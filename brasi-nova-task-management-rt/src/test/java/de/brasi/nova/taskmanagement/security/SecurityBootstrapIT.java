@@ -106,10 +106,15 @@ import org.springframework.web.context.WebApplicationContext;
 class SecurityBootstrapIT {
 
   private static final String TEST_KID = "task-mgmt-test-key";
+  // Tenant A: Haupt-Tenant fuer positive Tests
   private static final long TENANT_INTERNAL_ID = 1L;
   private static final UUID TENANT_UUID = UUID.randomUUID();
   private static final UUID USER_UUID = UUID.randomUUID();
   private static final String USER_LOGIN = "it-user@brasi.de";
+  // Tenant B: fremder Tenant fuer Tenant-Scoping-Tests
+  private static final long FOREIGN_TENANT_INTERNAL_ID = 2L;
+  private static final UUID FOREIGN_TENANT_UUID = UUID.randomUUID();
+  private static final String FOREIGN_USER_LOGIN = "foreign-user@brasi.de";
 
   // RSA-Keypair fuer Test-JWT-Signierung (im Speicher erzeugt, nie persistiert)
   private static final KeyPair RSA_KEY_PAIR;
@@ -206,7 +211,53 @@ class SecurityBootstrapIT {
         .andExpect(jsonPath("$.loginName").value(USER_LOGIN));
   }
 
-  // ---- Step 4: fremder Tenant -> 403 ----------------------------------------------------------
+  // ---- Step 4a: Tenant-Scoping des UserReadRepository beweisen -----------------------------------
+
+  /**
+   * Beweist, dass UserReadRepository.findByLoginName(:tenantId) den Benutzer des FREMDEN Mandanten
+   * NICHT zurueckliefert, wenn man als Mandant A (currentTenant) authentifiziert ist.
+   *
+   * <p>TDD-Rationale: Wuerde :tenantId NICHT auto-gebunden (z.B. keine WHERE TENANT_ID-Klausel),
+   * wuerde findByLoginName den Benutzer mandantenuebergreifend finden und der Test lieferte 200
+   * statt 404 -> Fehler. Er bestellt Gruene nur wenn der Query korrekt auf den Kontext-Tenant
+   * beschraenkt ist.
+   *
+   * <p>Setup: Tenant A (TENANT_INTERNAL_ID / TENANT_UUID) und Tenant B
+   * (FOREIGN_TENANT_INTERNAL_ID / FOREIGN_TENANT_UUID) werden in PROD_FIRMA geseedet. Der
+   * Fremdbenutzer FOREIGN_USER_LOGIN wird AUSSCHLIESSLICH in Tenant B angelegt. Dann wird ein JWT
+   * fuer Tenant A ausgestellt. Der /it/findUser-Endpoint sucht den fremden Login-Namen -- der KSF-
+   * Filter bindet TenantContextHolder auf Tenant A, das Repository-Query filtert auf TENANT_ID=1.
+   * Ergebnis: Optional.empty() -> 404 (Beweis fuer korrekte Scoping-Bindung).
+   */
+  @Test
+  @DisplayName(
+      "fremder_tenant_user_nicht_sichtbar: UserReadRepository scoped auf aktuellen Tenant;"
+          + " Fremdbenutzer liefert 404")
+  void fremder_tenant_user_nicht_sichtbar() throws Exception {
+    // Tenant A und Tenant B anlegen (Seed idempotent durch IF NOT EXISTS)
+    seedFirma(TENANT_INTERNAL_ID, TENANT_UUID);
+    seedFirma(FOREIGN_TENANT_INTERNAL_ID, FOREIGN_TENANT_UUID);
+    // Fremdbenutzer NUR in Tenant B anlegen -- in Tenant A existiert dieser Login-Name nicht
+    seedBenutzer(99L, UUID.randomUUID(), FOREIGN_USER_LOGIN, FOREIGN_TENANT_INTERNAL_ID);
+
+    // JWT fuer Tenant A (current) -- TenantContextHolder wird auf TENANT_INTERNAL_ID=1 gesetzt
+    final String tokenForTenantA = buildSignedJwt(TENANT_UUID, USER_UUID, USER_LOGIN);
+
+    final MockMvc mvc =
+        MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .apply(SecurityMockMvcConfigurers.springSecurity())
+            .build();
+
+    // Anfrage als Tenant A nach dem Benutzer des fremden Tenants B:
+    // UserReadRepository.findByLoginName bindet :tenantId an Tenant A -> kein Treffer -> 404
+    mvc.perform(
+            get("/it/findUser")
+                .param("loginName", FOREIGN_USER_LOGIN)
+                .header("Authorization", "Bearer " + tokenForTenantA))
+        .andExpect(status().isNotFound());
+  }
+
+  // ---- Step 4b: fremder Tenant -> 403 ----------------------------------------------------------
 
   @Test
   @DisplayName("fremder_tenant_user_nicht_aufloesbar: unbekannte Tenant-UUID -> 403")
