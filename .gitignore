@@ -1,0 +1,32 @@
+### Build-Output ###
+target/
+*.class
+
+### IDE ###
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+*.eclipse
+.factorypath
+
+### Maven ###
+.mvn/timing.properties
+!.mvn/wrapper/maven-wrapper.jar
+
+### Logs ###
+*.log
+logs/
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Lokale Konfiguration (nie einchecken) ###
+_local/
+*.local.properties
+*.local.yml
+*.local.yaml

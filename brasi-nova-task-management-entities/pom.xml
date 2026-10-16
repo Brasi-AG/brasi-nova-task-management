@@ -21,6 +21,12 @@
       <artifactId>ksf-api</artifactId>
     </dependency>
 
+    <!-- KSF-Persistence: QNovaEntity / QNovaValidityEntity (Basisklassen fuer Q-Metamodell) -->
+    <dependency>
+      <groupId>io.keel.framework</groupId>
+      <artifactId>ksf-persistence</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>jakarta.validation</groupId>
       <artifactId>jakarta.validation-api</artifactId>
