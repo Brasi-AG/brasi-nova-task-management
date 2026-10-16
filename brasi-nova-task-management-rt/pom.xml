@@ -1,0 +1,257 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>de.brasi.nova</groupId>
+		<artifactId>brasi-nova-task-management</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+	</parent>
+	<artifactId>brasi-nova-task-management-rt</artifactId>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<!--
+			keel-spring-framework Aggregat-Starter:
+			EINE Runtime-Dependency, zieht ksf-persistence/-web/-security/-integration.
+		-->
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-starter</artifactId>
+		</dependency>
+		<!-- ksf-web explizit: Base-Controller/AssemblerEngine direkt referenziert. -->
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-web</artifactId>
+		</dependency>
+		<!-- ksf-api explizit: Service-/Repository-/Model-/HATEOAS-/Exception-Vertraege. -->
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-integration</artifactId>
+		</dependency>
+		<!-- ksf-security-web-starter: Anti-Spoofing, Live-Authz-SPI (Task-1-Pflicht laut Brief). -->
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-security-web-starter</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-hateoas</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-aop</artifactId>
+		</dependency>
+		<!-- HikariCP/JDBC: Persistenz via KSF-JdbcTemplate -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jdbc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-artemis</artifactId>
+		</dependency>
+		<!-- WebSocket: Due-Reminder-Push (Task-16-Scheduler-Basis). -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-websocket</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>com.microsoft.sqlserver</groupId>
+			<artifactId>mssql-jdbc</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>de.brasi.nova</groupId>
+			<artifactId>brasi-nova-task-management-api</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-config</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>io.keel.framework</groupId>
+			<artifactId>ksf-test-support</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<mainClass>de.brasi.nova.taskmanagement.BrasiNovaApplication</mainClass>
+					<layout>JAR</layout>
+					<excludes>
+						<exclude>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+						</exclude>
+					</excludes>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>repackage</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<!-- Scaffold-Profile folgen in einem spaeterem Task -->
+	<profiles>
+
+		<profile>
+			<id>generate-scaffold-api</id>
+			<activation>
+				<property>
+					<name>generateApi</name>
+				</property>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>io.keel.framework</groupId>
+						<artifactId>ksf-scaffold-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>generate-api</id>
+								<phase>generate-sources</phase>
+								<goals>
+									<goal>generate</goal>
+								</goals>
+								<configuration>
+									<entitiesProjectPath>
+										${project.basedir}/../brasi-nova-task-management-entities
+									</entitiesProjectPath>
+									<apiProjectPath>
+										${project.basedir}/../brasi-nova-task-management-api</apiProjectPath>
+									<appProjectPath>${project.basedir}</appProjectPath>
+									<generationMode>API_ONLY</generationMode>
+									<rootPackage>de.brasi.nova.taskmanagement</rootPackage>
+									<entitiesPackage>
+										de.brasi.nova.taskmanagement.entity</entitiesPackage>
+									<targets>
+										<target>Repository</target>
+										<target>Model</target>
+										<target>Service</target>
+										<target>Controller</target>
+										<target>Validator</target>
+										<target>Assembler</target>
+										<target>QClass</target>
+										<target>LinkSpec</target>
+										<target>QueryProvider</target>
+										<target>ServiceProviders</target>
+										<target>Summary</target>
+										<target>Hateoas</target>
+									</targets>
+									<all>true</all>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<profile>
+			<id>generate-scaffold-app</id>
+			<activation>
+				<property>
+					<name>generateApp</name>
+				</property>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>io.keel.framework</groupId>
+						<artifactId>ksf-scaffold-plugin</artifactId>
+
+						<dependencies>
+							<dependency>
+								<groupId>de.brasi.nova</groupId>
+								<artifactId>brasi-nova-task-management-api</artifactId>
+								<version>${project.version}</version>
+							</dependency>
+						</dependencies>
+
+						<executions>
+							<execution>
+								<id>create-final-classes</id>
+								<phase>generate-sources</phase>
+								<goals>
+									<goal>generate</goal>
+								</goals>
+								<configuration>
+									<entitiesProjectPath>
+										${project.basedir}/../brasi-nova-task-management-entities
+									</entitiesProjectPath>
+									<apiProjectPath>
+										${project.basedir}/../brasi-nova-task-management-api</apiProjectPath>
+									<appProjectPath>${project.basedir}</appProjectPath>
+									<generationMode>APP_ONLY_IF_NOT_EXISTS</generationMode>
+									<rootPackage>de.brasi.nova.taskmanagement</rootPackage>
+									<entitiesPackage>
+										de.brasi.nova.taskmanagement.entity</entitiesPackage>
+									<targets>
+										<target>Repository</target>
+										<target>Model</target>
+										<target>Service</target>
+										<target>Controller</target>
+										<target>Validator</target>
+										<target>Assembler</target>
+										<target>QClass</target>
+										<target>LinkSpec</target>
+										<target>QueryProvider</target>
+										<target>ServiceProviders</target>
+										<target>Summary</target>
+										<target>Hateoas</target>
+									</targets>
+									<all>true</all>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+	</profiles>
+</project>

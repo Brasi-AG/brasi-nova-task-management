@@ -1,0 +1,68 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>de.brasi.nova</groupId>
+    <artifactId>brasi-nova-task-management</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+  </parent>
+  <artifactId>brasi-nova-task-management-api</artifactId>
+
+  <!--
+    Scaffold-Ziel-Modul (generierter REST-Layer); in Task 1 nur als leeres Modul angelegt.
+    Scaffold-Execution und generierter Code folgen in einem spaeterem Task.
+  -->
+
+  <dependencies>
+
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+    <dependency>
+      <groupId>de.brasi.nova</groupId>
+      <artifactId>brasi-nova-task-management-entities</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <!-- KSF-Vertraege: Service, Repository, Model, HATEOAS, Exceptions -->
+    <dependency>
+      <groupId>io.keel.framework</groupId>
+      <artifactId>ksf-api</artifactId>
+    </dependency>
+    <!-- KSF-Web: AssemblerEngine, Base-Controller, OpenAPI-Annotations -->
+    <dependency>
+      <groupId>io.keel.framework</groupId>
+      <artifactId>ksf-web</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>jakarta.validation</groupId>
+      <artifactId>jakarta.validation-api</artifactId>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!--
+        Spotless ist fuer das scaffold-generierte api-Modul deaktiviert:
+        cleanthat-javaparser-unnecessaryimport entfernt Lombok-Imports ohne Typaufloesung,
+        was Lombok-Annotation-Processing bricht.
+      -->
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

@@ -1,0 +1,159 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>de.brasi.nova</groupId>
+	<artifactId>brasi-nova-task-management</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>pom</packaging>
+
+	<properties>
+		<!-- Java 25 (ksf-Baseline) -->
+		<java.version>25</java.version>
+		<maven.compiler.source>25</maven.compiler.source>
+		<maven.compiler.target>25</maven.compiler.target>
+		<maven.compiler.release>25</maven.compiler.release>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<maven-compiler-plugin-version>3.13.0</maven-compiler-plugin-version>
+		<!-- Lombok 1.18.42 fuer JDK-25-Support (Spring Boot 3.5.5 managt nur 1.18.38). -->
+		<lombok.version>1.18.42</lombok.version>
+		<!-- keel-spring-framework (KSF) 2.3.24 -->
+		<ksf.version>2.3.24</ksf.version>
+		<ksf-web.version>2.3.24</ksf-web.version>
+		<!-- springdoc: ksf-bom managt springdoc nicht (ksf-web pinnt 2.8.12 intern) — daher hier explizit. -->
+		<springdoc.version>2.8.12</springdoc.version>
+		<spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>
+		<build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
+		<ksf-scaffold-plugin.version>${ksf.version}</ksf-scaffold-plugin.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>io.keel.framework</groupId>
+				<artifactId>ksf-bom</artifactId>
+				<version>${ksf.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<dependency>
+				<groupId>io.keel.framework</groupId>
+				<artifactId>ksf-web</artifactId>
+				<version>${ksf-web.version}</version>
+			</dependency>
+			<!-- springdoc-Management -->
+			<dependency>
+				<groupId>org.springdoc</groupId>
+				<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+				<version>${springdoc.version}</version>
+			</dependency>
+			<!-- Spring Cloud fuer kpl-config-Client (spring-cloud-starter-config) -->
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>2025.0.0</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<build>
+		<pluginManagement>
+			<plugins>
+				<plugin>
+					<groupId>org.springframework.boot</groupId>
+					<artifactId>spring-boot-maven-plugin</artifactId>
+					<version>3.5.5</version>
+				</plugin>
+				<plugin>
+					<groupId>com.diffplug.spotless</groupId>
+					<artifactId>spotless-maven-plugin</artifactId>
+					<version>${spotless-maven-plugin.version}</version>
+					<configuration>
+						<java>
+							<removeUnusedImports>
+								<engine>cleanthat-javaparser-unnecessaryimport</engine>
+							</removeUnusedImports>
+							<googleJavaFormat>
+								<version>1.24.0</version>
+								<style>GOOGLE</style>
+							</googleJavaFormat>
+							<formatAnnotations />
+							<trimTrailingWhitespace />
+							<endWithNewline />
+						</java>
+					</configuration>
+					<executions>
+						<execution>
+							<phase>process-sources</phase>
+							<goals>
+								<goal>apply</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
+				<plugin>
+					<groupId>io.keel.framework</groupId>
+					<artifactId>ksf-scaffold-plugin</artifactId>
+					<version>${ksf-scaffold-plugin.version}</version>
+				</plugin>
+				<plugin>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>build-helper-maven-plugin</artifactId>
+					<version>${build-helper-maven-plugin.version}</version>
+					<executions>
+						<execution>
+							<id>add-generated-sources</id>
+							<phase>generate-sources</phase>
+							<goals>
+								<goal>add-source</goal>
+							</goals>
+							<configuration>
+								<sources>
+									<source>
+										${project.build.directory}/generated-sources/nova</source>
+								</sources>
+							</configuration>
+						</execution>
+					</executions>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>${maven-compiler-plugin-version}</version>
+				<configuration>
+					<source>${java.version}</source>
+					<target>${java.version}</target>
+					<release>${java.version}</release>
+					<parameters>true</parameters>
+					<compilerArgs>
+						<arg>-parameters</arg>
+					</compilerArgs>
+					<!--
+						Explizite Annotation-Processor-Pfade: notwendig fuer Lombok mit
+						Java 25 + maven-compiler-plugin 3.13+.
+					-->
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+							<version>${lombok.version}</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<modules>
+		<module>brasi-nova-task-management-entities</module>
+		<module>brasi-nova-task-management-api</module>
+		<module>brasi-nova-task-management-rt</module>
+	</modules>
+</project>
