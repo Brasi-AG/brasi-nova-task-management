@@ -146,6 +146,11 @@ class InboxSnapshotControllerIT {
   private static final String USER_POST_LOGIN = "user-post-inbox@brasi.de";
   private static final long USER_POST_DB_ID = 566L;
 
+  /** USER_DEL: Nachweis Entity-Status-Filter (deaktivierte Tasks/Memberships). */
+  private static final UUID USER_DEL_REF = UUID.randomUUID();
+  private static final String USER_DEL_LOGIN = "user-del-inbox@brasi.de";
+  private static final long USER_DEL_DB_ID = 568L;
+
   /** Read-Only-User ohne TASK_READ. */
   private static final UUID USER_RO_REF = UUID.randomUUID();
   private static final String USER_RO_LOGIN = "user-ro-inbox@brasi.de";
@@ -223,6 +228,7 @@ class InboxSnapshotControllerIT {
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_ARCH_DB_ID, USER_ARCH_REF, USER_ARCH_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_POST_DB_ID, USER_POST_REF, USER_POST_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, USER_DEL_DB_ID, USER_DEL_REF, USER_DEL_LOGIN, TENANT_A_ID);
   }
 
   // ---- IT 1: snapshot user-scoped + Bausteine -----------------------------------------------
@@ -460,7 +466,85 @@ class InboxSnapshotControllerIT {
     assertThat(creatorIsParticipant).as("Creator muss Seiten-Teilnehmer sein").isTrue();
   }
 
-  // ---- IT 5: Negativ 401 / 403 + malformed Cursor 400 ---------------------------------------
+  // ---- IT 5: Entity-Status-Filter (Codex-P1): deaktivierte Rows nicht in Reads/Totals -------
+
+  @Test
+  @DisplayName("deaktivierte_tasks_und_memberships_nicht_in_reads_und_totals")
+  void deaktivierte_tasks_und_memberships_nicht_in_reads_und_totals() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long doneId = statusId("DONE");
+    final long normalId = priorityId("NORMAL");
+    final long dir = directionId("CUSTOMER_INTERNAL");
+
+    // (a) aktiver erledigter Task + aktiver UserState -> in done-Archiv + Totals
+    final long activeDoneId = ID_BASE + 80;
+    final UUID activeDoneUuid = UUID.randomUUID();
+    seedTask(jdbcTemplate, activeDoneId, activeDoneUuid, TENANT_A_ID, doneId, normalId, dir,
+        LocalDateTime.now().minusMinutes(15), "Aktiv erledigt");
+    seedParticipant(jdbcTemplate, ID_BASE + 81, activeDoneId, USER_DEL_REF, TENANT_A_ID,
+        true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 82, activeDoneId, USER_DEL_REF, TENANT_A_ID, null);
+
+    // (b) DEAKTIVIERTER erledigter Task (ENTITY_STATUS='DEACTIVE') -> NICHT sichtbar/gezaehlt
+    final long deadTaskId = ID_BASE + 83;
+    final UUID deadUuid = UUID.randomUUID();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
+            + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
+            + "VALUES (?, 'DEACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
+        deadTaskId, deadUuid, TENANT_A_ID, "Deaktiviert erledigt", doneId, normalId, dir,
+        TENANT_A_ID, Timestamp.valueOf(LocalDateTime.now().minusMinutes(14)));
+    seedParticipant(jdbcTemplate, ID_BASE + 84, deadTaskId, USER_DEL_REF, TENANT_A_ID,
+        true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 85, deadTaskId, USER_DEL_REF, TENANT_A_ID, null);
+
+    // (c) aktiver OPEN-Task mit DEAKTIVIERTEM UserState -> NICHT in aktiver Seite (Membership-Filter)
+    final long openTaskId = ID_BASE + 86;
+    final UUID openUuid = UUID.randomUUID();
+    seedTask(jdbcTemplate, openTaskId, openUuid, TENANT_A_ID, openId, normalId, dir,
+        LocalDateTime.now().minusMinutes(13), "Open mit totem UserState");
+    seedParticipant(jdbcTemplate, ID_BASE + 87, openTaskId, USER_DEL_REF, TENANT_A_ID,
+        true, true, true, null);
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_USER_STATE] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
+            + "VALUES (?, 'DEACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
+        ID_BASE + 88, UUID.randomUUID(), TENANT_A_ID, openTaskId, USER_DEL_REF, TENANT_A_ID);
+
+    final String token =
+        jwt(TENANT_A_UUID, USER_DEL_REF, USER_DEL_LOGIN, "task-management:TASK_READ");
+
+    // Archiv done: nur aktiver erledigter Task, NICHT der deaktivierte
+    final JsonNode donePage = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/archive?filter=done")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(donePage)).contains(activeDoneUuid.toString())
+        .doesNotContain(deadUuid.toString());
+
+    // Totals: done == 1 (deaktivierter Task NICHT mitgezaehlt)
+    final JsonNode snapshot = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/snapshot")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(snapshot.get("archiveTotals").get("done").asLong()).isEqualTo(1L);
+
+    // Aktive Seite: OPEN-Task mit deaktiviertem UserState erscheint NICHT (Membership-Filter)
+    final JsonNode active = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(active)).doesNotContain(openUuid.toString());
+  }
+
+  // ---- IT 6: Negativ 401 / 403 + malformed Cursor 400 ---------------------------------------
 
   @Test
   @DisplayName("negativ_anonym_401_ohne_task_read_403_malformed_cursor_400")
