@@ -119,6 +119,38 @@ class TagCatalogServiceTest {
         .hasMessageContaining("GIBTS_NICHT");
   }
 
+  @Test
+  @DisplayName("create_null_severityCode_liefert_400: EntityValidationException bei null severityCode (F-P2a)")
+  void create_null_severity_code_liefert_400() {
+    // null severityCode darf kein NPE (500) auslösen, sondern 400
+    assertThatThrownBy(() -> service.create(new TagCreateInput("ValidName", null)))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("create_blank_severityCode_liefert_400: EntityValidationException bei leerem severityCode (F-P2a)")
+  void create_blank_severity_code_liefert_400() {
+    assertThatThrownBy(() -> service.create(new TagCreateInput("ValidName", "  ")))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("update_present_null_severityCode_liefert_400: EntityValidationException bei PatchValue present+null (F-P2a)")
+  void update_present_null_severity_code_liefert_400() {
+    final UUID tagUuid = UUID.randomUUID();
+    final TaskTag existing = new TaskTag();
+    existing.setUuid(tagUuid);
+    existing.setId(1000001099L);
+    existing.setEntryValue("SomeName");
+    existing.setSeverityId(SEVERITY_ID_PRIMARY);
+    when(tagRepository.findByUuid(tagUuid.toString())).thenReturn(Optional.of(existing));
+
+    // PatchValue.ofNull() = present(null) -> muss 400 sein, nicht NPE (500)
+    assertThatThrownBy(() -> service.update(tagUuid,
+        new TagUpdateInput(PatchValue.absent(), PatchValue.ofNull())))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
   // ---- update ---------------------------------------------------------------------------------
 
   @Test
@@ -217,7 +249,7 @@ class TagCatalogServiceTest {
     tag2.setSeverityId(SEVERITY_ID_PRIMARY);
     tag2.setTenantId(0L);
 
-    when(tagRepository.findAllActive()).thenReturn(List.of(tag1, tag2));
+    when(tagRepository.findAllValidAndActive()).thenReturn(List.of(tag1, tag2));
 
     // Act
     final List<TagModel> models = service.list();

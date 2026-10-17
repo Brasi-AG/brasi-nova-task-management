@@ -248,14 +248,25 @@ public class TaskCommandService {
       final Set<UUID> desiredTagUuids =
           input.tagIds().get() != null ? input.tagIds().get() : Set.of();
 
-      // Alle Tag-UUIDs gegen den globalen Katalog aufloesen (unbekannt/inaktiv -> 400)
+      // null-Element-Pruefung: {"tagIds":[null]} -> 400 statt NPE (F-P2b).
+      // Iteration statt contains(null): ImmutableSet.contains(null) wuerde NPE ausloesen.
+      for (final UUID tagUuid : desiredTagUuids) {
+        if (tagUuid == null) {
+          throw new EntityValidationException(
+              "tagIds darf keine null-Elemente enthalten.");
+        }
+      }
+
+      // Alle Tag-UUIDs gegen den globalen Katalog aufloesen (unbekannt/inaktiv/abgelaufen -> 400)
+      // Verwendet findActiveByUuid (F-P1): filtert ENTITY_STATUS + Gueltigkeit;
+      // findByUuid wuerde inaktive/abgelaufene Tags akzeptieren (R-PATCH-Verletzung).
       // Abbruch-sicher: alle validieren BEVOR irgendwas geaendert wird
       final Map<UUID, Long> tagUuidToId =
           TenantContextHolder.runWithTenant(TenantInfo.global(), () -> {
             final Map<UUID, Long> result = new java.util.HashMap<>();
             for (final UUID tagUuid : desiredTagUuids) {
               final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
-                  tagRepository.findByUuid(tagUuid.toString());
+                  tagRepository.findActiveByUuid(tagUuid.toString());
               if (found.isEmpty()) {
                 throw new EntityValidationException(
                     "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");

@@ -336,6 +336,54 @@ class TaskCommandServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- F-P1: inaktive Tag-UUID -> 400 (findByUuid durch findActiveByUuid ersetzen) --------------
+
+  @Test
+  @DisplayName("patch_inaktive_tag_uuid_liefert_400: findActiveByUuid liefert empty -> 400 (F-P1)")
+  void patch_inaktive_tag_uuid_liefert_400() {
+    final Task task = taskWithId(80L, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    final UUID inactiveTagUuid = UUID.randomUUID();
+    // findActiveByUuid liefert empty (Tag inaktiv oder abgelaufen)
+    when(tagRepository.findActiveByUuid(inactiveTagUuid.toString())).thenReturn(java.util.Optional.empty());
+    when(tagAssignmentQueryRepository.findActiveByTaskId(task.getId())).thenReturn(List.of());
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.of(java.util.Set.of(inactiveTagUuid)))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessageContaining(inactiveTagUuid.toString());
+  }
+
+  // ---- F-P2b: null-Element in tagIds -> 400 ----------------------------------------------------
+
+  @Test
+  @DisplayName("patch_null_element_in_tag_ids_liefert_400: Set mit null-Element -> 400 statt NPE (F-P2b)")
+  void patch_null_element_in_tag_ids_liefert_400() {
+    final Task task = taskWithId(81L, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    // Set mit null-Element (deserialisiert aus {"tagIds":[null]})
+    final java.util.Set<UUID> tagIdsWithNull = new java.util.HashSet<>();
+    tagIdsWithNull.add(null);
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.of(tagIdsWithNull))))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {

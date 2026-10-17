@@ -56,7 +56,7 @@ public class TagCatalogService {
    */
   public List<TagModel> list() {
     final List<TaskTag> tags =
-        TenantContextHolder.runWithTenant(TenantInfo.global(), tagRepository::findAllActive);
+        TenantContextHolder.runWithTenant(TenantInfo.global(), tagRepository::findAllValidAndActive);
     return tags.stream().map(this::toModel).collect(Collectors.toList());
   }
 
@@ -75,6 +75,11 @@ public class TagCatalogService {
     // Name-Validierung
     if (in.name() == null || in.name().isBlank()) {
       throw new EntityValidationException("Tag-Name darf nicht leer sein.");
+    }
+
+    // severityCode-Pflichtfeld: null/blank -> 400 (verhindert NPE in resolveTagSeverity, F-P2a)
+    if (in.severityCode() == null || in.severityCode().isBlank()) {
+      throw new EntityValidationException("severityCode darf nicht leer sein.");
     }
 
     // SeverityCode -> interne ID (unbekannter Code -> 400)
@@ -132,9 +137,12 @@ public class TagCatalogService {
       tag.setEntryValue(newName);
     }
 
-    // severityCode-Patch
+    // severityCode-Patch: present + null/blank -> 400 (F-P2a); unbekannter Code -> 400
     if (in.severityCode().isPresent()) {
       final String newSeverityCode = in.severityCode().get();
+      if (newSeverityCode == null || newSeverityCode.isBlank()) {
+        throw new EntityValidationException("severityCode darf nicht leer sein.");
+      }
       final Long newSeverityId;
       try {
         newSeverityId = resolver.resolveTagSeverity(newSeverityCode);

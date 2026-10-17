@@ -363,6 +363,56 @@ class TagCatalogIT {
         .isEqualTo(0);
   }
 
+  // ---- IT F-P2c: Gueltigkeitspraedikat (future-dated Tag) -------------------------------------
+
+  @Test
+  @DisplayName(
+      "future_dated_tag_nicht_in_list_f_p2c:"
+          + " Tag mit GUELTIG_VON morgen taucht NICHT in GET /tags auf (F-P2c: GUELTIG_VON-Praedikat)")
+  void future_dated_tag_nicht_in_list_f_p2c() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // Future-dated Tag direkt in DB seeden (GUELTIG_VON = morgen)
+    final UUID futureDatedTagUuid = UUID.randomUUID();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_TAG] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, BEZEICHNUNG, ENTRY_TYPE,"
+            + " GUELTIG_VON, SEVERITY_ID) "
+            + "VALUES (9299, 'ACTIVE', ?, 1, 0, 'FutureDatedTag', 'SYSTEM_PUBLIC',"
+            + " CAST(DATEADD(day, 1, GETDATE()) AS DATE), 601)",
+        futureDatedTagUuid);
+
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_READ");
+
+    final String listResponse =
+        mvc.perform(
+                get("/api/v1/tags")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final com.fasterxml.jackson.databind.JsonNode tagArray =
+        om.readValue(listResponse, com.fasterxml.jackson.databind.JsonNode.class);
+    assertThat(tagArray.isArray()).isTrue();
+
+    boolean futureDatedTagVisible = false;
+    for (com.fasterxml.jackson.databind.JsonNode node : tagArray) {
+      if (futureDatedTagUuid.toString().equals(node.get("id").asText())) {
+        futureDatedTagVisible = true;
+        break;
+      }
+    }
+    assertThat(futureDatedTagVisible)
+        .as("Future-dated Tag (GUELTIG_VON=morgen) darf NICHT in GET /tags erscheinen")
+        .isFalse();
+  }
+
   // ---- Negativ-ITs: 401 / 403 / 200 -----------------------------------------------------------
 
   @Test

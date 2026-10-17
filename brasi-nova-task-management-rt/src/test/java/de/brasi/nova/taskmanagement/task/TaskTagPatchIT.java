@@ -360,6 +360,51 @@ class TaskTagPatchIT {
 
   @Test
   @DisplayName(
+      "inaktive_tag_uuid_400_f_p1:"
+          + " PATCH mit inaktiver (ENTITY_STATUS=INACTIVE) Tag-UUID -> 400 (F-P1: findActiveByUuid)")
+  void inaktive_tag_uuid_400_f_p1() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String token =
+        buildJwtWithAuthority(
+            TENANT_UUID, USER_REF, USER_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-IT-4b");
+
+    // Inaktiven Tag direkt in DB seeden (ENTITY_STATUS=INACTIVE)
+    final UUID inactiveTagUuid = UUID.randomUUID();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_TAG] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, BEZEICHNUNG, ENTRY_TYPE,"
+            + " GUELTIG_VON, SEVERITY_ID) "
+            + "VALUES (9199, 'INACTIVE', ?, 1, 0, 'InactiverTag', 'SYSTEM_PUBLIC',"
+            + " CAST(GETDATE() AS DATE), 601)",
+        inactiveTagUuid);
+
+    // PATCH mit inaktiver Tag-UUID -> 400 (F-P1: findActiveByUuid liefert empty)
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("tagIds", List.of(inactiveTagUuid)))))
+        .andExpect(status().isBadRequest());
+
+    // Kein Assignment angelegt (keine Teil-Anwendung)
+    final Integer assignmentCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+                + " JOIN [dbo].[TASK] t ON a.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND a.ENTITY_STATUS = 'ACTIVE'",
+            Integer.class, taskUuid);
+    assertThat(assignmentCount)
+        .as("Keine Assignments nach 400-Fehler mit inaktiver Tag-UUID")
+        .isEqualTo(0);
+  }
+
+  @Test
+  @DisplayName(
       "unbekannte_tag_uuid_400_keine_teil_anwendung:"
           + " PATCH mit unbekannter Tag-UUID -> 400, kein Assignment angelegt")
   void unbekannte_tag_uuid_400_keine_teil_anwendung() throws Exception {
