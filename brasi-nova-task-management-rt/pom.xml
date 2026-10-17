@@ -187,13 +187,12 @@
 										Nur Persistenz-/Modell-Targets (arch-v2 §7):
 										Controller, Hateoas, Assembler, LinkSpec werden NICHT erzeugt.
 										Die gesamte REST-Oberflaeche sind hand-geschriebene Facade-Controller.
-										<all>true</all> stellt sicher, dass die Target-Liste verbindlich ist
-										und der Plugin NICHT automatisch alle 12 Targets generiert.
+										<all>true</all> waehlt ALLE gefundenen Entities aus; die explizite
+										<targets>-Liste begrenzt die erzeugten ARTEFAKT-Typen auf diese Auswahl.
 									-->
 									<targets>
 										<target>Repository</target>
 										<target>Model</target>
-										<target>Service</target>
 										<target>Validator</target>
 										<target>QClass</target>
 										<target>QueryProvider</target>
@@ -251,11 +250,12 @@
 									<!--
 										Konsistente Target-Liste zum generate-scaffold-api-Profil:
 										nur Persistenz-/Modell-Targets, keine Web-Layer-Artefakte.
+										<all>true</all> waehlt ALLE gefundenen Entities aus; die explizite
+										<targets>-Liste begrenzt die erzeugten ARTEFAKT-Typen auf diese Auswahl.
 									-->
 									<targets>
 										<target>Repository</target>
 										<target>Model</target>
-										<target>Service</target>
 										<target>Validator</target>
 										<target>QClass</target>
 										<target>QueryProvider</target>
