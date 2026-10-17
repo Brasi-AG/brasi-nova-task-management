@@ -47,7 +47,8 @@ class HandlerSentinelIT {
   private static final java.util.Set<String> ALLOWED_FACADE_CONTROLLERS =
       java.util.Set.of(
           WHOAMI_PROBE_CONTROLLER,
-          "de.brasi.nova.taskmanagement.task.TaskFacadeController");
+          "de.brasi.nova.taskmanagement.task.TaskFacadeController",
+          "de.brasi.nova.taskmanagement.participant.AssigneeController");
 
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";
