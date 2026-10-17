@@ -2,6 +2,8 @@ package de.brasi.nova.taskmanagement.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.when;
 import de.brasi.nova.taskmanagement.entity.TaskNotification;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.push.NotificationPushEnvelope;
 import de.brasi.nova.taskmanagement.push.NotificationPushPort;
 import de.brasi.nova.taskmanagement.repository.BaseTaskNotificationRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
@@ -21,6 +24,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -100,15 +104,31 @@ class NotificationServiceTest {
             ACTOR_REF);
 
     // Kein Push vor Commit
-    verify(pushPort, never()).push(any());
+    verify(pushPort, never()).push(anyLong(), any(), any());
     assertThat(notificationId).as("emit muss eine UUID zurueckgeben").isNotNull();
 
     // afterCommit ausfuehren (simuliert Commit-Abschluss)
     TransactionSynchronizationManager.getSynchronizations()
         .forEach(s -> s.afterCommit());
 
-    // Genau EIN Push nach Commit
-    verify(pushPort, times(1)).push(any());
+    // Genau EIN Push nach Commit, mit Routing-Metadaten + korrektem Envelope-Kontrakt
+    final ArgumentCaptor<NotificationPushEnvelope> envelopeCaptor =
+        ArgumentCaptor.forClass(NotificationPushEnvelope.class);
+    verify(pushPort, times(1))
+        .push(eq(TENANT_ID), eq(RECIPIENT_REF), envelopeCaptor.capture());
+
+    final NotificationPushEnvelope envelope = envelopeCaptor.getValue();
+    assertThat(envelope.type())
+        .as("Envelope-Diskriminator MUSS fest 'notification' sein (nicht der Typ-CODE)")
+        .isEqualTo("notification");
+    assertThat(envelope.version()).isEqualTo("1");
+    assertThat(envelope.category())
+        .as("Benachrichtigungs-KATEGORIE = typeCode")
+        .isEqualTo(TYPE_CODE);
+    assertThat(envelope.severity()).isEqualTo(SEVERITY_CODE);
+    assertThat(envelope.notificationId()).isEqualTo(notificationId);
+    assertThat(envelope.payload().text()).isEqualTo("Testnachricht");
+    assertThat(envelope.payload().preview()).isEqualTo("Vorschau");
   }
 
   // ---- (b) kein Push bei Rollback --------------------------------------------------------------
@@ -127,6 +147,6 @@ class NotificationServiceTest {
             org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK));
 
     // Port darf NICHT aufgerufen worden sein
-    verify(pushPort, never()).push(any());
+    verify(pushPort, never()).push(anyLong(), any(), any());
   }
 }

@@ -33,13 +33,18 @@ public class NoOpNotificationPushConfig {
   static class NoOpNotificationPushPort implements NotificationPushPort {
 
     @Override
-    public void push(final NotificationPushEnvelope envelope) {
+    public void push(
+        final long tenantId,
+        final java.util.UUID recipientRef,
+        final NotificationPushEnvelope envelope) {
       log.debug(
-          "NoOp-NotificationPushPort: Benachrichtigung {} (Typ={}, Schwere={}) nicht gesendet"
-              + " (kein WS-Adapter aktiv).",
+          "NoOp-NotificationPushPort: Benachrichtigung {} (Kategorie={}, Schwere={}) an Empfaenger"
+              + " {}/Mandant {} nicht gesendet (kein WS-Adapter aktiv).",
           envelope.notificationId(),
-          envelope.type(),
-          envelope.severity());
+          envelope.category(),
+          envelope.severity(),
+          recipientRef,
+          tenantId);
     }
   }
 }

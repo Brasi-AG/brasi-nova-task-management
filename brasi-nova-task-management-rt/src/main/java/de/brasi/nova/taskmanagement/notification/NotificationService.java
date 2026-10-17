@@ -19,10 +19,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Erzeugt und persistiert Benachrichtigungen fuer Benutzer.
  *
- * <p>Der {@link NotificationPushPort}-Aufruf wird IMMER ueber
+ * <p>Bei aktiver Transaktion wird der {@link NotificationPushPort}-Aufruf ueber
  * {@link TransactionSynchronizationManager#registerSynchronization(TransactionSynchronization)}
- * als {@code afterCommit}-Hook registriert. Kein Push innerhalb der DB-Transaktion; das verhindert
- * Phantom-Pushes bei Rollback.
+ * als {@code afterCommit}-Hook registriert (kein Push innerhalb der DB-Transaktion -> keine
+ * Phantom-Pushes bei Rollback); ohne aktive Transaktion wird direkt gepusht (Best-Effort).
  *
  * <p>typeCode und severityCode sind system-interne Konstanten (Aufrufer liefern Konstanten aus
  * {@code NotificationTypeCodes}/{@code NotificationSeverityCodes}).
@@ -115,16 +115,13 @@ public class NotificationService {
         recipientRef,
         tenant.id());
 
-    // After-Commit-Seam: Push erst nach erfolgreichem Commit senden
-    final String severityCodeForPush = severityCode;
+    // After-Commit-Seam: Push erst nach erfolgreichem Commit senden.
+    // type ist der feste Envelope-Diskriminator "notification"; die Kategorie (typeCode) steht in
+    // category. Routing-Metadaten (tenantId, recipientRef) gehen separat an den Port (nicht im Envelope).
+    final long tenantId = tenant.id();
     final NotificationPushEnvelope envelope =
-        new NotificationPushEnvelope(
-            typeCode,
-            "1",
-            notificationExternalId,
-            Instant.now(),
-            severityCodeForPush,
-            new NotificationPushEnvelope.Payload(text, preview));
+        NotificationPushEnvelope.of(
+            notificationExternalId, Instant.now(), typeCode, severityCode, text, preview);
 
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       TransactionSynchronizationManager.registerSynchronization(
@@ -132,10 +129,10 @@ public class NotificationService {
             @Override
             public void afterCommit() {
               log.debug(
-                  "NotificationService.afterCommit: Push fuer Benachrichtigung {} (Typ={}).",
+                  "NotificationService.afterCommit: Push fuer Benachrichtigung {} (Kategorie={}).",
                   notificationExternalId,
                   typeCode);
-              pushPort.push(envelope);
+              pushPort.push(tenantId, recipientRef, envelope);
             }
           });
     } else {
@@ -143,7 +140,7 @@ public class NotificationService {
       log.debug(
           "NotificationService (kein Tx-Kontext): Push fuer Benachrichtigung {} direkt gesendet.",
           notificationExternalId);
-      pushPort.push(envelope);
+      pushPort.push(tenantId, recipientRef, envelope);
     }
 
     return notificationExternalId;
