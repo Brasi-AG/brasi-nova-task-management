@@ -50,9 +50,11 @@ class HandlerSentinelIT {
           "de.brasi.nova.taskmanagement.task.TaskFacadeController",
           "de.brasi.nova.taskmanagement.participant.AssigneeController",
           "de.brasi.nova.taskmanagement.participant.UserStateController",
+          "de.brasi.nova.taskmanagement.participant.ParticipantSearchController",
           "de.brasi.nova.taskmanagement.comment.CommentController",
           "de.brasi.nova.taskmanagement.notification.NotificationController",
-          "de.brasi.nova.taskmanagement.dictionary.DictionaryCatalogController");
+          "de.brasi.nova.taskmanagement.dictionary.DictionaryCatalogController",
+          "de.brasi.nova.taskmanagement.tag.TagController");
 
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";

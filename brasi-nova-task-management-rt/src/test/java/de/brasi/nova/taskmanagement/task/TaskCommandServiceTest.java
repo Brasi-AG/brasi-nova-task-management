@@ -18,6 +18,8 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
@@ -76,6 +78,8 @@ class TaskCommandServiceTest {
   @Mock private UserStateService userStateService;
   @Mock private TaskHistoryService historyService;
   @Mock private InboxSignalService inboxSignalService;
+  @Mock private TaskTagRepository tagRepository;
+  @Mock private TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
 
   private TaskCommandService service;
 
@@ -90,7 +94,9 @@ class TaskCommandServiceTest {
             userAccessor,
             userStateService,
             historyService,
-            inboxSignalService);
+            inboxSignalService,
+            tagRepository,
+            tagAssignmentQueryRepository);
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -215,7 +221,7 @@ class TaskCommandServiceTest {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
 
     assertThatThrownBy(
-            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -230,7 +236,7 @@ class TaskCommandServiceTest {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(foreignTask));
 
     assertThatThrownBy(
-            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -266,7 +272,7 @@ class TaskCommandServiceTest {
     service.patch(
         task.getUuid(),
         new TaskPatchInput(
-            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent()));
+            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent(), PatchValue.absent()));
 
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
@@ -307,7 +313,8 @@ class TaskCommandServiceTest {
                 new TaskPatchInput(
                     PatchValue.absent(),
                     PatchValue.absent(),
-                    PatchValue.of("UNGUELTIG_STATUS"))))
+                    PatchValue.of("UNGUELTIG_STATUS"),
+                    PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNGUELTIG_STATUS");
   }
@@ -324,7 +331,8 @@ class TaskCommandServiceTest {
                 new TaskPatchInput(
                     PatchValue.absent(),
                     PatchValue.absent(),
-                    PatchValue.of(""))))
+                    PatchValue.of(""),
+                    PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
 

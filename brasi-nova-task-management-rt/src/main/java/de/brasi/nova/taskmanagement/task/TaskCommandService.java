@@ -2,12 +2,15 @@ package de.brasi.nova.taskmanagement.task;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
@@ -18,12 +21,18 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
+import io.keel.framework.api.security.tenant.TenantContextHolder;
+import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -56,6 +65,8 @@ public class TaskCommandService {
   private final UserStateService userStateService;
   private final TaskHistoryService historyService;
   private final InboxSignalService inboxSignalService;
+  private final TaskTagRepository tagRepository;
+  private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -66,7 +77,9 @@ public class TaskCommandService {
       final UserAccessor userAccessor,
       final UserStateService userStateService,
       final TaskHistoryService historyService,
-      final InboxSignalService inboxSignalService) {
+      final InboxSignalService inboxSignalService,
+      final TaskTagRepository tagRepository,
+      final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -75,6 +88,8 @@ public class TaskCommandService {
     this.userStateService = userStateService;
     this.historyService = historyService;
     this.inboxSignalService = inboxSignalService;
+    this.tagRepository = tagRepository;
+    this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
   }
 
   /**
@@ -226,6 +241,77 @@ public class TaskCommandService {
           taskId, tenantId, actorRef, "Status geaendert", "-> " + newStatusCode);
       task.setTaskStatusId(newStatusId);
       changed = true;
+    }
+
+    // tagIds: PUT-Set-Semantik (R-PATCH)
+    if (input.tagIds().isPresent()) {
+      final Set<UUID> desiredTagUuids =
+          input.tagIds().get() != null ? input.tagIds().get() : Set.of();
+
+      // Alle Tag-UUIDs gegen den globalen Katalog aufloesen (unbekannt/inaktiv -> 400)
+      // Abbruch-sicher: alle validieren BEVOR irgendwas geaendert wird
+      final Map<UUID, Long> tagUuidToId =
+          TenantContextHolder.runWithTenant(TenantInfo.global(), () -> {
+            final Map<UUID, Long> result = new java.util.HashMap<>();
+            for (final UUID tagUuid : desiredTagUuids) {
+              final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
+                  tagRepository.findByUuid(tagUuid.toString());
+              if (found.isEmpty()) {
+                throw new EntityValidationException(
+                    "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");
+              }
+              result.put(tagUuid, found.get().getId());
+            }
+            return result;
+          });
+
+      // Aktuelle aktive Assignments laden
+      final List<TaskTagAssignment> currentAssignments =
+          tagAssignmentQueryRepository.findActiveByTaskId(taskId);
+      final Map<Long, TaskTagAssignment> currentByTagId = currentAssignments.stream()
+          .collect(Collectors.toMap(TaskTagAssignment::getTagId, a -> a));
+
+      // Neue Tag-IDs: gewuenschaft aber noch nicht vorhanden
+      final Set<Long> desiredTagIds = new HashSet<>(tagUuidToId.values());
+      final Set<Long> toAdd = desiredTagIds.stream()
+          .filter(id -> !currentByTagId.containsKey(id))
+          .collect(Collectors.toSet());
+
+      // Abgewaehlte Tag-IDs: vorhanden aber nicht gewuenscht
+      final List<Long> toRemoveIds = currentByTagId.entrySet().stream()
+          .filter(e -> !desiredTagIds.contains(e.getKey()))
+          .map(e -> e.getValue().getId())
+          .collect(Collectors.toList());
+
+      if (!toAdd.isEmpty() || !toRemoveIds.isEmpty()) {
+        // Neue Assignments anlegen oder inaktive reaktivieren (UNIQUE-Guard: [TASK_ID, TAG_ID])
+        for (final Long tagId : toAdd) {
+          final java.util.Optional<TaskTagAssignment> existing =
+              tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagId);
+          if (existing.isPresent()) {
+            // Bereits vorhandener (inaktiver) Eintrag: reaktivieren statt neuen anlegen
+            final TaskTagAssignment exAssignment = existing.get();
+            exAssignment.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
+            tagAssignmentQueryRepository.save(exAssignment);
+          } else {
+            // Kein Eintrag: neu anlegen
+            final TaskTagAssignment assignment = new TaskTagAssignment();
+            assignment.setTenantId(tenantId);
+            assignment.setTaskId(taskId);
+            assignment.setTagId(tagId);
+            tagAssignmentQueryRepository.save(assignment);
+          }
+        }
+        // Abgewaehlte deaktivieren (KSF-idiomatisch)
+        if (!toRemoveIds.isEmpty()) {
+          tagAssignmentQueryRepository.deactivateAllByIds(toRemoveIds);
+        }
+        changed = true;
+        log.info(
+            "TaskCommandService.patch: Tag-Menge fuer Aufgabe {} aktualisiert"
+                + " (hinzugefuegt={}, entfernt={}).",
+            taskExternalId, toAdd.size(), toRemoveIds.size());
+      }
     }
 
     if (changed) {
