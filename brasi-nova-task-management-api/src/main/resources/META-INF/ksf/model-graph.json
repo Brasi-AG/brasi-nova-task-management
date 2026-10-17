@@ -1,0 +1,2284 @@
+{
+  "schemaVersion": "1.0",
+  "generator": "ksf-scaffold-plugin",
+  "rootPackage": "de.brasi.nova.taskmanagement",
+  "nodes": [
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.Task",
+      "kind": "ENTITY",
+      "name": "Task",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": true,
+      "properties": [
+        {
+          "name": "title",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "TITLE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "description",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "DESCRIPTION",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "originTenantId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "ORIGIN_TENANT_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "startDate",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "START_DATE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "dueDate",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "DUE_DATE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "lastActivityAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "LAST_ACTIVITY_AT",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "commentCount",
+          "javaType": "int",
+          "source": "PERSISTED",
+          "columnName": "COMMENT_COUNT",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sourceModule",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "SOURCE_MODULE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sourceEntityType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "SOURCE_ENTITY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sourceEntityRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "SOURCE_ENTITY_REF",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskComment",
+      "kind": "ENTITY",
+      "name": "TaskComment",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_COMMENT" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "authorRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "AUTHOR_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "parentCommentId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "PARENT_COMMENT_ID",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "text",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "TEXT",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "isEdited",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "IS_EDITED",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskCommentCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskCommentUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskCommentModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskCommentInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskHistoryEntry",
+      "kind": "ENTITY",
+      "name": "TaskHistoryEntry",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_HISTORY_ENTRY" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "actorRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "ACTOR_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "text",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "TEXT",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "changeDetail",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CHANGE_DETAIL",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskHistoryEntryCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskHistoryEntryUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskHistoryEntryModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskHistoryEntryInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskNotification",
+      "kind": "ENTITY",
+      "name": "TaskNotification",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_NOTIFICATION" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": true,
+      "properties": [
+        {
+          "name": "recipientRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "RECIPIENT_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "isRead",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "IS_READ",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "actorRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "ACTOR_REF",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "text",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "TEXT",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "preview",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "PREVIEW",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskNotificationCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskNotificationUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskNotificationModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskNotificationInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskParticipant",
+      "kind": "ENTITY",
+      "name": "TaskParticipant",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_PARTICIPANT" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "participantRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "PARTICIPANT_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "participantKind",
+          "javaType": "de.brasi.nova.taskmanagement.entity.enums.ParticipantKind",
+          "source": "PERSISTED",
+          "columnName": "PARTICIPANT_KIND",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "participantTenantId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "PARTICIPANT_TENANT_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "creatorFlag",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "CREATOR_FLAG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "assigneeFlag",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "ASSIGNEE_FLAG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "participantFlag",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "PARTICIPANT_FLAG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "exitKind",
+          "javaType": "de.brasi.nova.taskmanagement.entity.enums.ExitKind",
+          "source": "PERSISTED",
+          "columnName": "EXIT_KIND",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "exitAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "EXIT_AT",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskParticipantCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskParticipantUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskParticipantModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskParticipantInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskReminderReceipt",
+      "kind": "ENTITY",
+      "name": "TaskReminderReceipt",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_REMINDER_RECEIPT" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "recipientRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "RECIPIENT_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "occurrenceDate",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "OCCURRENCE_DATE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskReminderReceiptCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskReminderReceiptUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskReminderReceiptModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskReminderReceiptInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskTag",
+      "kind": "ENTITY",
+      "name": "TaskTag",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_TAG" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskTagCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskTagUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskTagModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskTagInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskTagAssignment",
+      "kind": "ENTITY",
+      "name": "TaskTagAssignment",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_TAG_ASSIGNMENT" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskTagAssignmentCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskTagAssignmentUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskTagAssignmentModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskTagAssignmentInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskUserState",
+      "kind": "ENTITY",
+      "name": "TaskUserState",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_USER_STATE" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "userRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "USER_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "userTenantId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "USER_TENANT_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "isPinned",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "IS_PINNED",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "isFlagged",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "IS_FLAGGED",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "isMuted",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "IS_MUTED",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "readAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "READ_AT",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "unsubscribedAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "UNSUBSCRIBED_AT",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskUserStateCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskUserStateUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskUserStateModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskUserStateInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.NotificationSeverity",
+      "kind": "ENTITY",
+      "name": "NotificationSeverity",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_NOTIFICATION_SEVERITY" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "NotificationSeverityCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "NotificationSeverityUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "NotificationSeverityModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "NotificationSeverityInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.NotificationType",
+      "kind": "ENTITY",
+      "name": "NotificationType",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_NOTIFICATION_TYPE" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "NotificationTypeCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "NotificationTypeUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "NotificationTypeModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "NotificationTypeInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.TagSeverity",
+      "kind": "ENTITY",
+      "name": "TagSeverity",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_TAG_SEVERITY" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TagSeverityCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TagSeverityUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TagSeverityModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TagSeverityInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.TaskDirection",
+      "kind": "ENTITY",
+      "name": "TaskDirection",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_TASK_DIRECTION" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskDirectionCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskDirectionUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskDirectionModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskDirectionInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.TaskPriority",
+      "kind": "ENTITY",
+      "name": "TaskPriority",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_TASK_PRIORITY" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sortOrder",
+          "javaType": "java.lang.Integer",
+          "source": "PERSISTED",
+          "columnName": "SORT_ORDER",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskPriorityCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskPriorityUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskPriorityModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskPriorityInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.dictionary.TaskStatus",
+      "kind": "ENTITY",
+      "name": "TaskStatus",
+      "packageName": "de.brasi.nova.taskmanagement.entity.dictionary",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "DIC_TASK_STATUS" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "code",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "CODE",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "entryValue",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "BEZEICHNUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "entryValue",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "dictionaryEntryType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ENTRY_TYPE",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "INFO",
+              "propertyName": "dictionaryEntryType",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validFrom",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_VON",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validFrom",
+              "shape": "SCALAR",
+              "required": true,
+              "targetDto": null
+            }
+          ]
+        },
+        {
+          "name": "validTo",
+          "javaType": "java.time.LocalDate",
+          "source": "PERSISTED",
+          "columnName": "GUELTIG_BIS",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": [
+            {
+              "schema": "CREATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "UPDATE",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            },
+            {
+              "schema": "MODEL",
+              "propertyName": "validTo",
+              "shape": "SCALAR",
+              "required": false,
+              "targetDto": null
+            }
+          ]
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskStatusCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskStatusUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskStatusModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskStatusInfoModel"
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.Task#directionId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.Task",
+      "sourceProperty": "directionId",
+      "sourceColumn": "DIRECTION_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.TaskDirection",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.Task#priorityId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.Task",
+      "sourceProperty": "priorityId",
+      "sourceColumn": "PRIORITY_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.TaskPriority",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.Task#taskStatusId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.Task",
+      "sourceProperty": "taskStatusId",
+      "sourceColumn": "TASK_STATUS_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.TaskStatus",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskNotification#severityId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.TaskNotification",
+      "sourceProperty": "severityId",
+      "sourceColumn": "SEVERITY_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.NotificationSeverity",
+      "referencedColumn": "ID",
+      "sourceCardinality": "ZERO_OR_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": true,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_TRUE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskNotification#typeId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.TaskNotification",
+      "sourceProperty": "typeId",
+      "sourceColumn": "TYPE_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.NotificationType",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskTag#severityId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.TaskTag",
+      "sourceProperty": "severityId",
+      "sourceColumn": "SEVERITY_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.TagSeverity",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskTagAssignment#tagId",
+      "kind": "FOREIGN_KEY",
+      "sourceEntity": "de.brasi.nova.taskmanagement.entity.TaskTagAssignment",
+      "sourceProperty": "tagId",
+      "sourceColumn": "TAG_ID",
+      "targetEntity": "de.brasi.nova.taskmanagement.entity.TaskTag",
+      "referencedColumn": "ID",
+      "sourceCardinality": "EXACTLY_ONE",
+      "targetCardinality": "ZERO_OR_MANY",
+      "nullable": false,
+      "unique": false,
+      "updateable": false,
+      "tenantScope": { "mode": "GLOBAL", "property": null },
+      "category": null,
+      "label": null,
+      "inverseLabel": null,
+      "evidence": [
+        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NO_SINGLE_COLUMN_UNIQUENESS"
+      ],
+      "dtoProjections": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "ASSOCIATION_CANDIDATE",
+      "nodeId": "de.brasi.nova.taskmanagement.entity.Task",
+      "propertyName": null,
+      "message": "Entität besitzt mindestens zwei Fremdschlüssel, aber keine semantische Kategorie."
+    },
+    {
+      "code": "ASSOCIATION_CANDIDATE",
+      "nodeId": "de.brasi.nova.taskmanagement.entity.TaskNotification",
+      "propertyName": null,
+      "message": "Entität besitzt mindestens zwei Fremdschlüssel, aber keine semantische Kategorie."
+    }
+  ]
+}

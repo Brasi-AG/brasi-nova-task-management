@@ -2,9 +2,13 @@ package de.brasi.nova.taskmanagement.entity;
 
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
+import de.brasi.nova.taskmanagement.openapi.TaskManagementOpenApiGroups;
 import io.keel.framework.api.annotation.db.NovaColumn;
 import io.keel.framework.api.annotation.db.NovaTable;
 import io.keel.framework.api.model.NovaEntity;
+import io.keel.framework.api.scaffold.ScaffoldSchema;
+import io.keel.framework.api.scaffold.ScaffoldSchemaConfig;
+import io.keel.framework.api.scaffold.ScaffoldType;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.Getter;
@@ -13,6 +17,9 @@ import lombok.Setter;
 
 /** Teilnehmer einer Aufgabe (Ersteller, Assignee, Beobachter). */
 @NovaTable(name = "TASK_PARTICIPANT")
+@ScaffoldSchemaConfig(
+    openApiGroupId = TaskManagementOpenApiGroups.TASK_MANAGEMENT,
+    value = {@ScaffoldSchema(type = ScaffoldType.MODEL)})
 @Getter
 @Setter
 @NoArgsConstructor

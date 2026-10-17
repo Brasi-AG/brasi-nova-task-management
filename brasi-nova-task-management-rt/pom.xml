@@ -183,19 +183,22 @@
 									<rootPackage>de.brasi.nova.taskmanagement</rootPackage>
 									<entitiesPackage>
 										de.brasi.nova.taskmanagement.entity</entitiesPackage>
+									<!--
+										Nur Persistenz-/Modell-Targets (arch-v2 §7):
+										Controller, Hateoas, Assembler, LinkSpec werden NICHT erzeugt.
+										Die gesamte REST-Oberflaeche sind hand-geschriebene Facade-Controller.
+										<all>true</all> stellt sicher, dass die Target-Liste verbindlich ist
+										und der Plugin NICHT automatisch alle 12 Targets generiert.
+									-->
 									<targets>
 										<target>Repository</target>
 										<target>Model</target>
 										<target>Service</target>
-										<target>Controller</target>
 										<target>Validator</target>
-										<target>Assembler</target>
 										<target>QClass</target>
-										<target>LinkSpec</target>
 										<target>QueryProvider</target>
 										<target>ServiceProviders</target>
 										<target>Summary</target>
-										<target>Hateoas</target>
 									</targets>
 									<all>true</all>
 								</configuration>
@@ -245,19 +248,19 @@
 									<rootPackage>de.brasi.nova.taskmanagement</rootPackage>
 									<entitiesPackage>
 										de.brasi.nova.taskmanagement.entity</entitiesPackage>
+									<!--
+										Konsistente Target-Liste zum generate-scaffold-api-Profil:
+										nur Persistenz-/Modell-Targets, keine Web-Layer-Artefakte.
+									-->
 									<targets>
 										<target>Repository</target>
 										<target>Model</target>
 										<target>Service</target>
-										<target>Controller</target>
 										<target>Validator</target>
-										<target>Assembler</target>
 										<target>QClass</target>
-										<target>LinkSpec</target>
 										<target>QueryProvider</target>
 										<target>ServiceProviders</target>
 										<target>Summary</target>
-										<target>Hateoas</target>
 									</targets>
 									<all>true</all>
 								</configuration>

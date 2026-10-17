@@ -2,11 +2,15 @@ package de.brasi.nova.taskmanagement.entity;
 
 import de.brasi.nova.taskmanagement.entity.dictionary.NotificationSeverity;
 import de.brasi.nova.taskmanagement.entity.dictionary.NotificationType;
+import de.brasi.nova.taskmanagement.openapi.TaskManagementOpenApiGroups;
 import io.keel.framework.api.annotation.db.NovaColumn;
 import io.keel.framework.api.annotation.db.NovaFkScope;
 import io.keel.framework.api.annotation.db.NovaForeignKey;
 import io.keel.framework.api.annotation.db.NovaTable;
 import io.keel.framework.api.model.NovaEntity;
+import io.keel.framework.api.scaffold.ScaffoldSchema;
+import io.keel.framework.api.scaffold.ScaffoldSchemaConfig;
+import io.keel.framework.api.scaffold.ScaffoldType;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -14,6 +18,9 @@ import lombok.Setter;
 
 /** Benachrichtigung an einen Benutzer (optional ohne Aufgabenbezug = System-Benachrichtigung). */
 @NovaTable(name = "TASK_NOTIFICATION")
+@ScaffoldSchemaConfig(
+    openApiGroupId = TaskManagementOpenApiGroups.TASK_MANAGEMENT,
+    value = {@ScaffoldSchema(type = ScaffoldType.MODEL)})
 @Getter
 @Setter
 @NoArgsConstructor
