@@ -37,9 +37,12 @@ import org.springframework.test.context.DynamicPropertySource;
  * Damit beweist dieser IT den vollstaendigen DB-Kontrakt: gueltige Enum-Namen werden gespeichert,
  * ungueltige String-Werte scheitern am CHECK.
  *
- * <p>Hinweis: KSF save() via Repository setzt eine generierte Q-Klasse voraus (Scaffold-Task 6).
- * Da Task 5 vor Task 6 liegt, wird der KSF-Persistenz-Pfad hier ueber direktes JDBC mit den
- * kanonischen Enum-String-Werten abgebildet. Der tatsaechliche KSF-save()-Beweis folgt mit Task 6.
+ * <p>SCOPE-GRENZE Task 5 (Owner-Entscheidung 2026-10-17, Codex-BLOCK-Remediation): Dieser IT
+ * beweist den DB-SCHEMA-Kontrakt (CHECK + exakte name()-Strings speicherbar), NICHT den KSF-
+ * save()-Pfad. KSF save() via Repository setzt eine generierte Q-Klasse voraus, die erst Scaffold
+ * in Task 6 erzeugt. Der echte KSF-save()+Readback-Roundtrip (Beweis, dass KSF Enums via name()
+ * schreibt) ist als verbindliches Akzeptanzkriterium in plan-v4 Task 6 verankert (nach Scaffold,
+ * gegen die realen Q-Klassen/Repositories) - bewusste, geplante Verlagerung, kein Wegwerf-Testcode.
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -57,6 +60,8 @@ import org.springframework.test.context.DynamicPropertySource;
       "spring.flyway.baseline-on-migrate=true",
       "spring.flyway.baseline-version=0",
       "spring.flyway.locations=classpath:db/migration",
+      // KSF darf das Schema NICHT anfassen (Flyway ist allein zustaendig)
+      "ksf.persistence.ddl-auto=none",
     })
 @RefSchemaItEnabled
 @Execution(ExecutionMode.SAME_THREAD)

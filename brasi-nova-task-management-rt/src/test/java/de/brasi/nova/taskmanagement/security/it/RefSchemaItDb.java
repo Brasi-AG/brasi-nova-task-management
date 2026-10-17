@@ -119,51 +119,6 @@ public final class RefSchemaItDb {
   }
 
   /**
-   * Legt die SYS_SEQUENCE-Tabelle (KSF-Sequenz-Generator) in der uebergebenen DB an und befuellt
-   * eine Standard-Sequenz-Zeile (AKTUELLE_ID = defaultStartId-1 = 999999999). Idempotent: macht
-   * nichts, wenn die Tabelle bereits existiert. Wird von ITs benoetigt, die KSF save() nutzen
-   * (SequenceIdGenerator). Die Sequenz wird vom KSF-SequenceInitializer beim Anwendungsstart
-   * gefunden und ggf. aktualisiert — wir legen sie hier frueher an, damit der IT-Context in der
-   * Wegwerf-DB einen konsistenten Zustand vorfindet.
-   *
-   * @param jdbc JdbcTemplate auf die Wegwerf-DB
-   */
-  public static void createSysSequence(final JdbcTemplate jdbc) {
-    final Integer exists =
-        jdbc.queryForObject(
-            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SYS_SEQUENCE'",
-            Integer.class);
-    if (exists != null && exists > 0) {
-      log.info("SYS_SEQUENCE existiert bereits in der Wegwerf-DB.");
-      return;
-    }
-    jdbc.execute(
-        "CREATE TABLE [dbo].[SYS_SEQUENCE] ("
-            + "[ID]               bigint IDENTITY(1,1) NOT NULL, "
-            + "[SEQUENCENAME]     nvarchar(255)    NOT NULL, "
-            + "[AKTUELLE_ID]      bigint           NOT NULL, "
-            + "[MAXIMALE_ID]      bigint           NOT NULL, "
-            + "[WIEDERHOLBAR]     bit              NOT NULL, "
-            + "[START_ID]         bigint           NOT NULL, "
-            + "[ENTITY_STATUS]    nvarchar(255)    NOT NULL DEFAULT 'ACTIVE', "
-            + "[ANGELEGT_VON]     nvarchar(255)    NOT NULL DEFAULT 'SYSTEM_USER', "
-            + "[AKTUALISIERT_VON] nvarchar(255)    NULL, "
-            + "[GELOESCHT_VON]    nvarchar(255)    NULL, "
-            + "[ANGELEGT_AM]      datetime2(7)     NOT NULL DEFAULT SYSDATETIME(), "
-            + "[AKTUALISIERT_AM]  datetime2(7)     NULL, "
-            + "[GELOESCHT_AM]     datetime2(7)     NULL, "
-            + "[EXTERNALID]       uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(), "
-            + "[VERSION]          int              NOT NULL DEFAULT 1, "
-            + "[TENANT_ID]        bigint           NOT NULL DEFAULT 0, "
-            + "CONSTRAINT [PK_SYS_SEQUENCE] PRIMARY KEY CLUSTERED ([ID] ASC)"
-            + ")");
-    jdbc.execute(
-        "CREATE UNIQUE NONCLUSTERED INDEX [UDX_SYS_SEQUENCE_SEQUENCENAME] "
-            + "ON [dbo].[SYS_SEQUENCE] ([SEQUENCENAME] ASC)");
-    log.info("SYS_SEQUENCE-Tabelle in der Wegwerf-DB angelegt.");
-  }
-
-  /**
    * Erstellt das Minimal-Referenz-Schema (PROD_FIRMA + PROD_BENUTZER) in der Wegwerf-DB. Nur die
    * fuer die Filterchain-/Repository-Validierung benoetigten Spalten.
    */

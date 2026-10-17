@@ -10,6 +10,11 @@
 -- IDs: keine IDENTITY; KSF-SequenceIdGenerator vergibt via SYS_SEQUENCE (Start 1000000000).
 --      Seed-IDs in 100er-Bloecken: STATUS 101-103, PRIORITY 201-204, DIRECTION 301-303,
 --      NOTIF_TYPE 401-408, NOTIF_SEVERITY 501-504, TAG_SEVERITY 601-605.
+-- Spaltenlaengen: String-Felder folgen dem Entity-@NovaColumn.length (Default 255). Fuer lange
+--      Freitext-Felder (TASK.DESCRIPTION, TASK_COMMENT.TEXT) ist bewusst nvarchar(max) gewaehlt
+--      (arch-v1: Markdown/Langtext); @NovaColumn kann MAX nicht ausdruecken, ddl-auto=none -> KSF
+--      generiert/vergleicht die DDL nie, Lese-/Schreibpfad ist laengenunabhaengig. Enum-Felder =
+--      nvarchar(255) (KSF-MsSqlDialect-Enum-Default) + CHECK auf die erlaubten name()-Werte.
 -- =============================================================================
 
 SET QUOTED_IDENTIFIER ON;
@@ -376,12 +381,14 @@ CREATE TABLE [dbo].[TASK_PARTICIPANT] (
     -- Fachliche Spalten
     [TASK_ID]              bigint           NOT NULL,
     [PARTICIPANT_REF]      uniqueidentifier NOT NULL,
-    [PARTICIPANT_KIND]     nvarchar(20)     NOT NULL,
+    -- Enum-Spalten: nvarchar(255) = KSF-MsSqlDialect-Default fuer Enum-Felder (@NovaColumn ohne
+    -- length-Override). Wertebereich zusaetzlich per CHECK eingeengt.
+    [PARTICIPANT_KIND]     nvarchar(255)    NOT NULL,
     [PARTICIPANT_TENANT_ID] bigint          NOT NULL,
     [CREATOR_FLAG]         bit              NOT NULL,
     [ASSIGNEE_FLAG]        bit              NOT NULL,
     [PARTICIPANT_FLAG]     bit              NOT NULL,
-    [EXIT_KIND]            nvarchar(20)     NULL,
+    [EXIT_KIND]            nvarchar(255)    NULL,
     [EXIT_AT]              datetime2(7)     NULL,
     CONSTRAINT [PK_TASK_PARTICIPANT] PRIMARY KEY CLUSTERED ([ID] ASC),
     CONSTRAINT [UQ_TASK_PARTICIPANT_EXTERNALID] UNIQUE ([EXTERNALID]),

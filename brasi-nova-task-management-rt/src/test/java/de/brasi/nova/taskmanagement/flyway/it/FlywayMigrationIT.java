@@ -50,6 +50,8 @@ import org.springframework.test.context.DynamicPropertySource;
       "spring.flyway.baseline-on-migrate=true",
       "spring.flyway.baseline-version=0",
       "spring.flyway.locations=classpath:db/migration",
+      // KSF darf das Schema NICHT anfassen (Flyway ist allein zustaendig)
+      "ksf.persistence.ddl-auto=none",
     })
 @RefSchemaItEnabled
 @Execution(ExecutionMode.SAME_THREAD)
@@ -84,15 +86,20 @@ class FlywayMigrationIT {
   static void configureDb(final DynamicPropertyRegistry registry) {
     master = RefSchemaItDb.masterDataSource();
     dbName = RefSchemaItDb.createThrowawayDb(master);
-    // Fremd-Daten in PROD_FIRMA/PROD_BENUTZER (preseeded-Szenario): V1 darf sie nicht veraendern
+    // Fremd-Daten in PROD_FIRMA/PROD_BENUTZER (preseeded-Szenario): V1 darf sie nicht veraendern.
+    // Sentinel-Zeilen mit festen Werten; nach V1 werden die vollstaendigen relevanten Werte geprueft.
     try (HikariDataSource throwaway = RefSchemaItDb.throwawayDataSource(dbName, 1)) {
       final JdbcTemplate jdbc = new JdbcTemplate(throwaway);
-      // Seed einer Firma in PROD_FIRMA (preseeded: existiert vor V1-Migration)
       jdbc.update(
           "INSERT INTO [dbo].[PROD_FIRMA] "
-              + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
-              + "VALUES (500, 'ACTIVE', '99999999-0000-0000-0000-000000000001', 1, 500,"
-              + " CAST(GETDATE() AS DATE))");
+              + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, NAME, GUELTIG_VON) "
+              + "VALUES (500, 'ACTIVE', '99999999-0000-0000-0000-000000000001', 7, 500,"
+              + " 'SENTINEL-FIRMA', CAST(GETDATE() AS DATE))");
+      jdbc.update(
+          "INSERT INTO [dbo].[PROD_BENUTZER] "
+              + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
+              + "VALUES (700, 'ACTIVE', '99999999-0000-0000-0000-000000000002', 9, 500,"
+              + " 'sentinel@brasi.de', 'Sentinel Benutzer')");
     }
     registry.add("spring.datasource.url", () -> RefSchemaItDb.throwawayJdbcUrl(dbName));
     registry.add("spring.datasource.username", RefSchemaItEnv::user);
@@ -153,15 +160,46 @@ class FlywayMigrationIT {
     assertThat(hasV1).as("V1 in flyway_schema_history").isTrue();
   }
 
-  // ---- 2. Preseeded-Daten in PROD_FIRMA unveraendert ---
+  // ---- 2. Preseeded-Sentinel in PROD_FIRMA + PROD_BENUTZER vollstaendig unveraendert ---
 
   @Test
-  @DisplayName("prod_firma_preseeded_zeile_unveraendert_nach_v1")
-  void prod_firma_preseeded_zeile_unveraendert_nach_v1() {
-    final Integer count =
-        jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM [dbo].[PROD_FIRMA] WHERE ID = 500", Integer.class);
-    assertThat(count).isEqualTo(1);
+  @DisplayName("prod_firma_sentinel_vollstaendig_unveraendert_nach_v1")
+  void prod_firma_sentinel_vollstaendig_unveraendert_nach_v1() {
+    final Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT ENTITY_STATUS, CONVERT(nvarchar(36), EXTERNALID) AS EXTERNALID, VERSION,"
+                + " TENANT_ID, NAME FROM [dbo].[PROD_FIRMA] WHERE ID = 500");
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(String.valueOf(row.get("EXTERNALID")))
+        .isEqualTo("99999999-0000-0000-0000-000000000001");
+    assertThat(((Number) row.get("VERSION")).intValue()).isEqualTo(7);
+    assertThat(((Number) row.get("TENANT_ID")).longValue()).isEqualTo(500L);
+    assertThat(row.get("NAME")).isEqualTo("SENTINEL-FIRMA");
+  }
+
+  @Test
+  @DisplayName("prod_benutzer_sentinel_vollstaendig_unveraendert_nach_v1")
+  void prod_benutzer_sentinel_vollstaendig_unveraendert_nach_v1() {
+    final Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT ENTITY_STATUS, CONVERT(nvarchar(36), EXTERNALID) AS EXTERNALID, VERSION,"
+                + " TENANT_ID, LOGIN_NAME, VOLLER_NAME FROM [dbo].[PROD_BENUTZER] WHERE ID = 700");
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(String.valueOf(row.get("EXTERNALID")))
+        .isEqualTo("99999999-0000-0000-0000-000000000002");
+    assertThat(((Number) row.get("VERSION")).intValue()).isEqualTo(9);
+    assertThat(((Number) row.get("TENANT_ID")).longValue()).isEqualTo(500L);
+    assertThat(row.get("LOGIN_NAME")).isEqualTo("sentinel@brasi.de");
+    assertThat(row.get("VOLLER_NAME")).isEqualTo("Sentinel Benutzer");
+  }
+
+  // ---- 2b. Enum-Spaltenlaenge = KSF-Default 255 (Code=Wahrheit; @NovaColumn ohne length) ---
+
+  @Test
+  @DisplayName("participant_kind_und_exit_kind_sind_nvarchar_255")
+  void participant_kind_und_exit_kind_sind_nvarchar_255() {
+    assertThat(characterMaxLength("TASK_PARTICIPANT", "PARTICIPANT_KIND")).isEqualTo(255);
+    assertThat(characterMaxLength("TASK_PARTICIPANT", "EXIT_KIND")).isEqualTo(255);
   }
 
   // ---- 3. Seed-Assertions ---
@@ -254,12 +292,34 @@ class FlywayMigrationIT {
   }
 
   private void assertSeedCodes(final String table, final List<String> expectedCodes) {
-    final List<String> actual =
+    // CODE-Menge exakt
+    final List<String> actualCodes =
         jdbcTemplate.queryForList(
             "SELECT CODE FROM [dbo].[" + table + "] ORDER BY CODE", String.class);
-    assertThat(actual)
+    assertThat(actualCodes)
         .as("Seed-CODEs in " + table)
         .containsExactlyInAnyOrderElementsOf(expectedCodes);
+    // CODE/BEZEICHNUNG-Paare: Label = CODE-Wert (arch-v3 §2.1); je CODE genau ein Treffer
+    for (final String code : expectedCodes) {
+      final String bezeichnung =
+          jdbcTemplate.queryForObject(
+              "SELECT BEZEICHNUNG FROM [dbo].[" + table + "] WHERE CODE = ?", String.class, code);
+      assertThat(bezeichnung)
+          .as("BEZEICHNUNG (Label) fuer CODE %s in %s", code, table)
+          .isEqualTo(code);
+    }
+  }
+
+  private int characterMaxLength(final String table, final String column) {
+    final Integer len =
+        jdbcTemplate.queryForObject(
+            "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS"
+                + " WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+            Integer.class,
+            table,
+            column);
+    assertThat(len).as("CHARACTER_MAXIMUM_LENGTH %s.%s", table, column).isNotNull();
+    return len;
   }
 
   private void assertAllGlobal(final String table) {
