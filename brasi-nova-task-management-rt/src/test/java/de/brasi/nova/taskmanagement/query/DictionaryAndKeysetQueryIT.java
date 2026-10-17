@@ -82,6 +82,12 @@ class DictionaryAndKeysetQueryIT {
   /** Feste Task-ID fuer Inbox-Pruefung. */
   private static final long TASK_ID_ACTIVE = 10001L;
 
+  /** Task, den der Benutzer via TASK_PARTICIPANT.EXIT_KIND (HANDOVER) verlassen hat (kein UNSUBSCRIBED_AT). */
+  private static final long TASK_ID_LEFT_EXIT = 10002L;
+
+  /** Task, den der Benutzer via TASK_USER_STATE.UNSUBSCRIBED_AT verlassen hat (kein EXIT_KIND). */
+  private static final long TASK_ID_LEFT_UNSUB = 10003L;
+
   /** UUID des Test-Benutzers. */
   private static final UUID USER_REF = UUID.fromString("aaaaaaaa-0000-0000-0000-000000000001");
 
@@ -146,6 +152,48 @@ class DictionaryAndKeysetQueryIT {
             + "  ?, ?, ?, 0, 0, 0)",
         TASK_ID_ACTIVE, USER_REF,   // IF NOT EXISTS-Pruefung
         TENANT_ID, TASK_ID_ACTIVE, USER_REF, TENANT_ID);  // VALUES: TENANT_ID, TASK_ID, USER_REF, USER_TENANT_ID
+
+    // --- Archiv-left-Szenario 1: Benutzer via TASK_PARTICIPANT.EXIT_KIND='HANDOVER' ausgetreten ---
+    // (KEIN TASK_USER_STATE.UNSUBSCRIBED_AT fuer diesen Task -> deckt die EXIT_KIND-Alternative ab)
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK] WHERE ID = ?)"
+            + " INSERT INTO [dbo].[TASK]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
+            + "  LAST_ACTIVITY_AT, COMMENT_COUNT)"
+            + " VALUES (?, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  'Left-Exit-Task', 102, 202, 302, ?, GETDATE(), 0)",
+        TASK_ID_LEFT_EXIT, TASK_ID_LEFT_EXIT, TENANT_ID, TENANT_ID);
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?)"
+            + " INSERT INTO [dbo].[TASK_PARTICIPANT]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
+            + "  CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT)"
+            + " VALUES (10002001, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  ?, ?, 'PERSON', ?, 0, 0, 1, 'HANDOVER', GETDATE())",
+        TASK_ID_LEFT_EXIT, USER_REF,
+        TENANT_ID, TASK_ID_LEFT_EXIT, USER_REF, TENANT_ID);
+
+    // --- Archiv-left-Szenario 2: Benutzer via TASK_USER_STATE.UNSUBSCRIBED_AT abgemeldet ---
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK] WHERE ID = ?)"
+            + " INSERT INTO [dbo].[TASK]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
+            + "  LAST_ACTIVITY_AT, COMMENT_COUNT)"
+            + " VALUES (?, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  'Left-Unsub-Task', 102, 202, 302, ?, GETDATE(), 0)",
+        TASK_ID_LEFT_UNSUB, TASK_ID_LEFT_UNSUB, TENANT_ID, TENANT_ID);
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?)"
+            + " INSERT INTO [dbo].[TASK_USER_STATE]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT)"
+            + " VALUES (10003001, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  ?, ?, ?, 0, 0, 0, GETDATE())",
+        TASK_ID_LEFT_UNSUB, USER_REF,
+        TENANT_ID, TASK_ID_LEFT_UNSUB, USER_REF, TENANT_ID);
   }
 
   @Autowired
@@ -257,6 +305,65 @@ class DictionaryAndKeysetQueryIT {
     assertThat(page)
         .as("Inbox-Query darf fuer anderen Benutzer keine Tasks des geseedeten Users liefern")
         .noneMatch(t -> t.getId().equals(TASK_ID_ACTIVE));
+  }
+
+  // ---- 4. Archiv-left-Query: UNSUBSCRIBED_AT ODER TASK_PARTICIPANT.EXIT_KIND -----------------
+
+  @Test
+  @DisplayName("keyset_findArchiveLeftPage_findet_task_via_participant_exit_kind")
+  void keyset_findArchiveLeftPage_findet_task_via_participant_exit_kind() {
+    TenantContextHolder.setTenant(new TenantInfo(UUID.randomUUID(), TENANT_ID));
+
+    final List<Task> page =
+        taskKeysetQueryRepository.findArchiveLeftPage(
+            USER_REF, farFuture(), farFuture(), maxExternalId(), 50);
+
+    assertThat(page)
+        .as("Left-Query muss den Task finden, den der User via TASK_PARTICIPANT.EXIT_KIND"
+            + " (HANDOVER) verlassen hat - auch OHNE TASK_USER_STATE.UNSUBSCRIBED_AT")
+        .anyMatch(t -> t.getId().equals(TASK_ID_LEFT_EXIT));
+  }
+
+  @Test
+  @DisplayName("keyset_findArchiveLeftPage_findet_task_via_user_state_unsubscribed")
+  void keyset_findArchiveLeftPage_findet_task_via_user_state_unsubscribed() {
+    TenantContextHolder.setTenant(new TenantInfo(UUID.randomUUID(), TENANT_ID));
+
+    final List<Task> page =
+        taskKeysetQueryRepository.findArchiveLeftPage(
+            USER_REF, farFuture(), farFuture(), maxExternalId(), 50);
+
+    assertThat(page)
+        .as("Left-Query muss den Task finden, von dem der User sich via UNSUBSCRIBED_AT abgemeldet hat")
+        .anyMatch(t -> t.getId().equals(TASK_ID_LEFT_UNSUB));
+  }
+
+  @Test
+  @DisplayName("keyset_findArchiveLeftPage_liefert_nichts_fuer_fremden_user")
+  void keyset_findArchiveLeftPage_liefert_nichts_fuer_fremden_user() {
+    TenantContextHolder.setTenant(new TenantInfo(UUID.randomUUID(), TENANT_ID));
+    final UUID otherUser = UUID.fromString("bbbbbbbb-0000-0000-0000-000000000002");
+
+    final List<Task> page =
+        taskKeysetQueryRepository.findArchiveLeftPage(
+            otherUser, farFuture(), farFuture(), maxExternalId(), 50);
+
+    assertThat(page)
+        .as("Left-Query darf fuer einen fremden Benutzer weder den EXIT_KIND- noch den"
+            + " UNSUBSCRIBED_AT-Task des geseedeten Users liefern")
+        .noneMatch(
+            t ->
+                t.getId().equals(TASK_ID_LEFT_EXIT) || t.getId().equals(TASK_ID_LEFT_UNSUB));
+  }
+
+  /** Keyset-Cursor-Obergrenze (alle vorhandenen Zeilen einschliessen). */
+  private static LocalDateTime farFuture() {
+    return LocalDateTime.now().plusYears(10);
+  }
+
+  /** Maximaler EXTERNALID-Tie-Break (alle Zeilen einschliessen). */
+  private static UUID maxExternalId() {
+    return UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
   }
 
   // ---- IT-Konfigurations-Context -----------------------------------------------------------

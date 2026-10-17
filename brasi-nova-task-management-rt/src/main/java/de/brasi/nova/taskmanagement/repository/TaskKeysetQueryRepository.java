@@ -11,8 +11,13 @@ import java.util.UUID;
  * Ergaenzt {@link BaseTaskRepository} um benutzer-scoped Inbox-/Archiv-Queries (arch-v2 §2.1,
  * arch-v3 §3.1).
  *
- * <p>Alle Queries sind benutzer-scoped: ein Task ist nur sichtbar, wenn der aktuelle Benutzer
- * einen {@code TASK_USER_STATE}-Eintrag dafuer hat (nicht abgemeldet).
+ * <p>Alle Queries sind benutzer-scoped. Inbox-/Archiv-done-Queries verlangen einen aktiven
+ * {@code TASK_USER_STATE} (UNSUBSCRIBED_AT IS NULL). Die Archiv-left-Query ist das Gegenstueck:
+ * sie liefert Tasks, die der Benutzer verlassen hat - entweder ueber {@code TASK_USER_STATE.
+ * UNSUBSCRIBED_AT} (persoenliches Abmelden) ODER ueber {@code TASK_PARTICIPANT.EXIT_KIND}
+ * (Teilnehmer-Austritt, z.B. HANDOVER). EXIT_KIND liegt auf TASK_PARTICIPANT, nicht auf
+ * TASK_USER_STATE; beide Dimensionen muessen in der Query (nicht service-seitig) OR-verknuepft
+ * werden, sonst ist die Keyset-/TOP-Paginierung unvollstaendig.
  *
  * <p>Status-Filter laufen ueber aufgeloeste {@code Long}-IDs ({@code :openStatusId},
  * {@code :doneId}, {@code :cancelledId}), die der aufrufende Service einmalig via
@@ -132,8 +137,10 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
 
   /**
    * Liefert eine Keyset-Seite verlassener Tasks fuer den Benutzer (statusunabhaengig).
-   * "Verlassen" = {@code TASK_USER_STATE.UNSUBSCRIBED_AT IS NOT NULL} ODER
-   * {@code EXIT_KIND IS NOT NULL} (arch-v2 §2.1).
+   * "Verlassen" = {@code TASK_USER_STATE.UNSUBSCRIBED_AT IS NOT NULL} (persoenliches Abmelden)
+   * ODER {@code TASK_PARTICIPANT.EXIT_KIND IS NOT NULL} fuer {@code PARTICIPANT_REF = :userRef}
+   * (Teilnehmer-Austritt, z.B. HANDOVER) - arch-v2 §2.1. Beide Alternativen sind in der Query
+   * OR-verknuepft (nicht service-seitig), damit die Keyset-/TOP-Paginierung vollstaendig bleibt.
    * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC}.
    *
    * @param userRef        UUID des Benutzers
@@ -148,10 +155,17 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
           "SELECT TOP (:limit) t.* FROM TASK t"
               + " WHERE t.TENANT_ID = :tenantId"
               + " AND t.LAST_ACTIVITY_AT <= :asOf"
-              + " AND EXISTS ("
-              + "   SELECT 1 FROM TASK_USER_STATE s"
-              + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
-              + "   AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL"
+              + " AND ("
+              + "   EXISTS ("
+              + "     SELECT 1 FROM TASK_USER_STATE s"
+              + "     WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "     AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL"
+              + "   )"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_PARTICIPANT p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL"
+              + "   )"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -160,10 +174,17 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
           "SELECT TOP (:limit) t.* FROM [dbo].[TASK] t"
               + " WHERE t.TENANT_ID = :tenantId"
               + " AND t.LAST_ACTIVITY_AT <= :asOf"
-              + " AND EXISTS ("
-              + "   SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
-              + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
-              + "   AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL"
+              + " AND ("
+              + "   EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "     WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "     AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL"
+              + "   )"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL"
+              + "   )"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
