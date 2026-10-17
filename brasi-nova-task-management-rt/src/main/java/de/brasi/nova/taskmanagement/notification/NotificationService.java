@@ -51,14 +51,16 @@ public class NotificationService {
   }
 
   /**
-   * Persistiert eine {@link TaskNotification} und registriert den WS-Push fuer {@code afterCommit}.
+   * Persistiert eine {@link TaskNotification} und stellt den WS-Push zu.
    *
    * <p>Ablauf:
    * <ol>
    *   <li>typeId und severityId werden ueber den {@link DictionaryCodeResolver} aufgeloest.
    *   <li>Eine neue {@link TaskNotification} wird gespeichert (KSF {@code save()}).
-   *   <li>Ein {@link TransactionSynchronization#afterCommit()}-Hook registriert den
-   *       {@link NotificationPushPort#push(NotificationPushEnvelope)}-Aufruf.
+   *   <li>Bei aktiver Transaktion registriert ein
+   *       {@link TransactionSynchronization#afterCommit()}-Hook den
+   *       {@link NotificationPushPort#push(long, UUID, NotificationPushEnvelope)}-Aufruf (kein Push
+   *       in der Tx); ohne aktive Transaktion wird direkt gepusht (Best-Effort).
    * </ol>
    *
    * @param recipientRef  UUID des Empfaengers (PROD_BENUTZER.EXTERNALID), nie null

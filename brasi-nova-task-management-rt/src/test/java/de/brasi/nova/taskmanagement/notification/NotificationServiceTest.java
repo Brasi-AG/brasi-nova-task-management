@@ -149,4 +149,25 @@ class NotificationServiceTest {
     // Port darf NICHT aufgerufen worden sein
     verify(pushPort, never()).push(anyLong(), any(), any());
   }
+
+  // ---- (c) ohne aktive Tx: direkter Push mit Routing-Metadaten ---------------------------------
+
+  @Test
+  @DisplayName(
+      "emit_ohne_tx_pusht_direkt: ohne aktive Transaktion wird sofort mit Routing-Metadaten gepusht")
+  void emit_ohne_tx_pusht_direkt() {
+    // KEINE Synchronisation aktiv (kein initSynchronization)
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+
+    final UUID notificationId =
+        service.emit(RECIPIENT_REF, null, TYPE_CODE, SEVERITY_CODE, "Direkt", "P", ACTOR_REF);
+
+    final ArgumentCaptor<NotificationPushEnvelope> envelopeCaptor =
+        ArgumentCaptor.forClass(NotificationPushEnvelope.class);
+    verify(pushPort, times(1))
+        .push(eq(TENANT_ID), eq(RECIPIENT_REF), envelopeCaptor.capture());
+    assertThat(envelopeCaptor.getValue().type()).isEqualTo("notification");
+    assertThat(envelopeCaptor.getValue().category()).isEqualTo(TYPE_CODE);
+    assertThat(envelopeCaptor.getValue().notificationId()).isEqualTo(notificationId);
+  }
 }
