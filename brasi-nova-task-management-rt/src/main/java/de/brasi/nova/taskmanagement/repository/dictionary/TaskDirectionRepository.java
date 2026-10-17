@@ -36,4 +36,25 @@ public interface TaskDirectionRepository extends BaseTaskDirectionRepository {
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code")
   List<TaskDirection> findByCode(String code);
+
+  /**
+   * Liefert alle aktiven DIC_TASK_DIRECTION-Eintraege, geordnet nach CODE.
+   * Laueft im globalen Scope (TENANT_ID=0).
+   *
+   * @return Liste aller aktiven Task-Richtungs-Eintraege
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM DIC_TASK_DIRECTION"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE",
+      mssql =
+          "SELECT * FROM [dbo].[DIC_TASK_DIRECTION]"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE")
+  List<TaskDirection> findAllActive();
 }

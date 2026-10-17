@@ -213,6 +213,45 @@ public class DictionaryCodeResolver {
   }
 
   /**
+   * Loest eine interne {@link NotificationType}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "ASSIGN", "MENTION")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveNotificationTypeCode(final Long id) {
+    return resolveCode(
+        notificationTypeRepository, NotificationType::getCode, id, "DIC_NOTIFICATION_TYPE");
+  }
+
+  /**
+   * Loest eine interne {@link NotificationSeverity}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "INFO", "WARN")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveNotificationSeverityCode(final Long id) {
+    return resolveCode(
+        notificationSeverityRepository,
+        NotificationSeverity::getCode,
+        id,
+        "DIC_NOTIFICATION_SEVERITY");
+  }
+
+  /**
+   * Loest eine interne {@link TagSeverity}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "PRIMARY", "DANGER")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveTagSeverityCode(final Long id) {
+    return resolveCode(
+        tagSeverityRepository, TagSeverity::getCode, id, "DIC_TAG_SEVERITY");
+  }
+
+  /**
    * Generischer Reverse-Resolver: loest eine interne ID auf den CODE eines Dictionary-Eintrags auf.
    *
    * <p>Liest im globalen Scope (TENANT_ID=0).

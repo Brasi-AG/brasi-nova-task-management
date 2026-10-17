@@ -36,4 +36,25 @@ public interface TaskPriorityRepository extends BaseTaskPriorityRepository {
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code")
   List<TaskPriority> findByCode(String code);
+
+  /**
+   * Liefert alle aktiven DIC_TASK_PRIORITY-Eintraege, geordnet nach SORT_ORDER.
+   * Laueft im globalen Scope (TENANT_ID=0).
+   *
+   * @return Liste aller aktiven Task-Prioritaets-Eintraege
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM DIC_TASK_PRIORITY"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY SORT_ORDER",
+      mssql =
+          "SELECT * FROM [dbo].[DIC_TASK_PRIORITY]"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY SORT_ORDER")
+  List<TaskPriority> findAllActive();
 }

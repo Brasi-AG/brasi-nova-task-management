@@ -36,4 +36,25 @@ public interface TaskStatusRepository extends BaseTaskStatusRepository {
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code")
   List<TaskStatus> findByCode(String code);
+
+  /**
+   * Liefert alle aktiven DIC_TASK_STATUS-Eintraege, geordnet nach CODE.
+   * Laueft im globalen Scope (TENANT_ID=0).
+   *
+   * @return Liste aller aktiven Task-Status-Eintraege
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM DIC_TASK_STATUS"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE",
+      mssql =
+          "SELECT * FROM [dbo].[DIC_TASK_STATUS]"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE")
+  List<TaskStatus> findAllActive();
 }

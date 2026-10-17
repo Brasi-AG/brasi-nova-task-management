@@ -36,4 +36,25 @@ public interface NotificationTypeRepository extends BaseNotificationTypeReposito
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code")
   List<NotificationType> findByCode(String code);
+
+  /**
+   * Liefert alle aktiven DIC_NOTIFICATION_TYPE-Eintraege, geordnet nach CODE.
+   * Laueft im globalen Scope (TENANT_ID=0).
+   *
+   * @return Liste aller aktiven Benachrichtigungs-Typ-Eintraege
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM DIC_NOTIFICATION_TYPE"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE",
+      mssql =
+          "SELECT * FROM [dbo].[DIC_NOTIFICATION_TYPE]"
+              + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND TENANT_ID = :tenantId"
+              + " ORDER BY CODE")
+  List<NotificationType> findAllActive();
 }

@@ -49,7 +49,10 @@ class HandlerSentinelIT {
           WHOAMI_PROBE_CONTROLLER,
           "de.brasi.nova.taskmanagement.task.TaskFacadeController",
           "de.brasi.nova.taskmanagement.participant.AssigneeController",
-          "de.brasi.nova.taskmanagement.participant.UserStateController");
+          "de.brasi.nova.taskmanagement.participant.UserStateController",
+          "de.brasi.nova.taskmanagement.comment.CommentController",
+          "de.brasi.nova.taskmanagement.notification.NotificationController",
+          "de.brasi.nova.taskmanagement.dictionary.DictionaryCatalogController");
 
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";
