@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.refentity;
 
 import io.keel.framework.api.annotation.db.NovaQuery;
 import io.keel.framework.api.repository.NovaRepository;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -85,4 +86,38 @@ public interface UserReadRepository extends NovaRepository<User> {
       @Param("like") String like,
       @Param("afterExternalId") UUID afterExternalId,
       @Param("limit") int limit);
+
+  /**
+   * Liefert die distinkten aktiven, nicht ausgetretenen Teilnehmer-Benutzer der angegebenen
+   * Aufgaben ("Seiten-Teilnehmer" fuer den Snapshot, arch-v2 §2.1). JOIN ueber
+   * {@code TASK_PARTICIPANT.PARTICIPANT_REF = PROD_BENUTZER.EXTERNALID}; gefiltert auf aktive,
+   * nicht ausgetretene Teilnehmer ({@code EXIT_KIND IS NULL}, {@code ENTITY_STATUS='ACTIVE'}).
+   * {@code :tenantId} wird automatisch gebunden (beide Tabellen tenant-scoped; 1a: PERSON im
+   * selben Mandanten).
+   *
+   * <p><b>Pflicht des Aufrufers:</b> {@code taskIds} nie leer uebergeben - MSSQL {@code IN ()} ist
+   * ein Syntaxfehler. Der Service ueberspringt leere Mengen und liefert eine leere Liste.
+   * Die Collection wird von {@code NamedParameterJdbcTemplate} fuer {@code IN (:taskIds)} expandiert.
+   *
+   * @param taskIds interne Aufgaben-IDs der aktuellen Seite (nicht leer)
+   * @return distinkte aktive Teilnehmer-Benutzer, geordnet nach EXTERNALID ASC
+   */
+  @NovaQuery(
+      value =
+          "SELECT DISTINCT b.* FROM PROD_BENUTZER b"
+              + " JOIN TASK_PARTICIPANT p ON p.PARTICIPANT_REF = b.EXTERNALID"
+              + " WHERE p.TENANT_ID = :tenantId AND b.TENANT_ID = :tenantId"
+              + " AND p.TASK_ID IN (:taskIds)"
+              + " AND p.EXIT_KIND IS NULL AND p.ENTITY_STATUS = 'ACTIVE'"
+              + " AND b.ENTITY_STATUS = 'ACTIVE'"
+              + " ORDER BY b.EXTERNALID ASC",
+      mssql =
+          "SELECT DISTINCT b.* FROM [dbo].[PROD_BENUTZER] b"
+              + " JOIN [dbo].[TASK_PARTICIPANT] p ON p.PARTICIPANT_REF = b.EXTERNALID"
+              + " WHERE p.TENANT_ID = :tenantId AND b.TENANT_ID = :tenantId"
+              + " AND p.TASK_ID IN (:taskIds)"
+              + " AND p.EXIT_KIND IS NULL AND p.ENTITY_STATUS = 'ACTIVE'"
+              + " AND b.ENTITY_STATUS = 'ACTIVE'"
+              + " ORDER BY b.EXTERNALID ASC")
+  List<User> findActiveParticipantsForTasks(@Param("taskIds") Collection<Long> taskIds);
 }

@@ -195,4 +195,203 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
       LocalDateTime lastActivityAt,
       UUID externalId,
       int limit);
+
+  // ---- Archiv: Vereinigung erledigt ODER verlassen ("all") -------------------------------
+
+  /**
+   * Liefert eine Keyset-Seite der Vereinigung aus erledigt ODER verlassen fuer den Benutzer
+   * (Archiv-Filter {@code all}, arch-v2 §2.1). "all" ist exakt die Vereinigung von
+   * {@link #findArchiveDonePage} (DONE/CANCELLED mit aktivem {@code TASK_USER_STATE}) und
+   * {@link #findArchiveLeftPage} ({@code UNSUBSCRIBED_AT} ODER {@code EXIT_KIND}), in EINER
+   * Query OR-verknuepft, damit die Keyset-/TOP-Paginierung vollstaendig bleibt (nicht
+   * service-seitig zusammengefuehrt). Ein Task, der zugleich erledigt und verlassen ist, wird
+   * durch das einzelne {@code EXISTS}-Praedikat genau einmal gezaehlt (keine Doppelung).
+   * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf}.
+   *
+   * @param userRef        UUID des Benutzers
+   * @param doneId         aufgeloeste ID fuer "DONE"
+   * @param cancelledId    aufgeloeste ID fuer "CANCELLED"
+   * @param asOf           Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param lastActivityAt Keyset-Cursor
+   * @param externalId     Keyset-Cursor Tie-Break
+   * @param limit          maximale Anzahl
+   * @return Liste der Tasks
+   */
+  @NovaQuery(
+      value =
+          "SELECT TOP (:limit) t.* FROM TASK t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM TASK_USER_STATE s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL))"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_USER_STATE s2"
+              + "     WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "     AND s2.USER_REF = :userRef AND s2.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_PARTICIPANT p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )"
+              + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
+              + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
+              + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC",
+      mssql =
+          "SELECT TOP (:limit) t.* FROM [dbo].[TASK] t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL))"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_USER_STATE] s2"
+              + "     WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "     AND s2.USER_REF = :userRef AND s2.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )"
+              + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
+              + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
+              + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC")
+  List<Task> findArchiveAllPage(
+      UUID userRef,
+      Long doneId,
+      Long cancelledId,
+      LocalDateTime asOf,
+      LocalDateTime lastActivityAt,
+      UUID externalId,
+      int limit);
+
+  // ---- Archiv-Gesamtzahlen (asOf-gebunden, user-scoped) ----------------------------------
+
+  /**
+   * Zaehlt die Vereinigung aus erledigt ODER verlassen (Archiv-Filter {@code all}) fuer den
+   * Benutzer bis zum Wasserzeichen. WHERE-Praedikat deckungsgleich mit {@link #findArchiveAllPage}
+   * (ohne Keyset/TOP/ORDER) -> Zaehler == volle Kardinalitaet der {@code all}-Seitenmenge.
+   *
+   * @param userRef     UUID des Benutzers
+   * @param doneId      aufgeloeste ID fuer "DONE"
+   * @param cancelledId aufgeloeste ID fuer "CANCELLED"
+   * @param asOf        Wasserzeichen (inklusiv)
+   * @return Anzahl archivierter Aufgaben (erledigt ODER verlassen)
+   */
+  @NovaQuery(
+      value =
+          "SELECT COUNT(*) FROM TASK t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM TASK_USER_STATE s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL))"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_USER_STATE s2"
+              + "     WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "     AND s2.USER_REF = :userRef AND s2.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_PARTICIPANT p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )",
+      mssql =
+          "SELECT COUNT(*) FROM [dbo].[TASK] t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL))"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_USER_STATE] s2"
+              + "     WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "     AND s2.USER_REF = :userRef AND s2.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )")
+  long countArchiveAll(UUID userRef, Long doneId, Long cancelledId, LocalDateTime asOf);
+
+  /**
+   * Zaehlt die erledigten Aufgaben (DONE/CANCELLED mit aktivem {@code TASK_USER_STATE}) fuer den
+   * Benutzer bis zum Wasserzeichen. WHERE deckungsgleich mit {@link #findArchiveDonePage}.
+   *
+   * @param userRef     UUID des Benutzers
+   * @param doneId      aufgeloeste ID fuer "DONE"
+   * @param cancelledId aufgeloeste ID fuer "CANCELLED"
+   * @param asOf        Wasserzeichen (inklusiv)
+   * @return Anzahl erledigter Aufgaben
+   */
+  @NovaQuery(
+      value =
+          "SELECT COUNT(*) FROM TASK t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_USER_STATE s"
+              + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "   AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL)",
+      mssql =
+          "SELECT COUNT(*) FROM [dbo].[TASK] t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "   AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NULL)")
+  long countArchiveDone(UUID userRef, Long doneId, Long cancelledId, LocalDateTime asOf);
+
+  /**
+   * Zaehlt die verlassenen Aufgaben ({@code UNSUBSCRIBED_AT} ODER {@code EXIT_KIND}) fuer den
+   * Benutzer bis zum Wasserzeichen. WHERE deckungsgleich mit {@link #findArchiveLeftPage}.
+   *
+   * @param userRef UUID des Benutzers
+   * @param asOf    Wasserzeichen (inklusiv)
+   * @return Anzahl verlassener Aufgaben
+   */
+  @NovaQuery(
+      value =
+          "SELECT COUNT(*) FROM TASK t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   EXISTS ("
+              + "     SELECT 1 FROM TASK_USER_STATE s"
+              + "     WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "     AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_PARTICIPANT p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )",
+      mssql =
+          "SELECT COUNT(*) FROM [dbo].[TASK] t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "     WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "     AND s.USER_REF = :userRef AND s.UNSUBSCRIBED_AT IS NOT NULL)"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL)"
+              + " )")
+  long countArchiveLeft(UUID userRef, LocalDateTime asOf);
 }
