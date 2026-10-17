@@ -396,6 +396,64 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- MAJOR (Re-Gate): GET Detail nicht-existent + fremd -> 404, identische neutrale Meldung ----
+
+  @Test
+  @DisplayName("detail_nicht_existent_und_fremd_liefert_404_identisch: GET maskiert Existenz")
+  void detail_nicht_existent_und_fremd_liefert_404_identisch() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // (a) Zufaellige UUID (existiert nicht) -> 404
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final UUID randomId = UUID.randomUUID();
+    final String bodyNotFound =
+        mvc.perform(get("/api/v1/tasks/" + randomId).header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    // (b) Fremder Tenant: User A legt Task an, User B (Tenant B) GET Detail -> 404
+    final String postResp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", "Tenant-A-Detail-Test"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID foreignTaskId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    final String tokenB = buildJwtWithAuthority(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN,
+        "task-management:TASK_READ");
+    final String bodyForeign =
+        mvc.perform(
+                get("/api/v1/tasks/" + foreignTaskId).header("Authorization", "Bearer " + tokenB))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    // Existenz-Maskierung: die UNTERSCHEIDENDEN Felder (message, errorKey) sind in beiden Faellen
+    // identisch neutral. (Das Feld "path" echot bewusst den vom Client selbst angefragten URL-Pfad
+    // und ist daher KEINE Existenz-Disclosure - der Client kennt die angefragte UUID bereits.)
+    assertThat(bodyNotFound)
+        .contains("\"message\":\"Aufgabe nicht gefunden.\"")
+        .contains("\"errorKey\":\"NOVA_NOT_FOUND\"");
+    assertThat(bodyForeign)
+        .as("Fremd-Tenant-404 muss dieselbe neutrale Meldung + errorKey liefern wie Nicht-gefunden-404")
+        .contains("\"message\":\"Aufgabe nicht gefunden.\"")
+        .contains("\"errorKey\":\"NOVA_NOT_FOUND\"");
+  }
+
   // ---- MAJOR 3: ungueltige Client-Codes -> 400 -------------------------------------------------
 
   @Test
@@ -482,16 +540,21 @@ class TaskFacadeControllerIT {
             .readValueAs(UUID.class);
     assertThat(taskExternalId).as("POST muss UUID zurueckgeben").isNotNull();
 
-    // (a) CREATOR_FLAG=1 und ASSIGNEE_FLAG=1 in TASK_PARTICIPANT pruefen
+    // (a) CREATOR_FLAG=1 und ASSIGNEE_FLAG=1 EXAKT fuer den gerade erzeugten Task pruefen
+    // (gebunden ueber TASK.EXTERNALID = taskExternalId + Tenant; genau ein Datensatz erwartet)
     final Integer creatorParticipantCount =
         jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] "
-                + "WHERE PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 1",
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+                + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.CREATOR_FLAG = 1 AND p.ASSIGNEE_FLAG = 1",
             Integer.class,
+            taskExternalId,
+            TENANT_A_ID,
             USER_A_REF);
     assertThat(creatorParticipantCount)
-        .as("Creator muss CREATOR_FLAG=1 und ASSIGNEE_FLAG=1 in TASK_PARTICIPANT haben")
-        .isGreaterThanOrEqualTo(1);
+        .as("Genau ein Creator-Participant (CREATOR_FLAG=1/ASSIGNEE_FLAG=1) fuer den erzeugten Task")
+        .isEqualTo(1);
 
     // (b) Task via findActivePage (benutzerscoped, aufgeloeste OPEN-Id) fuer Creator sichtbar
     final Long openStatusId;

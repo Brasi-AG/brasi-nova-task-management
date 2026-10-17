@@ -42,21 +42,24 @@ public class TaskDetailService {
   /**
    * Laedt das Detail einer Aufgabe anhand ihrer externen UUID.
    *
+   * <p>Nicht gefunden UND fremder Mandant werden mit identischer, neutraler
+   * {@link EntityNotFoundException} (HTTP 404) beantwortet, um keine Existenz-Information
+   * preiszugeben (arch-v2 §8; konsistent zu {@code TaskCommandService.requireTask}). Die Meldung
+   * enthaelt bewusst KEINE UUID und unterscheidet die beiden Faelle NICHT.
+   *
    * @param taskExternalId externe UUID der Aufgabe
    * @param tenantId       aktueller Mandanten-Schluessel (Plausibilitaetspruefung)
    * @return aufgebautes {@link TaskDetailModel}
-   * @throws BusinessRuleException wenn die Aufgabe nicht gefunden oder fremdem Mandanten zugehoerig
+   * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Mandanten zugehoerig (HTTP 404)
    */
   public TaskDetailModel loadDetail(final UUID taskExternalId, final long tenantId) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {
-      throw new EntityNotFoundException(
-          "Aufgabe mit UUID " + taskExternalId + " nicht gefunden.");
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
     final Task task = opt.get();
     if (!Objects.equals(tenantId, task.getTenantId())) {
-      throw new EntityNotFoundException(
-          "Aufgabe " + taskExternalId + " nicht gefunden.");
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
 
     // Dictionary-IDs auf CODEs aufloesen
