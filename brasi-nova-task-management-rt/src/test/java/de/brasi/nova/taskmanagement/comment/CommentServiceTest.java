@@ -21,6 +21,7 @@ import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
@@ -29,7 +30,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -88,7 +89,8 @@ class CommentServiceTest {
         notificationService,
         inboxSignalService,
         mentionResolver,
-        userAccessor);
+        userAccessor,
+        new AuditTimeConverter("Europe/Berlin"));
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -401,18 +403,18 @@ class CommentServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
-  // ---- Test 9: createdAt wird als UTC serialisiert -----------------------------------------------
+  // ---- Test 9: createdAt wird mit Persistenz-Zone (Europe/Berlin) konvertiert -----------------
 
   @Test
   @DisplayName(
-      "created_at_utc: ANGELEGT_AM wird via ZoneOffset.UTC konvertiert (nicht systemDefault)")
-  void created_at_utc() {
+      "created_at_persistence_zone: ANGELEGT_AM wird via Europe/Berlin konvertiert (nicht UTC)")
+  void created_at_persistence_zone() {
     final Long taskId = 48L;
     final UUID taskUuid = UUID.randomUUID();
     final Task task = taskWithId(taskId, taskUuid, 0);
 
     final LocalDateTime savedAt = LocalDateTime.of(2026, 1, 15, 12, 0, 0);
-    final Instant expectedInstant = savedAt.toInstant(ZoneOffset.UTC);
+    final Instant expectedInstant = savedAt.atZone(ZoneId.of("Europe/Berlin")).toInstant();
 
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
     when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
@@ -426,7 +428,7 @@ class CommentServiceTest {
     when(mentionResolver.resolve(any())).thenReturn(List.of());
 
     final CommentModel model =
-        service.createComment(taskUuid, new CommentCreateInput("UTC-Test.", null));
+        service.createComment(taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null));
 
     assertThat(model.createdAt()).isEqualTo(expectedInstant);
   }

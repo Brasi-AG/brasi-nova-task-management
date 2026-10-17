@@ -8,8 +8,8 @@ import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
+import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,15 +28,18 @@ public class TaskDetailService {
   private final BaseTaskRepository taskRepository;
   private final TaskHistoryEntryQueryRepository historyRepository;
   private final DictionaryCodeResolver resolver;
+  private final AuditTimeConverter auditTimeConverter;
 
   /** Konstruktor-Injektion. */
   public TaskDetailService(
       final BaseTaskRepository taskRepository,
       final TaskHistoryEntryQueryRepository historyRepository,
-      final DictionaryCodeResolver resolver) {
+      final DictionaryCodeResolver resolver,
+      final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.resolver = resolver;
+    this.auditTimeConverter = auditTimeConverter;
   }
 
   /**
@@ -79,9 +82,7 @@ public class TaskDetailService {
                         e.getActorRef(),
                         e.getText(),
                         e.getChangeDetail(),
-                        e.getCreatedAt() != null
-                            ? e.getCreatedAt().toInstant(ZoneOffset.UTC)
-                            : null))
+                        auditTimeConverter.toInstant(e.getCreatedAt())))
             .toList();
 
     return new TaskDetailModel(
@@ -93,9 +94,7 @@ public class TaskDetailService {
         directionCode,
         task.getStartDate(),
         task.getDueDate(),
-        task.getLastActivityAt() != null
-            ? task.getLastActivityAt().toInstant(ZoneOffset.UTC)
-            : null,
+        auditTimeConverter.toInstant(task.getLastActivityAt()),
         task.getCommentCount(),
         history);
   }

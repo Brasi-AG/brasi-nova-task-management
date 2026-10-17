@@ -13,12 +13,12 @@ import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -56,6 +56,7 @@ public class CommentService {
   private final InboxSignalService inboxSignalService;
   private final MentionResolver mentionResolver;
   private final UserAccessor userAccessor;
+  private final AuditTimeConverter auditTimeConverter;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -65,7 +66,8 @@ public class CommentService {
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
       final MentionResolver mentionResolver,
-      final UserAccessor userAccessor) {
+      final UserAccessor userAccessor,
+      final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -73,6 +75,7 @@ public class CommentService {
     this.inboxSignalService = inboxSignalService;
     this.mentionResolver = mentionResolver;
     this.userAccessor = userAccessor;
+    this.auditTimeConverter = auditTimeConverter;
   }
 
   /**
@@ -191,7 +194,7 @@ public class CommentService {
     inboxSignalService.invalidate(tenantId, activeUserRefs);
 
     // Antwort-DTO zusammenstellen
-    final Instant createdAt = toInstant(saved.getCreatedAt());
+    final Instant createdAt = auditTimeConverter.toInstant(saved.getCreatedAt());
     return new CommentModel(
         saved.getUuid(),
         taskExternalId,
@@ -259,19 +262,4 @@ public class CommentService {
     return task;
   }
 
-  /**
-   * Konvertiert ein {@link LocalDateTime} (ANGELEGT_AM aus der Nova-Basis) in ein {@link Instant}.
-   *
-   * <p>Verwendet UTC als Konvertierungsgrundlage, identisch zu {@code TaskDetailService}
-   * (KSF-Konvention: alle Audit-Zeitstempel werden als UTC-gespeicherte Werte behandelt).
-   *
-   * @param ldt Zeitstempel aus der Datenbank (kann null sein, wenn KSF noch nicht gesetzt hat)
-   * @return Instant (UTC) oder {@code Instant.now()} als Fallback
-   */
-  private static Instant toInstant(final LocalDateTime ldt) {
-    if (ldt == null) {
-      return Instant.now();
-    }
-    return ldt.toInstant(ZoneOffset.UTC);
-  }
 }

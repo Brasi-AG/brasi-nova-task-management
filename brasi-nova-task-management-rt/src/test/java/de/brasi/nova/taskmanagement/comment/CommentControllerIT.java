@@ -540,6 +540,7 @@ class CommentControllerIT {
         "de.brasi.nova.taskmanagement.push",
         "de.brasi.nova.taskmanagement.refentity",
         "de.brasi.nova.taskmanagement.repository",
+        "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
         @org.springframework.context.annotation.ComponentScan.Filter(
