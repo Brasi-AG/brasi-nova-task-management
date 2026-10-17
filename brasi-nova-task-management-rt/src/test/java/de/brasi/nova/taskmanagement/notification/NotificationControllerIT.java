@@ -544,6 +544,43 @@ class NotificationControllerIT {
     assertThat(foundDeactivated).as("Deaktivierte Notification darf NICHT sichtbar sein").isFalse();
   }
 
+  // ---- F-P2c: markRead auf deaktivierte Benachrichtigung -> 404, IS_READ unveraendert -----
+
+  @Test
+  @DisplayName("markRead_deaktivierte_benachrichtigung_liefert_404_und_is_read_unveraendert")
+  void markRead_deaktivierte_benachrichtigung_liefert_404_und_is_read_unveraendert()
+      throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // Benachrichtigung direkt mit ENTITY_STATUS='DEACTIVE' seeden (P2-Negativtest)
+    final UUID deactivatedId = UUID.randomUUID();
+    jdbcTemplate.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_NOTIFICATION] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_NOTIFICATION] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
+            + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
+            + "VALUES (?, 'DEACTIVE', ?, 1, ?, ?, ?, ?, ?, ?)",
+        NOTIF_ID_BASE + 50, NOTIF_ID_BASE + 50, deactivatedId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, 0, "Deaktivierte Notif fuer markRead-Test",
+        java.sql.Timestamp.valueOf(LocalDateTime.now().minusMinutes(70)));
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:NOTIFICATION_READ",
+        "task-management:NOTIFICATION_WRITE");
+
+    // PUT auf deaktivierte Notification muss 404 liefern
+    mvc.perform(put("/api/v1/notifications/" + deactivatedId + "/read")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isNotFound());
+
+    // DB-Beweis: IS_READ bleibt 0 (unveraendert)
+    final Integer isRead = jdbcTemplate.queryForObject(
+        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+        Integer.class, deactivatedId);
+    assertThat(isRead).as("IS_READ muss nach 404 unveraendert 0 bleiben").isEqualTo(0);
+  }
+
   // ---- Negativ-Tests: 401 / 403 / 404 ---------------------------------------------------
 
   @Test

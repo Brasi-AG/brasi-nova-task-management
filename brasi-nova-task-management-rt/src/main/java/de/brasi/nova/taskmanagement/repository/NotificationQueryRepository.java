@@ -4,6 +4,7 @@ import de.brasi.nova.taskmanagement.entity.TaskNotification;
 import io.keel.framework.api.annotation.db.NovaQuery;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -132,6 +133,32 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       LocalDateTime afterCreatedAt,
       UUID afterExternalId,
       int limit);
+
+  /**
+   * Laedt eine ACTIVE-Benachrichtigung anhand ihrer externen UUID und des aktuellen Mandanten.
+   *
+   * <p>Gibt {@code empty} zurueck wenn die Benachrichtigung nicht existiert, deaktiviert oder
+   * geloescht ist. Wird in {@code NotificationQueryService.markRead} verwendet, damit
+   * deaktivierte Benachrichtigungen konsistent dieselbe neutrale 404 liefern wie die
+   * List-Queries (ENTITY_STATUS-Konsistenz, P2).
+   *
+   * <p>{@code :tenantId} wird automatisch vom Framework gebunden.
+   *
+   * @param externalId externe UUID der Benachrichtigung als String
+   * @return Optional mit der aktiven Benachrichtigung, oder empty wenn nicht aktiv
+   */
+  @NovaQuery(
+      value =
+          "SELECT n.* FROM TASK_NOTIFICATION n"
+              + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
+              + " AND n.EXTERNALID = :externalId",
+      mssql =
+          "SELECT n.* FROM [dbo].[TASK_NOTIFICATION] n"
+              + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
+              + " AND n.EXTERNALID = :externalId")
+  Optional<TaskNotification> findActiveByUuid(String externalId);
 
   /**
    * Alle ungelesenen Benachrichtigungen eines Benutzers (ohne Limit, fuer markAllRead).

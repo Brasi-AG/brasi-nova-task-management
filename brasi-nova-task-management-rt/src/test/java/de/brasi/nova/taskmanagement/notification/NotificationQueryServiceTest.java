@@ -179,7 +179,8 @@ class NotificationQueryServiceTest {
     final TaskNotification n = buildNotification();
     n.setRecipientRef(UUID.randomUUID()); // fremder Empfaenger
     n.setTenantId(TENANT_ID);
-    when(notificationRepository.findByUuid(notifId.toString())).thenReturn(Optional.of(n));
+    // Nach Fix: queryRepository.findActiveByUuid (active-scoped Lookup)
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.of(n));
 
     assertThatThrownBy(() -> service.markRead(notifId, USER_REF, TENANT_ID))
         .isInstanceOf(EntityNotFoundException.class);
@@ -194,7 +195,8 @@ class NotificationQueryServiceTest {
     final TaskNotification n = buildNotification();
     n.setRecipientRef(USER_REF);
     n.setTenantId(999L); // fremder Mandant
-    when(notificationRepository.findByUuid(notifId.toString())).thenReturn(Optional.of(n));
+    // Nach Fix: queryRepository.findActiveByUuid (active-scoped Lookup)
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.of(n));
 
     assertThatThrownBy(() -> service.markRead(notifId, USER_REF, TENANT_ID))
         .isInstanceOf(EntityNotFoundException.class);
@@ -206,7 +208,8 @@ class NotificationQueryServiceTest {
   @DisplayName("markRead_nicht_gefunden_wirft_EntityNotFoundException")
   void markRead_nicht_gefunden_wirft_EntityNotFoundException() {
     final UUID notifId = UUID.randomUUID();
-    when(notificationRepository.findByUuid(notifId.toString())).thenReturn(Optional.empty());
+    // Nach Fix: queryRepository.findActiveByUuid (active-scoped Lookup)
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.markRead(notifId, USER_REF, TENANT_ID))
         .isInstanceOf(EntityNotFoundException.class);
@@ -220,7 +223,8 @@ class NotificationQueryServiceTest {
     n.setRecipientRef(USER_REF);
     n.setTenantId(TENANT_ID);
     n.setRead(false);
-    when(notificationRepository.findByUuid(notifId.toString())).thenReturn(Optional.of(n));
+    // Nach Fix: queryRepository.findActiveByUuid (active-scoped Lookup)
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.of(n));
     when(notificationRepository.save(any())).thenReturn(n);
 
     service.markRead(notifId, USER_REF, TENANT_ID);
@@ -237,13 +241,28 @@ class NotificationQueryServiceTest {
     n.setRecipientRef(USER_REF);
     n.setTenantId(TENANT_ID);
     n.setRead(true); // schon gelesen
-    when(notificationRepository.findByUuid(notifId.toString())).thenReturn(Optional.of(n));
+    // Nach Fix: queryRepository.findActiveByUuid (active-scoped Lookup)
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.of(n));
     when(notificationRepository.save(any())).thenReturn(n);
 
     // kein Fehler erwartet
     service.markRead(notifId, USER_REF, TENANT_ID);
 
     verify(notificationRepository).save(n); // trotzdem gespeichert (idempotent)
+  }
+
+  @Test
+  @DisplayName("markRead_deaktivierte_benachrichtigung_wirft_EntityNotFoundException")
+  void markRead_deaktivierte_benachrichtigung_wirft_EntityNotFoundException() {
+    // P2-Negativtest: deaktivierte Benachrichtigung muss neutrale 404 liefern (kein IS_READ-Update).
+    // findActiveByUuid gibt empty zurueck (ENTITY_STATUS-Filter), daher kein save.
+    final UUID notifId = UUID.randomUUID();
+    when(queryRepository.findActiveByUuid(notifId.toString())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.markRead(notifId, USER_REF, TENANT_ID))
+        .isInstanceOf(EntityNotFoundException.class);
+
+    verify(notificationRepository, never()).save(any());
   }
 
   // ---- F-P2b: Seite mit mehreren Notifications zu unterschiedlichen Tasks -> korrekte UUIDs ----

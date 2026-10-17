@@ -175,9 +175,13 @@ public class NotificationQueryService {
    * Markiert eine Benachrichtigung als gelesen.
    *
    * <p>Idempotent: bereits gelesene Benachrichtigungen werden ohne Fehler gespeichert.
-   * 404-Masking (R5): nicht gefunden UND falscher Tenant/Empfaenger liefern
-   * identische neutrale {@link EntityNotFoundException}.
+   * 404-Masking (R5/P2): nicht gefunden, deaktiviert UND falscher Tenant/Empfaenger liefern
+   * identische neutrale {@link EntityNotFoundException} — kein Hinweis auf Existenz.
    * Kein Invalidate/Notification nach dem Lesen (R5).
+   *
+   * <p>Der Lookup ueber {@code queryRepository.findActiveByUuid} scopet auf
+   * {@code ENTITY_STATUS='ACTIVE'}, damit deaktivierte Benachrichtigungen konsistent
+   * dieselbe neutrale 404 erhalten wie List- und markAllRead-Queries (P2).
    *
    * @param notificationExternalId externe UUID der Benachrichtigung
    * @param actorRef               UUID des aktuellen Benutzers (aus Security-Context)
@@ -190,7 +194,7 @@ public class NotificationQueryService {
       final long tenantId) {
 
     final Optional<TaskNotification> found =
-        notificationRepository.findByUuid(notificationExternalId.toString());
+        queryRepository.findActiveByUuid(notificationExternalId.toString());
 
     if (found.isEmpty()
         || found.get().getTenantId() != tenantId
