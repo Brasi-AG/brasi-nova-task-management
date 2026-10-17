@@ -102,7 +102,7 @@ class AssigneeServiceTest {
     TenantContextHolder.clear();
   }
 
-  // ---- Test 1: Zuweisung -> ASSIGNEE_FLAG + UserState.ensure + ASSIGN-Notification + invalidate ---
+  // ---- Test 1: Zuweisung -> ASSIGNEE_FLAG + UserState.reactivate + ASSIGN-Notification + invalidate ---
 
   @Test
   @DisplayName(

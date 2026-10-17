@@ -80,8 +80,8 @@ public class AssigneeService {
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Aktuelle Assignees laden und mit Ziel-Menge vergleichen.
    *   <li>Neu zugewiesene Assignees: {@link TaskParticipant} anlegen/reaktivieren
-   *       (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link UserStateService#ensure},
-   *       ASSIGN-Notification emittieren.
+   *       (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link UserStateService#reactivate}
+   *       (UserState sichern + UNSUBSCRIBED_AT zuruecksetzen), ASSIGN-Notification emittieren.
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr):
    *       EXIT_KIND=UNSUBSCRIBED + EXIT_AT setzen.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer alle betroffenen userRefs.
