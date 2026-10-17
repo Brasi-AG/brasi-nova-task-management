@@ -22,9 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
  * sein. Wenn sie fehlt, ist der -api-Stand veraltet oder der Scaffold-Lauf wurde übersprungen.
  *
  * <p><b>(2) NEGATIV / Routing — keine generischen CRUD-Routen:</b> Im gesamten Anwendungspaket
- * {@code de.brasi.nova.taskmanagement} darf keine {@link RestController}-annotierte Klasse
- * existieren, außer dem bekannten IT-Probe-Controller
- * {@code de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController}. Geprüft via Springs
+ * {@code de.brasi.nova.taskmanagement} darf kein vom Scaffold generierter
+ * {@link RestController} existieren. Erlaubt sind ausschliesslich handgeschriebene Facade-
+ * Controller (in der Allowlist) und der IT-Probe-Controller. Geprüft via Springs
  * {@link ClassPathScanningCandidateComponentProvider} gegen das Basis-Paket.
  *
  * <p>Da das Scaffold-Plugin gemäß arch-v2 §7 ausschließlich die Targets
@@ -36,9 +36,18 @@ import org.springframework.web.bind.annotation.RestController;
  */
 class HandlerSentinelIT {
 
-  /** Bekannter IT-Probe-Controller — einzig erlaubter {@link RestController} im Anwendungspaket. */
+  /** IT-Probe-Controller (nur fuer Tests). */
   private static final String WHOAMI_PROBE_CONTROLLER =
       "de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController";
+
+  /**
+   * Handgeschriebene Facade-Controller (arch-v2 §7): explizit erlaubt, werden NICHT vom Scaffold
+   * generiert. Jeder neue Facade-Controller muss hier eingetragen werden.
+   */
+  private static final java.util.Set<String> ALLOWED_FACADE_CONTROLLERS =
+      java.util.Set.of(
+          WHOAMI_PROBE_CONTROLLER,
+          "de.brasi.nova.taskmanagement.task.TaskFacadeController");
 
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";
@@ -82,19 +91,21 @@ class HandlerSentinelIT {
         .findCandidateComponents(APP_BASE_PACKAGE)
         .forEach(bd -> found.add(bd.getBeanClassName()));
 
-    // WhoAmIProbeController ist der einzig erlaubte @RestController (IT-only, kein Domain-CRUD)
+    // Erlaubt: handgeschriebene Facade-Controller + IT-Probe-Controller (ALLOWED_FACADE_CONTROLLERS)
+    // Verboten: alle anderen (= vom Scaffold generierte oder unbekannte Controller)
     List<String> forbidden =
         found.stream()
-            .filter(name -> !WHOAMI_PROBE_CONTROLLER.equals(name))
+            .filter(name -> !ALLOWED_FACADE_CONTROLLERS.contains(name))
             .toList();
 
     assertThat(forbidden)
         .as(
             "Scaffold darf KEINE @RestController-Klassen im Anwendungspaket %s erzeugen "
                 + "(arch-v2 §7: nur Repository/Model/QClass/QueryProvider/ServiceProviders/"
-                + "Summary/Validator). Erlaubt ausschliesslich: %s. Verbotene Treffer: %s",
+                + "Summary/Validator). Erlaubte Controller (handgeschrieben): %s."
+                + " Verbotene Treffer: %s",
             APP_BASE_PACKAGE,
-            WHOAMI_PROBE_CONTROLLER,
+            ALLOWED_FACADE_CONTROLLERS,
             forbidden)
         .isEmpty();
   }

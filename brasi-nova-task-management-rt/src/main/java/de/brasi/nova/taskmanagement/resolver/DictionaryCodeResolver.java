@@ -23,6 +23,7 @@ import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
@@ -171,6 +172,73 @@ public class DictionaryCodeResolver {
     final Long id = results.get(0).getId();
     cache.put(key, id);
     return id;
+  }
+
+  // ---- Reverse-Resolver: ID -> CODE (fuer Detail-Antworten) ------------------------------------
+
+  /**
+   * Loest eine interne {@link TaskStatus}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "OPEN")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveTaskStatusCode(final Long id) {
+    return resolveCode(
+        taskStatusRepository, TaskStatus::getCode, id, "DIC_TASK_STATUS");
+  }
+
+  /**
+   * Loest eine interne {@link TaskPriority}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "NORMAL")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveTaskPriorityCode(final Long id) {
+    return resolveCode(
+        taskPriorityRepository, TaskPriority::getCode, id, "DIC_TASK_PRIORITY");
+  }
+
+  /**
+   * Loest eine interne {@link TaskDirection}-ID auf den zugehoerigen CODE auf.
+   *
+   * @param id interne ID
+   * @return CODE-String (z.B. "CUSTOMER_INTERNAL")
+   * @throws DictionaryResolverException wenn die ID nicht aufloesbar ist
+   */
+  public String resolveTaskDirectionCode(final Long id) {
+    return resolveCode(
+        taskDirectionRepository, TaskDirection::getCode, id, "DIC_TASK_DIRECTION");
+  }
+
+  /**
+   * Generischer Reverse-Resolver: loest eine interne ID auf den CODE eines Dictionary-Eintrags auf.
+   *
+   * <p>Liest im globalen Scope (TENANT_ID=0).
+   *
+   * @param <T>           Dictionary-Entity-Typ
+   * @param repository    Repository des Dictionaries
+   * @param codeExtractor Lambda zum Extrahieren des CODE-Felds aus der Entity
+   * @param id            interne ID
+   * @param dictName      Dictionary-Name (nur fuer Fehlermeldung)
+   * @return CODE-String
+   * @throws DictionaryResolverException wenn kein Eintrag gefunden
+   */
+  private <T extends NovaDictionaryEntry<T>> String resolveCode(
+      final io.keel.framework.api.repository.NovaRepository<T> repository,
+      final java.util.function.Function<T, String> codeExtractor,
+      final Long id,
+      final String dictName) {
+    Objects.requireNonNull(id, "id darf nicht null sein");
+    final Optional<T> result =
+        TenantContextHolder.runWithTenant(TenantInfo.global(), () -> repository.findById(id));
+    if (result.isEmpty()) {
+      throw new DictionaryResolverException(
+          String.format(
+              "DictionaryCodeResolver: ID %d nicht gefunden in Dictionary '%s'.", id, dictName));
+    }
+    return codeExtractor.apply(result.get());
   }
 
   /**
