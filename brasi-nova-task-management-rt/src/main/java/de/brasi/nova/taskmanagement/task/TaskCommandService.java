@@ -2,11 +2,13 @@ package de.brasi.nova.taskmanagement.task;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
@@ -15,13 +17,15 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
-import io.keel.framework.api.exception.BusinessRuleException;
+import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -46,6 +50,7 @@ public class TaskCommandService {
 
   private final BaseTaskRepository taskRepository;
   private final BaseTaskParticipantRepository participantRepository;
+  private final TaskUserStateQueryRepository userStateQueryRepository;
   private final DictionaryCodeResolver resolver;
   private final UserAccessor userAccessor;
   private final UserStateService userStateService;
@@ -56,6 +61,7 @@ public class TaskCommandService {
   public TaskCommandService(
       final BaseTaskRepository taskRepository,
       final BaseTaskParticipantRepository participantRepository,
+      final TaskUserStateQueryRepository userStateQueryRepository,
       final DictionaryCodeResolver resolver,
       final UserAccessor userAccessor,
       final UserStateService userStateService,
@@ -63,6 +69,7 @@ public class TaskCommandService {
       final InboxSignalService inboxSignalService) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
+    this.userStateQueryRepository = userStateQueryRepository;
     this.resolver = resolver;
     this.userAccessor = userAccessor;
     this.userStateService = userStateService;
@@ -100,10 +107,15 @@ public class TaskCommandService {
     final Long directionId = resolver.resolveTaskDirection(TaskDirectionCodes.CUSTOMER_INTERNAL);
     final Long statusId = resolver.resolveTaskStatus(TaskStatusCodes.OPEN);
 
-    // Prioritaet: aus Input oder Default NORMAL
+    // Prioritaet: aus Input oder Default NORMAL; unbekannter Client-Code -> 400
     final Long priorityId;
     if (input.priorityCode() != null && !input.priorityCode().isBlank()) {
-      priorityId = resolver.resolveTaskPriority(input.priorityCode());
+      try {
+        priorityId = resolver.resolveTaskPriority(input.priorityCode());
+      } catch (DictionaryResolverException e) {
+        throw new EntityValidationException(
+            "Ungueltiger priorityCode: '" + input.priorityCode() + "'.");
+      }
     } else {
       priorityId = resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL);
     }
@@ -158,11 +170,12 @@ public class TaskCommandService {
    * Patcht eine bestehende Aufgabe (title, dueDate, statusCode).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion.
-   * Nach Commit: {@link InboxSignalService#invalidate} fuer alle Teilnehmer.
+   * Nach Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param input          Patch-Eingabe
-   * @throws BusinessRuleException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant gehoert
+   * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant gehoert
+   * @throws EntityValidationException bei unbekanntem statusCode
    */
   @Transactional
   public void patch(final UUID taskExternalId, final TaskPatchInput input) {
@@ -196,10 +209,19 @@ public class TaskCommandService {
       changed = true;
     }
 
-    // statusCode
+    // statusCode: Client-Eingabe validieren -> unbekannt/leer -> 400
     if (input.statusCode().isPresent()) {
       final String newStatusCode = input.statusCode().get();
-      final Long newStatusId = resolver.resolveTaskStatus(newStatusCode);
+      if (newStatusCode == null || newStatusCode.isBlank()) {
+        throw new EntityValidationException("statusCode darf nicht leer sein.");
+      }
+      final Long newStatusId;
+      try {
+        newStatusId = resolver.resolveTaskStatus(newStatusCode);
+      } catch (DictionaryResolverException e) {
+        throw new EntityValidationException(
+            "Ungueltiger statusCode: '" + newStatusCode + "'.");
+      }
       historyService.record(
           taskId, tenantId, actorRef, "Status geaendert", "-> " + newStatusCode);
       task.setTaskStatusId(newStatusId);
@@ -216,32 +238,40 @@ public class TaskCommandService {
           tenantId);
     }
 
-    // After-Commit: snapshot-invalidated Signal registrieren (auch wenn changed=false,
-    // damit idempotente Aufrufe keine stillen Skips verursachen - sicherheitshalber nur
-    // wenn tatsaechlich etwas geaendert wurde)
+    // After-Commit: snapshot-invalidated Signal fuer ALLE aktiven Teilnehmer registrieren.
+    // Aktive Teilnehmer = TASK_USER_STATE mit UNSUBSCRIBED_AT IS NULL (innerhalb dieser Tx ermittelt).
     if (changed) {
-      inboxSignalService.invalidate(tenantId, List.of(actorRef));
+      final List<UUID> activeUserRefs = userStateQueryRepository
+          .findActiveUserRefsByTaskId(taskId)
+          .stream()
+          .map(TaskUserState::getUserRef)
+          .collect(Collectors.toList());
+      if (!activeUserRefs.isEmpty()) {
+        inboxSignalService.invalidate(tenantId, activeUserRefs);
+      }
     }
   }
 
   /**
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
+   * <p>Beide Fehlerfaelle (nicht gefunden / fremder Mandant) liefern eine identische, neutrale
+   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
+   * (arch-v2 §8 / Cross-Tenant-Disclosure-Schutz).
+   *
    * @param taskExternalId externe UUID der Aufgabe
    * @param tenantId       erwarteter Mandanten-Schluessel
    * @return die gefundene Aufgabe
-   * @throws BusinessRuleException wenn nicht gefunden oder falschem Tenant zugehoerig
+   * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */
   private Task requireTask(final UUID taskExternalId, final long tenantId) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {
-      throw new BusinessRuleException(
-          "Aufgabe mit UUID " + taskExternalId + " nicht gefunden.");
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
     final Task task = opt.get();
     if (!Objects.equals(tenantId, task.getTenantId())) {
-      throw new BusinessRuleException(
-          "Aufgabe " + taskExternalId + " gehoert nicht dem aktuellen Mandanten.");
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
     return task;
   }

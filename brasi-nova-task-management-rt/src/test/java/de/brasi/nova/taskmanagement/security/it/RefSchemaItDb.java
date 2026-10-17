@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.security.it;
 
+import com.microsoft.sqlserver.jdbc.SQLServerException;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.List;
@@ -32,6 +33,15 @@ public final class RefSchemaItDb {
       Pattern.compile("^TASK_MGMT_IT_[0-9a-f]{32}$");
 
   private static final int STALE_TTL_HOURS = 2;
+
+  /** Maximale Anzahl Versuche beim DROP einer Wegwerf-DB (SQL-Fehlercode 3702: "currently in use"). */
+  private static final int DROP_MAX_RETRIES = 3;
+
+  /** Wartezeit zwischen DROP-Versuchen in Millisekunden. */
+  private static final long DROP_RETRY_WAIT_MS = 300L;
+
+  /** SQL-Fehlercode 3702: "Cannot drop database ... because it is currently in use." */
+  private static final int SQL_ERROR_DB_IN_USE = 3702;
 
   private RefSchemaItDb() {}
 
@@ -78,14 +88,68 @@ public final class RefSchemaItDb {
     return swapDatabaseName(RefSchemaItEnv.masterUrl(), dbName);
   }
 
-  /** Droppt die Wegwerf-DB (SINGLE_USER kickt Restsessions); Name strikt validiert. */
+  /**
+   * Droppt die Wegwerf-DB (SINGLE_USER kickt Restsessions); Name strikt validiert.
+   *
+   * <p>Haertung: bei SQL-Fehlercode 3702 ("currently in use") wird ALTER SET SINGLE_USER erneut
+   * ausgefuehrt und DROP wiederholt, maximal {@link #DROP_MAX_RETRIES} Mal mit kurzem Warten.
+   * Dadurch wird der Race zwischen @AfterAll-Hook und noch lebenden Pool-Connections vermieden.
+   *
+   * @param master DataSource auf master-DB
+   * @param dbName Name der Wegwerf-DB (strikt validiert)
+   */
   public static void dropThrowawayDb(final DataSource master, final String dbName) {
     ensureSafeName(dbName);
     final JdbcTemplate jdbc = new JdbcTemplate(master);
-    jdbc.execute(
-        "ALTER DATABASE [" + dbName + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE");
-    jdbc.execute("DROP DATABASE [" + dbName + "]");
-    log.info("Task-Mgmt-IT Wegwerf-DB gedroppt: {}", dbName);
+    RuntimeException lastException = null;
+    for (int attempt = 1; attempt <= DROP_MAX_RETRIES; attempt++) {
+      try {
+        jdbc.execute(
+            "ALTER DATABASE [" + dbName + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE");
+        jdbc.execute("DROP DATABASE [" + dbName + "]");
+        log.info("Task-Mgmt-IT Wegwerf-DB gedroppt: {} (Versuch {})", dbName, attempt);
+        return;
+      } catch (RuntimeException e) {
+        if (isSqlErrorDbInUse(e) && attempt < DROP_MAX_RETRIES) {
+          log.warn(
+              "DROP {} fehlgeschlagen (3702 - DB in use), Versuch {}/{} - warte {}ms...",
+              dbName,
+              attempt,
+              DROP_MAX_RETRIES,
+              DROP_RETRY_WAIT_MS);
+          try {
+            Thread.sleep(DROP_RETRY_WAIT_MS);
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("DROP-Retry unterbrochen.", ie);
+          }
+          lastException = e;
+        } else {
+          throw e;
+        }
+      }
+    }
+    // Letzter Versuch fehlgeschlagen
+    throw lastException != null
+        ? lastException
+        : new RuntimeException("DROP DATABASE [" + dbName + "] nach " + DROP_MAX_RETRIES + " Versuchen fehlgeschlagen.");
+  }
+
+  /**
+   * Prueft, ob der SQL-Fehlercode 3702 ("currently in use") vorliegt.
+   *
+   * @param e die gefangene RuntimeException
+   * @return true, wenn es sich um Fehlercode 3702 handelt
+   */
+  private static boolean isSqlErrorDbInUse(final RuntimeException e) {
+    Throwable cause = e;
+    while (cause != null) {
+      if (cause instanceof SQLServerException sqlEx) {
+        return sqlEx.getErrorCode() == SQL_ERROR_DB_IN_USE;
+      }
+      cause = cause.getCause();
+    }
+    return false;
   }
 
   /**

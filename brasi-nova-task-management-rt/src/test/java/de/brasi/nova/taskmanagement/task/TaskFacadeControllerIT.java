@@ -10,7 +10,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
+import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
+import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -18,6 +21,8 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
 import io.jsonwebtoken.Jwts;
 import io.keel.framework.api.security.AuditorProvider;
+import io.keel.framework.api.security.tenant.TenantContextHolder;
+import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfiguration;
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
@@ -31,6 +36,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -201,6 +207,8 @@ class TaskFacadeControllerIT {
 
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private TaskKeysetQueryRepository keysetQueryRepository;
+  @Autowired private DictionaryCodeResolver dictionaryCodeResolver;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -341,6 +349,181 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- MAJOR 1: PATCH auf fremde/nicht-existente UUID -> 404 ------------------------------------
+
+  @Test
+  @DisplayName("patch_nicht_existent_und_fremd_liefert_404: beide Faelle liefern 404, ununterscheidbar")
+  void patch_nicht_existent_und_fremd_liefert_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // (a) Zufaellige UUID (existiert nicht) -> 404
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+    mvc.perform(
+            patch("/api/v1/tasks/" + UUID.randomUUID())
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "Irgendwas"))))
+        .andExpect(status().isNotFound());
+
+    // (b) Fremder Tenant: User A legt Task an, User B (Tenant B) versucht PATCH -> 404
+    final String createBody = om.writeValueAsString(Map.of("title", "Tenant-A-Patch-Test"));
+    final String postResp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // User B versucht PATCH auf Task von Tenant A -> 404 (nicht 409!)
+    final String tokenB = buildJwtWithAuthority(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN,
+        "task-management:TASK_WRITE");
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenB)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "Fremder Zugriff"))))
+        .andExpect(status().isNotFound());
+  }
+
+  // ---- MAJOR 3: ungueltige Client-Codes -> 400 -------------------------------------------------
+
+  @Test
+  @DisplayName("post_unbekannter_priorityCode_liefert_400: unbekannter priorityCode -> 400")
+  void post_unbekannter_priority_code_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+    mvc.perform(
+            post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(
+                    Map.of("title", "400-Test", "priorityCode", "GIBTS_NICHT"))))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @DisplayName("patch_unbekannter_statusCode_liefert_400: unbekannter statusCode -> 400")
+  void patch_unbekannter_status_code_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // Erst Task anlegen
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+    final String postResp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", "Status-400-Test"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // PATCH mit unbekanntem statusCode -> 400
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("statusCode", "GIBTS_NICHT"))))
+        .andExpect(status().isBadRequest());
+  }
+
+  // ---- MINOR 2: Creator-Participant-Flags + Inbox-Sichtbarkeit ---------------------------------
+
+  @Test
+  @DisplayName(
+      "post_creator_participant_flags_und_inbox_sichtbar: CREATOR_FLAG=1/ASSIGNEE_FLAG=1 in DB"
+          + " und Task via findActivePage fuer Creator sichtbar")
+  void post_creator_participant_flags_und_inbox_sichtbar() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    om.registerModule(new JavaTimeModule());
+
+    // POST: neuen Task anlegen
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final String createBody = om.writeValueAsString(Map.of("title", "Minor2-Creator-Test"));
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final UUID taskExternalId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+    assertThat(taskExternalId).as("POST muss UUID zurueckgeben").isNotNull();
+
+    // (a) CREATOR_FLAG=1 und ASSIGNEE_FLAG=1 in TASK_PARTICIPANT pruefen
+    final Integer creatorParticipantCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] "
+                + "WHERE PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 1",
+            Integer.class,
+            USER_A_REF);
+    assertThat(creatorParticipantCount)
+        .as("Creator muss CREATOR_FLAG=1 und ASSIGNEE_FLAG=1 in TASK_PARTICIPANT haben")
+        .isGreaterThanOrEqualTo(1);
+
+    // (b) Task via findActivePage (benutzerscoped, aufgeloeste OPEN-Id) fuer Creator sichtbar
+    final Long openStatusId;
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      openStatusId = dictionaryCodeResolver.resolveTaskStatusOpen();
+    } finally {
+      TenantContextHolder.clear();
+    }
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
+      final List<Task> activeTasks =
+          keysetQueryRepository.findActivePage(
+              USER_A_REF,
+              openStatusId,
+              asOf,
+              asOf,
+              UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+              10);
+      final boolean taskFound =
+          activeTasks.stream()
+              .anyMatch(t -> taskExternalId.equals(t.getUuid()));
+      assertThat(taskFound)
+          .as("Task muss in der benutzerscoped Inbox-Seite fuer den Creator sichtbar sein")
+          .isTrue();
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -435,6 +618,7 @@ class TaskFacadeControllerIT {
         "de.brasi.nova.taskmanagement.inbox",
         "de.brasi.nova.taskmanagement.push",
         "de.brasi.nova.taskmanagement.refentity",
+        "de.brasi.nova.taskmanagement.repository",
       },
       excludeFilters = {
         @org.springframework.context.annotation.ComponentScan.Filter(

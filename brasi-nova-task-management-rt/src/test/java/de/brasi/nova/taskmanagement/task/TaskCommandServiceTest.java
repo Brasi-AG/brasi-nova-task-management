@@ -1,14 +1,16 @@
 package de.brasi.nova.taskmanagement.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
@@ -16,14 +18,18 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
+import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
+import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.service.model.PatchValue;
+import io.keel.framework.api.validation.EntityValidationException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +41,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -49,6 +57,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class TaskCommandServiceTest {
 
   private static final long TENANT_ID = 500L;
@@ -61,6 +70,7 @@ class TaskCommandServiceTest {
 
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskParticipantRepository participantRepository;
+  @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private DictionaryCodeResolver resolver;
   @Mock private UserAccessor userAccessor;
   @Mock private UserStateService userStateService;
@@ -75,6 +85,7 @@ class TaskCommandServiceTest {
         new TaskCommandService(
             taskRepository,
             participantRepository,
+            userStateQueryRepository,
             resolver,
             userAccessor,
             userStateService,
@@ -194,6 +205,127 @@ class TaskCommandServiceTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  // ---- MAJOR 1: patch auf unbekannte UUID -> 404 -----------------------------------------------
+
+  @Test
+  @DisplayName("patch_nicht_gefundene_uuid_liefert_404: EntityNotFoundException bei unbekannter UUID")
+  void patch_nicht_gefundene_uuid_liefert_404() {
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+  }
+
+  @Test
+  @DisplayName("patch_fremder_tenant_liefert_404: EntityNotFoundException bei fremdem Mandant,"
+      + " identische Meldung wie nicht gefunden")
+  void patch_fremder_tenant_liefert_404() {
+    // Task gehoert Mandant TENANT_ID+1 (anderer Tenant als der aktuelle Benutzer)
+    final Task foreignTask = taskWithId(99L, UUID.randomUUID());
+    foreignTask.setTenantId(TENANT_ID + 1);
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(foreignTask));
+
+    assertThatThrownBy(
+            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+  }
+
+  // ---- MAJOR 2: patch invalidiert alle aktiven Teilnehmer ----------------------------------------
+
+  @Test
+  @DisplayName("patch_invalidiert_alle_aktiven_teilnehmer: A und B werden invalidiert wenn B patcht")
+  void patch_invalidiert_alle_aktiven_teilnehmer() {
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID patcherRef = USER_REF; // aktueller Benutzer (aus setUp)
+
+    final Long taskId = 55L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+
+    // Zwei aktive Teilnehmer: Creator + Patcher
+    final TaskUserState stateCreator = new TaskUserState();
+    stateCreator.setUserRef(creatorRef);
+    stateCreator.setTaskId(taskId);
+    stateCreator.setTenantId(TENANT_ID);
+    final TaskUserState statePatcher = new TaskUserState();
+    statePatcher.setUserRef(patcherRef);
+    statePatcher.setTaskId(taskId);
+    statePatcher.setTenantId(TENANT_ID);
+
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(stateCreator, statePatcher));
+
+    when(resolver.resolveTaskStatus(TaskStatusCodes.OPEN)).thenReturn(STATUS_ID_OPEN);
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent()));
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
+
+    assertThat(refsCaptor.getValue())
+        .as("invalidate muss sowohl Creator als auch Patcher enthalten")
+        .containsExactlyInAnyOrder(creatorRef, patcherRef);
+  }
+
+  // ---- MAJOR 3: unbekannte Client-Codes -> 400 -------------------------------------------------
+
+  @Test
+  @DisplayName("create_ungültiger_priorityCode_liefert_400: EntityValidationException bei unbekanntem Code")
+  void create_ungultiger_priority_code_liefert_400() {
+    when(resolver.resolveTaskPriority("UNBEKANNT_CODE"))
+        .thenThrow(new DictionaryResolverException("CODE 'UNBEKANNT_CODE' nicht gefunden."));
+
+    assertThatThrownBy(
+            () -> service.create(
+                new TaskCreateInput("Titel", null, "UNBEKANNT_CODE", null, null)))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessageContaining("UNBEKANNT_CODE");
+  }
+
+  @Test
+  @DisplayName("patch_ungültiger_statusCode_liefert_400: EntityValidationException bei unbekanntem statusCode")
+  void patch_ungultiger_status_code_liefert_400() {
+    final Task task = taskWithId(77L, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    when(resolver.resolveTaskStatus("UNGUELTIG_STATUS"))
+        .thenThrow(new DictionaryResolverException("CODE 'UNGUELTIG_STATUS' nicht gefunden."));
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.of("UNGUELTIG_STATUS"))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessageContaining("UNGUELTIG_STATUS");
+  }
+
+  @Test
+  @DisplayName("patch_leerer_statusCode_liefert_400: EntityValidationException bei leerem statusCode")
+  void patch_leerer_status_code_liefert_400() {
+    final Task task = taskWithId(78L, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.of(""))))
+        .isInstanceOf(EntityValidationException.class);
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------

@@ -61,4 +61,31 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
               + "AND TASK_ID = :taskId "
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskUserState> findByTaskId(@Param("taskId") Long taskId);
+
+  /**
+   * Liefert alle aktiven Teilnehmer einer Aufgabe (UNSUBSCRIBED_AT IS NULL).
+   *
+   * <p>Wird von {@link de.brasi.nova.taskmanagement.task.TaskCommandService#patch} verwendet,
+   * um nach einem Commit alle betroffenen Benutzer-Inboxen zu invalidieren.
+   * Kein {@code tenantId}-Parameter: automatisch vom KSF-NovaQueryTenantValidator gebunden.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @return alle aktiven (nicht abgemeldeten) Teilnehmer-Zustandseintraege
+   */
+  @NovaQuery(
+      value =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM TASK_USER_STATE "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND UNSUBSCRIBED_AT IS NULL "
+              + "AND ENTITY_STATUS = 'ACTIVE'",
+      mssql =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM [dbo].[TASK_USER_STATE] "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND UNSUBSCRIBED_AT IS NULL "
+              + "AND ENTITY_STATUS = 'ACTIVE'")
+  List<TaskUserState> findActiveUserRefsByTaskId(@Param("taskId") Long taskId);
 }
