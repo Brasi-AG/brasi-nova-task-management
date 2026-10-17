@@ -31,6 +31,7 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       value =
           "SELECT TOP (:limit) n.* FROM TASK_NOTIFICATION n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND (n.ANGELEGT_AM < :afterCreatedAt"
               + "   OR (n.ANGELEGT_AM = :afterCreatedAt AND n.EXTERNALID < :afterExternalId))"
@@ -38,6 +39,7 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       mssql =
           "SELECT TOP (:limit) n.* FROM [dbo].[TASK_NOTIFICATION] n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND (n.ANGELEGT_AM < :afterCreatedAt"
               + "   OR (n.ANGELEGT_AM = :afterCreatedAt AND n.EXTERNALID < :afterExternalId))"
@@ -60,11 +62,13 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       value =
           "SELECT TOP (:limit) n.* FROM TASK_NOTIFICATION n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " ORDER BY n.ANGELEGT_AM DESC, n.EXTERNALID DESC",
       mssql =
           "SELECT TOP (:limit) n.* FROM [dbo].[TASK_NOTIFICATION] n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " ORDER BY n.ANGELEGT_AM DESC, n.EXTERNALID DESC")
   List<TaskNotification> findFirstPage(UUID userRef, int limit);
@@ -81,12 +85,14 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       value =
           "SELECT TOP (:limit) n.* FROM TASK_NOTIFICATION n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0"
               + " ORDER BY n.ANGELEGT_AM DESC, n.EXTERNALID DESC",
       mssql =
           "SELECT TOP (:limit) n.* FROM [dbo].[TASK_NOTIFICATION] n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0"
               + " ORDER BY n.ANGELEGT_AM DESC, n.EXTERNALID DESC")
@@ -106,6 +112,7 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       value =
           "SELECT TOP (:limit) n.* FROM TASK_NOTIFICATION n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0"
               + " AND (n.ANGELEGT_AM < :afterCreatedAt"
@@ -114,6 +121,7 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       mssql =
           "SELECT TOP (:limit) n.* FROM [dbo].[TASK_NOTIFICATION] n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0"
               + " AND (n.ANGELEGT_AM < :afterCreatedAt"
@@ -136,11 +144,13 @@ public interface NotificationQueryRepository extends BaseTaskNotificationReposit
       value =
           "SELECT n.* FROM TASK_NOTIFICATION n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0",
       mssql =
           "SELECT n.* FROM [dbo].[TASK_NOTIFICATION] n"
               + " WHERE n.TENANT_ID = :tenantId"
+              + " AND n.ENTITY_STATUS = 'ACTIVE'"
               + " AND n.RECIPIENT_REF = :userRef"
               + " AND n.IS_READ = 0")
   List<TaskNotification> findUnreadAllForUser(UUID userRef);

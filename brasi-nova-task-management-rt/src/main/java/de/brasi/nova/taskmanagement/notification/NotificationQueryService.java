@@ -13,10 +13,15 @@ import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -116,10 +121,17 @@ public class NotificationQueryService {
         raw = queryRepository.findFirstPage(userRef, effectiveLimit + 1);
       }
     } else {
-      // Folgeseite: Cursor dekodieren (R12: LocalDateTime + UUID)
+      // Folgeseite: Cursor dekodieren (R12: LocalDateTime + UUID); semantische Token-Validierung
+      // kapselt DateTimeParseException + IllegalArgumentException -> 400 (F-P1-Fix)
       final List<String> tokens = KeysetCursor.decode(cursor, 2);
-      final LocalDateTime afterCreatedAt = LocalDateTime.parse(tokens.get(0));
-      final UUID afterExternalId = UUID.fromString(tokens.get(1));
+      final LocalDateTime afterCreatedAt;
+      final UUID afterExternalId;
+      try {
+        afterCreatedAt = LocalDateTime.parse(tokens.get(0));
+        afterExternalId = UUID.fromString(tokens.get(1));
+      } catch (DateTimeParseException | IllegalArgumentException e) {
+        throw new EntityValidationException("Ungueltiger cursor.");
+      }
 
       if (FILTER_UNREAD.equals(resolvedFilter)) {
         raw = queryRepository.findUnreadPage(
@@ -147,10 +159,13 @@ public class NotificationQueryService {
       nextCursor = null;
     }
 
+    // F-P2b: Task-UUIDs fuer die Seite EINMAL per Batch laden statt per-row
+    final Map<Long, UUID> taskUuidMap = batchLoadTaskUuids(page);
+
     // Entities in Models mappen
     final List<NotificationModel> items = new ArrayList<>();
     for (final TaskNotification entity : page) {
-      items.add(toModel(entity));
+      items.add(toModel(entity, taskUuidMap));
     }
 
     return new NotificationPage(items, nextCursor, hasMore);
@@ -223,28 +238,55 @@ public class NotificationQueryService {
   // ---- Mapping -----------------------------------------------------------------
 
   /**
+   * Laedt alle Task-UUIDs fuer die gegebene Seite in EINEM Batch-Aufruf vor (F-P2b-Fix).
+   *
+   * <p>Ermittelt die distinct nicht-null {@code taskId}s der Seite, laedt die {@link Task}-Entities
+   * per {@code findAllById} (batch) und baut eine ID-zu-UUID-Map auf.
+   * Null-safe: fehlt ein Task in der DB, fehlt sein Eintrag in der Map (toModel liefert null).
+   *
+   * @param page die Notification-Entities der aktuellen Seite
+   * @return Map von interner Task-ID zu externer Task-UUID
+   */
+  private Map<Long, UUID> batchLoadTaskUuids(final List<TaskNotification> page) {
+    final Set<Long> taskIds = page.stream()
+        .map(TaskNotification::getTaskId)
+        .filter(id -> id != null)
+        .collect(Collectors.toSet());
+
+    if (taskIds.isEmpty()) {
+      return Map.of();
+    }
+
+    final List<Task> tasks = taskRepository.findAllById(taskIds);
+    final Map<Long, UUID> result = new HashMap<>(tasks.size() * 2);
+    for (final Task t : tasks) {
+      result.put(t.getId(), t.getUuid());
+    }
+    return result;
+  }
+
+  /**
    * Mappt eine {@link TaskNotification} auf ein {@link NotificationModel}.
    *
-   * <p>taskId (R6): interne Task-ID wird auf externe Task-UUID aufgeloest (null-safe; defensiv
-   * wenn Task nicht gefunden).
+   * <p>taskId (R6): wird null-safe aus der vorgeladenen {@code taskUuidMap} aufgeloest (F-P2b).
    * createdAt (R7): AuditTimeConverter-Instant (PFLICHT).
-   * typeCode/severityCode: ueber DictionaryCodeResolver aufgeloest.
+   * typeCode/severityCode: ueber DictionaryCodeResolver aufgeloest (gecacht, F-P2b).
    *
-   * @param entity die Notification-Entity
+   * @param entity      die Notification-Entity
+   * @param taskUuidMap vorgeladene Map von interner Task-ID zu externer UUID
    * @return gemapptes Model
    */
-  private NotificationModel toModel(final TaskNotification entity) {
+  private NotificationModel toModel(
+      final TaskNotification entity, final Map<Long, UUID> taskUuidMap) {
     final String typeCode = resolver.resolveNotificationTypeCode(entity.getTypeId());
     final String severityCode = entity.getSeverityId() != null
         ? resolver.resolveNotificationSeverityCode(entity.getSeverityId())
         : null;
 
-    // R6: externe Task-UUID (null-safe; defensiv wenn Task nicht gefunden)
-    UUID taskUuid = null;
-    if (entity.getTaskId() != null) {
-      final Optional<Task> task = taskRepository.findById(entity.getTaskId());
-      taskUuid = task.map(Task::getUuid).orElse(null);
-    }
+    // R6: externe Task-UUID aus der Batch-Map (null-safe; defensiv wenn Task nicht gefunden)
+    final UUID taskUuid = entity.getTaskId() != null
+        ? taskUuidMap.get(entity.getTaskId())
+        : null;
 
     return new NotificationModel(
         entity.getUuid(),

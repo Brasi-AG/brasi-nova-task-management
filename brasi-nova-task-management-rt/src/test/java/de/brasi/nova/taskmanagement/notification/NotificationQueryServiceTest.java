@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskNotification;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
@@ -243,6 +244,72 @@ class NotificationQueryServiceTest {
     service.markRead(notifId, USER_REF, TENANT_ID);
 
     verify(notificationRepository).save(n); // trotzdem gespeichert (idempotent)
+  }
+
+  // ---- F-P2b: Seite mit mehreren Notifications zu unterschiedlichen Tasks -> korrekte UUIDs ----
+
+  @Test
+  @DisplayName("listFor_mehrere_notifications_mit_tasks_liefert_korrekte_externe_uuids")
+  void listFor_mehrere_notifications_mit_tasks_liefert_korrekte_externe_uuids() {
+    // Zwei unterschiedliche Tasks mit je eigener externer UUID
+    final Task task1 = new Task();
+    final UUID task1Uuid = UUID.randomUUID();
+    task1.setId(1001L);
+    task1.setUuid(task1Uuid);
+
+    final Task task2 = new Task();
+    final UUID task2Uuid = UUID.randomUUID();
+    task2.setId(1002L);
+    task2.setUuid(task2Uuid);
+
+    // Stub fuer Batch-findAllById (F-P2b: batch-Load aller Task-IDs der Seite)
+    when(taskRepository.findAllById(any())).thenReturn(List.of(task1, task2));
+
+    // Seite mit 2 Notifications, jede auf anderen Task
+    final List<TaskNotification> entities = new ArrayList<>();
+    final TaskNotification n1 = buildNotification();
+    n1.setTaskId(1001L);
+    n1.setUuid(UUID.randomUUID());
+    final TaskNotification n2 = buildNotification();
+    n2.setTaskId(1002L);
+    n2.setUuid(UUID.randomUUID());
+    entities.add(n1);
+    entities.add(n2);
+
+    when(queryRepository.findFirstPage(eq(USER_REF), eq(3))).thenReturn(entities);
+
+    final NotificationPage page = service.listFor(USER_REF, TENANT_ID, "all", null, 2);
+
+    assertThat(page.items()).hasSize(2);
+    // Beide Task-UUIDs muessen korrekt aufgeloest werden
+    final var taskUuids = page.items().stream()
+        .map(de.brasi.nova.taskmanagement.notification.model.NotificationModel::taskId)
+        .collect(java.util.stream.Collectors.toList());
+    assertThat(taskUuids).containsExactlyInAnyOrder(task1Uuid, task2Uuid);
+  }
+
+  // ---- F-P1: base64-gueltiger Cursor mit nicht-parsebarem Inhalt -> 400 ----------
+
+  @Test
+  @DisplayName("listFor_cursor_mit_nicht_parsebbarem_timestamp_wirft_EntityValidationException")
+  void listFor_cursor_mit_nicht_parsebbarem_timestamp_wirft_EntityValidationException() {
+    // base64url-gueltiger Cursor, aber Token[0] ist kein LocalDateTime
+    final String badTs = de.brasi.nova.taskmanagement.paging.KeysetCursor.encode(
+        List.of("KEIN_DATUM", UUID.randomUUID().toString()));
+
+    assertThatThrownBy(() -> service.listFor(USER_REF, TENANT_ID, "all", badTs, 10))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("listFor_cursor_mit_nicht_parsebarer_uuid_wirft_EntityValidationException")
+  void listFor_cursor_mit_nicht_parsebarer_uuid_wirft_EntityValidationException() {
+    // base64url-gueltiger Cursor, aber Token[1] ist keine UUID
+    final String badUuid = de.brasi.nova.taskmanagement.paging.KeysetCursor.encode(
+        List.of(LocalDateTime.now().toString(), "KEINE_UUID"));
+
+    assertThatThrownBy(() -> service.listFor(USER_REF, TENANT_ID, "all", badUuid, 10))
+        .isInstanceOf(EntityValidationException.class);
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------

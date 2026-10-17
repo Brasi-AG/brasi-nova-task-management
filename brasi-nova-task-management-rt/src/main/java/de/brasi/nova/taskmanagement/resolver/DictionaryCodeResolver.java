@@ -43,10 +43,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class DictionaryCodeResolver {
 
-  /** Cache-Schluessel: Dictionary-Klasse + CODE-String. */
+  /** Cache-Schluessel: Dictionary-Klasse + CODE-String (Forward: CODE -> ID). */
   record CacheKey(Class<?> dictionaryClass, String code) {}
 
+  /** Cache-Schluessel fuer Reverse-Lookup: Dictionary-Name + interne ID -> CODE. */
+  record ReverseCacheKey(String dictName, Long id) {}
+
+  /** Forward-Cache: Dictionary-Klasse + CODE -> interne Long-ID. */
   private final ConcurrentHashMap<CacheKey, Long> cache = new ConcurrentHashMap<>();
+
+  /**
+   * Reverse-Cache: Dictionary-Name + interne ID -> CODE.
+   *
+   * <p>Dasselbe Invarianzargument wie der Forward-Cache: alle 6 System-Dictionaries sind
+   * seed-only/read-only in Phase 1a (keine Write-Controller). Cache-Invalidierung bewusst ignoriert.
+   */
+  private final ConcurrentHashMap<ReverseCacheKey, String> reverseCache =
+      new ConcurrentHashMap<>();
 
   private final TaskStatusRepository taskStatusRepository;
   private final TaskPriorityRepository taskPriorityRepository;
@@ -270,6 +283,14 @@ public class DictionaryCodeResolver {
       final Long id,
       final String dictName) {
     Objects.requireNonNull(id, "id darf nicht null sein");
+
+    // Reverse-Cache pruefen (F-P2b-Fix: verhindert N+1 bei wiederholten Aufrufen je Seite)
+    final ReverseCacheKey reverseKey = new ReverseCacheKey(dictName, id);
+    final String cached = reverseCache.get(reverseKey);
+    if (cached != null) {
+      return cached;
+    }
+
     final Optional<T> result =
         TenantContextHolder.runWithTenant(TenantInfo.global(), () -> repository.findById(id));
     if (result.isEmpty()) {
@@ -277,7 +298,9 @@ public class DictionaryCodeResolver {
           String.format(
               "DictionaryCodeResolver: ID %d nicht gefunden in Dictionary '%s'.", id, dictName));
     }
-    return codeExtractor.apply(result.get());
+    final String code = codeExtractor.apply(result.get());
+    reverseCache.put(reverseKey, code);
+    return code;
   }
 
   /**

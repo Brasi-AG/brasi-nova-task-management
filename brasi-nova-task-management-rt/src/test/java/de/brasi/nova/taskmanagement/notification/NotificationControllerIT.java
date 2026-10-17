@@ -475,6 +475,75 @@ class NotificationControllerIT {
     }
   }
 
+  // ---- F-P1: base64-gueltiger Cursor mit semantisch kaputten Tokens -> HTTP 400 ----------
+
+  @Test
+  @DisplayName("get_notifications_malformed_cursor_liefert_400")
+  void get_notifications_malformed_cursor_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // base64url-gueltiger Cursor, Token[0] ist kein LocalDateTime
+    final String badCursor = de.brasi.nova.taskmanagement.paging.KeysetCursor.encode(
+        List.of("KEIN_DATUM", UUID.randomUUID().toString()));
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:NOTIFICATION_READ");
+
+    mvc.perform(get("/api/v1/notifications?cursor=" + badCursor)
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isBadRequest());
+  }
+
+  // ---- F-P2a: deaktivierte Notification nicht sichtbar ----------------------------------
+
+  @Test
+  @DisplayName("get_notifications_zeigt_keine_deaktivierten")
+  void get_notifications_zeigt_keine_deaktivierten() throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // Aktive Notification (soll sichtbar sein)
+    final UUID activeId = UUID.randomUUID();
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 40, activeId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, false, "Aktive Notif", LocalDateTime.now().minusMinutes(60));
+
+    // Deaktivierte Notification (soll NICHT sichtbar sein) - direkt per SQL mit DEACTIVE-Status
+    final UUID deactivatedId = UUID.randomUUID();
+    jdbcTemplate.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_NOTIFICATION] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_NOTIFICATION] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
+            + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
+            + "VALUES (?, 'DEACTIVE', ?, 1, ?, ?, ?, ?, ?, ?)",
+        NOTIF_ID_BASE + 41, NOTIF_ID_BASE + 41, deactivatedId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, 0, "Deaktivierte Notif",
+        java.sql.Timestamp.valueOf(LocalDateTime.now().minusMinutes(59)));
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:NOTIFICATION_READ");
+
+    final String json = mvc.perform(get("/api/v1/notifications")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+
+    final JsonNode root = new ObjectMapper().readTree(json);
+    boolean foundActive = false;
+    boolean foundDeactivated = false;
+    for (final JsonNode item : root.get("items")) {
+      final String id = item.get("id").asText();
+      if (activeId.toString().equals(id)) {
+        foundActive = true;
+      }
+      if (deactivatedId.toString().equals(id)) {
+        foundDeactivated = true;
+      }
+    }
+    assertThat(foundActive).as("Aktive Notification muss sichtbar sein").isTrue();
+    assertThat(foundDeactivated).as("Deaktivierte Notification darf NICHT sichtbar sein").isFalse();
+  }
+
   // ---- Negativ-Tests: 401 / 403 / 404 ---------------------------------------------------
 
   @Test
