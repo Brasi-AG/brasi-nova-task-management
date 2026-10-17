@@ -302,6 +302,58 @@ class DictionaryCatalogIT {
         .isEqualTo(rootB.get("notificationType").size());
   }
 
+  // ---- IT 3: Discriminator - future-dated Eintrag darf nicht im Katalog erscheinen ------
+
+  /**
+   * TDD-Discriminator-Test: Eine DIC_TASK_STATUS-Zeile mit GUELTIG_VON = morgen darf im
+   * Katalog-Ergebnis NICHT auftauchen.
+   *
+   * <p>Vor dem Fix (findAllActive = Basis-Criteria) wuerde sie erscheinen, da die Basis-Query
+   * kein GUELTIG_VON-Praedikat kennt. Nach dem Fix (findAllValidAndActive mit GUELTIG_VON-Filter)
+   * bleibt sie unsichtbar.
+   */
+  @Test
+  @DisplayName("future_dated_dict_eintrag_erscheint_nicht_im_katalog")
+  void future_dated_dict_eintrag_erscheint_nicht_im_katalog(
+      @Autowired JdbcTemplate jt) throws Exception {
+    final long futureEntryId = 59901L;
+    final UUID futureEntryUuid = UUID.fromString("00000099-0000-0099-0000-000000059901");
+    final String futureCode = "IT_FUTURE";
+
+    // Seed future-dated entry in DIC_TASK_STATUS (GUELTIG_VON = morgen)
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[DIC_TASK_STATUS] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[DIC_TASK_STATUS] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, ENTRY_TYPE, CODE, BEZEICHNUNG,"
+            + " ANGELEGT_VON, ANGELEGT_AM, GUELTIG_VON, GUELTIG_BIS) "
+            + "VALUES (?, 'ACTIVE', ?, 1, 0, 'SYSTEM_PUBLIC', ?, 'IT Future Entry',"
+            + " 'it-test', GETDATE(), CAST(DATEADD(day, 1, GETDATE()) AS DATE), NULL)",
+        futureEntryId, futureEntryId, futureEntryUuid, futureCode);
+
+    try {
+      final MockMvc mvc = buildMvc();
+      final String tokenA = buildJwtWithAuthority(
+          TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+          "task-management:TASK_READ");
+
+      final String json = mvc.perform(get("/api/v1/dictionaries")
+              .header("Authorization", "Bearer " + tokenA))
+          .andExpect(status().isOk())
+          .andReturn().getResponse().getContentAsString();
+
+      final JsonNode root = new ObjectMapper().readTree(json);
+      final JsonNode taskStatusList = root.get("taskStatus");
+      final List<String> codes = new java.util.ArrayList<>();
+      taskStatusList.forEach(e -> codes.add(e.get("code").asText()));
+
+      assertThat(codes)
+          .as("Future-dated DIC_TASK_STATUS-Eintrag IT_FUTURE darf nicht im Katalog erscheinen")
+          .doesNotContain(futureCode);
+    } finally {
+      jt.update("DELETE FROM [dbo].[DIC_TASK_STATUS] WHERE ID = ?", futureEntryId);
+    }
+  }
+
   // ---- Negativ-Tests: 401 / 403 -------------------------------------------------------
 
   @Test

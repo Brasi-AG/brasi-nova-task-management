@@ -38,23 +38,31 @@ public interface TaskPriorityRepository extends BaseTaskPriorityRepository {
   List<TaskPriority> findByCode(String code);
 
   /**
-   * Liefert alle aktiven DIC_TASK_PRIORITY-Eintraege, geordnet nach SORT_ORDER.
+   * Liefert alle aktiven, aktuell gueltigen DIC_TASK_PRIORITY-Eintraege, geordnet nach SORT_ORDER.
    * Laueft im globalen Scope (TENANT_ID=0).
    *
-   * @return Liste aller aktiven Task-Prioritaets-Eintraege
+   * <p>Eigener Methodenname (nicht {@code findAllActive}) notwendig, da {@code findAllActive}
+   * im Basis-Interface als Criteria-Query vorbelegt ist und {@code @NovaQuery} dort nicht greift
+   * (KSF bevorzugt die Criteria-Implementierung bei gleichem Methodennamen).
+   * Filtert zusaetzlich auf vollstaendiges Gueltigkeitspraedikat (GUELTIG_VON <= heute,
+   * GUELTIG_BIS IS NULL OR >= heute, Datumsvergleich per CAST).
+   *
+   * @return Liste aller aktiven und aktuell gueltigen Task-Prioritaets-Eintraege
    */
   @NovaQuery(
       value =
           "SELECT * FROM DIC_TASK_PRIORITY"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " ORDER BY SORT_ORDER",
       mssql =
           "SELECT * FROM [dbo].[DIC_TASK_PRIORITY]"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " ORDER BY SORT_ORDER")
-  List<TaskPriority> findAllActive();
+  List<TaskPriority> findAllValidAndActive();
 }

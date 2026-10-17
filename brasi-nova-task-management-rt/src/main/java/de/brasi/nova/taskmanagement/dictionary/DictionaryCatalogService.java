@@ -63,33 +63,33 @@ public class DictionaryCatalogService {
         TenantInfo.global(),
         () -> {
           final List<DictionaryEntryModel> taskStatus =
-              taskStatusRepository.findAllActive().stream()
+              taskStatusRepository.findAllValidAndActive().stream()
                   .map(e -> toEntry(e, null))
                   .toList();
 
           final List<DictionaryEntryModel> taskPriority =
-              taskPriorityRepository.findAllActive().stream()
+              taskPriorityRepository.findAllValidAndActive().stream()
                   .map(e -> new DictionaryEntryModel(
                       e.getUuid(), e.getCode(), e.getEntryValue(), e.getSortOrder()))
                   .toList();
 
           final List<DictionaryEntryModel> taskDirection =
-              taskDirectionRepository.findAllActive().stream()
+              taskDirectionRepository.findAllValidAndActive().stream()
                   .map(e -> toEntry(e, null))
                   .toList();
 
           final List<DictionaryEntryModel> notificationType =
-              notificationTypeRepository.findAllActive().stream()
+              notificationTypeRepository.findAllValidAndActive().stream()
                   .map(e -> toEntry(e, null))
                   .toList();
 
           final List<DictionaryEntryModel> notificationSeverity =
-              notificationSeverityRepository.findAllActive().stream()
+              notificationSeverityRepository.findAllValidAndActive().stream()
                   .map(e -> toEntry(e, null))
                   .toList();
 
           final List<DictionaryEntryModel> tagSeverity =
-              tagSeverityRepository.findAllActive().stream()
+              tagSeverityRepository.findAllValidAndActive().stream()
                   .map(e -> toEntry(e, null))
                   .toList();
 

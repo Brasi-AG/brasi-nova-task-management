@@ -38,23 +38,31 @@ public interface NotificationTypeRepository extends BaseNotificationTypeReposito
   List<NotificationType> findByCode(String code);
 
   /**
-   * Liefert alle aktiven DIC_NOTIFICATION_TYPE-Eintraege, geordnet nach CODE.
+   * Liefert alle aktiven, aktuell gueltigen DIC_NOTIFICATION_TYPE-Eintraege, geordnet nach CODE.
    * Laueft im globalen Scope (TENANT_ID=0).
    *
-   * @return Liste aller aktiven Benachrichtigungs-Typ-Eintraege
+   * <p>Eigener Methodenname (nicht {@code findAllActive}) notwendig, da {@code findAllActive}
+   * im Basis-Interface als Criteria-Query vorbelegt ist und {@code @NovaQuery} dort nicht greift
+   * (KSF bevorzugt die Criteria-Implementierung bei gleichem Methodennamen).
+   * Filtert zusaetzlich auf vollstaendiges Gueltigkeitspraedikat (GUELTIG_VON <= heute,
+   * GUELTIG_BIS IS NULL OR >= heute, Datumsvergleich per CAST).
+   *
+   * @return Liste aller aktiven und aktuell gueltigen Benachrichtigungs-Typ-Eintraege
    */
   @NovaQuery(
       value =
           "SELECT * FROM DIC_NOTIFICATION_TYPE"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " ORDER BY CODE",
       mssql =
           "SELECT * FROM [dbo].[DIC_NOTIFICATION_TYPE]"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " ORDER BY CODE")
-  List<NotificationType> findAllActive();
+  List<NotificationType> findAllValidAndActive();
 }
