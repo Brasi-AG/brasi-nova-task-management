@@ -81,6 +81,21 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!--
+			Flyway: Schema-Migration (V1 = task-management-Schema).
+			flyway-core: Basis-Engine. flyway-sqlserver: MSSQL-spezifische SQL-Dialekt-Unterstuetzung.
+			Version via Spring-Boot-BOM. Im Normalbetrieb deaktiviert (spring.flyway.enabled=false);
+			nur in ITs mit Wegwerf-DB eingeschaltet.
+		-->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-sqlserver</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>de.brasi.nova</groupId>
 			<artifactId>brasi-nova-task-management-api</artifactId>
