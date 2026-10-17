@@ -128,6 +128,53 @@ class MentionResolverTest {
     assertThat(result).containsExactly(externalUuid);
   }
 
+  // ---- Test 8: abschliessender Punkt wird abgeschnitten ------------------------------------------
+
+  @Test
+  @DisplayName(
+      "trailing_punkt_abgeschnitten: '@alice.' -> Handle 'alice' aufgeloest, nicht 'alice.'")
+  void trailing_punkt_abgeschnitten() {
+    final User alice = userWithUuid(ALICE_UUID);
+
+    when(userReadRepository.findByLoginName("alice")).thenReturn(Optional.of(alice));
+
+    final List<UUID> result = resolver.resolve("Bitte @alice.");
+
+    assertThat(result).containsExactly(ALICE_UUID);
+  }
+
+  // ---- Test 9: Bindestrich intern erlaubt --------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "bindestrich_intern_erlaubt: '@user-b-comment,' -> Handle 'user-b-comment' aufgeloest")
+  void bindestrich_intern_erlaubt() {
+    final UUID userUuid = UUID.randomUUID();
+    final User user = userWithUuid(userUuid);
+
+    when(userReadRepository.findByLoginName("user-b-comment")).thenReturn(Optional.of(user));
+
+    final List<UUID> result = resolver.resolve("@user-b-comment, danke");
+
+    assertThat(result).containsExactly(userUuid);
+  }
+
+  // ---- Test 10: interner Punkt bleibt erhalten ---------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "interner_punkt_bleibt_erhalten: '@al.ice' -> Handle 'al.ice' unveraendert an Repository")
+  void interner_punkt_bleibt_erhalten() {
+    final UUID userUuid = UUID.randomUUID();
+    final User user = userWithUuid(userUuid);
+
+    when(userReadRepository.findByLoginName("al.ice")).thenReturn(Optional.of(user));
+
+    final List<UUID> result = resolver.resolve("Hallo @al.ice bitte pruefen");
+
+    assertThat(result).containsExactly(userUuid);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static User userWithUuid(final UUID uuid) {

@@ -18,7 +18,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -262,15 +262,16 @@ public class CommentService {
   /**
    * Konvertiert ein {@link LocalDateTime} (ANGELEGT_AM aus der Nova-Basis) in ein {@link Instant}.
    *
-   * <p>Verwendet die System-Zeitzone als Konvertierungsgrundlage.
+   * <p>Verwendet UTC als Konvertierungsgrundlage, identisch zu {@code TaskDetailService}
+   * (KSF-Konvention: alle Audit-Zeitstempel werden als UTC-gespeicherte Werte behandelt).
    *
    * @param ldt Zeitstempel aus der Datenbank (kann null sein, wenn KSF noch nicht gesetzt hat)
-   * @return Instant oder {@code Instant.now()} als Fallback
+   * @return Instant (UTC) oder {@code Instant.now()} als Fallback
    */
   private static Instant toInstant(final LocalDateTime ldt) {
     if (ldt == null) {
       return Instant.now();
     }
-    return ldt.atZone(ZoneId.systemDefault()).toInstant();
+    return ldt.toInstant(ZoneOffset.UTC);
   }
 }

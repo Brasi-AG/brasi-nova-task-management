@@ -27,7 +27,9 @@ import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -397,6 +399,36 @@ class CommentServiceTest {
             () -> service.createComment(
                 taskUuid, new CommentCreateInput("Antwort.", parentUuid)))
         .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- Test 9: createdAt wird als UTC serialisiert -----------------------------------------------
+
+  @Test
+  @DisplayName(
+      "created_at_utc: ANGELEGT_AM wird via ZoneOffset.UTC konvertiert (nicht systemDefault)")
+  void created_at_utc() {
+    final Long taskId = 48L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    final LocalDateTime savedAt = LocalDateTime.of(2026, 1, 15, 12, 0, 0);
+    final Instant expectedInstant = savedAt.toInstant(ZoneOffset.UTC);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(savedAt);
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(mentionResolver.resolve(any())).thenReturn(List.of());
+
+    final CommentModel model =
+        service.createComment(taskUuid, new CommentCreateInput("UTC-Test.", null));
+
+    assertThat(model.createdAt()).isEqualTo(expectedInstant);
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------

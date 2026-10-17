@@ -15,7 +15,10 @@ import org.springframework.stereotype.Component;
 /**
  * Loest @handle-Mentions aus einem Kommentartext zu UUID-Listen auf.
  *
- * <p>Parst alle {@code @handle}-Token aus dem Text per Regex {@code @([A-Za-z0-9._-]+)},
+ * <p>Parst alle {@code @handle}-Token aus dem Text per Regex
+ * {@code @([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)},
+ * wobei Handles mit einem alphanumerischen Zeichen beginnen und enden muessen
+ * (fuehrende/abschliessende Punkte/Bindestriche/Unterstriche werden abgeschnitten),
  * loest jeden eindeutigen Handle per {@link UserReadRepository#findByLoginName(String)} auf
  * (Mandant automatisch durch den Tenant-Kontext gebunden) und gibt die externe UUID
  * (EXTERNALID = {@code getUuid()}) der aufgeloesten Benutzer zurueck.
@@ -27,7 +30,8 @@ public class MentionResolver {
   private static final Logger log = LoggerFactory.getLogger(MentionResolver.class);
 
   /** Regex-Muster fuer @handle-Tokens im Kommentartext. */
-  private static final Pattern MENTION_PATTERN = Pattern.compile("@([A-Za-z0-9._-]+)");
+  private static final Pattern MENTION_PATTERN =
+      Pattern.compile("@([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)");
 
   private final UserReadRepository userReadRepository;
 
