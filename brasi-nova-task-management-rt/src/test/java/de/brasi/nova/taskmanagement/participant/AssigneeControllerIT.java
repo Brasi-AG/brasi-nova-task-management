@@ -386,6 +386,365 @@ class AssigneeControllerIT {
     }
   }
 
+  // ---- MAJOR 1 IT: Creator-Schutz - Creator bleibt nach PUT ohne Creator aktiv ---------------
+
+  @Test
+  @DisplayName(
+      "creator_bleibt_nach_put_ohne_creator: PUT mit leerer Menge -> Creator kein EXIT_KIND,"
+          + " Task in findActivePage fuer Creator")
+  void creator_bleibt_nach_put_ohne_creator() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Task anlegen (USER_A = Creator)
+    final String createBody = om.writeValueAsString(Map.of("title", "Creator-Schutz-IT-Task"));
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // PUT ohne Creator (leeres Array)
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of()))))
+        .andExpect(status().isNoContent());
+
+    // Beweis 1: Creator-Participant hat KEIN EXIT_KIND
+    final Integer creatorExitCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+                + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.CREATOR_FLAG = 1 AND p.EXIT_KIND IS NOT NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            USER_A_REF);
+    assertThat(creatorExitCount)
+        .as("Creator-Participant darf kein EXIT_KIND haben")
+        .isEqualTo(0);
+
+    // Beweis 2: Creator-UserState hat KEIN UNSUBSCRIBED_AT
+    final Integer creatorUnsubCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+            Integer.class,
+            taskId,
+            USER_A_REF);
+    assertThat(creatorUnsubCount)
+        .as("Creator-UserState darf kein UNSUBSCRIBED_AT haben")
+        .isEqualTo(0);
+
+    // Beweis 3: Task ist in findActivePage fuer Creator
+    final Long openStatusId;
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      openStatusId = dictionaryCodeResolver.resolveTaskStatusOpen();
+    } finally {
+      TenantContextHolder.clear();
+    }
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
+      final List<de.brasi.nova.taskmanagement.entity.Task> activeTasks =
+          keysetQueryRepository.findActivePage(
+              USER_A_REF,
+              openStatusId,
+              asOf,
+              asOf,
+              UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+              10);
+      assertThat(activeTasks.stream().anyMatch(t -> taskId.equals(t.getUuid())))
+          .as("Creator-Task muss nach PUT-ohne-Creator in findActivePage sichtbar bleiben")
+          .isTrue();
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
+  // ---- MAJOR 2 IT: HANDOVER-Exit -> Task NICHT in findActivePage, aber in findArchiveLeftPage -
+
+  @Test
+  @DisplayName(
+      "handover_exit_nicht_in_active_page: nach exit(HANDOVER) Task NICHT in findActivePage,"
+          + " aber UNSUBSCRIBED_AT gesetzt")
+  void handover_exit_nicht_in_active_page() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Task anlegen (USER_A = Creator + Assignee -> hat UserState)
+    final String createBody = om.writeValueAsString(Map.of("title", "HANDOVER-ActivePage-IT-Task"));
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // Exit HANDOVER
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER"))))
+        .andExpect(status().isNoContent());
+
+    // Beweis 1: UNSUBSCRIBED_AT im UserState gesetzt (MAJOR 2)
+    final Integer unsubCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+            Integer.class,
+            taskId,
+            USER_A_REF);
+    assertThat(unsubCount)
+        .as("UNSUBSCRIBED_AT muss nach HANDOVER gesetzt sein")
+        .isEqualTo(1);
+
+    // Beweis 2: Task ist NICHT in findActivePage (MAJOR 2)
+    final Long openStatusId;
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      openStatusId = dictionaryCodeResolver.resolveTaskStatusOpen();
+    } finally {
+      TenantContextHolder.clear();
+    }
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
+      final List<de.brasi.nova.taskmanagement.entity.Task> activeTasks =
+          keysetQueryRepository.findActivePage(
+              USER_A_REF,
+              openStatusId,
+              asOf,
+              asOf,
+              UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+              10);
+      assertThat(activeTasks.stream().anyMatch(t -> taskId.equals(t.getUuid())))
+          .as("Task darf nach HANDOVER NICHT in findActivePage erscheinen")
+          .isFalse();
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
+  // ---- MAJOR 3 IT: Reassign -> UserState reaktiviert, Task wieder in findActivePage ----------
+
+  @Test
+  @DisplayName(
+      "reassign_reaktiviert_userstate: assign -> remove -> reassign"
+          + " -> Task wieder in findActivePage, UNSUBSCRIBED_AT null")
+  void reassign_reaktiviert_userstate() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Task anlegen
+    final String createBody = om.writeValueAsString(Map.of("title", "Reassign-Reaktivierung-IT-Task"));
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // Schritt 1: ASSIGNEE_REF zuweisen
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Schritt 2: ASSIGNEE_REF abwaehlen (Creator USER_A bleibt)
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of()))))
+        .andExpect(status().isNoContent());
+
+    // Zwischenstand: ASSIGNEE_REF hat UNSUBSCRIBED_AT gesetzt
+    final Integer midUnsubCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+            Integer.class,
+            taskId,
+            ASSIGNEE_REF);
+    assertThat(midUnsubCount)
+        .as("ASSIGNEE_REF muss nach Abwahl UNSUBSCRIBED_AT gesetzt haben")
+        .isEqualTo(1);
+
+    // Schritt 3: ASSIGNEE_REF erneut zuweisen (Reassign)
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Beweis 1: UNSUBSCRIBED_AT nach Reassign wieder null
+    final Integer afterUnsubCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NULL",
+            Integer.class,
+            taskId,
+            ASSIGNEE_REF);
+    assertThat(afterUnsubCount)
+        .as("UNSUBSCRIBED_AT muss nach Reassign wieder null sein")
+        .isEqualTo(1);
+
+    // Beweis 2: EXIT_KIND am Participant null (reaktiviert)
+    final Integer exitKindNullCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+                + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.ASSIGNEE_FLAG = 1 AND p.EXIT_KIND IS NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
+    assertThat(exitKindNullCount)
+        .as("EXIT_KIND muss nach Reassign null sein (Participant reaktiviert)")
+        .isEqualTo(1);
+
+    // Beweis 3: Task wieder in findActivePage fuer ASSIGNEE_REF
+    final Long openStatusId;
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      openStatusId = dictionaryCodeResolver.resolveTaskStatusOpen();
+    } finally {
+      TenantContextHolder.clear();
+    }
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
+      final List<de.brasi.nova.taskmanagement.entity.Task> activeTasks =
+          keysetQueryRepository.findActivePage(
+              ASSIGNEE_REF,
+              openStatusId,
+              asOf,
+              asOf,
+              UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+              10);
+      assertThat(activeTasks.stream().anyMatch(t -> taskId.equals(t.getUuid())))
+          .as("Task muss nach Reassign wieder in findActivePage fuer ASSIGNEE_REF erscheinen")
+          .isTrue();
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
+  // ---- MINOR IT: null/fehlendes assignees -> 400 -----------------------------------------------
+
+  @Test
+  @DisplayName("null_assignees_liefert_400: PUT ohne assignees-Feld oder mit null -> HTTP 400")
+  void null_assignees_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Beliebige Task-UUID (Validierung schlaegt vor Task-Lookup fehl - DTO-Ebene)
+    // Aber: Task muss existieren, damit die Validierung ueberhaupt greift.
+    // Wir testen mit einem Task, den wir anlegen:
+    final String createBody = om.writeValueAsString(Map.of("title", "MINOR-Validation-IT-Task"));
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // 1. PUT mit fehlendem assignees-Feld -> 400
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isBadRequest());
+
+    // 2. PUT mit assignees=null -> 400
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assignees\":null}"))
+        .andExpect(status().isBadRequest());
+
+    // 3. PUT mit leerem Array [] -> OK (204)
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of()))))
+        .andExpect(status().isNoContent());
+  }
+
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test

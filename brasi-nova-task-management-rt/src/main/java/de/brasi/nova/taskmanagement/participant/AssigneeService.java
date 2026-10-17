@@ -111,16 +111,26 @@ public class AssigneeService {
 
     final Set<UUID> desiredRefs = input.assignees();
 
+    // Creator-UUIDs ermitteln (duerfen nie abgewaehlt werden)
+    final Set<UUID> creatorRefs =
+        currentAssignees.stream()
+            .filter(TaskParticipant::isCreatorFlag)
+            .map(TaskParticipant::getParticipantRef)
+            .collect(Collectors.toSet());
+
     // Neue Assignees: in desired, aber nicht in current
     final Set<UUID> toAdd =
         desiredRefs.stream()
             .filter(ref -> !currentRefs.contains(ref))
             .collect(Collectors.toSet());
 
-    // Abgewaehlte Assignees: in current, aber nicht in desired (Creator-Schutz: Creator bleibt)
+    // Abgewaehlte Assignees: in current, aber nicht in desired.
+    // Creator-Schutz: Participants mit CREATOR_FLAG=1 werden aus toRemove ausgeschlossen
+    // (Creator ist unveraenderlich Teilnehmer seiner eigenen Aufgabe - Task-8-Invariante).
     final Set<UUID> toRemove =
         currentRefs.stream()
             .filter(ref -> !desiredRefs.contains(ref))
+            .filter(ref -> !creatorRefs.contains(ref))
             .collect(Collectors.toSet());
 
     final List<UUID> affectedRefs = new ArrayList<>();
@@ -160,8 +170,10 @@ public class AssigneeService {
             taskExternalId);
       }
 
-      // UserState sicherstellen
-      userStateService.ensure(taskId, assigneeRef, tenantId);
+      // UserState reaktivieren: UNSUBSCRIBED_AT=null setzen (Reassign-Reaktivierung - MAJOR 3).
+      // reactivate stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT zurueckgesetzt
+      // wird. Damit erscheint der erneut zugewiesene Benutzer wieder in findActivePage.
+      userStateService.reactivate(taskId, assigneeRef, tenantId);
 
       // ASSIGN-Notification emittieren
       notificationService.emit(
@@ -230,8 +242,11 @@ public class AssigneeService {
    *   <li>Participant des aktuellen Akteurs laden; falls kein Eintrag -> 400
    *       ({@link EntityValidationException}).
    *   <li>EXIT_KIND + EXIT_AT auf dem Participant setzen.
-   *   <li>Wenn UNSUBSCRIBED: UNSUBSCRIBED_AT im {@link de.brasi.nova.taskmanagement.entity.TaskUserState} setzen.
-   *   <li>Wenn HANDOVER: HANDOVER-Notification emittieren.
+   *   <li>Bei JEDEM ExitKind: UNSUBSCRIBED_AT im {@link de.brasi.nova.taskmanagement.entity.TaskUserState}
+   *       setzen (Inbox-Konsistenz: Verlassen = raus aus aktiver Inbox, unabhaengig von der Exit-Art).
+   *   <li>Wenn HANDOVER: HANDOVER-Notification an den Akteur selbst emittieren (Selbstbestaetigung).
+   *       <b>1a-Einschraenkung:</b> Ein echtes Handover-Ziel ({@code handoverTo}) ist in Phase 1a
+   *       noch nicht modelliert; die Benachrichtigung des Uebernehmers ist ein spaeterer Schritt.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer den Akteur.
    * </ol>
    *
@@ -265,15 +280,15 @@ public class AssigneeService {
     participant.setExitAt(LocalDateTime.now());
     participantQueryRepository.save(participant);
 
-    // Bei UNSUBSCRIBED: UNSUBSCRIBED_AT im UserState setzen
-    if (ExitKind.UNSUBSCRIBED == input.exitKind()) {
-      final List<TaskUserState> states =
-          userStateQueryRepository.findByTaskIdAndUserRef(taskId, actorRef);
-      if (!states.isEmpty()) {
-        final TaskUserState state = states.get(0);
-        state.setUnsubscribedAt(LocalDateTime.now());
-        userStateQueryRepository.save(state);
-      }
+    // Bei JEDEM Exit: UNSUBSCRIBED_AT im UserState setzen (Inbox-Konsistenz - MAJOR 2).
+    // findActivePage filtert auf UNSUBSCRIBED_AT IS NULL -> nach HANDOVER UND UNSUBSCRIBED
+    // muss der Task aus der aktiven Inbox verschwinden.
+    final List<TaskUserState> states =
+        userStateQueryRepository.findByTaskIdAndUserRef(taskId, actorRef);
+    if (!states.isEmpty()) {
+      final TaskUserState state = states.get(0);
+      state.setUnsubscribedAt(LocalDateTime.now());
+      userStateQueryRepository.save(state);
     }
 
     // Bei HANDOVER: HANDOVER-Notification emittieren (an den Akteur selbst als Bestaetigung)

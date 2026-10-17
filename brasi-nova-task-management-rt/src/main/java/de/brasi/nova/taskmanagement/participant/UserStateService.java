@@ -62,6 +62,47 @@ public class UserStateService {
   }
 
   /**
+   * Reaktiviert den {@link TaskUserState} eines erneut zugewiesenen Benutzers.
+   *
+   * <p>Stellt sicher, dass ein Eintrag existiert (wie {@link #ensure}), und setzt
+   * {@code UNSUBSCRIBED_AT} auf {@code null} zurueck, sodass der Benutzer wieder in der
+   * aktiven Inbox erscheint ({@code findActivePage} filtert auf {@code UNSUBSCRIBED_AT IS NULL}).
+   * Laueft in der aktiven Transaktion des Aufrufers.
+   *
+   * @param taskId   interne Aufgaben-ID
+   * @param userRef  UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interner Mandanten-Schluessel
+   */
+  public void reactivate(final Long taskId, final UUID userRef, final Long tenantId) {
+    final List<TaskUserState> existing = repository.findByTaskIdAndUserRef(taskId, userRef);
+    if (existing.isEmpty()) {
+      // Kein Eintrag vorhanden -> neu anlegen (wie ensure)
+      final TaskUserState state = new TaskUserState();
+      state.setTenantId(tenantId);
+      state.setTaskId(taskId);
+      state.setUserRef(userRef);
+      state.setUserTenantId(tenantId);
+      state.setPinned(false);
+      state.setFlagged(false);
+      state.setMuted(false);
+      repository.save(state);
+      log.debug(
+          "UserStateService.reactivate: Neuer Eintrag angelegt fuer Task {} und User {}.",
+          taskId,
+          userRef);
+    } else {
+      // Bestehenden Eintrag reaktivieren: UNSUBSCRIBED_AT zuruecksetzen
+      final TaskUserState state = existing.get(0);
+      state.setUnsubscribedAt(null);
+      repository.save(state);
+      log.debug(
+          "UserStateService.reactivate: UNSUBSCRIBED_AT zurueckgesetzt fuer Task {} und User {}.",
+          taskId,
+          userRef);
+    }
+  }
+
+  /**
    * Setzt READ_AT auf den aktuellen Zeitpunkt fuer den Benutzer.
    *
    * <p>Wenn kein {@link TaskUserState}-Eintrag existiert, wird der Aufruf ignoriert.

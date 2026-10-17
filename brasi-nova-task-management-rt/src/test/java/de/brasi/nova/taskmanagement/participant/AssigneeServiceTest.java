@@ -137,8 +137,8 @@ class AssigneeServiceTest {
     assertThat(saved.getParticipantKind()).as("PARTICIPANT_KIND muss PERSON sein")
         .isEqualTo(ParticipantKind.PERSON);
 
-    // UserState.ensure aufgerufen
-    verify(userStateService).ensure(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    // UserState.reactivate aufgerufen (MAJOR 3: Reassign reaktiviert UNSUBSCRIBED_AT)
+    verify(userStateService).reactivate(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
 
     // ASSIGN-Notification emittiert
     verify(notificationService).emit(
@@ -187,9 +187,15 @@ class AssigneeServiceTest {
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
 
-    // Kein UserState (Best-Effort)
+    // UserState vorhanden -> UNSUBSCRIBED_AT muss auch bei HANDOVER gesetzt werden (MAJOR 2)
+    final TaskUserState userState = new TaskUserState();
+    userState.setId(77L);
+    userState.setTaskId(taskId);
+    userState.setUserRef(ACTOR_REF);
     when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
-        .thenReturn(List.of());
+        .thenReturn(List.of(userState));
+    when(userStateQueryRepository.save(any(TaskUserState.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     // Act
     service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER));
@@ -200,6 +206,13 @@ class AssigneeServiceTest {
     final TaskParticipant saved = pCaptor.getValue();
     assertThat(saved.getExitKind()).as("EXIT_KIND muss HANDOVER sein").isEqualTo(ExitKind.HANDOVER);
     assertThat(saved.getExitAt()).as("EXIT_AT muss gesetzt sein").isNotNull();
+
+    // MAJOR 2: UNSUBSCRIBED_AT muss auch bei HANDOVER im UserState gesetzt sein
+    final ArgumentCaptor<TaskUserState> stateCaptor = ArgumentCaptor.forClass(TaskUserState.class);
+    verify(userStateQueryRepository).save(stateCaptor.capture());
+    assertThat(stateCaptor.getValue().getUnsubscribedAt())
+        .as("UNSUBSCRIBED_AT muss auch bei HANDOVER gesetzt sein")
+        .isNotNull();
 
     // HANDOVER-Notification emittiert (Akteur als Empfaenger)
     verify(notificationService).emit(
@@ -313,6 +326,87 @@ class AssigneeServiceTest {
 
     assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
         .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- Test 6: MAJOR 1 - Creator wird nie abgewaehlt ----------------------------------------
+
+  @Test
+  @DisplayName(
+      "creator_nicht_abwaehlbar: PUT ohne Creator -> Creator-Participant kein EXIT_KIND gesetzt")
+  void creator_nicht_abwaehlbar() {
+    // Arrange
+    final Long taskId = 55L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+
+    // Creator-Participant (creatorFlag=true, assigneeFlag=true)
+    final TaskParticipant creatorParticipant = new TaskParticipant();
+    creatorParticipant.setId(20L);
+    creatorParticipant.setTenantId(TENANT_ID);
+    creatorParticipant.setTaskId(taskId);
+    creatorParticipant.setParticipantRef(ACTOR_REF);
+    creatorParticipant.setParticipantKind(ParticipantKind.PERSON);
+    creatorParticipant.setCreatorFlag(true);
+    creatorParticipant.setAssigneeFlag(true);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    // Aktuelle Assignees: nur Creator
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(creatorParticipant));
+
+    // Act: PUT mit leerer Menge (Creator fehlt in desired)
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of()));
+
+    // Assert: save wurde NIE fuer den Creator-Participant aufgerufen (kein EXIT_KIND gesetzt)
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    // UserStateQueryRepository: kein UNSUBSCRIBED_AT fuer Creator
+    verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
+  }
+
+  // ---- Test 7: MAJOR 3 - Reassign ruft reactivate auf ----------------------------------------
+
+  @Test
+  @DisplayName(
+      "reassign_ruft_reactivate_auf: Reaktivierung eines abgewaehlten Assignees -> reactivate")
+  void reassign_ruft_reactivate_auf() {
+    // Arrange
+    final Long taskId = 66L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    // Keine aktuellen Assignees
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+
+    // Bestehender (deaktivierter) Participant-Eintrag fuer ASSIGNEE_REF
+    final TaskParticipant deactivatedParticipant = new TaskParticipant();
+    deactivatedParticipant.setId(30L);
+    deactivatedParticipant.setTenantId(TENANT_ID);
+    deactivatedParticipant.setTaskId(taskId);
+    deactivatedParticipant.setParticipantRef(ASSIGNEE_REF);
+    deactivatedParticipant.setExitKind(ExitKind.UNSUBSCRIBED);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(deactivatedParticipant));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    // Act: ASSIGNEE_REF erneut zuweisen
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ASSIGNEE_REF)));
+
+    // Assert: reactivate (nicht ensure) aufgerufen -> UNSUBSCRIBED_AT wird zurueckgesetzt
+    verify(userStateService).reactivate(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    verify(userStateService, never()).ensure(any(), any(), any());
+  }
+
+  // ---- Test 8: MINOR - null-assignees wirft EntityValidationException ----------------------
+
+  @Test
+  @DisplayName("null_assignees_wirft_400: AssigneeUpdateInput mit null -> EntityValidationException")
+  void null_assignees_wirft_400() {
+    assertThatThrownBy(() -> new AssigneeUpdateInput(null))
+        .isInstanceOf(
+            io.keel.framework.api.validation.EntityValidationException.class)
+        .hasMessageContaining("assignees");
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------
