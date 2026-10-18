@@ -891,6 +891,7 @@ class AssigneeControllerIT {
         "de.brasi.nova.taskmanagement.time",
         "de.brasi.nova.taskmanagement.participant",
         "de.brasi.nova.taskmanagement.inbox",
+        "de.brasi.nova.taskmanagement.tag",
         "de.brasi.nova.taskmanagement.notification",
         "de.brasi.nova.taskmanagement.push",
         "de.brasi.nova.taskmanagement.refentity",

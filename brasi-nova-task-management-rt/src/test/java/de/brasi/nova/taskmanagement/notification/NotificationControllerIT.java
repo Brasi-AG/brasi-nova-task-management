@@ -735,6 +735,7 @@ class NotificationControllerIT {
         "de.brasi.nova.taskmanagement.participant",
         "de.brasi.nova.taskmanagement.comment",
         "de.brasi.nova.taskmanagement.inbox",
+        "de.brasi.nova.taskmanagement.tag",
         "de.brasi.nova.taskmanagement.notification",
         "de.brasi.nova.taskmanagement.dictionary",
         "de.brasi.nova.taskmanagement.push",
