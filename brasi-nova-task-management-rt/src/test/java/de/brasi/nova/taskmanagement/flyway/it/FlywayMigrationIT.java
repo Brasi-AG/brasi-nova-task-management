@@ -279,7 +279,68 @@ class FlywayMigrationIT {
         .hasMessageContaining("UNIQUE");
   }
 
+  // ---- 5. V3: Participant-UNIQUE + Audit-Indizes (Final-Review P2-6 + Pre-Release-Audit) ---
+
+  @Test
+  @DisplayName("flyway_schema_history_enthaelt_v3")
+  void flyway_schema_history_enthaelt_v3() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    final boolean hasV3 =
+        rows.stream().anyMatch(r -> "3".equals(String.valueOf(r.get("version"))));
+    assertThat(hasV3).as("V3 in flyway_schema_history").isTrue();
+  }
+
+  @Test
+  @DisplayName(
+      "task_participant_unique_verhindert_doppelte_teilnehmerzeile:"
+          + " zweiter INSERT mit gleichem (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)"
+          + " scheitert hart")
+  void task_participant_unique_verhindert_doppelte_teilnehmerzeile() {
+    final String participantRef = "77777777-0000-0000-0000-000000000009";
+    // Erster Teilnehmer-Datensatz (TENANT_ID=500 referenziert die Sentinel-PROD_FIRMA)
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT]"
+            + " (ID, TENANT_ID, TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND,"
+            + "  PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG)"
+            + " VALUES (8001, 500, 9001, ?, 'PERSON', 500, 0, 1, 1)",
+        participantRef);
+
+    // Zweiter Datensatz, gleiche (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF), andere ID
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "INSERT INTO [dbo].[TASK_PARTICIPANT]"
+                        + " (ID, TENANT_ID, TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND,"
+                        + "  PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG)"
+                        + " VALUES (8002, 500, 9001, ?, 'PERSON', 500, 0, 1, 1)",
+                    participantRef))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("UNIQUE");
+  }
+
+  @Test
+  @DisplayName("v3_legt_audit_indizes_und_participant_unique_an")
+  void v3_legt_audit_indizes_und_participant_unique_an() {
+    assertIndexExists("TASK_PARTICIPANT", "UQ_TASK_PARTICIPANT_TASK_USER");
+    assertIndexExists("TASK_NOTIFICATION", "IX_TASK_NOTIFICATION_RECIPIENT");
+    assertIndexExists("TASK_HISTORY_ENTRY", "IX_TASK_HISTORY_ENTRY_TASK");
+  }
+
   // ---- Hilfsmethoden ---
+
+  private void assertIndexExists(final String tableName, final String indexName) {
+    final Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM sys.indexes i"
+                + " JOIN sys.tables t ON i.object_id = t.object_id"
+                + " WHERE t.name = ? AND i.name = ?",
+            Integer.class,
+            tableName,
+            indexName);
+    assertThat(count).as("Index " + indexName + " auf " + tableName + " muss existieren").isEqualTo(1);
+  }
 
   private void assertTableExists(final String tableName) {
     final Integer count =
