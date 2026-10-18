@@ -30,21 +30,23 @@ public class UserStateService {
   /**
    * Stellt sicher, dass ein {@link TaskUserState}-Eintrag fuer den Benutzer existiert (idempotent).
    *
-   * <p>Wenn kein Eintrag existiert, wird ein neuer angelegt. Wenn bereits einer vorhanden ist,
-   * bleibt er unveraendert. Laueft in der aktiven Transaktion des Aufrufers.
+   * <p>Wenn kein Eintrag existiert, wird ein neuer (aktiver) angelegt. Wenn bereits einer
+   * vorhanden ist, bleibt er unveraendert. Laueft in der aktiven Transaktion des Aufrufers.
    *
    * @param taskId   interne Aufgaben-ID
    * @param userRef  UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
    * @param tenantId interner Mandanten-Schluessel
+   * @return {@code true}, wenn ein neuer aktiver Eintrag angelegt wurde (der Benutzer also durch
+   *     diesen Aufruf inbox-faehig wird); {@code false}, wenn bereits ein Eintrag existierte
    */
-  public void ensure(final Long taskId, final UUID userRef, final Long tenantId) {
+  public boolean ensure(final Long taskId, final UUID userRef, final Long tenantId) {
     final List<TaskUserState> existing = repository.findByTaskIdAndUserRef(taskId, userRef);
     if (!existing.isEmpty()) {
       log.debug(
           "UserStateService.ensure: Eintrag bereits vorhanden fuer Task {} und User {}.",
           taskId,
           userRef);
-      return;
+      return false;
     }
     final TaskUserState state = new TaskUserState();
     state.setTenantId(tenantId);
@@ -59,6 +61,7 @@ public class UserStateService {
         "UserStateService.ensure: Neuer Eintrag angelegt fuer Task {} und User {}.",
         taskId,
         userRef);
+    return true;
   }
 
   /**

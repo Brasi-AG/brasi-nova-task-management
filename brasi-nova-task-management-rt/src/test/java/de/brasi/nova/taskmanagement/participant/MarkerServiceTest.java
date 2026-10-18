@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -57,6 +59,7 @@ class MarkerServiceTest {
   @Mock private BaseTaskRepository taskRepository;
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private UserStateService userStateService;
+  @Mock private InboxSignalService inboxSignalService;
   @Mock private UserAccessor userAccessor;
 
   private MarkerService markerService;
@@ -64,7 +67,12 @@ class MarkerServiceTest {
   @BeforeEach
   void setUp() {
     markerService =
-        new MarkerService(taskRepository, userStateQueryRepository, userStateService, userAccessor);
+        new MarkerService(
+            taskRepository,
+            userStateQueryRepository,
+            userStateService,
+            inboxSignalService,
+            userAccessor);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     TenantContextHolder.setTenant(tenant);
@@ -264,6 +272,53 @@ class MarkerServiceTest {
     // reactivate darf NIEMALS aufgerufen werden (wuerde UNSUBSCRIBED_AT loeschen)
     // Mockito-Default: kein Aufruf = kein Fehler; explizit via verifyNoMoreInteractions
     // nicht noetig hier, da ensure der einzige zu pruefende Aufruf ist
+  }
+
+  // ---- Test 9: P2-3 - Neuanlage eines aktiven UserState invalidiert den Inbox-Snapshot --------
+
+  @Test
+  @DisplayName(
+      "marker_neuanlage_invalidiert: ensure legt neuen aktiven UserState an (created=true) ->"
+          + " InboxSignalService.invalidate fuer den Actor")
+  void marker_neuanlage_invalidiert() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+
+    // ensure meldet Neuanlage -> Task wird fuer den Benutzer inbox-faehig
+    when(userStateService.ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID))).thenReturn(true);
+
+    // Der (neu angelegte) State fuer das Marker-Setzen
+    final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+        .thenReturn(List.of(stateA));
+
+    markerService.setPinned(TASK_EXTERNAL_ID, true);
+
+    // Invalidate fuer den Actor (Task frisch inbox-faehig)
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), eq(List.of(USER_A_REF)));
+  }
+
+  // ---- Test 10: P2-3 - bestehender UserState -> kein Invalidate -------------------------------
+
+  @Test
+  @DisplayName(
+      "marker_bestehender_state_invalidiert_nicht: ensure meldet keinen Neuzugang (created=false) ->"
+          + " kein InboxSignalService.invalidate")
+  void marker_bestehender_state_invalidiert_nicht() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+
+    // ensure meldet: Eintrag existierte bereits -> keine neue Inbox-Faehigkeit
+    when(userStateService.ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID))).thenReturn(false);
+
+    final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+        .thenReturn(List.of(stateA));
+
+    markerService.setFlagged(TASK_EXTERNAL_ID, true);
+
+    // Persoenlicher Marker auf bestehendem State -> kein Snapshot-Invalidate
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------------------

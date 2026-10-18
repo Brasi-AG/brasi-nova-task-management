@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.participant;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
@@ -35,6 +36,7 @@ public class MarkerService {
   private final BaseTaskRepository taskRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final UserStateService userStateService;
+  private final InboxSignalService inboxSignalService;
   private final UserAccessor userAccessor;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
@@ -42,10 +44,12 @@ public class MarkerService {
       final BaseTaskRepository taskRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
       final UserStateService userStateService,
+      final InboxSignalService inboxSignalService,
       final UserAccessor userAccessor) {
     this.taskRepository = taskRepository;
     this.userStateQueryRepository = userStateQueryRepository;
     this.userStateService = userStateService;
+    this.inboxSignalService = inboxSignalService;
     this.userAccessor = userAccessor;
   }
 
@@ -118,8 +122,10 @@ public class MarkerService {
     final Long taskId = task.getId();
 
     // UserState sicherstellen: ensure legt an (falls nicht vorhanden),
-    // aendert UNSUBSCRIBED_AT NICHT (Inbox-Invariante)
-    userStateService.ensure(taskId, userRef, tenantId);
+    // aendert UNSUBSCRIBED_AT NICHT (Inbox-Invariante). created=true bedeutet, dass durch
+    // diesen Aufruf erstmals ein aktiver UserState entsteht -> der Task wird fuer den Benutzer
+    // inbox-faehig.
+    final boolean created = userStateService.ensure(taskId, userRef, tenantId);
 
     final List<TaskUserState> states =
         userStateQueryRepository.findByTaskIdAndUserRef(taskId, userRef);
@@ -127,6 +133,15 @@ public class MarkerService {
 
     markerSetter.accept(state);
     userStateQueryRepository.save(state);
+
+    // Final-Review P2-3: Entstand durch diesen Marker erstmals ein aktiver UserState, erscheint
+    // der Task ab jetzt im Inbox-Snapshot des Benutzers. Damit der Client den neuen Stand nicht
+    // erst beim naechsten vollen Reload sieht, ein snapshot-invalidated-Signal (after-commit)
+    // senden. Das reine Setzen eines Markers auf einem bereits vorhandenen State bleibt rein
+    // persoenlich und invalidiert NICHT.
+    if (created) {
+      inboxSignalService.invalidate(tenantId, List.of(userRef));
+    }
   }
 
   /**
