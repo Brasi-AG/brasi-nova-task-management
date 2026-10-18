@@ -694,6 +694,63 @@ class AssigneeServiceTest {
     verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
   }
 
+  // ---- Test RG-exit: exit invalidiert Akteur UND verbleibende aktive Teilnehmer ----------------
+
+  /**
+   * Whole-Branch-Re-Gate (P2): Beim Verlassen einer Aufgabe entfernt sich der Akteur aus
+   * {@code participantSummaries} - das veraendert den Snapshot JEDES verbleibenden aktiven
+   * Teilnehmers. Deshalb muss {@code exit} den Akteur gemeinsam mit den verbleibenden aktiven
+   * Teilnehmern invalidieren (analog {@code updateAssignees}), sonst behalten diese veraltete Daten.
+   */
+  @Test
+  @DisplayName(
+      "exit_invalidiert_auch_verbleibende_teilnehmer: Akteur verlaesst Aufgabe -> invalidate"
+          + " enthaelt Akteur UND verbleibenden aktiven Teilnehmer B")
+  void exit_invalidiert_auch_verbleibende_teilnehmer() {
+    // Arrange
+    final Long taskId = 91L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID remainingRefB = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Akteur ist aktiver Nicht-Creator-Teilnehmer (darf austreten).
+    final TaskParticipant actorParticipant = new TaskParticipant();
+    actorParticipant.setParticipantRef(ACTOR_REF);
+    actorParticipant.setParticipantKind(ParticipantKind.PERSON);
+    actorParticipant.setAssigneeFlag(true);
+    actorParticipant.setCreatorFlag(false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actorParticipant));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState actorState = new TaskUserState();
+    actorState.setUserRef(ACTOR_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actorState));
+    when(userStateQueryRepository.save(any(TaskUserState.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    // Nach dem Austritt ist B der verbleibende aktive Teilnehmer.
+    final TaskUserState stateB = new TaskUserState();
+    stateB.setUserRef(remainingRefB);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(stateB));
+
+    // Act
+    service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    // Assert: invalidate muss Akteur UND verbleibenden Teilnehmer B enthalten.
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
+    assertThat(refsCaptor.getValue())
+        .as("invalidate muss den austretenden Akteur UND den verbleibenden aktiven B enthalten")
+        .contains(ACTOR_REF, remainingRefB);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {

@@ -370,8 +370,16 @@ public class AssigneeService {
           actorRef);
     }
 
-    // After-Commit: Invalidate fuer den Akteur
-    inboxSignalService.invalidate(tenantId, List.of(actorRef));
+    // After-Commit: Invalidate fuer den Akteur UND alle verbleibenden aktiven Teilnehmer.
+    // Der Austritt entfernt den Akteur aus participantSummaries -> der Snapshot jedes verbleibenden
+    // aktiven Teilnehmers aendert sich ebenfalls (analog updateAssignees). Der Akteur selbst ist
+    // nach dem UNSUBSCRIBED_AT-Set nicht mehr in findActiveUserRefsByTaskId -> explizit erganzen.
+    final Set<UUID> toInvalidate = new HashSet<>();
+    toInvalidate.add(actorRef);
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(toInvalidate::add);
+    inboxSignalService.invalidate(tenantId, toInvalidate);
 
     log.info(
         "AssigneeService.exit: Akteur {} hat Aufgabe {} (id={}) verlassen"
