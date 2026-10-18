@@ -1,8 +1,10 @@
 package de.brasi.nova.taskmanagement.participant;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
+import io.keel.framework.api.validation.EntityValidationException;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -50,5 +52,14 @@ class UserStateControllerTest {
   void mute_delegiert_an_markerService_setMuted() {
     controller.mute(TASK_ID, new MarkerInput(true));
     verify(markerService).setMuted(TASK_ID, true);
+  }
+
+  // ---- P2-E: null value -> 400 ----------------------------------------------------------------
+
+  @Test
+  @DisplayName("pin_null_value_liefert_400: MarkerInput ohne value -> EntityValidationException")
+  void pin_null_value_liefert_400() {
+    assertThatThrownBy(() -> new MarkerInput(null))
+        .isInstanceOf(EntityValidationException.class);
   }
 }
