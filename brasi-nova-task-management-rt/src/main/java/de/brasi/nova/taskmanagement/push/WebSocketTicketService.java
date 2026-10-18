@@ -8,6 +8,7 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -35,8 +36,8 @@ public class WebSocketTicketService {
   private final ConcurrentHashMap<String, Entry> store = new ConcurrentHashMap<>();
   private final long ttlSeconds;
   private final Clock clock;
-  /** Zeitpunkt des letzten Cleanup-Durchlaufs (initiell: EPOCH = noch nie gelaufen). */
-  private volatile Instant lastPurgeAt = Instant.EPOCH;
+  /** Zeitpunkt des letzten Cleanup-Durchlaufs; AtomicReference fuer CAS-Koordination. */
+  private final AtomicReference<Instant> lastPurgeAt = new AtomicReference<>(Instant.EPOCH);
 
   /**
    * Produktiv-Konstruktor. Nutzt {@link Clock#systemUTC()}.
@@ -69,11 +70,13 @@ public class WebSocketTicketService {
    */
   public WsTicketResponse issue(final long tenantId, final UUID userRef) {
     // Periodischer Cleanup: abgelaufene, nie-konsumierte Tickets entfernen (max. 1x pro
-    // TTL-Periode, um O(n)-Scan nicht bei jedem Aufruf auszufuehren).
+    // TTL-Periode). CAS-Guard stellt sicher dass bei nebenlaeufigen issue()-Aufrufen genau
+    // ein Thread den O(n)-Scan uebernimmt; alle anderen ueberspringen ihn.
     final Instant now = clock.instant();
-    if (now.isAfter(lastPurgeAt.plusSeconds(ttlSeconds))) {
+    final Instant prevPurge = lastPurgeAt.get();
+    if (now.isAfter(prevPurge.plusSeconds(ttlSeconds))
+        && lastPurgeAt.compareAndSet(prevPurge, now)) {
       store.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
-      lastPurgeAt = now;
     }
 
     final byte[] raw = new byte[TOKEN_BYTES];
