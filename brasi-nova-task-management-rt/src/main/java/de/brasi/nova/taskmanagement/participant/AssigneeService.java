@@ -250,16 +250,18 @@ public class AssigneeService {
       }
     }
 
-    // After-Commit: Invalidate fuer alle betroffenen Benutzer.
-    // Eine Assignee-Aenderung veraendert participantSummaries fuer JEDEN verbleibenden aktiven
-    // Teilnehmer, nicht nur fuer die neu zugewiesenen/abgewaehlten Refs. Deshalb die Vereinigung
-    // aus geaenderten Refs (affectedRefs, inkl. der gerade abgewaehlten die nicht mehr aktiv sind)
-    // UND allen aktuell aktiven Teilnehmer-Refs der Aufgabe invalidieren (wie TaskCommandService.patch).
-    final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
-    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
-        .map(TaskUserState::getUserRef)
-        .forEach(toInvalidate::add);
-    if (!toInvalidate.isEmpty()) {
+    // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).
+    // Idempotente No-Op-PUTs (Ziel-Menge == aktueller Stand, inkl. Creator-Schutz-No-Ops) duerfen
+    // weder aktive UserStates laden noch Invalidierungen senden - sonst vermeidbare DB-Last,
+    // Push-Traffic und Client-Snapshot-Reloads (analog TaskCommandService.patch 'changed'-Guard).
+    // Bei echter Aenderung: participantSummaries aendern sich fuer JEDEN verbleibenden aktiven
+    // Teilnehmer - deshalb die Vereinigung aus geaenderten Refs (affectedRefs, inkl. der gerade
+    // abgewaehlten) UND allen aktuell aktiven Teilnehmer-Refs der Aufgabe invalidieren.
+    if (!affectedRefs.isEmpty()) {
+      final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
+      userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+          .map(TaskUserState::getUserRef)
+          .forEach(toInvalidate::add);
       inboxSignalService.invalidate(tenantId, toInvalidate);
     }
   }

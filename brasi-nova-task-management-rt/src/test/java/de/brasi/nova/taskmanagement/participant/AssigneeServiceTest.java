@@ -656,6 +656,44 @@ class AssigneeServiceTest {
         .contains(existingRefA, newRefB);
   }
 
+  // ---- Test RG1b: No-Op-PUT loest KEINE Invalidierung aus --------------------------------------
+
+  /**
+   * Whole-Branch-Re-Gate (P2, Folge-Auflage): Ein idempotenter PUT ohne tatsaechliche Aenderung
+   * (Ziel-Menge == aktueller Stand, inkl. Creator-Schutz-No-Ops) darf WEDER aktive UserStates laden
+   * NOCH eine Invalidierung senden - sonst entstehen vermeidbare DB-Last, Push-Traffic und
+   * Client-Snapshot-Reloads. Guard auf {@code affectedRefs} (actual-change), analog
+   * {@code TaskCommandService.patch}.
+   */
+  @Test
+  @DisplayName(
+      "noop_put_loest_keine_invalidierung_aus: Ziel-Menge == aktueller Stand -> kein invalidate,"
+          + " kein Laden der aktiven UserStates")
+  void noop_put_loest_keine_invalidierung_aus() {
+    // Arrange
+    final Long taskId = 88L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID existingRefA = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // A ist bereits aktiver Assignee; die Ziel-Menge ist identisch -> keine Aenderung.
+    final TaskParticipant participantA = new TaskParticipant();
+    participantA.setParticipantRef(existingRefA);
+    participantA.setAssigneeFlag(true);
+    participantA.setCreatorFlag(false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(participantA));
+
+    // Act: idempotenter PUT mit identischer Ziel-Menge {A}.
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(existingRefA)));
+
+    // Assert: weder Invalidierung noch Laden der aktiven UserStates.
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {
