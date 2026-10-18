@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.participant;
 
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import io.keel.framework.api.exception.BusinessRuleException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -56,7 +57,22 @@ public class UserStateService {
     state.setPinned(false);
     state.setFlagged(false);
     state.setMuted(false);
-    repository.save(state);
+    // Re-Read-Translate: bei UNIQUE-Verletzung (nebenlaeufiger Erst-Insert hat bereits committet)
+    // den Konflikt idempotent abfangen statt als HTTP 409 nach aussen zu geben.
+    try {
+      repository.save(state);
+    } catch (final BusinessRuleException concurrentInsert) {
+      final List<TaskUserState> recheck = repository.findByTaskIdAndUserRef(taskId, userRef);
+      if (!recheck.isEmpty()) {
+        log.debug(
+            "UserStateService.ensure: Nebenlaeufige Anlage erkannt fuer Task {} User {} -"
+                + " idempotent false.",
+            taskId,
+            userRef);
+        return false;
+      }
+      throw concurrentInsert;
+    }
     log.debug(
         "UserStateService.ensure: Neuer Eintrag angelegt fuer Task {} und User {}.",
         taskId,
