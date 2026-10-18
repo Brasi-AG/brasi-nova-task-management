@@ -207,11 +207,22 @@ public class DictionaryCodeResolver {
     }
 
     final Long id = results.get(0).getId();
+    final CachedEntry newEntry = new CachedEntry(id, results.get(0).getValidTo());
     // putIfAbsent: kein Ueberschreiben eines frischen Eintrags durch einen anderen Thread.
-    // Gibt null zurueck wenn der Eintrag neu gesetzt wurde; den bestehenden Eintrag (vom
-    // gewinnenden Thread) zurueck wenn bereits jemand anderes eingesetzt hat -> konsistente ID.
-    final CachedEntry existing = cache.putIfAbsent(key, new CachedEntry(id, results.get(0).getValidTo()));
-    return existing != null ? existing.id() : id;
+    final CachedEntry winning = cache.putIfAbsent(key, newEntry);
+    if (winning == null) {
+      // Wir haben die Insertion gewonnen.
+      return id;
+    }
+    if (!winning.isExpired()) {
+      // Anderer Thread hat schneller einen gueltigen Eintrag gesetzt -> konsistente ID.
+      return winning.id();
+    }
+    // Gewinner-Eintrag ist bereits abgelaufen: per CAS durch frischen Eintrag ersetzen.
+    // Schlaegt das replace fehl (weiterer Thread hat inzwischen ersetzt), trotzdem unsere
+    // frische ID zurueckgeben.
+    cache.replace(key, winning, newEntry);
+    return id;
   }
 
   // ---- Reverse-Resolver: ID -> CODE (fuer Detail-Antworten) ------------------------------------
