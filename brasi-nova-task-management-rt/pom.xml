@@ -147,6 +147,38 @@
 					</execution>
 				</executions>
 			</plugin>
+
+			<!--
+				Failsafe: fuehrt die Integration-Tests (*IT) im Standard-Lifecycle
+				(integration-test/verify) aus. Ohne diese Bindung laufen Flyway-, REST-,
+				Security-, WebSocket- und Scheduler-IT nur bei explizitem -Dtest und werden von
+				`mvn verify` still uebersprungen. Version explizit gepinnt, da dieser Build keinen
+				spring-boot-starter-parent erbt (sonst Maven-Default 2.12.4 -> JUnit-5-inkompatibel).
+				classesDirectory=target/classes: spring-boot:repackage ersetzt das Hauptartefakt
+				durch das Boot-Fat-JAR (Klassen wandern nach BOOT-INF/classes); Failsafe laeuft nach
+				package und wuerde sonst dieses Fat-JAR laden -> Klassen am Root nicht ladbar.
+				Gleiches Muster wie brasi-nova-production-rt.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<version>3.5.2</version>
+				<configuration>
+					<argLine>-XX:+EnableDynamicAgentLoading</argLine>
+					<classesDirectory>${project.build.outputDirectory}</classesDirectory>
+					<includes>
+						<include>**/*IT.java</include>
+					</includes>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 
