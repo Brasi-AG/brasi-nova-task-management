@@ -170,11 +170,18 @@ public class DictionaryCodeResolver {
     if (cached != null && !cached.isExpired()) {
       return cached.id();
     }
-    // Kein Eintrag oder abgelaufen: evicten und neu aufloesen.
-    // cache.remove(key, cached): atomic CAS - entfernt nur wenn noch derselbe Eintrag (kein
-    // fremder Thread hat inzwischen einen frischen Eintrag gesetzt).
+
     if (cached != null) {
-      cache.remove(key, cached);
+      // CAS-Eviction: nur den bekannten abgelaufenen Eintrag entfernen.
+      final boolean removed = cache.remove(key, cached);
+      if (!removed) {
+        // Ein anderer Thread hat den Eintrag bereits erneuert. Frischen Eintrag pruefen.
+        final CachedEntry current = cache.get(key);
+        if (current != null && !current.isExpired()) {
+          return current.id();
+        }
+        // Noch immer kein gueltiger Eintrag -> DB-Abfrage fortsetzen.
+      }
     }
 
     // Global-Scope: TENANT_ID=0 im TenantContextHolder setzen
@@ -200,7 +207,8 @@ public class DictionaryCodeResolver {
     }
 
     final Long id = results.get(0).getId();
-    cache.put(key, new CachedEntry(id, results.get(0).getValidTo()));
+    // putIfAbsent: kein Ueberschreiben eines frischen Eintrags durch einen anderen Thread.
+    cache.putIfAbsent(key, new CachedEntry(id, results.get(0).getValidTo()));
     return id;
   }
 
