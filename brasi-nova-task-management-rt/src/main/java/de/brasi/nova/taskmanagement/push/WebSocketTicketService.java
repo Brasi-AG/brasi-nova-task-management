@@ -35,6 +35,8 @@ public class WebSocketTicketService {
   private final ConcurrentHashMap<String, Entry> store = new ConcurrentHashMap<>();
   private final long ttlSeconds;
   private final Clock clock;
+  /** Zeitpunkt des letzten Cleanup-Durchlaufs (initiell: EPOCH = noch nie gelaufen). */
+  private volatile Instant lastPurgeAt = Instant.EPOCH;
 
   /**
    * Produktiv-Konstruktor. Nutzt {@link Clock#systemUTC()}.
@@ -66,15 +68,19 @@ public class WebSocketTicketService {
    * @return {@link WsTicketResponse} mit opakem Token und Ablaufzeitpunkt
    */
   public WsTicketResponse issue(final long tenantId, final UUID userRef) {
-    // Lazy Cleanup: abgelaufene, nie-konsumierte Tickets entfernen um unbegrenztes Wachstum
-    // des Stores zu verhindern (nie konsumierte Tickets bleiben sonst bis JVM-Neustart erhalten).
+    // Periodischer Cleanup: abgelaufene, nie-konsumierte Tickets entfernen (max. 1x pro
+    // TTL-Periode, um O(n)-Scan nicht bei jedem Aufruf auszufuehren).
     final Instant now = clock.instant();
-    store.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
+    if (now.isAfter(lastPurgeAt.plusSeconds(ttlSeconds))) {
+      store.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
+      lastPurgeAt = now;
+    }
 
     final byte[] raw = new byte[TOKEN_BYTES];
     secureRandom.nextBytes(raw);
     final String token = encoder.encodeToString(raw);
-    final Instant expiresAt = now.plusSeconds(ttlSeconds);
+    // expiresAt nach dem Cleanup-Scan berechnen um korrekte verbleibende Lebensdauer zu gewaehrleisten.
+    final Instant expiresAt = clock.instant().plusSeconds(ttlSeconds);
     store.put(token, new Entry(tenantId, userRef, expiresAt));
     return new WsTicketResponse(token, expiresAt);
   }
