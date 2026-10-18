@@ -26,13 +26,15 @@ public interface TaskDirectionRepository extends BaseTaskDirectionRepository {
       value =
           "SELECT * FROM DIC_TASK_DIRECTION"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code",
       mssql =
           "SELECT * FROM [dbo].[DIC_TASK_DIRECTION]"
               + " WHERE /* NOVA:DICTIONARY_VISIBILITY */ ENTITY_STATUS = 'ACTIVE'"
-              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= GETDATE())"
+              + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+              + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))"
               + " AND TENANT_ID = :tenantId"
               + " AND CODE = :code")
   List<TaskDirection> findByCode(String code);

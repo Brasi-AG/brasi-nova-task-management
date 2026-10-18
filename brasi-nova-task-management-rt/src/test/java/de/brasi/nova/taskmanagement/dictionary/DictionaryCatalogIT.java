@@ -354,6 +354,48 @@ class DictionaryCatalogIT {
     }
   }
 
+  // ---- IT 4: findByCode ignoriert future-dated Eintraege (P2-A) -----------------------
+
+  /**
+   * TDD-Discriminator fuer P2-A: ein future-dated DIC_TASK_PRIORITY-Eintrag darf via
+   * findByCode NICHT aufgeloest werden. Vor dem Fix (kein GUELTIG_VON-Praedikat) wuerde
+   * resolveTaskPriority den Code finden und eine ID liefern; nach dem Fix wirft der Resolver
+   * eine DictionaryResolverException.
+   */
+  @Test
+  @DisplayName("findbycode_ignoriert_future_dated_priority_code")
+  void findbycode_ignoriert_future_dated_priority_code(
+      @Autowired JdbcTemplate jt,
+      @Autowired de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver resolver)
+      throws Exception {
+    final long futureId = 59902L;
+    final UUID futureUuid = UUID.fromString("00000099-0000-0099-0000-000000059902");
+    final String futureCode = "IT_FUTURE_PRIO";
+
+    // Seed future-dated priority (GUELTIG_VON = morgen)
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[DIC_TASK_PRIORITY] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[DIC_TASK_PRIORITY] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, ENTRY_TYPE, CODE, BEZEICHNUNG,"
+            + " ANGELEGT_VON, ANGELEGT_AM, GUELTIG_VON, GUELTIG_BIS, SORT_ORDER) "
+            + "VALUES (?, 'ACTIVE', ?, 1, 0, 'SYSTEM_PUBLIC', ?, 'IT Future Prio',"
+            + " 'it-test', GETDATE(), CAST(DATEADD(day, 1, GETDATE()) AS DATE), NULL, 99)",
+        futureId, futureId, futureUuid, futureCode);
+
+    try {
+      io.keel.framework.api.security.tenant.TenantContextHolder.runWithTenant(
+          io.keel.framework.api.security.tenant.TenantInfo.global(), () -> {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> resolver.resolveTaskPriority(futureCode))
+                .as("Future-dated Code darf via findByCode nicht aufgeloest werden")
+                .isInstanceOf(de.brasi.nova.taskmanagement.resolver.DictionaryResolverException.class);
+            return null;
+          });
+    } finally {
+      jt.update("DELETE FROM [dbo].[DIC_TASK_PRIORITY] WHERE ID = ?", futureId);
+    }
+  }
+
   // ---- Negativ-Tests: 401 / 403 -------------------------------------------------------
 
   @Test
