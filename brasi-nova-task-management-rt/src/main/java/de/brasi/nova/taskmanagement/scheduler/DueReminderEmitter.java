@@ -99,11 +99,21 @@ public class DueReminderEmitter {
         tenantId);
   }
 
-  /** Kuerzt {@code value} auf hoechstens {@code maxLength} Zeichen (null-sicher). */
-  private static String truncate(final String value, final int maxLength) {
+  /**
+   * Kuerzt {@code value} auf hoechstens {@code maxLength} UTF-16-Code-Units (null-sicher) und
+   * schneidet dabei NICHT mitten in ein Surrogatpaar (z.B. Emoji) - sonst entstuende ein
+   * ungepaartes Surrogat (korrupter Unicode / Insert-Fehler). Paketsichtbar fuer Unit-Tests.
+   */
+  static String truncate(final String value, final int maxLength) {
     if (value == null || value.length() <= maxLength) {
       return value;
     }
-    return value.substring(0, maxLength);
+    int end = maxLength;
+    if (Character.isHighSurrogate(value.charAt(end - 1))) {
+      // Letztes eingeschlossenes Zeichen ist das High-Surrogate eines Paares, dessen
+      // Low-Surrogate gerade abgeschnitten wuerde -> das High-Surrogate ebenfalls weglassen.
+      end--;
+    }
+    return value.substring(0, end);
   }
 }
