@@ -135,10 +135,14 @@ public class TaskCommandService {
       priorityId = resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL);
     }
 
+    if (input.title() == null || input.title().isBlank()) {
+      throw new EntityValidationException("Titel darf nicht leer sein.");
+    }
+
     // Aufgabe anlegen
     final Task task = new Task();
     task.setTenantId(tenantId);
-    task.setTitle(input.title());
+    task.setTitle(input.title().strip());
     task.setDescription(input.description());
     task.setTaskStatusId(statusId);
     task.setPriorityId(priorityId);
@@ -205,8 +209,12 @@ public class TaskCommandService {
     // title
     if (input.title().isPresent()) {
       final String newTitle = input.title().get();
+      if (newTitle == null || newTitle.isBlank()) {
+        throw new EntityValidationException("Titel darf nicht leer sein.");
+      }
       historyService.record(
-          taskId, tenantId, actorRef, "Titel geaendert", task.getTitle() + " -> " + newTitle);
+          taskId, tenantId, actorRef, "Titel geaendert",
+          truncate(task.getTitle() + " -> " + newTitle, 500));
       task.setTitle(newTitle);
       changed = true;
     }
@@ -361,6 +369,13 @@ public class TaskCommandService {
    * @return die gefundene Aufgabe
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */
+  private static String truncate(final String s, final int max) {
+    if (s == null || s.length() <= max) {
+      return s;
+    }
+    return s.substring(0, max - 3) + "...";
+  }
+
   private Task requireTask(final UUID taskExternalId, final long tenantId) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {

@@ -384,6 +384,62 @@ class TaskCommandServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- P2-D: Title-History-Detail bounded 500 Zeichen -----------------------------------------
+
+  @Test
+  @DisplayName("patch_langer_titel_trunciert_change_detail: changeDetail ueberschreitet nicht 500 Zeichen")
+  void patch_langer_titel_trunciert_change_detail() {
+    final String longTitle = "A".repeat(500);
+    final Task task = taskWithId(90L, UUID.randomUUID());
+    task.setTitle(longTitle);
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+
+    final String newLongTitle = "B".repeat(500);
+    final List<TaskUserState> noStates = List.of();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(task.getId())).thenReturn(noStates);
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of(newLongTitle),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent()));
+
+    final ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+    verify(historyService).record(any(), any(), any(), any(), detailCaptor.capture());
+    assertThat(detailCaptor.getValue().length())
+        .as("changeDetail darf 500 Zeichen nicht ueberschreiten")
+        .isLessThanOrEqualTo(500);
+  }
+
+  // ---- P2-C: Blank-Titel ablehnen (create + patch) --------------------------------------------
+
+  @Test
+  @DisplayName("create_leerer_titel_liefert_400: Whitespace-only Titel -> EntityValidationException")
+  void create_leerer_titel_liefert_400() {
+    assertThatThrownBy(() -> service.create(new TaskCreateInput("   ", null, null, null, null)))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("patch_leerer_titel_liefert_400: Whitespace-only Titel beim Patch -> EntityValidationException")
+  void patch_leerer_titel_liefert_400() {
+    final Task task = taskWithId(82L, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.of("   "),
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.absent())))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {
