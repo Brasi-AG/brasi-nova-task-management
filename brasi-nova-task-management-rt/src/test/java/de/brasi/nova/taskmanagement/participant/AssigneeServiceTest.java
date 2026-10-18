@@ -505,6 +505,100 @@ class AssigneeServiceTest {
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
 
+  // ---- Test 11: P2-5 Nebenlaeufigkeit - Wettlauf-Verlierer wird als 400 uebersetzt -----------
+
+  @Test
+  @DisplayName(
+      "exit_nebenlaeufiger_konflikt_wird_als_400_uebersetzt: save -> BusinessRuleException +"
+          + " Teilnehmer inzwischen ausgetreten -> EntityValidationException (400), keine Notification")
+  void exit_nebenlaeufiger_konflikt_wird_als_400_uebersetzt() {
+    // Arrange
+    final Long taskId = 131L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Erst aktiver Nicht-Creator-Participant; nach dem (verlorenen) save ist er ausgetreten.
+    final TaskParticipant active = new TaskParticipant();
+    active.setId(80L);
+    active.setTenantId(TENANT_ID);
+    active.setTaskId(taskId);
+    active.setParticipantRef(ACTOR_REF);
+    active.setParticipantKind(ParticipantKind.PERSON);
+    active.setAssigneeFlag(true);
+
+    final TaskParticipant exitedAfterRace = new TaskParticipant();
+    exitedAfterRace.setId(80L);
+    exitedAfterRace.setTenantId(TENANT_ID);
+    exitedAfterRace.setTaskId(taskId);
+    exitedAfterRace.setParticipantRef(ACTOR_REF);
+    exitedAfterRace.setParticipantKind(ParticipantKind.PERSON);
+    exitedAfterRace.setAssigneeFlag(true);
+    exitedAfterRace.setExitKind(ExitKind.UNSUBSCRIBED);
+    exitedAfterRace.setExitAt(java.time.LocalDateTime.now());
+
+    // Erster Lookup -> aktiv; Re-Check nach dem Konflikt -> ausgetreten
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(active), List.of(exitedAfterRace));
+    // save verliert den Versionsvergleich -> KSF BusinessRuleException (409)
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(new BusinessRuleException("Versionskonflikt"));
+
+    // Act + Assert: Wettlauf-Verlierer wird neutral als 400 abgelehnt
+    assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
+        .isInstanceOf(EntityValidationException.class);
+
+    // Keine Notification, kein Invalidate, kein UserState-Save
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
+  }
+
+  // ---- Test 12: unverwandter Konflikt (Teilnehmer bleibt aktiv) wird durchgereicht -----------
+
+  @Test
+  @DisplayName(
+      "exit_unverwandter_konflikt_wird_durchgereicht: save -> BusinessRuleException +"
+          + " Teilnehmer weiterhin aktiv -> BusinessRuleException propagiert (kein 400-Maskieren)")
+  void exit_unverwandter_konflikt_wird_durchgereicht() {
+    // Arrange
+    final Long taskId = 132L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant active = new TaskParticipant();
+    active.setId(81L);
+    active.setTenantId(TENANT_ID);
+    active.setTaskId(taskId);
+    active.setParticipantRef(ACTOR_REF);
+    active.setParticipantKind(ParticipantKind.PERSON);
+    active.setAssigneeFlag(true);
+
+    // Re-Check liefert eine FRISCHE, weiterhin aktive Zeile (EXIT_KIND null) - eigenes Objekt,
+    // damit die vor save() gesetzte In-Memory-Mutation des ersten Lookups das Ergebnis nicht faelscht.
+    final TaskParticipant stillActive = new TaskParticipant();
+    stillActive.setId(81L);
+    stillActive.setTenantId(TENANT_ID);
+    stillActive.setTaskId(taskId);
+    stillActive.setParticipantRef(ACTOR_REF);
+    stillActive.setParticipantKind(ParticipantKind.PERSON);
+    stillActive.setAssigneeFlag(true);
+
+    // Erster Lookup -> aktiv; Re-Check nach dem Konflikt -> weiterhin aktiv
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(active), List.of(stillActive));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(new BusinessRuleException("unverwandter Konflikt"));
+
+    // Act + Assert: kein Austritt feststellbar -> urspruengliche BusinessRuleException propagiert
+    assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
+        .isInstanceOf(BusinessRuleException.class);
+
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {

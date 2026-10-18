@@ -313,10 +313,28 @@ public class AssigneeService {
           "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
     }
 
-    // EXIT_KIND + EXIT_AT setzen
+    // EXIT_KIND + EXIT_AT setzen. Der save() laeuft ueber KSFs Optimistic-Lock (VERSION-Spalte):
+    // Bei zwei nebenlaeufigen Austritts-Anfragen koennen beide den EXIT_KIND-Guard oben passieren,
+    // solange noch keine committet hat. Der Versionsvergleich beim Commit laesst genau eine
+    // gewinnen; die verlierende Transaktion meldet KSF als BusinessRuleException (HTTP 409). Diesen
+    // Wettlauf-Verlierer uebersetzen wir - sofern der Teilnehmer inzwischen tatsaechlich ausgetreten
+    // ist - in dieselbe neutrale 400-Antwort wie den sequentiellen Doppel-Austritt (P2-5), statt
+    // einen generischen 409 nach aussen zu geben. So bleibt die Doppel-Austritts-Invariante auch
+    // unter Nebenlaeufigkeit konsistent (keine zweite Erfolgsantwort / keine zweite Notification).
     participant.setExitKind(input.exitKind());
     participant.setExitAt(LocalDateTime.now());
-    participantQueryRepository.save(participant);
+    try {
+      participantQueryRepository.save(participant);
+    } catch (final BusinessRuleException concurrentConflict) {
+      final List<TaskParticipant> recheck =
+          participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef);
+      if (recheck.isEmpty() || recheck.get(0).getExitKind() != null) {
+        throw new EntityValidationException(
+            "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
+      }
+      // Unverwandter Konflikt (Teilnehmer weiterhin aktiv) -> unveraendert durchreichen.
+      throw concurrentConflict;
+    }
 
     // Bei JEDEM Exit: UNSUBSCRIBED_AT im UserState setzen (Inbox-Konsistenz - MAJOR 2).
     // findActivePage filtert auf UNSUBSCRIBED_AT IS NULL -> nach HANDOVER UND UNSUBSCRIBED
