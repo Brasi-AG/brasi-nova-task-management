@@ -208,8 +208,10 @@ public class DictionaryCodeResolver {
 
     final Long id = results.get(0).getId();
     // putIfAbsent: kein Ueberschreiben eines frischen Eintrags durch einen anderen Thread.
-    cache.putIfAbsent(key, new CachedEntry(id, results.get(0).getValidTo()));
-    return id;
+    // Gibt null zurueck wenn der Eintrag neu gesetzt wurde; den bestehenden Eintrag (vom
+    // gewinnenden Thread) zurueck wenn bereits jemand anderes eingesetzt hat -> konsistente ID.
+    final CachedEntry existing = cache.putIfAbsent(key, new CachedEntry(id, results.get(0).getValidTo()));
+    return existing != null ? existing.id() : id;
   }
 
   // ---- Reverse-Resolver: ID -> CODE (fuer Detail-Antworten) ------------------------------------
