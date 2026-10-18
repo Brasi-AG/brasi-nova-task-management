@@ -66,10 +66,15 @@ public class WebSocketTicketService {
    * @return {@link WsTicketResponse} mit opakem Token und Ablaufzeitpunkt
    */
   public WsTicketResponse issue(final long tenantId, final UUID userRef) {
+    // Lazy Cleanup: abgelaufene, nie-konsumierte Tickets entfernen um unbegrenztes Wachstum
+    // des Stores zu verhindern (nie konsumierte Tickets bleiben sonst bis JVM-Neustart erhalten).
+    final Instant now = clock.instant();
+    store.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
+
     final byte[] raw = new byte[TOKEN_BYTES];
     secureRandom.nextBytes(raw);
     final String token = encoder.encodeToString(raw);
-    final Instant expiresAt = clock.instant().plusSeconds(ttlSeconds);
+    final Instant expiresAt = now.plusSeconds(ttlSeconds);
     store.put(token, new Entry(tenantId, userRef, expiresAt));
     return new WsTicketResponse(token, expiresAt);
   }
@@ -96,6 +101,11 @@ public class WebSocketTicketService {
       return Optional.empty();
     }
     return Optional.of(new TicketPrincipal(entry.tenantId(), entry.userRef()));
+  }
+
+  /** Anzahl Eintraege im Store (fuer Tests). */
+  int storeSize() {
+    return store.size();
   }
 
   /** Interner Store-Eintrag. */

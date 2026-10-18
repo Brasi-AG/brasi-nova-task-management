@@ -114,6 +114,33 @@ class WebSocketTicketServiceTest {
     assertThat(decoded.length * 8).as(">= 128 Bit Entropie").isGreaterThanOrEqualTo(128);
   }
 
+  // ---- P2-G: Lazy Expiry-Cleanup ---------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "issue_bereinigt_abgelaufene_tickets_lazy: "
+          + "abgelaufene nie-konsumierte Tickets werden beim naechsten issue entfernt")
+  void issue_bereinigt_abgelaufene_tickets_lazy() {
+    final MutableClock clock = new MutableClock(Instant.parse("2026-10-18T10:00:00Z"));
+    final WebSocketTicketService service = new WebSocketTicketService(1L, clock); // TTL=1s
+
+    // N Tickets ausstellen (werden nie konsumiert)
+    for (int i = 0; i < 5; i++) {
+      service.issue(TENANT_ID, USER_REF);
+    }
+    assertThat(service.storeSize()).as("Vor Ablauf: 5 Eintraege im Store").isEqualTo(5);
+
+    // Uhr vorruecken: alle 5 Tickets sind jetzt abgelaufen
+    clock.advance(Duration.ofSeconds(2));
+
+    // Naechstes issue soll die abgelaufenen Tickets bereinigen
+    service.issue(TENANT_ID, USER_REF);
+
+    assertThat(service.storeSize())
+        .as("Nach issue mit abgelaufenen Eintraegen: nur noch 1 (der neue) im Store")
+        .isEqualTo(1);
+  }
+
   @Test
   @DisplayName("zwei_gleichzeitige_consume_genau_ein_erfolg")
   void zwei_gleichzeitige_consume_genau_ein_erfolg() throws Exception {
