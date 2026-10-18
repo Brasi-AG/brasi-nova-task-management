@@ -171,19 +171,7 @@ public class DictionaryCodeResolver {
       return cached.id();
     }
 
-    if (cached != null) {
-      // CAS-Eviction: nur den bekannten abgelaufenen Eintrag entfernen.
-      final boolean removed = cache.remove(key, cached);
-      if (!removed) {
-        // Ein anderer Thread hat den Eintrag bereits erneuert. Frischen Eintrag pruefen.
-        final CachedEntry current = cache.get(key);
-        if (current != null && !current.isExpired()) {
-          return current.id();
-        }
-        // Noch immer kein gueltiger Eintrag -> DB-Abfrage fortsetzen.
-      }
-    }
-
+    // Cache-Miss oder abgelaufener Eintrag -> DB-Abfrage.
     // Global-Scope: TENANT_ID=0 im TenantContextHolder setzen
     final List<T> results =
         TenantContextHolder.runWithTenant(TenantInfo.global(), () -> finder.findByCode(code));
@@ -208,20 +196,14 @@ public class DictionaryCodeResolver {
 
     final Long id = results.get(0).getId();
     final CachedEntry newEntry = new CachedEntry(id, results.get(0).getValidTo());
-    // putIfAbsent: kein Ueberschreiben eines frischen Eintrags durch einen anderen Thread.
-    final CachedEntry winning = cache.putIfAbsent(key, newEntry);
-    if (winning == null) {
-      // Wir haben die Insertion gewonnen.
-      return id;
+    // Cache best-effort aktualisieren. UNIQUE(TENANT_ID, CODE) auf der DB garantiert dass
+    // alle nebenlaeufigen Abfragen dieselbe ID liefern - der Cache ist reine Performance-
+    // Optimierung, keine Konsistenzquelle. Immer die eigene DB-frische ID zurueckgeben.
+    if (cached == null) {
+      cache.putIfAbsent(key, newEntry);
+    } else {
+      cache.replace(key, cached, newEntry);
     }
-    if (!winning.isExpired()) {
-      // Anderer Thread hat schneller einen gueltigen Eintrag gesetzt -> konsistente ID.
-      return winning.id();
-    }
-    // Gewinner-Eintrag ist bereits abgelaufen: per CAS durch frischen Eintrag ersetzen.
-    // Schlaegt das replace fehl (weiterer Thread hat inzwischen ersetzt), trotzdem unsere
-    // frische ID zurueckgeben.
-    cache.replace(key, winning, newEntry);
     return id;
   }
 
