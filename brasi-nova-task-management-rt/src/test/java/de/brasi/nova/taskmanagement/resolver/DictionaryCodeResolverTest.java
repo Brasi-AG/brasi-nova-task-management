@@ -23,6 +23,7 @@ import de.brasi.nova.taskmanagement.repository.dictionary.TaskPriorityRepository
 import de.brasi.nova.taskmanagement.repository.dictionary.TaskStatusRepository;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -140,6 +141,36 @@ class DictionaryCodeResolverTest {
 
     // Cache-Eintrag fuer DONE darf OPEN nicht verdraengen
     verify(statusRepo, times(0)).findByCode(TaskStatusCodes.OPEN);
+  }
+
+  // ---- P2-B: abgelaufener Cache-Eintrag ---------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "resolve_abgelaufener_cache_eintrag_evictet_und_revalidiert: "
+          + "GUELTIG_BIS gestern -> zweiter Aufruf nutzt NICHT den Cache -> re-resolve -> exception")
+  void resolve_abgelaufener_cache_eintrag_evictet_und_revalidiert() {
+    // Eintrag mit GUELTIG_BIS gestern (korrekte DB-Abfrage wuerde ihn nicht mehr liefern).
+    final TaskStatus expiredStatus = statusWithId(42L);
+    expiredStatus.setValidTo(LocalDate.now().minusDays(1));
+
+    // Erster Aufruf liefert den abgelaufenen Eintrag (Simulation: wurde kurz vor Mitternacht
+    // gecacht). Zweiter Aufruf (nach Eviction): kein Treffer mehr in der DB.
+    when(statusRepo.findByCode(TaskStatusCodes.OPEN))
+        .thenReturn(List.of(expiredStatus))
+        .thenReturn(List.of());
+
+    // Erster Aufruf: populiert Cache (abgelaufen).
+    final Long idFirst = resolver.resolveTaskStatusOpen();
+    assertThat(idFirst).as("Erster Aufruf muss die gecachte ID liefern").isEqualTo(42L);
+
+    // Zweiter Aufruf: Cache-Eintrag ist abgelaufen -> muss re-resolven -> DB leer -> exception.
+    assertThatThrownBy(() -> resolver.resolveTaskStatusOpen())
+        .isInstanceOf(DictionaryResolverException.class)
+        .hasMessageContaining("OPEN");
+
+    // Repository muss 2x aufgerufen worden sein (1x initial + 1x Re-Resolve nach Eviction).
+    verify(statusRepo, times(2)).findByCode(TaskStatusCodes.OPEN);
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------------------

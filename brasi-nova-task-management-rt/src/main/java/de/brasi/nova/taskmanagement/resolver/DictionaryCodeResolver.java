@@ -21,6 +21,7 @@ import de.brasi.nova.taskmanagement.repository.dictionary.TaskStatusRepository;
 import io.keel.framework.api.model.NovaDictionaryEntry;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -49,8 +50,18 @@ public class DictionaryCodeResolver {
   /** Cache-Schluessel fuer Reverse-Lookup: Dictionary-Name + interne ID -> CODE. */
   record ReverseCacheKey(String dictName, Long id) {}
 
-  /** Forward-Cache: Dictionary-Klasse + CODE -> interne Long-ID. */
-  private final ConcurrentHashMap<CacheKey, Long> cache = new ConcurrentHashMap<>();
+  /**
+   * Cache-Eintrag: interne ID + optionales Ablaufdatum (GUELTIG_BIS).
+   * {@code validTo == null} bedeutet dauerhaft gueltig (kein Ablaufdatum gesetzt).
+   */
+  record CachedEntry(Long id, LocalDate validTo) {
+    boolean isExpired() {
+      return validTo != null && validTo.isBefore(LocalDate.now());
+    }
+  }
+
+  /** Forward-Cache: Dictionary-Klasse + CODE -> CachedEntry (ID + Ablaufdatum). */
+  private final ConcurrentHashMap<CacheKey, CachedEntry> cache = new ConcurrentHashMap<>();
 
   /**
    * Reverse-Cache: Dictionary-Name + interne ID -> CODE.
@@ -155,9 +166,13 @@ public class DictionaryCodeResolver {
     Objects.requireNonNull(code, "code darf nicht null sein");
 
     final CacheKey key = new CacheKey(dictionaryClass, code);
-    final Long cached = cache.get(key);
+    final CachedEntry cached = cache.get(key);
+    if (cached != null && !cached.isExpired()) {
+      return cached.id();
+    }
+    // Kein Eintrag oder abgelaufen: evicten und neu aufloesen.
     if (cached != null) {
-      return cached;
+      cache.remove(key);
     }
 
     // Global-Scope: TENANT_ID=0 im TenantContextHolder setzen
@@ -183,7 +198,7 @@ public class DictionaryCodeResolver {
     }
 
     final Long id = results.get(0).getId();
-    cache.put(key, id);
+    cache.put(key, new CachedEntry(id, results.get(0).getValidTo()));
     return id;
   }
 
