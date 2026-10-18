@@ -33,6 +33,9 @@ public class DueReminderEmitter {
 
   private static final Logger log = LoggerFactory.getLogger(DueReminderEmitter.class);
 
+  /** Spaltenlaenge von {@code TASK_NOTIFICATION.TEXT}/{@code PREVIEW} ({@code nvarchar(500)}). */
+  private static final int MAX_NOTIFICATION_TEXT = 500;
+
   private final BaseTaskReminderReceiptRepository receiptRepository;
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
@@ -74,13 +77,15 @@ public class DueReminderEmitter {
     receipt.setOccurrenceDate(occurrenceDate);
     receiptRepository.save(receipt);
 
+    // TASK_NOTIFICATION.TEXT/PREVIEW sind nvarchar(500); TITLE darf bis 500 Zeichen lang sein.
+    // Mit dem Praefix wuerde TEXT sonst ueberlaufen -> Insert-Fehler -> Receipt-Rollback -> kein DUE.
     notificationService.emit(
         recipientRef,
         taskId,
         NotificationTypeCodes.DUE,
         NotificationSeverityCodes.WARN,
-        "Aufgabe faellig: " + taskTitle,
-        taskTitle,
+        truncate("Aufgabe faellig: " + taskTitle, MAX_NOTIFICATION_TEXT),
+        truncate(taskTitle, MAX_NOTIFICATION_TEXT),
         null);
 
     // Snapshot-Invalidierung nach Commit (arch-v2 §3: Due aendert die Inbox-Liste).
@@ -92,5 +97,13 @@ public class DueReminderEmitter {
         recipientRef,
         occurrenceDate,
         tenantId);
+  }
+
+  /** Kuerzt {@code value} auf hoechstens {@code maxLength} Zeichen (null-sicher). */
+  private static String truncate(final String value, final int maxLength) {
+    if (value == null || value.length() <= maxLength) {
+      return value;
+    }
+    return value.substring(0, maxLength);
   }
 }
