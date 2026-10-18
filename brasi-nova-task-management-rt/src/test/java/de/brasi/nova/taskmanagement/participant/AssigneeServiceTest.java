@@ -599,6 +599,63 @@ class AssigneeServiceTest {
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
 
+  // ---- Test RG1: Invalidate fuer ALLE aktiven Teilnehmer (nicht nur geaenderte Refs) -----------
+
+  /**
+   * Whole-Branch-Re-Gate (P2): Beim Hinzufuegen eines Assignees aendert sich
+   * {@code participantSummaries} fuer JEDEN verbleibenden aktiven Teilnehmer, nicht nur fuer den
+   * neu hinzugefuegten. Deshalb muss {@code invalidate} die Vereinigung aus geaenderten Refs UND
+   * allen aktuell aktiven Teilnehmer-Refs der Aufgabe erhalten - sonst bleibt der Snapshot eines
+   * unveraendert zugewiesenen Benutzers (A) ohne den neuen Teilnehmer (B) veraltet.
+   */
+  @Test
+  @DisplayName(
+      "invalidate_fuer_alle_aktiven_teilnehmer: Hinzufuegen von B invalidiert auch den bereits"
+          + " aktiven A (participantSummaries aendern sich fuer beide)")
+  void invalidate_fuer_alle_aktiven_teilnehmer() {
+    // Arrange
+    final Long taskId = 77L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID existingRefA = UUID.randomUUID();
+    final UUID newRefB = ASSIGNEE_REF;
+    final Task task = taskWithId(taskId, taskUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // A ist bereits aktiver Assignee der Aufgabe (bleibt unveraendert in der Ziel-Menge).
+    final TaskParticipant participantA = new TaskParticipant();
+    participantA.setParticipantRef(existingRefA);
+    participantA.setAssigneeFlag(true);
+    participantA.setCreatorFlag(false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(participantA));
+
+    // B ist neu -> kein vorhandener Participant.
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRefB))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    // Nach der Mutation sind A und B die aktiven Teilnehmer der Aufgabe.
+    final TaskUserState stateA = new TaskUserState();
+    stateA.setUserRef(existingRefA);
+    final TaskUserState stateB = new TaskUserState();
+    stateB.setUserRef(newRefB);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(stateA, stateB));
+
+    // Act: Ziel-Menge {A, B} -> A bleibt, B kommt neu hinzu.
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(existingRefA, newRefB)));
+
+    // Assert: invalidate muss BEIDE Refs enthalten (A als Mitbetroffener + B als neu).
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
+    assertThat(refsCaptor.getValue())
+        .as("invalidate muss den neuen B UND den bereits aktiven A enthalten")
+        .contains(existingRefA, newRefB);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {

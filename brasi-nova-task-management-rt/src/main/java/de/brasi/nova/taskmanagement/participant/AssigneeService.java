@@ -23,6 +23,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -249,9 +250,17 @@ public class AssigneeService {
       }
     }
 
-    // After-Commit: Invalidate fuer alle betroffenen Benutzer
-    if (!affectedRefs.isEmpty()) {
-      inboxSignalService.invalidate(tenantId, affectedRefs);
+    // After-Commit: Invalidate fuer alle betroffenen Benutzer.
+    // Eine Assignee-Aenderung veraendert participantSummaries fuer JEDEN verbleibenden aktiven
+    // Teilnehmer, nicht nur fuer die neu zugewiesenen/abgewaehlten Refs. Deshalb die Vereinigung
+    // aus geaenderten Refs (affectedRefs, inkl. der gerade abgewaehlten die nicht mehr aktiv sind)
+    // UND allen aktuell aktiven Teilnehmer-Refs der Aufgabe invalidieren (wie TaskCommandService.patch).
+    final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(toInvalidate::add);
+    if (!toInvalidate.isEmpty()) {
+      inboxSignalService.invalidate(tenantId, toInvalidate);
     }
   }
 
