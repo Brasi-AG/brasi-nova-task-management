@@ -171,8 +171,10 @@ public class DictionaryCodeResolver {
       return cached.id();
     }
     // Kein Eintrag oder abgelaufen: evicten und neu aufloesen.
+    // cache.remove(key, cached): atomic CAS - entfernt nur wenn noch derselbe Eintrag (kein
+    // fremder Thread hat inzwischen einen frischen Eintrag gesetzt).
     if (cached != null) {
-      cache.remove(key);
+      cache.remove(key, cached);
     }
 
     // Global-Scope: TENANT_ID=0 im TenantContextHolder setzen
