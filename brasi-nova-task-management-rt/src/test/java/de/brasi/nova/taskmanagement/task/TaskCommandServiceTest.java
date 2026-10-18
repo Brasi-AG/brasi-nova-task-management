@@ -391,6 +391,7 @@ class TaskCommandServiceTest {
     task.setId(id);
     task.setUuid(uuid);
     task.setTenantId(TENANT_ID);
+    task.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
     task.setTitle("Testtitel");
     task.setLastActivityAt(java.time.LocalDateTime.now());
     task.setCommentCount(0);

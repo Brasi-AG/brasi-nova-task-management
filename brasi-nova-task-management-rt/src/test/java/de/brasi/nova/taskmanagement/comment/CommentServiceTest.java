@@ -440,6 +440,7 @@ class CommentServiceTest {
     task.setId(id);
     task.setUuid(uuid);
     task.setTenantId(TENANT_ID);
+    task.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
     task.setTitle("Testtitel");
     task.setLastActivityAt(LocalDateTime.now().minusMinutes(10));
     task.setCommentCount(commentCount);

@@ -273,6 +273,7 @@ class MarkerServiceTest {
     task.setId(id);
     task.setUuid(uuid);
     task.setTenantId(TENANT_ID);
+    task.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
     task.setTitle("Testtitel");
     return task;
   }
