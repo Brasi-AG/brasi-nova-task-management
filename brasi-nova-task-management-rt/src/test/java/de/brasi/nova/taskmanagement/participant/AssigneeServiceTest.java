@@ -19,15 +19,19 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import io.keel.framework.api.exception.EntityNotFoundException;
+import io.keel.framework.api.model.EntityState;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -70,6 +74,7 @@ class AssigneeServiceTest {
   @Mock private UserStateService userStateService;
   @Mock private NotificationService notificationService;
   @Mock private InboxSignalService inboxSignalService;
+  @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
 
   private AssigneeService service;
@@ -84,7 +89,24 @@ class AssigneeServiceTest {
             userStateService,
             notificationService,
             inboxSignalService,
+            userReadRepository,
             userAccessor);
+
+    // Final-Review P1-2: Validierung angeforderter Assignees -> hier echot der Mock die UUIDs als
+    // aktive Benutzer zurueck (die Unit-Tests gehen von gueltigen Benutzern aus; die Ablehnung
+    // unbekannter UUIDs ist im AssigneeControllerIT real gegen MSSQL geprueft).
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenAnswer(
+            inv -> {
+              final Collection<UUID> requested = inv.getArgument(0);
+              final List<User> users = new ArrayList<>();
+              for (final UUID ref : requested) {
+                final User u = org.mockito.Mockito.mock(User.class);
+                when(u.getUuid()).thenReturn(ref);
+                users.add(u);
+              }
+              return users;
+            });
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -416,6 +438,7 @@ class AssigneeServiceTest {
     task.setId(id);
     task.setUuid(uuid);
     task.setTenantId(TENANT_ID);
+    task.setEntityState(EntityState.ACTIVE);
     task.setTitle("Testtitel");
     task.setLastActivityAt(java.time.LocalDateTime.now());
     task.setCommentCount(0);

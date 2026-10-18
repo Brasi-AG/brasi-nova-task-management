@@ -32,6 +32,26 @@ public interface UserReadRepository extends NovaRepository<User> {
   Optional<User> findByLoginName(String loginName);
 
   /**
+   * Liefert die aktiven Benutzer des aktuellen Mandanten, deren EXTERNALID in {@code uuids} liegt
+   * (Validierung angeforderter Assignee-UUIDs, Final-Review P1-2). {@code :tenantId} wird
+   * automatisch gebunden -> fremde Mandanten/unbekannte/inaktive UUIDs sind NICHT im Ergebnis.
+   *
+   * <p><b>Pflicht des Aufrufers:</b> {@code uuids} nie leer uebergeben (MSSQL {@code IN ()} ist ein
+   * Syntaxfehler). Die Collection wird fuer {@code IN (:uuids)} expandiert.
+   *
+   * @param uuids angeforderte Benutzer-UUIDs (nicht leer)
+   * @return die davon aktiven Benutzer des Mandanten
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM PROD_BENUTZER WHERE EXTERNALID IN (:uuids)"
+              + " AND TENANT_ID = :tenantId AND ENTITY_STATUS = 'ACTIVE'",
+      mssql =
+          "SELECT * FROM [dbo].[PROD_BENUTZER] WHERE EXTERNALID IN (:uuids)"
+              + " AND TENANT_ID = :tenantId AND ENTITY_STATUS = 'ACTIVE'")
+  List<User> findActiveByUuids(@Param("uuids") Collection<UUID> uuids);
+
+  /**
    * Erste Seite der Teilnehmer-Suche (kein Keyset-Praedikat).
    *
    * <p>Gibt maximal {@code limit} Eintraege zurueck. LIKE-Pattern wird nur angewendet, wenn

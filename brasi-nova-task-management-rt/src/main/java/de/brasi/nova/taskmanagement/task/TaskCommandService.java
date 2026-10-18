@@ -370,6 +370,10 @@ public class TaskCommandService {
     if (!Objects.equals(tenantId, task.getTenantId())) {
       throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
+    // Final-Review P1-1: logisch deaktivierte Aufgaben neutral wie fremder Tenant maskieren (404).
+    if (task.getEntityState() != io.keel.framework.api.model.EntityState.ACTIVE) {
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
+    }
     return task;
   }
 }

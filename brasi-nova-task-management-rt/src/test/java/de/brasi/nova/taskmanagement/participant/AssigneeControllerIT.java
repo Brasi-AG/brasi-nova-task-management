@@ -688,6 +688,45 @@ class AssigneeControllerIT {
     }
   }
 
+  // ---- Final-Review P1-2: unbekannte/fremde Assignee-UUID -> 400 -------------------------------
+
+  @Test
+  @DisplayName(
+      "assignee_unbekannte_uuid_liefert_400:"
+          + " PUT /assignees mit UUID ohne aktiven Mandanten-Benutzer -> 400, kein Participant")
+  void assignee_unbekannte_uuid_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final String postResponse =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "P1-2-Assignee-Test"))))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id").traverse(om).readValueAs(UUID.class);
+
+    // Unbekannte UUID (kein aktiver PROD_BENUTZER im Mandanten) -> 400, bevor etwas angelegt wird
+    final UUID unknown = UUID.randomUUID();
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", Set.of(unknown.toString())))))
+        .andExpect(status().isBadRequest());
+
+    final Integer count = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        Integer.class, taskId, unknown);
+    assertThat(count).as("kein Participant fuer die unbekannte UUID").isZero();
+  }
+
   // ---- MINOR IT: null/fehlendes assignees -> 400 -----------------------------------------------
 
   @Test

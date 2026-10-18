@@ -589,6 +589,47 @@ class TaskFacadeControllerIT {
 
   // ---- Hilfsmethoden -------------------------------------------------------------------------
 
+  // ---- Final-Review P1-1: logisch deaktivierter Task nicht les-/patchbar -----------------------
+
+  @Test
+  @DisplayName(
+      "deaktivierter_task_ist_nicht_les_oder_patchbar_404:"
+          + " ENTITY_STATUS!='ACTIVE' -> GET Detail + PATCH liefern neutrale 404")
+  void deaktivierter_task_ist_nicht_les_oder_patchbar_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Aktiven Task anlegen ...
+    final String postResponse =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "Deaktivierungs-Test"))))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id").traverse(om).readValueAs(UUID.class);
+
+    // ... dann logisch deaktivieren (ENTITY_STATUS != 'ACTIVE')
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", taskId);
+
+    // GET Detail -> 404 (neutrale Maskierung wie fremder Tenant)
+    mvc.perform(get("/api/v1/tasks/" + taskId).header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isNotFound());
+
+    // PATCH -> 404 (keine Mutation deaktivierter Aufgaben)
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", "Neuer Titel"))))
+        .andExpect(status().isNotFound());
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())

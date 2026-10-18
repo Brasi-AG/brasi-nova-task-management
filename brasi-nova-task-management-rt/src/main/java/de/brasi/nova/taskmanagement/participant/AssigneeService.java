@@ -14,6 +14,8 @@ import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
@@ -52,6 +54,7 @@ public class AssigneeService {
   private final UserStateService userStateService;
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
+  private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
@@ -62,6 +65,7 @@ public class AssigneeService {
       final UserStateService userStateService,
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
+      final UserReadRepository userReadRepository,
       final UserAccessor userAccessor) {
     this.taskRepository = taskRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -69,6 +73,7 @@ public class AssigneeService {
     this.userStateService = userStateService;
     this.notificationService = notificationService;
     this.inboxSignalService = inboxSignalService;
+    this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
   }
 
@@ -132,6 +137,22 @@ public class AssigneeService {
             .filter(ref -> !desiredRefs.contains(ref))
             .filter(ref -> !creatorRefs.contains(ref))
             .collect(Collectors.toSet());
+
+    // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
+    // Sonst entstuenden orphan-/cross-tenant-Participant/UserState/Notification. Unbekannt/fremd/
+    // inaktiv -> 400 (EntityValidationException), bevor irgendetwas angelegt wird.
+    if (!toAdd.isEmpty()) {
+      final Set<UUID> activeUserRefs =
+          userReadRepository.findActiveByUuids(toAdd).stream()
+              .map(User::getUuid)
+              .collect(Collectors.toSet());
+      final Set<UUID> unknown =
+          toAdd.stream().filter(ref -> !activeUserRefs.contains(ref)).collect(Collectors.toSet());
+      if (!unknown.isEmpty()) {
+        throw new EntityValidationException(
+            "Unbekannte oder nicht zugelassene Assignee-Benutzer: " + unknown);
+      }
+    }
 
     final List<UUID> affectedRefs = new ArrayList<>();
 
@@ -335,6 +356,10 @@ public class AssigneeService {
     }
     final Task task = opt.get();
     if (!Objects.equals(tenantId, task.getTenantId())) {
+      throw new EntityNotFoundException("Aufgabe nicht gefunden.");
+    }
+    // Final-Review P1-1: logisch deaktivierte Aufgaben neutral wie fremder Tenant maskieren (404).
+    if (task.getEntityState() != io.keel.framework.api.model.EntityState.ACTIVE) {
       throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
     return task;
