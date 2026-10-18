@@ -52,10 +52,13 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *       (bei asOf war er noch NICHT abgemeldet).
  *   <li>IT 3: findArchiveLeftPage liefert Task NICHT, wenn Participant-Austritt (EXIT_AT) NACH asOf
  *       (bei asOf hatte der Teilnehmer die Aufgabe noch nicht verlassen).
- *   <li>IT 4 (ANGELEGT_AM-Bound): findActivePage liefert Task NICHT, wenn Benutzer NACH asOf
- *       beigetreten ist (Mitgliedschaft existierte beim Wasserzeichen noch nicht).
+ *   <li>IT 4 (ANGELEGT_AM-Bound UserState): findActivePage liefert Task NICHT, wenn Benutzer
+ *       NACH asOf beigetreten ist (Mitgliedschaft existierte beim Wasserzeichen noch nicht).
  *   <li>IT 5 (EXIT_AT-Null-Fallback): findArchiveLeftPage liefert Task MIT null EXIT_AT
- *       (EXIT_KIND gesetzt, EXIT_AT fehlt -> als verlassen gewertet, nicht still verschluckt).
+ *       (EXIT_KIND gesetzt + ANGELEGT_AM vor asOf -> als verlassen gewertet, kein Verschlucken).
+ *   <li>IT 6 (ANGELEGT_AM-Bound Participant/null EXIT_AT): findArchiveLeftPage liefert Task NICHT
+ *       wenn Participant NACH asOf erstellt wurde mit EXIT_KIND und EXIT_AT=null (kein Beitritt
+ *       vor Wasserzeichen -> soll nicht im Archiv erscheinen).
  * </ul>
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
@@ -92,6 +95,7 @@ class TaskKeysetSnapshotIT {
   private static final long TASK_LEFT_EXIT_ID = 590003L;
   private static final long TASK_ADDED_AFTER_ID = 590004L;
   private static final long TASK_LEFT_EXIT_NULL_AT_ID = 590005L;
+  private static final long TASK_PARTICIPANT_AFTER_ASOF_ID = 590006L;
   private static final UUID TASK_ACTIVE_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000590001");
   private static final UUID TASK_LEFT_UNSUB_UUID =
@@ -102,6 +106,8 @@ class TaskKeysetSnapshotIT {
       UUID.fromString("00000059-0000-0059-aaaa-000000590004");
   private static final UUID TASK_LEFT_EXIT_NULL_AT_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000590005");
+  private static final UUID TASK_PARTICIPANT_AFTER_ASOF_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000590006");
 
   // Bekannte Seed-IDs aus V1-Migration
   private static final long STATUS_OPEN = 101L;
@@ -176,9 +182,9 @@ class TaskKeysetSnapshotIT {
     insertTask(
         jt, TASK_LEFT_EXIT_ID, TASK_LEFT_EXIT_UUID, TENANT_ID, STATUS_OPEN, T0,
         "IT-P1-LeftExit");
-    insertParticipant(jt, 590030L, TASK_LEFT_EXIT_ID, TENANT_ID, USER_A_REF, T_AFTER);
+    insertParticipant(jt, 590030L, TASK_LEFT_EXIT_ID, TENANT_ID, USER_A_REF, T_AFTER, T_BEFORE);
 
-    // T4 (IT 4 - ANGELEGT_AM-Bound): OPEN-Task, Benutzer erst bei T_AFTER beigetreten.
+    // T4 (IT 4 - ANGELEGT_AM-Bound UserState): OPEN-Task, Benutzer erst bei T_AFTER beigetreten.
     //            ANGELEGT_AM > asOf -> Mitgliedschaft existierte beim Wasserzeichen noch nicht
     //            -> darf NICHT in findActivePage erscheinen.
     insertTask(
@@ -186,13 +192,23 @@ class TaskKeysetSnapshotIT {
         "IT-P1-AddedAfter");
     insertUserState(jt, 590040L, TASK_ADDED_AFTER_ID, TENANT_ID, USER_A_REF, null, T_AFTER);
 
-    // T5 (IT 5 - EXIT_AT-Null-Fallback): OPEN-Task, Participant mit EXIT_KIND aber EXIT_AT=null.
-    //            Solche Zeilen duerfen NICHT still verschluckt werden.
-    //            -> MUSS in findArchiveLeftPage erscheinen.
+    // T5 (IT 5 - EXIT_AT-Null-Fallback positiv): Participant mit EXIT_KIND + EXIT_AT=null,
+    //            aber ANGELEGT_AM = T_BEFORE (VOR asOf beigetreten).
+    //            -> MUSS in findArchiveLeftPage erscheinen (Null-Fallback greift korrekt).
     insertTask(
         jt, TASK_LEFT_EXIT_NULL_AT_ID, TASK_LEFT_EXIT_NULL_AT_UUID, TENANT_ID, STATUS_OPEN, T0,
         "IT-P1-LeftExitNullAt");
-    insertParticipantNullExit(jt, 590050L, TASK_LEFT_EXIT_NULL_AT_ID, TENANT_ID, USER_A_REF);
+    insertParticipantNullExit(
+        jt, 590050L, TASK_LEFT_EXIT_NULL_AT_ID, TENANT_ID, USER_A_REF, T_BEFORE);
+
+    // T6 (IT 6 - ANGELEGT_AM-Bound Participant/null EXIT_AT): Participant mit EXIT_KIND + EXIT_AT=null,
+    //            aber ANGELEGT_AM = T_AFTER (NACH asOf erstellt).
+    //            -> darf NICHT in findArchiveLeftPage erscheinen (Beitritt nach Wasserzeichen).
+    insertTask(
+        jt, TASK_PARTICIPANT_AFTER_ASOF_ID, TASK_PARTICIPANT_AFTER_ASOF_UUID, TENANT_ID,
+        STATUS_OPEN, T0, "IT-P1-ParticipantAfterAsOf");
+    insertParticipantNullExit(
+        jt, 590060L, TASK_PARTICIPANT_AFTER_ASOF_ID, TENANT_ID, USER_A_REF, T_AFTER);
   }
 
   @BeforeEach
@@ -269,13 +285,11 @@ class TaskKeysetSnapshotIT {
         .doesNotContain(TASK_LEFT_EXIT_ID);
   }
 
-  // ---- IT 4 (ANGELEGT_AM-Bound): nach asOf beigetretener Benutzer nicht in findActivePage --
+  // ---- IT 4 (ANGELEGT_AM-Bound UserState): nach asOf beigetretener Benutzer ----
 
   /**
    * Diskriminator: ANGELEGT_AM > asOf -> Mitgliedschaft existierte beim Wasserzeichen noch nicht ->
    * Task darf NICHT in findActivePage erscheinen.
-   * Verhindert, dass ein User der NACH asOf beigetreten ist und sich nicht abgemeldet hat
-   * faelschlicherweise als aktiv bei asOf gewertet wird.
    */
   @Test
   @DisplayName(
@@ -293,26 +307,50 @@ class TaskKeysetSnapshotIT {
         .doesNotContain(TASK_ADDED_AFTER_ID);
   }
 
-  // ---- IT 5 (EXIT_AT-Null-Fallback): null EXIT_AT mit EXIT_KIND -> in archive-left ----------
+  // ---- IT 5 (EXIT_AT-Null-Fallback positiv): VOR asOf erstellter Participant ----
 
   /**
-   * Diskriminator: EXIT_KIND gesetzt, EXIT_AT = NULL -> Austritt ohne expliziten Zeitstempel darf
-   * NICHT still aus archive-left verschluckt werden. Mit Null-Fallback (EXIT_AT IS NULL)
-   * erscheint der Task.
+   * Diskriminator: EXIT_KIND gesetzt + EXIT_AT = NULL + ANGELEGT_AM < asOf ->
+   * Participant existierte beim Wasserzeichen und ist als verlassen gewertet ->
+   * Task MUSS in archive-left erscheinen (Null-Fallback greift korrekt, nicht verschluckt).
    */
   @Test
   @DisplayName(
-      "findArchiveLeftPage_enthaelt_task_mit_null_exit_at: "
-          + "EXIT_KIND gesetzt + EXIT_AT=null -> Null-Fallback -> erscheint in archive-left")
-  void findArchiveLeftPage_enthaelt_task_mit_null_exit_at(
+      "findArchiveLeftPage_enthaelt_task_mit_null_exit_at_und_angelegt_vor_asof: "
+          + "EXIT_KIND gesetzt + EXIT_AT=null + ANGELEGT_AM < asOf -> erscheint in archive-left")
+  void findArchiveLeftPage_enthaelt_task_mit_null_exit_at_und_angelegt_vor_asof(
       @Autowired TaskKeysetQueryRepository repo) {
     final List<Task> page =
         repo.findArchiveLeftPage(USER_A_REF, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 10);
 
     assertThat(page)
-        .as("T5 muss erscheinen: EXIT_KIND=HANDOVER, EXIT_AT=null -> Null-Fallback greift")
+        .as("T5 muss erscheinen: EXIT_KIND=HANDOVER, EXIT_AT=null, ANGELEGT_AM=%s < asOf=%s",
+            T_BEFORE, T0)
         .extracting(Task::getId)
         .contains(TASK_LEFT_EXIT_NULL_AT_ID);
+  }
+
+  // ---- IT 6 (ANGELEGT_AM-Bound Participant/null EXIT_AT): NACH asOf erstellter Participant ----
+
+  /**
+   * Diskriminator: EXIT_KIND gesetzt + EXIT_AT = NULL + ANGELEGT_AM > asOf ->
+   * Participant-Beitritt war nach dem Wasserzeichen -> Membership existierte noch nicht ->
+   * Task darf NICHT in archive-left erscheinen.
+   */
+  @Test
+  @DisplayName(
+      "findArchiveLeftPage_enthaelt_task_nicht_bei_participant_angelegt_nach_asof: "
+          + "EXIT_KIND + EXIT_AT=null + ANGELEGT_AM > asOf -> Beitritt nach Wasserzeichen -> NICHT in archive-left")
+  void findArchiveLeftPage_enthaelt_task_nicht_bei_participant_angelegt_nach_asof(
+      @Autowired TaskKeysetQueryRepository repo) {
+    final List<Task> page =
+        repo.findArchiveLeftPage(USER_A_REF, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 10);
+
+    assertThat(page)
+        .as("T6 darf NICHT erscheinen: EXIT_KIND=HANDOVER, EXIT_AT=null, ANGELEGT_AM=%s > asOf=%s",
+            T_AFTER, T0)
+        .extracting(Task::getId)
+        .doesNotContain(TASK_PARTICIPANT_AFTER_ASOF_ID);
   }
 
   // ---- Hilfsmethoden -----------------------------------------------------------------------
@@ -372,14 +410,19 @@ class TaskKeysetSnapshotIT {
         id, id, tenantId, taskId, userRef, tenantId, unsubscribedAt, angelegtAm);
   }
 
-  /** Participant mit gesetztem EXIT_KIND und EXIT_AT (Normalfall). */
+  /**
+   * Participant mit gesetztem EXIT_KIND und EXIT_AT.
+   *
+   * @param angelegtAm  Beitrittszeitpunkt des Participants (ANGELEGT_AM)
+   */
   private static void insertParticipant(
       final JdbcTemplate jt,
       final long id,
       final long taskId,
       final long tenantId,
       final UUID participantRef,
-      final LocalDateTime exitAt) {
+      final LocalDateTime exitAt,
+      final LocalDateTime angelegtAm) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
@@ -387,17 +430,23 @@ class TaskKeysetSnapshotIT {
             + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, 'HANDOVER', ?, "
-            + " 'it-seed', GETDATE())",
-        id, id, tenantId, taskId, participantRef, tenantId, exitAt);
+            + " 'it-seed', ?)",
+        id, id, tenantId, taskId, participantRef, tenantId, exitAt, angelegtAm);
   }
 
-  /** Participant mit gesetztem EXIT_KIND aber NULL EXIT_AT (Null-Fallback-Test). */
+  /**
+   * Participant mit gesetztem EXIT_KIND aber NULL EXIT_AT (Null-Fallback-Test).
+   *
+   * @param angelegtAm  Beitrittszeitpunkt des Participants (ANGELEGT_AM);
+   *                    vor asOf -> erscheint; nach asOf -> erscheint nicht
+   */
   private static void insertParticipantNullExit(
       final JdbcTemplate jt,
       final long id,
       final long taskId,
       final long tenantId,
-      final UUID participantRef) {
+      final UUID participantRef,
+      final LocalDateTime angelegtAm) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
@@ -405,8 +454,8 @@ class TaskKeysetSnapshotIT {
             + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, 'HANDOVER', NULL, "
-            + " 'it-seed', GETDATE())",
-        id, id, tenantId, taskId, participantRef, tenantId);
+            + " 'it-seed', ?)",
+        id, id, tenantId, taskId, participantRef, tenantId, angelegtAm);
   }
 
   // ---- IT-Konfigurations-Context --------------------------------------------------------
