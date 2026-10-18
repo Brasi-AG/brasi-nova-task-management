@@ -89,12 +89,12 @@ class V3ParticipantReconciliationIT {
     // Gruppe X: drei Zeilen fuer denselben (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF).
     // Erwartung: der Creator (ID=1) bleibt, ID=2 (aktiv, nicht-Creator) und ID=3 (ausgetreten)
     // werden entfernt.
-    insertParticipant(1L, 9001L, GROUP_X_REF, true, true, null); // Creator aktiv
-    insertParticipant(2L, 9001L, GROUP_X_REF, false, true, null); // Nicht-Creator aktiv
-    insertParticipant(3L, 9001L, GROUP_X_REF, false, true, "UNSUBSCRIBED"); // ausgetreten
+    insertParticipant(1L, 9001L, GROUP_X_REF, true, true, null, "ACTIVE"); // Creator aktiv
+    insertParticipant(2L, 9001L, GROUP_X_REF, false, true, null, "ACTIVE"); // Nicht-Creator aktiv
+    insertParticipant(3L, 9001L, GROUP_X_REF, false, true, "UNSUBSCRIBED", "ACTIVE"); // ausgetreten
 
     // Gruppe Y: eine einzelne, nicht-duplizierte Zeile -> muss unangetastet bleiben.
-    insertParticipant(4L, 9002L, GROUP_Y_REF, false, true, null);
+    insertParticipant(4L, 9002L, GROUP_Y_REF, false, true, null, "ACTIVE");
 
     assertThat(countParticipants()).as("vor V3: 4 Zeilen").isEqualTo(4);
 
@@ -120,9 +120,46 @@ class V3ParticipantReconciliationIT {
     assertThat(countParticipants()).as("nach V3: 2 Zeilen").isEqualTo(2);
 
     // 4c. Der UNIQUE greift jetzt: erneuter Duplikat-INSERT fuer Gruppe X scheitert hart.
-    assertThatThrownBy(() -> insertParticipant(99L, 9001L, GROUP_X_REF, false, false, null))
+    assertThatThrownBy(() -> insertParticipant(99L, 9001L, GROUP_X_REF, false, false, null, "ACTIVE"))
         .isInstanceOf(DataIntegrityViolationException.class)
         .hasMessageContaining("UNIQUE");
+  }
+
+  @Test
+  @DisplayName(
+      "v3_bevorzugt_aktive_zeile_vor_deaktiviertem_creator: ENTITY_STATUS=ACTIVE schlaegt einen"
+          + " DEACTIVE-Creator -> die sichtbare (aktive) Zeile bleibt erhalten")
+  void v3_bevorzugt_aktive_zeile_vor_deaktiviertem_creator() {
+    migrateTo("2");
+
+    jdbc.update(
+        "INSERT INTO [dbo].[PROD_FIRMA] (ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID,"
+            + " GUELTIG_VON) VALUES (?, 'ACTIVE', NEWID(), 1, ?, CAST(GETDATE() AS DATE))",
+        TENANT_ID,
+        TENANT_ID);
+
+    // Gruppe Z: ein DEACTIVE-Creator (ID=5) + eine ACTIVE-Nicht-Creator-Zeile (ID=6).
+    // Erwartung: die ACTIVE-Zeile (ID=6) ueberlebt - sonst waere der Teilnehmer nach der Migration
+    // fuer alle ENTITY_STATUS='ACTIVE'-Reads unsichtbar und der UNIQUE blockierte einen Ersatz.
+    insertParticipant(5L, 9003L, GROUP_X_REF, true, true, null, "DEACTIVE");
+    insertParticipant(6L, 9003L, GROUP_X_REF, false, true, null, "ACTIVE");
+
+    migrateTo("3");
+
+    final Integer groupZCount =
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = 9003", Integer.class);
+    assertThat(groupZCount).as("Gruppe Z auf eine Zeile bereinigt").isEqualTo(1);
+
+    final Long survivorId =
+        jdbc.queryForObject(
+            "SELECT ID FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = 9003", Long.class);
+    assertThat(survivorId).as("die ACTIVE-Zeile (ID=6) bleibt, nicht der DEACTIVE-Creator").isEqualTo(6L);
+
+    final String survivorStatus =
+        jdbc.queryForObject(
+            "SELECT ENTITY_STATUS FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = 9003", String.class);
+    assertThat(survivorStatus).as("ueberlebende Zeile ist aktiv").isEqualTo("ACTIVE");
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------
@@ -145,13 +182,15 @@ class V3ParticipantReconciliationIT {
       final String participantRef,
       final boolean creator,
       final boolean assignee,
-      final String exitKind) {
+      final String exitKind,
+      final String entityStatus) {
     jdbc.update(
         "INSERT INTO [dbo].[TASK_PARTICIPANT]"
-            + " (ID, TENANT_ID, TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
-            + "  CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND)"
-            + " VALUES (?, ?, ?, ?, 'PERSON', ?, ?, ?, 1, ?)",
+            + " (ID, ENTITY_STATUS, TENANT_ID, TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND,"
+            + "  PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND)"
+            + " VALUES (?, ?, ?, ?, ?, 'PERSON', ?, ?, ?, 1, ?)",
         id,
+        entityStatus,
         TENANT_ID,
         taskId,
         participantRef,
