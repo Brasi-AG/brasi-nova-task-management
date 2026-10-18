@@ -1,6 +1,8 @@
 package de.brasi.nova.taskmanagement.participant.model;
 
 import io.keel.framework.api.validation.EntityValidationException;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.Set;
 import java.util.UUID;
 
@@ -23,7 +25,12 @@ import java.util.UUID;
  *                  kein null-Element)
  * @throws EntityValidationException wenn {@code assignees} null ist oder ein null-Element enthaelt
  */
-public record AssigneeUpdateInput(Set<UUID> assignees) {
+public record AssigneeUpdateInput(
+    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
+        description = "UUID eines Assignee-Benutzers (PROD_BENUTZER.EXTERNALID)."))
+    @Schema(description = "Ziel-Menge der Assignee-UUIDs (PUT-Set-Semantik). Leeres Array = alle abwaehlen.",
+        requiredMode = Schema.RequiredMode.REQUIRED)
+    Set<UUID> assignees) {
 
   /**
    * Kompakter Konstruktor: Validiert, dass {@code assignees} nicht null ist und keine

@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.paging;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.List;
 
@@ -17,4 +18,14 @@ import java.util.List;
  * @param hasMore    ob weitere Seiten vorhanden sind
  * @param asOf       Snapshot-Wasserzeichen (UTC); fuer alle Seiten desselben Scrolls identisch
  */
-public record KeysetPage<T>(List<T> items, String nextCursor, boolean hasMore, Instant asOf) {}
+public record KeysetPage<T>(
+    @Schema(description = "Elemente dieser Seite.")
+    List<T> items,
+    @Schema(description = "Opaker Cursor fuer die naechste Seite (null wenn hasMore=false).",
+        example = "eyJhc09mIjoiMjAyNi0xMC0xOFQwODowMDowMCJ9")
+    String nextCursor,
+    @Schema(description = "Gibt an, ob weitere Seiten vorhanden sind.", example = "false")
+    boolean hasMore,
+    @Schema(description = "Snapshot-Wasserzeichen (UTC); fuer alle Seiten desselben Scrolls identisch.",
+        example = "2026-10-18T08:00:00Z")
+    Instant asOf) {}

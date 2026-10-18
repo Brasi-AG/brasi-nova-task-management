@@ -4,6 +4,10 @@ import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,10 +44,23 @@ public class AssigneeController {
    * @param input Ziel-Assignee-Menge
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Assignees aktualisieren",
+      description = "Ersetzt die aktuelle Assignee-Menge durch die gewuenschte Ziel-Menge (PUT-Set-Semantik)."
+          + " Neu zugewiesene Benutzer erhalten eine ASSIGN-Notification."
+          + " Der Creator kann nicht abgewaehlt werden.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Assignees erfolgreich aktualisiert."),
+      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannte Benutzer-UUID, null-Elemente)."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @PutMapping("/{id}/assignees")
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> updateAssignees(
-      @PathVariable final UUID id, @RequestBody final AssigneeUpdateInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final AssigneeUpdateInput input) {
     assigneeService.updateAssignees(id, input);
     return ResponseEntity.noContent().build();
   }
@@ -57,10 +74,24 @@ public class AssigneeController {
    * @param input Austritts-Art
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Aufgabe verlassen",
+      description = "Der angemeldete Benutzer verlaesst die Aufgabe."
+          + " exitKind: HANDOVER (Aufgabe uebergeben) oder UNSUBSCRIBED (Aufgabe abgemeldet)."
+          + " Der Creator kann die Aufgabe nicht verlassen (409).")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich verlassen."),
+      @ApiResponse(responseCode = "400", description = "Benutzer ist kein aktiver Teilnehmer der Aufgabe."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert)."),
+      @ApiResponse(responseCode = "409", description = "Der Creator kann die Aufgabe nicht verlassen.")
+  })
   @PostMapping("/{id}/exit")
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> exit(
-      @PathVariable final UUID id, @RequestBody final ExitInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final ExitInput input) {
     assigneeService.exit(id, input);
     return ResponseEntity.noContent().build();
   }

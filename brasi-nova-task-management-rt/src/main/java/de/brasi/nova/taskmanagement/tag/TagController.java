@@ -5,6 +5,13 @@ import de.brasi.nova.taskmanagement.tag.model.TagCreateInput;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
 import de.brasi.nova.taskmanagement.tag.model.TagUpdateInput;
 import io.keel.framework.api.security.permission.RequiresPermission;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +52,22 @@ public class TagController {
    *
    * @return 200 OK mit Liste der Tags
    */
+  @Operation(
+      summary = "Tags auflisten",
+      description = "Liefert alle aktiven Tags des globalen Katalogs (TENANT_ID=0).")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Tag-Liste erfolgreich geladen.",
+          content = @Content(
+              mediaType = "application/json",
+              examples = @ExampleObject(value = "["
+                  + "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\","
+                  + "\"name\": \"Dringend\","
+                  + "\"severityCode\": \"DANGER\"}]"))),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+  })
   @GetMapping
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<List<TagModel>> listTags() {
@@ -57,6 +80,21 @@ public class TagController {
    * @param input Eingabe-DTO (name, severityCode)
    * @return 201 Created mit {"id": "<uuid>"}
    */
+  @Operation(
+      summary = "Tag anlegen",
+      description = "Legt einen neuen Tag im globalen Katalog an. Erfordert TAG_ADMIN-Berechtigung.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "201",
+          description = "Tag erfolgreich angelegt.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(type = "object"),
+              examples = @ExampleObject(value = "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\"}"))),
+      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Name, unbekannter severityCode)."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung.")
+  })
   @PostMapping
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Map<String, UUID>> createTag(@RequestBody final TagCreateInput input) {
@@ -71,10 +109,20 @@ public class TagController {
    * @param input Patch-Eingabe (name, severityCode)
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Tag aktualisieren",
+      description = "Aktualisiert einen bestehenden Tag (name und/oder severityCode). Erfordert TAG_ADMIN-Berechtigung.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Tag erfolgreich aktualisiert."),
+      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Name, unbekannter severityCode)."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Tag nicht gefunden.")
+  })
   @PutMapping("/{id}")
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Void> updateTag(
-      @PathVariable final UUID id,
+      @Parameter(description = "Externe UUID des Tags.", required = true) @PathVariable final UUID id,
       @RequestBody final TagUpdateInput input) {
     catalogService.update(id, input);
     return ResponseEntity.noContent().build();

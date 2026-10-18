@@ -5,6 +5,12 @@ import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,6 +43,24 @@ public class WebSocketTicketController {
    *
    * @return 200 OK mit {@link WsTicketResponse}
    */
+  @Operation(
+      summary = "WebSocket-Ticket ausstellen",
+      description = "Stellt ein kurzlebiges Einmal-Ticket fuer den WebSocket-Handshake aus."
+          + " Das Ticket wird bei WS /ws?ticket=... eingeloest und danach verworfen (einmalig, TTL ca. 30s).")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Ticket erfolgreich ausgestellt.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = WsTicketResponse.class),
+              examples = @ExampleObject(value = "{"
+                  + "\"ticket\": \"abc123XYZ_opakes-token-hier\","
+                  + "\"expiresAt\": \"2026-10-18T08:00:30Z\""
+                  + "}"))),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+  })
   @PostMapping
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<WsTicketResponse> issueTicket() {

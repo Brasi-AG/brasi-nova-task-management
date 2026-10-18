@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.notification.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
@@ -10,6 +11,10 @@ import java.util.List;
  * @param hasMore    ob weitere Seiten vorhanden sind
  */
 public record NotificationPage(
+    @Schema(description = "Benachrichtigungen dieser Seite.")
     List<NotificationModel> items,
+    @Schema(description = "Opaker Cursor fuer die naechste Seite (null wenn hasMore=false).",
+        example = "eyJjcmVhdGVkQXQiOiIyMDI2LTEwLTE4VDA4OjAwOjAwIn0")
     String nextCursor,
+    @Schema(description = "Gibt an, ob weitere Seiten vorhanden sind.", example = "false")
     boolean hasMore) {}

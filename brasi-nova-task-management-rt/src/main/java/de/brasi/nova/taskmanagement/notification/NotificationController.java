@@ -5,6 +5,13 @@ import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,11 +54,42 @@ public class NotificationController {
    * @param limit    Seitengroesse (default 50, geclampt auf [1, 100])
    * @return 200 OK mit {@link NotificationPage}
    */
+  @Operation(
+      summary = "Benachrichtigungen auflisten",
+      description = "Liefert eine Keyset-paginierte Seite der eigenen Benachrichtigungen."
+          + " filter=all (Standard) liefert alle, filter=unread nur ungelesene.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Seite mit Benachrichtigungen.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = NotificationPage.class),
+              examples = @ExampleObject(value = "{"
+                  + "\"items\": [{\"id\": \"880e8400-e29b-41d4-a716-446655440003\","
+                  + "\"typeCode\": \"ASSIGN\","
+                  + "\"taskId\": \"550e8400-e29b-41d4-a716-446655440000\","
+                  + "\"actorRef\": \"770e8400-e29b-41d4-a716-446655440002\","
+                  + "\"text\": \"Du wurdest der Aufgabe zugewiesen.\","
+                  + "\"preview\": \"Jahresabschluss vorbereiten\","
+                  + "\"severityCode\": \"INFO\","
+                  + "\"read\": false,"
+                  + "\"createdAt\": \"2026-10-18T08:00:00Z\"}],"
+                  + "\"nextCursor\": null,"
+                  + "\"hasMore\": false"
+                  + "}"))),
+      @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_READ-Berechtigung.")
+  })
   @GetMapping
   @RequiresPermission(TaskManagementPermissions.NOTIFICATION_READ)
   public ResponseEntity<NotificationPage> listNotifications(
+      @Parameter(description = "Filter: 'all' (Standard) oder 'unread' fuer nur ungelesene.")
       @RequestParam(required = false) final String filter,
+      @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
       @RequestParam(required = false) final String cursor,
+      @Parameter(description = "Seitengroesse, geclampt auf [1, 100]. Default: 50.")
       @RequestParam(required = false, defaultValue = "50") final int limit) {
 
     final CurrentActor actor = CurrentActor.require(userAccessor);
@@ -72,6 +110,14 @@ public class NotificationController {
    *
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Alle Benachrichtigungen als gelesen markieren",
+      description = "Markiert alle eigenen ungelesenen Benachrichtigungen als gelesen (idempotent).")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Alle Benachrichtigungen erfolgreich als gelesen markiert."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung.")
+  })
   @PutMapping("/read-all")
   @RequiresPermission(TaskManagementPermissions.NOTIFICATION_WRITE)
   public ResponseEntity<Void> markAllRead() {
@@ -86,9 +132,21 @@ public class NotificationController {
    * @param id externe UUID der Benachrichtigung
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Benachrichtigung als gelesen markieren",
+      description = "Markiert eine einzelne Benachrichtigung als gelesen (idempotent)."
+          + " Liefert 404 wenn die Benachrichtigung nicht gefunden wird oder einem anderen Benutzer/Mandanten gehoert.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Benachrichtigung erfolgreich als gelesen markiert."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Benachrichtigung nicht gefunden (neutral maskiert).")
+  })
   @PutMapping("/{id}/read")
   @RequiresPermission(TaskManagementPermissions.NOTIFICATION_WRITE)
-  public ResponseEntity<Void> markRead(@PathVariable final UUID id) {
+  public ResponseEntity<Void> markRead(
+      @Parameter(description = "Externe UUID der Benachrichtigung.", required = true)
+      @PathVariable final UUID id) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     queryService.markRead(id, actor.user().id(), actor.tenant().id());
     return ResponseEntity.noContent().build();

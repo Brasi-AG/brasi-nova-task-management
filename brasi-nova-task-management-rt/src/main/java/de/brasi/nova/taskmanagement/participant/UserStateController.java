@@ -3,6 +3,10 @@ package de.brasi.nova.taskmanagement.participant;
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,10 +40,21 @@ public class UserStateController {
    * @param input gewuenschter Zielwert ({@code true} = angepinnt, {@code false} = nicht angepinnt)
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Pin-Marker setzen",
+      description = "Setzt den persoenlichen Pin-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+          + " true = angepinnt, false = nicht angepinnt.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @PutMapping("/{id}/pin")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> pin(
-      @PathVariable final UUID id, @RequestBody final MarkerInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final MarkerInput input) {
     markerService.setPinned(id, input.value());
     return ResponseEntity.noContent().build();
   }
@@ -51,10 +66,21 @@ public class UserStateController {
    * @param input gewuenschter Zielwert ({@code true} = markiert, {@code false} = nicht markiert)
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Flag-Marker setzen",
+      description = "Setzt den persoenlichen Flag-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+          + " true = markiert, false = nicht markiert.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @PutMapping("/{id}/flag")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> flag(
-      @PathVariable final UUID id, @RequestBody final MarkerInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final MarkerInput input) {
     markerService.setFlagged(id, input.value());
     return ResponseEntity.noContent().build();
   }
@@ -66,10 +92,21 @@ public class UserStateController {
    * @param input gewuenschter Zielwert ({@code true} = stummgeschaltet, {@code false} = nicht stumm)
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Mute-Marker setzen",
+      description = "Setzt den persoenlichen Mute-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+          + " true = stummgeschaltet, false = nicht stumm.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @PutMapping("/{id}/mute")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> mute(
-      @PathVariable final UUID id, @RequestBody final MarkerInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final MarkerInput input) {
     markerService.setMuted(id, input.value());
     return ResponseEntity.noContent().build();
   }

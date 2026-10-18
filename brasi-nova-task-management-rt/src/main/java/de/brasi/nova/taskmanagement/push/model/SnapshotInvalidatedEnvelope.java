@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.push.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 
 /**
@@ -13,7 +14,13 @@ import java.time.Instant;
  * @param version   Envelope-Version (immer {@code "1"})
  * @param timestamp Zeitpunkt des Signals (UTC)
  */
-public record SnapshotInvalidatedEnvelope(String type, String version, Instant timestamp) {
+public record SnapshotInvalidatedEnvelope(
+    @Schema(description = "Fester Diskriminator, immer 'snapshot-invalidated'.", example = "snapshot-invalidated")
+    String type,
+    @Schema(description = "Envelope-Version, immer '1'.", example = "1")
+    String version,
+    @Schema(description = "Zeitpunkt des Signals (UTC).", example = "2026-10-18T08:00:00Z")
+    Instant timestamp) {
 
   /** Fester Envelope-Diskriminator fuer das Snapshot-Invalidate-Signal. */
   public static final String TYPE_SNAPSHOT_INVALIDATED = "snapshot-invalidated";

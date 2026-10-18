@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.participant.model;
 
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * Eingabe-DTO fuer den Austritt des aktuellen Akteurs aus einer Aufgabe.
@@ -11,7 +12,10 @@ import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
  *
  * @param exitKind Art des Austritts (HANDOVER | UNSUBSCRIBED), darf nicht null sein
  */
-public record ExitInput(ExitKind exitKind) {
+public record ExitInput(
+    @Schema(description = "Art des Austritts: HANDOVER (Aufgabe uebergeben) oder UNSUBSCRIBED (Aufgabe abgemeldet).",
+        example = "UNSUBSCRIBED", requiredMode = Schema.RequiredMode.REQUIRED)
+    ExitKind exitKind) {
 
   /** Kompakter Konstruktor: validiert, dass exitKind nicht null ist. */
   public ExitInput {

@@ -7,6 +7,12 @@ import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,6 +51,22 @@ public class InboxSnapshotController {
    *
    * @return 200 OK mit {@link InboxSnapshotModel}
    */
+  @Operation(
+      summary = "Inbox-Snapshot laden",
+      description = "Liefert den vollstaendigen Bootstrap-Snapshot der Inbox:"
+          + " aktive Aufgaben (erste Seite), Benachrichtigungen, Tag-Katalog,"
+          + " Teilnehmer-Zusammenfassungen und Archiv-Gesamtzahlen."
+          + " Erzeugt ein asOf-Wasserzeichen fuer konsistente Keyset-Paginierung.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Inbox-Snapshot erfolgreich geladen.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = InboxSnapshotModel.class))),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+  })
   @GetMapping("/snapshot")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<InboxSnapshotModel> snapshot() {
@@ -59,10 +81,27 @@ public class InboxSnapshotController {
    * @param limit  Seitengroesse (default 50, geclampt auf [1, 100])
    * @return 200 OK mit {@link KeysetPage} von {@link TaskSummaryModel}
    */
+  @Operation(
+      summary = "Aktive Aufgaben laden",
+      description = "Liefert eine Keyset-paginierte Seite aktiver (OPEN) Aufgaben des angemeldeten Benutzers."
+          + " Setzt das asOf-Wasserzeichen bei der ersten Seite (cursor=leer).")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Seite aktiver Aufgaben.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = KeysetPage.class))),
+      @ApiResponse(responseCode = "400", description = "Ungueltiger cursor."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+  })
   @GetMapping
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<KeysetPage<TaskSummaryModel>> activeTasks(
+      @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
       @RequestParam(required = false) final String cursor,
+      @Parameter(description = "Seitengroesse, geclampt auf [1, 100]. Default: 50.")
       @RequestParam(required = false, defaultValue = "50") final int limit) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     return ResponseEntity.ok(snapshotService.loadActivePage(actor.user().id(), cursor, limit));
@@ -76,11 +115,29 @@ public class InboxSnapshotController {
    * @param limit  Seitengroesse (default 50, geclampt auf [1, 100])
    * @return 200 OK mit {@link KeysetPage} von {@link TaskSummaryModel}
    */
+  @Operation(
+      summary = "Archivierte Aufgaben laden",
+      description = "Liefert eine Keyset-paginierte Seite archivierter Aufgaben des angemeldeten Benutzers."
+          + " filter=all (Standard): alle archivierten; filter=done: erledigte; filter=left: verlassene.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Seite archivierter Aufgaben.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = KeysetPage.class))),
+      @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+  })
   @GetMapping("/archive")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<KeysetPage<TaskSummaryModel>> archiveTasks(
+      @Parameter(description = "Filter: 'all' (Standard), 'done' (erledigt) oder 'left' (verlassen).")
       @RequestParam(required = false) final String filter,
+      @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
       @RequestParam(required = false) final String cursor,
+      @Parameter(description = "Seitengroesse, geclampt auf [1, 100]. Default: 50.")
       @RequestParam(required = false, defaultValue = "50") final int limit) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     return ResponseEntity.ok(

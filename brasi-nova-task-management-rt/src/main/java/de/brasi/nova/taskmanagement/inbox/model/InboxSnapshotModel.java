@@ -4,6 +4,7 @@ import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantSummary;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.List;
 
@@ -25,9 +26,16 @@ import java.util.List;
  * @param archiveTotals        Archiv-Gesamtzahlen je Filter (all/done/left) zum {@code asOf}
  */
 public record InboxSnapshotModel(
+    @Schema(description = "Snapshot-Wasserzeichen (UTC); fuer alle Folge-Reads desselben Scrolls identisch.",
+        example = "2026-10-18T08:00:00Z")
     Instant asOf,
+    @Schema(description = "Erste Keyset-Seite der aktiven (OPEN) Aufgaben des Benutzers.")
     KeysetPage<TaskSummaryModel> tasks,
+    @Schema(description = "Erste Seite der Benachrichtigungen des Benutzers.")
     NotificationPage notifications,
+    @Schema(description = "Globaler Tag-Katalog (alle aktiven Tags).")
     List<TagModel> tags,
+    @Schema(description = "Distinkte Teilnehmer der Aufgaben dieser Seite (nur aktuell sichtbare Seite).")
     List<ParticipantSummary> participantSummaries,
+    @Schema(description = "Archiv-Gesamtzahlen je Filter (all/done/left) zum asOf-Zeitpunkt.")
     ArchiveTotals archiveTotals) {}

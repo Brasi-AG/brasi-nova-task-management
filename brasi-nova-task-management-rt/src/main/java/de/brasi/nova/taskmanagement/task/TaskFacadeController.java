@@ -8,6 +8,13 @@ import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.net.URI;
 import java.util.Map;
 import java.util.UUID;
@@ -58,6 +65,22 @@ public class TaskFacadeController {
    * @param input Eingabe-DTO
    * @return 201 Created mit Body {@code {"id": "<uuid>"}}
    */
+  @Operation(
+      summary = "Aufgabe anlegen",
+      description = "Legt eine neue Aufgabe an. Direction wird serverseitig auf CUSTOMER_INTERNAL erzwungen."
+          + " Der angemeldete Benutzer wird automatisch als Creator und erster Assignee eingetragen.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "201",
+          description = "Aufgabe erfolgreich angelegt.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(type = "object"),
+              examples = @ExampleObject(value = "{\"id\": \"550e8400-e29b-41d4-a716-446655440000\"}"))),
+      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter priorityCode)."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung.")
+  })
   @PostMapping
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Map<String, UUID>> create(@RequestBody final TaskCreateInput input) {
@@ -74,10 +97,22 @@ public class TaskFacadeController {
    * @param input Patch-Eingabe
    * @return 204 No Content
    */
+  @Operation(
+      summary = "Aufgabe patchen",
+      description = "Aktualisiert einzelne Felder einer Aufgabe (title, dueDate, statusCode, tagIds)."
+          + " Nur gesendete Felder werden geaendert (PatchValue-Semantik: absent = unveraendert).")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
+      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID)."),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @PatchMapping("/{id}")
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> patch(
-      @PathVariable final UUID id, @RequestBody final TaskPatchInput input) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @RequestBody final TaskPatchInput input) {
     commandService.patch(id, input);
     return ResponseEntity.noContent().build();
   }
@@ -88,9 +123,38 @@ public class TaskFacadeController {
    * @param id externe UUID der Aufgabe
    * @return 200 OK mit {@link TaskDetailModel}
    */
+  @Operation(
+      summary = "Aufgabe laden",
+      description = "Liefert alle Details einer Aufgabe inkl. Historieneintraegen."
+          + " Setzt READ_AT fuer den angemeldeten Benutzer (Best-Effort).")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Aufgabe erfolgreich geladen.",
+          content = @Content(
+              mediaType = "application/json",
+              schema = @Schema(implementation = TaskDetailModel.class),
+              examples = @ExampleObject(value = "{"
+                  + "\"id\": \"550e8400-e29b-41d4-a716-446655440000\","
+                  + "\"title\": \"Jahresabschluss vorbereiten\","
+                  + "\"description\": null,"
+                  + "\"statusCode\": \"OPEN\","
+                  + "\"priorityCode\": \"NORMAL\","
+                  + "\"directionCode\": \"CUSTOMER_INTERNAL\","
+                  + "\"startDate\": null,"
+                  + "\"dueDate\": \"2026-12-31\","
+                  + "\"lastActivityAt\": \"2026-10-18T08:00:00Z\","
+                  + "\"commentCount\": 0,"
+                  + "\"history\": []"
+                  + "}"))),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
   @GetMapping("/{id}")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
-  public ResponseEntity<TaskDetailModel> detail(@PathVariable final UUID id) {
+  public ResponseEntity<TaskDetailModel> detail(
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
     final UUID userRef = actor.user().id();

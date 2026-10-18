@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.participant.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * Eingabe-DTO zum expliziten Setzen eines persoenlichen Markers (pin/flag/mute).
  *
@@ -8,4 +10,7 @@ package de.brasi.nova.taskmanagement.participant.model;
  *
  * @param value gewuenschter Zielwert des Markers
  */
-public record MarkerInput(boolean value) {}
+public record MarkerInput(
+    @Schema(description = "Gewuenschter Zielzustand: true = aktiv, false = inaktiv.",
+        example = "true", requiredMode = Schema.RequiredMode.REQUIRED)
+    boolean value) {}

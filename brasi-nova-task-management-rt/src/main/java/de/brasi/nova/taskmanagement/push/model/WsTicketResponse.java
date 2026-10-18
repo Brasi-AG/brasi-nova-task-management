@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.push.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 
 /**
@@ -11,4 +12,10 @@ import java.time.Instant;
  * @param ticket    opaker Einmal-Token (Base64url ohne Padding)
  * @param expiresAt Ablaufzeitpunkt (UTC); nach Ablauf wird der Token beim Handshake abgelehnt
  */
-public record WsTicketResponse(String ticket, Instant expiresAt) {}
+public record WsTicketResponse(
+    @Schema(description = "Opaker Einmal-Token (Base64url ohne Padding, >= 128 Bit Zufall).",
+        example = "abc123XYZ_opakes-token-hier")
+    String ticket,
+    @Schema(description = "Ablaufzeitpunkt des Tickets (UTC); nach Ablauf wird der Token beim Handshake abgelehnt.",
+        example = "2026-10-18T08:00:30Z")
+    Instant expiresAt) {}

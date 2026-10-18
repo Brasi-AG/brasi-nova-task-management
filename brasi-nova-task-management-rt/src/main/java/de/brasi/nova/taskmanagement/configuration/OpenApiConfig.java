@@ -15,6 +15,7 @@
  */
 package de.brasi.nova.taskmanagement.configuration;
 
+import de.brasi.nova.taskmanagement.openapi.TaskManagementOpenApiGroups;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import lombok.RequiredArgsConstructor;
@@ -67,13 +68,29 @@ public class OpenApiConfig {
                         """));
   }
 
+  /**
+   * Registriert die Task-Management-Gruppe unter der Scaffold-Gruppen-Id
+   * ({@link TaskManagementOpenApiGroups#TASK_MANAGEMENT}) und matcht die gesamte v1-REST-Flaeche.
+   *
+   * <p>Ersetzt die frueheren Boilerplate-Gruppen {@code overview} (matchte {@code /api/v1/overview}
+   * - kein Endpunkt, leeres/totes Dokument) und {@code all} (anonyme Gruppe, nicht mit der
+   * Scaffold-Gruppen-Id verknuepft). Damit ist die in {@code @ScaffoldSchemaConfig} referenzierte
+   * Gruppen-Id endlich als {@link GroupedOpenApi}-Bean registriert (Pre-Release-Audit).
+   */
   @Bean
-  GroupedOpenApi overviewGroup() {
-    return GroupedOpenApi.builder().group("overview").pathsToMatch("/api/v1/overview").build();
+  GroupedOpenApi taskManagementGroup() {
+    return GroupedOpenApi.builder()
+        .group(TaskManagementOpenApiGroups.TASK_MANAGEMENT)
+        .pathsToMatch("/api/v1/**")
+        .build();
   }
 
+  /**
+   * Registriert den {@link PatchValueModelConverter}, der den KSF-{@code PatchValue<T>}-Wrapper in
+   * den PATCH-DTOs auf den fachlichen Typ reduziert (springdoc-Fallstrick, Pre-Release-Audit).
+   */
   @Bean
-  GroupedOpenApi allApiGroup() {
-    return GroupedOpenApi.builder().group("all").pathsToMatch("/api/v1/**").build();
+  PatchValueModelConverter patchValueModelConverter() {
+    return new PatchValueModelConverter();
   }
 }
