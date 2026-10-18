@@ -177,6 +177,11 @@ public class DictionaryCodeResolver {
         TenantContextHolder.runWithTenant(TenantInfo.global(), () -> finder.findByCode(code));
 
     if (results == null || results.isEmpty()) {
+      // Abgelaufenen Eintrag aus Cache entfernen damit nicht dauerhaft erneute DB-Abfragen
+      // ausgeloest werden (abgelaufene Codes sollten nicht im Cache verbleiben).
+      if (cached != null) {
+        cache.remove(key, cached);
+      }
       throw new DictionaryResolverException(
           String.format(
               "DictionaryCodeResolver: CODE '%s' nicht gefunden in Dictionary '%s'"
@@ -185,6 +190,9 @@ public class DictionaryCodeResolver {
               dictionaryClass.getSimpleName()));
     }
     if (results.size() > 1) {
+      if (cached != null) {
+        cache.remove(key, cached);
+      }
       throw new DictionaryResolverException(
           String.format(
               "DictionaryCodeResolver: CODE '%s' ist mehrdeutig in Dictionary '%s'"
