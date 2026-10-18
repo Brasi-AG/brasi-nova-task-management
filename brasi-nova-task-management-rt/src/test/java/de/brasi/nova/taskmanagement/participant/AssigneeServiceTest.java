@@ -24,6 +24,7 @@ import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.model.EntityState;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
@@ -429,6 +430,79 @@ class AssigneeServiceTest {
         .isInstanceOf(
             io.keel.framework.api.validation.EntityValidationException.class)
         .hasMessageContaining("assignees");
+  }
+
+  // ---- Test 9: P2-4 - Creator darf die Aufgabe nicht verlassen (409) --------------------------
+
+  @Test
+  @DisplayName(
+      "exit_creator_wird_abgelehnt: Creator ruft exit auf -> BusinessRuleException (409),"
+          + " kein EXIT_KIND/Notification/Invalidate")
+  void exit_creator_wird_abgelehnt() {
+    // Arrange
+    final Long taskId = 123L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Akteur ist der Creator-Participant (creatorFlag=true)
+    final TaskParticipant creatorParticipant = new TaskParticipant();
+    creatorParticipant.setId(70L);
+    creatorParticipant.setTenantId(TENANT_ID);
+    creatorParticipant.setTaskId(taskId);
+    creatorParticipant.setParticipantRef(ACTOR_REF);
+    creatorParticipant.setParticipantKind(ParticipantKind.PERSON);
+    creatorParticipant.setCreatorFlag(true);
+    creatorParticipant.setAssigneeFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(creatorParticipant));
+
+    // Act + Assert: Creator-Exit wird als Geschaeftsregel-Verstoss (409) abgelehnt
+    assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
+        .isInstanceOf(BusinessRuleException.class);
+
+    // Keine Mutation, keine Notification, kein Invalidate
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  // ---- Test 10: P2-5 - bereits ausgetretener Teilnehmer kann nicht erneut austreten (400) -----
+
+  @Test
+  @DisplayName(
+      "exit_bereits_ausgetreten_wird_abgelehnt: Participant mit EXIT_KIND -> EntityValidationException"
+          + " (400), keine zweite Notification/zweites EXIT_AT")
+  void exit_bereits_ausgetreten_wird_abgelehnt() {
+    // Arrange
+    final Long taskId = 124L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Akteur ist ein Nicht-Creator-Participant, der bereits ausgetreten ist (EXIT_KIND gesetzt)
+    final TaskParticipant exitedParticipant = new TaskParticipant();
+    exitedParticipant.setId(71L);
+    exitedParticipant.setTenantId(TENANT_ID);
+    exitedParticipant.setTaskId(taskId);
+    exitedParticipant.setParticipantRef(ACTOR_REF);
+    exitedParticipant.setParticipantKind(ParticipantKind.PERSON);
+    exitedParticipant.setCreatorFlag(false);
+    exitedParticipant.setAssigneeFlag(true);
+    exitedParticipant.setExitKind(ExitKind.HANDOVER);
+    exitedParticipant.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(exitedParticipant));
+
+    // Act + Assert: erneuter Austritt -> 400 (kein aktiver Teilnehmer)
+    assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
+        .isInstanceOf(EntityValidationException.class);
+
+    // Kein zweites EXIT_AT, keine zweite HANDOVER-Notification, kein Invalidate
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------

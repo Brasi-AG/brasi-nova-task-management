@@ -303,8 +303,8 @@ class AssigneeControllerIT {
 
   @Test
   @DisplayName(
-      "exit_handover_persistiert_und_archiv_left: POST /exit HANDOVER -> EXIT_KIND='HANDOVER'"
-          + " + Task in findArchiveLeftPage")
+      "exit_handover_persistiert_und_archiv_left: POST /exit HANDOVER (Nicht-Creator)"
+          + " -> EXIT_KIND='HANDOVER' + Task in findArchiveLeftPage")
   void exit_handover_persistiert_und_archiv_left() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -312,8 +312,12 @@ class AssigneeControllerIT {
     final String tokenA = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // Der Austretende ist bewusst NICHT der Creator (P2-4: Creator kann nicht austreten).
+    final String tokenAssignee = buildJwtWithAuthority(
+        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
 
-    // Erst: Task anlegen (USER_A wird Creator + Assignee)
+    // Erst: Task anlegen (USER_A = Creator) und ASSIGNEE_REF als Nicht-Creator-Assignee zuweisen
     final String createBody = om.writeValueAsString(Map.of("title", "Exit-HANDOVER-IT-Task"));
     final String postResponse =
         mvc.perform(
@@ -333,16 +337,23 @@ class AssigneeControllerIT {
             .readValueAs(UUID.class);
     assertThat(taskId).isNotNull();
 
-    // Exit HANDOVER (USER_A verlaesst den Task)
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Exit HANDOVER (ASSIGNEE_REF verlaesst den Task)
     final String exitBody = om.writeValueAsString(Map.of("exitKind", ExitKind.HANDOVER.name()));
     mvc.perform(
             post("/api/v1/tasks/" + taskId + "/exit")
-                .header("Authorization", "Bearer " + tokenA)
+                .header("Authorization", "Bearer " + tokenAssignee)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(exitBody))
         .andExpect(status().isNoContent());
 
-    // Beweis: TASK_PARTICIPANT.EXIT_KIND='HANDOVER' fuer USER_A in DB
+    // Beweis: TASK_PARTICIPANT.EXIT_KIND='HANDOVER' fuer ASSIGNEE_REF in DB
     final Integer exitKindCount =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
@@ -352,26 +363,18 @@ class AssigneeControllerIT {
             Integer.class,
             taskId,
             TENANT_A_ID,
-            USER_A_REF);
+            ASSIGNEE_REF);
     assertThat(exitKindCount)
         .as("EXIT_KIND='HANDOVER' muss in TASK_PARTICIPANT persistiert sein")
         .isEqualTo(1);
 
-    // Beweis: Task erscheint in findArchiveLeftPage fuer USER_A
-    final Long openStatusId;
-    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
-    try {
-      openStatusId = dictionaryCodeResolver.resolveTaskStatusOpen();
-    } finally {
-      TenantContextHolder.clear();
-    }
-
+    // Beweis: Task erscheint in findArchiveLeftPage fuer ASSIGNEE_REF
     TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
     try {
       final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
       final java.util.List<de.brasi.nova.taskmanagement.entity.Task> leftTasks =
           keysetQueryRepository.findArchiveLeftPage(
-              USER_A_REF,
+              ASSIGNEE_REF,
               asOf,
               asOf,
               UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
@@ -486,8 +489,8 @@ class AssigneeControllerIT {
 
   @Test
   @DisplayName(
-      "handover_exit_nicht_in_active_page: nach exit(HANDOVER) Task NICHT in findActivePage,"
-          + " aber UNSUBSCRIBED_AT gesetzt")
+      "handover_exit_nicht_in_active_page: nach exit(HANDOVER) eines Nicht-Creators Task NICHT"
+          + " in findActivePage, aber UNSUBSCRIBED_AT gesetzt")
   void handover_exit_nicht_in_active_page() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -495,8 +498,12 @@ class AssigneeControllerIT {
     final String tokenA = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // Der Austretende ist bewusst NICHT der Creator (P2-4: Creator kann nicht austreten).
+    final String tokenAssignee = buildJwtWithAuthority(
+        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
 
-    // Task anlegen (USER_A = Creator + Assignee -> hat UserState)
+    // Task anlegen (USER_A = Creator) + ASSIGNEE_REF zuweisen (Nicht-Creator -> hat UserState)
     final String createBody = om.writeValueAsString(Map.of("title", "HANDOVER-ActivePage-IT-Task"));
     final String postResponse =
         mvc.perform(
@@ -514,10 +521,17 @@ class AssigneeControllerIT {
             .traverse(om)
             .readValueAs(UUID.class);
 
-    // Exit HANDOVER
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Exit HANDOVER (ASSIGNEE_REF)
     mvc.perform(
             post("/api/v1/tasks/" + taskId + "/exit")
-                .header("Authorization", "Bearer " + tokenA)
+                .header("Authorization", "Bearer " + tokenAssignee)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER"))))
         .andExpect(status().isNoContent());
@@ -530,12 +544,12 @@ class AssigneeControllerIT {
                 + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NOT NULL",
             Integer.class,
             taskId,
-            USER_A_REF);
+            ASSIGNEE_REF);
     assertThat(unsubCount)
         .as("UNSUBSCRIBED_AT muss nach HANDOVER gesetzt sein")
         .isEqualTo(1);
 
-    // Beweis 2: Task ist NICHT in findActivePage (MAJOR 2)
+    // Beweis 2: Task ist NICHT in findActivePage fuer ASSIGNEE_REF (MAJOR 2)
     final Long openStatusId;
     TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
     try {
@@ -549,7 +563,7 @@ class AssigneeControllerIT {
       final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
       final List<de.brasi.nova.taskmanagement.entity.Task> activeTasks =
           keysetQueryRepository.findActivePage(
-              USER_A_REF,
+              ASSIGNEE_REF,
               openStatusId,
               asOf,
               asOf,
@@ -725,6 +739,170 @@ class AssigneeControllerIT {
             + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
         Integer.class, taskId, unknown);
     assertThat(count).as("kein Participant fuer die unbekannte UUID").isZero();
+  }
+
+  // ---- P2-4 IT: Creator-Exit wird abgelehnt (409), Creator bleibt aktiv ----------------------
+
+  @Test
+  @DisplayName(
+      "creator_exit_wird_abgelehnt_409: Creator ruft POST /exit auf -> 409,"
+          + " Creator-Participant ohne EXIT_KIND, Task bleibt in findActivePage")
+  void creator_exit_wird_abgelehnt_409() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Task anlegen (USER_A = Creator + Assignee)
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", "Creator-Exit-409-IT-Task"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    // Creator (USER_A) versucht zu exiten -> 409 (Geschaeftsregel: Ersteller kann nicht verlassen)
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "UNSUBSCRIBED"))))
+        .andExpect(status().isConflict());
+
+    // Beweis: Creator-Participant hat KEIN EXIT_KIND
+    final Integer creatorExitCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+                + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.CREATOR_FLAG = 1 AND p.EXIT_KIND IS NOT NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            USER_A_REF);
+    assertThat(creatorExitCount)
+        .as("Creator-Participant darf nach abgelehntem Exit kein EXIT_KIND haben")
+        .isEqualTo(0);
+
+    // Beweis: Creator-UserState hat KEIN UNSUBSCRIBED_AT
+    final Integer creatorUnsubCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+            Integer.class,
+            taskId,
+            USER_A_REF);
+    assertThat(creatorUnsubCount)
+        .as("Creator-UserState darf nach abgelehntem Exit kein UNSUBSCRIBED_AT haben")
+        .isEqualTo(0);
+  }
+
+  // ---- P2-5 IT: Doppel-Exit wird abgelehnt (400), keine zweite HANDOVER-Notification ----------
+
+  @Test
+  @DisplayName(
+      "doppel_exit_wird_abgelehnt_400: Nicht-Creator exitet (204) und erneut (400) ->"
+          + " genau ein EXIT_AT, keine zweite HANDOVER-Notification")
+  void doppel_exit_wird_abgelehnt_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee = buildJwtWithAuthority(
+        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Task anlegen (USER_A = Creator) + ASSIGNEE_REF zuweisen (Nicht-Creator-Participant)
+    final String postResponse =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", "Doppel-Exit-400-IT-Task"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
+
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Erster Exit (HANDOVER) durch den Assignee -> 204
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER"))))
+        .andExpect(status().isNoContent());
+
+    // Notification-Stand des Assignees nach dem ersten (gueltigen) Exit festhalten
+    final Integer notifAfterFirst =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+            Integer.class,
+            taskId,
+            ASSIGNEE_REF);
+
+    // Zweiter Exit durch denselben (bereits ausgetretenen) Assignee -> 400
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER"))))
+        .andExpect(status().isBadRequest());
+
+    // Beweis 1: genau ein Participant mit EXIT_KIND='HANDOVER' (kein zweites EXIT)
+    final Integer exitRowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+                + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.EXIT_KIND = 'HANDOVER'",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
+    assertThat(exitRowCount)
+        .as("Es darf genau eine HANDOVER-Austrittszeile fuer den Assignee geben")
+        .isEqualTo(1);
+
+    // Beweis 2: keine zweite Notification durch den abgelehnten zweiten Exit
+    final Integer notifAfterSecond =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+            Integer.class,
+            taskId,
+            ASSIGNEE_REF);
+    assertThat(notifAfterSecond)
+        .as("Der abgelehnte zweite Exit darf keine weitere Notification erzeugen")
+        .isEqualTo(notifAfterFirst);
   }
 
   // ---- MINOR IT: null/fehlendes assignees -> 400 -----------------------------------------------

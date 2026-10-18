@@ -17,6 +17,7 @@ import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
@@ -291,10 +292,26 @@ public class AssigneeService {
 
     if (existing.isEmpty()) {
       throw new EntityValidationException(
-          "Der aktuelle Benutzer ist kein Teilnehmer dieser Aufgabe.");
+          "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
     }
 
     final TaskParticipant participant = existing.get(0);
+
+    // Final-Review P2-4: Der Ersteller kann seine eigene Aufgabe nicht verlassen
+    // (Creator-Immobilitaet, konsistent zu updateAssignees, das den Creator aus toRemove
+    // ausschliesst). Ein Creator-Exit wuerde den Ersteller aus der aktiven Inbox entfernen und
+    // die in Task 8 erzwungene Invariante verletzen -> Ablehnung als Geschaeftsregel (HTTP 409).
+    if (participant.isCreatorFlag()) {
+      throw new BusinessRuleException("Der Ersteller kann die Aufgabe nicht verlassen.");
+    }
+
+    // Final-Review P2-5: Ein bereits ausgetretener Teilnehmer (EXIT_KIND gesetzt) darf nicht
+    // erneut austreten - sonst gaebe es eine zweite Erfolgsantwort und (bei HANDOVER) eine zweite
+    // Notification. Neutral wie "kein aktiver Teilnehmer" ablehnen (HTTP 400).
+    if (participant.getExitKind() != null) {
+      throw new EntityValidationException(
+          "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
+    }
 
     // EXIT_KIND + EXIT_AT setzen
     participant.setExitKind(input.exitKind());
