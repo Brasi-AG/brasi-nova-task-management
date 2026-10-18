@@ -1,7 +1,9 @@
 package de.brasi.nova.taskmanagement.repository;
 
 import de.brasi.nova.taskmanagement.entity.Task;
+import io.keel.framework.api.annotation.db.GlobalQuery;
 import io.keel.framework.api.annotation.db.NovaQuery;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -90,6 +92,38 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
       LocalDateTime lastActivityAt,
       UUID externalId,
       int limit);
+
+  // ---- Due-Reminder-Scheduler: faellige OPEN-Tasks (mandantenuebergreifend) ----------------
+
+  /**
+   * Liefert alle aktiven OPEN-Aufgaben mit {@code DUE_DATE} am angegebenen Tag ueber ALLE Mandanten
+   * (Kandidatensuche des Due-Reminder-Schedulers, arch-v2 §5).
+   *
+   * <p>Bewusst mandantenuebergreifend ({@link GlobalQuery}) und daher OHNE {@code :tenantId}; darf
+   * nur im System-Scope ({@code TenantContextHolder.runAsSystem(...)}) laufen. Der aufrufende
+   * {@code DueReminderWorker} setzt pro Treffer anschliessend {@code runWithTenant(tenantOf(row))},
+   * bevor er Empfaenger aufloest und emittiert.
+   *
+   * @param today        Faelligkeitstag (vom Worker in der Persistenz-Zone bestimmt)
+   * @param openStatusId aufgeloeste Id des Status {@code OPEN}
+   * @return faellige, offene, aktive Aufgaben (mandantenuebergreifend)
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM TASK"
+              + " WHERE DUE_DATE = :today"
+              + " AND TASK_STATUS_ID = :openStatusId"
+              + " AND ENTITY_STATUS = 'ACTIVE'",
+      mssql =
+          "SELECT * FROM [dbo].[TASK]"
+              + " WHERE DUE_DATE = :today"
+              + " AND TASK_STATUS_ID = :openStatusId"
+              + " AND ENTITY_STATUS = 'ACTIVE'")
+  @GlobalQuery(
+      reason =
+          "Due-Reminder-Scheduler sucht faellige OPEN-Aufgaben mandantenuebergreifend;"
+              + " pro Treffer wird anschliessend runWithTenant gesetzt.")
+  List<Task> findDueOpenTasks(LocalDate today, Long openStatusId);
 
   // ---- Archiv: erledigte Tasks (done/cancelled) ------------------------------------------
 
