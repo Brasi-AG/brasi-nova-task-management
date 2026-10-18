@@ -235,6 +235,9 @@ public class CommentService {
     if (!Objects.equals(tenantId, parent.getTenantId())) {
       throw new EntityValidationException("Der angegebene Eltern-Kommentar ist ungueltig.");
     }
+    if (parent.getEntityState() != io.keel.framework.api.model.EntityState.ACTIVE) {
+      throw new EntityValidationException("Der angegebene Eltern-Kommentar ist ungueltig.");
+    }
     return parent;
   }
 

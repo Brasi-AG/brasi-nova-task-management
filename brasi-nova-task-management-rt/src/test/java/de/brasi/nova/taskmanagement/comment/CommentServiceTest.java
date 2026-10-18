@@ -403,6 +403,26 @@ class CommentServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- P2-H: inaktiver Eltern-Kommentar -> 400 ------------------------------------------------
+
+  @Test
+  @DisplayName("inaktiver_parent_400: Eltern-Kommentar mit ENTITY_STATUS != ACTIVE -> EntityValidationException")
+  void inaktiver_parent_400() {
+    final Long taskId = 49L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final UUID parentUuid = UUID.randomUUID();
+    final TaskComment inactiveParent = commentWithId(20L, taskId, ALICE_UUID, parentUuid);
+    inactiveParent.setEntityState(io.keel.framework.api.model.EntityState.DEACTIVE);
+    when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(inactiveParent));
+
+    assertThatThrownBy(
+            () -> service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid)))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
   // ---- Test 9: createdAt wird mit Persistenz-Zone (Europe/Berlin) konvertiert -----------------
 
   @Test
