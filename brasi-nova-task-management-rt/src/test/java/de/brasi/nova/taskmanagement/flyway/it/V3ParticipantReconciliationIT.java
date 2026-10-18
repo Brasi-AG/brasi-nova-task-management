@@ -127,9 +127,9 @@ class V3ParticipantReconciliationIT {
 
   @Test
   @DisplayName(
-      "v3_bevorzugt_aktive_zeile_vor_deaktiviertem_creator: ENTITY_STATUS=ACTIVE schlaegt einen"
-          + " DEACTIVE-Creator -> die sichtbare (aktive) Zeile bleibt erhalten")
-  void v3_bevorzugt_aktive_zeile_vor_deaktiviertem_creator() {
+      "v3_bevorzugt_aktive_zeile_und_merged_creator_flag: ENTITY_STATUS=ACTIVE schlaegt einen"
+          + " DEACTIVE-Creator -> aktive Zeile bleibt, erbt aber dessen CREATOR_FLAG (Merge)")
+  void v3_bevorzugt_aktive_zeile_und_merged_creator_flag() {
     migrateTo("2");
 
     jdbc.update(
@@ -160,6 +160,16 @@ class V3ParticipantReconciliationIT {
         jdbc.queryForObject(
             "SELECT ENTITY_STATUS FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = 9003", String.class);
     assertThat(survivorStatus).as("ueberlebende Zeile ist aktiv").isEqualTo("ACTIVE");
+
+    // Merge: die ueberlebende aktive Zeile erbt den CREATOR_FLAG der entfernten Creator-Zeile,
+    // damit die Creator-Immobilitaet nach dem Upgrade nicht verloren geht.
+    final Boolean survivorCreatorFlag =
+        jdbc.queryForObject(
+            "SELECT CREATOR_FLAG FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = 9003",
+            Boolean.class);
+    assertThat(survivorCreatorFlag)
+        .as("CREATOR_FLAG muss in die ueberlebende Zeile gemergt sein")
+        .isTrue();
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------
