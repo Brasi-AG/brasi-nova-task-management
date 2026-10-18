@@ -21,7 +21,6 @@ import de.brasi.nova.taskmanagement.repository.dictionary.TaskStatusRepository;
 import io.keel.framework.api.model.NovaDictionaryEntry;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,17 +50,13 @@ public class DictionaryCodeResolver {
   record ReverseCacheKey(String dictName, Long id) {}
 
   /**
-   * Cache-Eintrag: interne ID + optionales Ablaufdatum (GUELTIG_BIS).
-   * {@code validTo == null} bedeutet dauerhaft gueltig (kein Ablaufdatum gesetzt).
+   * Forward-Cache: Dictionary-Klasse + CODE -> interne Long-ID.
+   *
+   * <p>Nur zeitlich ungebundene Eintraege (GUELTIG_BIS = NULL) werden gecacht.
+   * Eintraege mit Ablaufdatum (GUELTIG_BIS gesetzt) werden bei jedem Aufruf direkt von der DB
+   * gelesen, um Stale-Cache-Probleme ohne komplexe Nebenlaeufigskeitslogik zu vermeiden.
    */
-  record CachedEntry(Long id, LocalDate validTo) {
-    boolean isExpired() {
-      return validTo != null && validTo.isBefore(LocalDate.now());
-    }
-  }
-
-  /** Forward-Cache: Dictionary-Klasse + CODE -> CachedEntry (ID + Ablaufdatum). */
-  private final ConcurrentHashMap<CacheKey, CachedEntry> cache = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<CacheKey, Long> cache = new ConcurrentHashMap<>();
 
   /**
    * Reverse-Cache: Dictionary-Name + interne ID -> CODE.
@@ -166,22 +161,17 @@ public class DictionaryCodeResolver {
     Objects.requireNonNull(code, "code darf nicht null sein");
 
     final CacheKey key = new CacheKey(dictionaryClass, code);
-    final CachedEntry cached = cache.get(key);
-    if (cached != null && !cached.isExpired()) {
-      return cached.id();
+    final Long cached = cache.get(key);
+    if (cached != null) {
+      return cached;
     }
 
-    // Cache-Miss oder abgelaufener Eintrag -> DB-Abfrage.
+    // Cache-Miss -> DB-Abfrage.
     // Global-Scope: TENANT_ID=0 im TenantContextHolder setzen
     final List<T> results =
         TenantContextHolder.runWithTenant(TenantInfo.global(), () -> finder.findByCode(code));
 
     if (results == null || results.isEmpty()) {
-      // Abgelaufenen Eintrag aus Cache entfernen damit nicht dauerhaft erneute DB-Abfragen
-      // ausgeloest werden (abgelaufene Codes sollten nicht im Cache verbleiben).
-      if (cached != null) {
-        cache.remove(key, cached);
-      }
       throw new DictionaryResolverException(
           String.format(
               "DictionaryCodeResolver: CODE '%s' nicht gefunden in Dictionary '%s'"
@@ -190,9 +180,6 @@ public class DictionaryCodeResolver {
               dictionaryClass.getSimpleName()));
     }
     if (results.size() > 1) {
-      if (cached != null) {
-        cache.remove(key, cached);
-      }
       throw new DictionaryResolverException(
           String.format(
               "DictionaryCodeResolver: CODE '%s' ist mehrdeutig in Dictionary '%s'"
@@ -203,14 +190,11 @@ public class DictionaryCodeResolver {
     }
 
     final Long id = results.get(0).getId();
-    final CachedEntry newEntry = new CachedEntry(id, results.get(0).getValidTo());
-    // Cache best-effort aktualisieren. UNIQUE(TENANT_ID, CODE) auf der DB garantiert dass
-    // alle nebenlaeufigen Abfragen dieselbe ID liefern - der Cache ist reine Performance-
-    // Optimierung, keine Konsistenzquelle. Immer die eigene DB-frische ID zurueckgeben.
-    if (cached == null) {
-      cache.putIfAbsent(key, newEntry);
-    } else {
-      cache.replace(key, cached, newEntry);
+    // Nur zeitlich ungebundene Eintraege cachen (GUELTIG_BIS = NULL).
+    // Eintraege mit Ablaufdatum werden immer frisch von der DB gelesen; das vermeidet
+    // Expiry-in-Cache-Races ohne komplexe Nebenlaeufigskeitslogik.
+    if (results.get(0).getValidTo() == null) {
+      cache.putIfAbsent(key, id);
     }
     return id;
   }
