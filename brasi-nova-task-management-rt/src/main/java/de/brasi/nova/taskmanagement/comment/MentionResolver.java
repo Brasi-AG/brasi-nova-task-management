@@ -1,7 +1,6 @@
 package de.brasi.nova.taskmanagement.comment;
 
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -65,7 +64,11 @@ public class MentionResolver {
       handles.add(matcher.group(1));
     }
 
-    final List<UUID> result = new ArrayList<>();
+    // UUID-Dedup (nicht nur Handle-String-Dedup): Bei case-insensitiver Collation loesen
+    // verschiedene Schreibweisen (@alice, @Alice) zum selben Benutzer auf. Ohne Dedup der
+    // aufgeloesten UUIDs erhielte ein Empfaenger mehrere MENTION-Benachrichtigungen.
+    // LinkedHashSet bewahrt die Reihenfolge des ersten Vorkommens.
+    final Set<UUID> result = new LinkedHashSet<>();
     for (final String handle : handles) {
       userReadRepository.findByLoginName(handle).ifPresentOrElse(
           user -> {

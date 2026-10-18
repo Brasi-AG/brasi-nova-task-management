@@ -175,6 +175,32 @@ class MentionResolverTest {
     assertThat(result).containsExactly(userUuid);
   }
 
+  // ---- Test 11: case-variante Handles -> dieselbe UUID, nur einmal (Re-Gate P2) ------------------
+
+  /**
+   * Whole-Branch-Re-Gate (P2): Bei case-insensitiver SQL-Server-Collation loesen {@code @alice} und
+   * {@code @Alice} zum selben Benutzer auf. Die reine String-Deduplizierung der Handles verhindert
+   * das nicht (verschiedene Strings), daher muessen die aufgeloesten UUIDs selbst dedupliziert
+   * werden - sonst emittiert CommentService zwei MENTION-Benachrichtigungen an einen Empfaenger.
+   */
+  @Test
+  @DisplayName(
+      "case_variante_handles_dedupliziert_uuid: '@alice @Alice' -> selbe UUID, nur ein Eintrag")
+  void case_variante_handles_dedupliziert_uuid() {
+    // Beide Schreibweisen loesen (case-insensitive Collation) zum selben Benutzer auf.
+    when(userReadRepository.findByLoginName("alice"))
+        .thenReturn(Optional.of(userWithUuid(ALICE_UUID)));
+    when(userReadRepository.findByLoginName("Alice"))
+        .thenReturn(Optional.of(userWithUuid(ALICE_UUID)));
+
+    final List<UUID> result = resolver.resolve("@alice und @Alice bitte pruefen");
+
+    assertThat(result)
+        .as("case-variante Handles zum selben Benutzer duerfen die UUID nur einmal liefern")
+        .containsExactly(ALICE_UUID);
+    assertThat(result).hasSize(1);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static User userWithUuid(final UUID uuid) {
