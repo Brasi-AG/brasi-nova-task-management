@@ -29,7 +29,7 @@ public record TaskPatchInput(
     @Schema(type = "string", description = "Neuer Titel der Aufgabe (absent = unveraendert).",
         example = "Jahresabschluss vorbereiten")
     PatchValue<String> title,
-    @Schema(type = "string", format = "date",
+    @Schema(nullable = true,
         description = "Neues Faelligkeitsdatum ISO 8601 (absent = unveraendert, null = Datum loeschen).",
         example = "2026-12-31")
     PatchValue<LocalDate> dueDate,

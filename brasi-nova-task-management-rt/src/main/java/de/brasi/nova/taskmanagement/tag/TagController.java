@@ -4,6 +4,7 @@ import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.tag.model.TagCreateInput;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
 import de.brasi.nova.taskmanagement.tag.model.TagUpdateInput;
+import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -89,7 +90,7 @@ public class TagController {
           description = "Tag erfolgreich angelegt.",
           content = @Content(
               mediaType = "application/json",
-              schema = @Schema(type = "object"),
+              schema = @Schema(implementation = CreatedResourceResponse.class),
               examples = @ExampleObject(value = "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\"}"))),
       @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Name, unbekannter severityCode)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),

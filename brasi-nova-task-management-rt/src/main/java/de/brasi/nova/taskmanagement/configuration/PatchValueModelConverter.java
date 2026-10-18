@@ -47,7 +47,19 @@ public class PatchValueModelConverter implements ModelConverter {
               .resolveAsRef(type.isResolveAsRef())
               .jsonViewAnnotation(type.getJsonViewAnnotation())
               .skipOverride(type.isSkipOverride());
-      return context.resolve(unwrapped);
+      final Schema<?> resolved = context.resolve(unwrapped);
+      // Nullable am Feld-@Schema explizit durchreichen: bei der Aufloesung des inneren Typs geht
+      // die Nullability (OpenAPI 3.1: "null" im type-Set) sonst verloren. PATCH-Felder mit
+      // PatchValue.ofNull() duerfen explizit null gesendet werden.
+      if (resolved != null && type.getCtxAnnotations() != null) {
+        for (final java.lang.annotation.Annotation ann : type.getCtxAnnotations()) {
+          if (ann instanceof io.swagger.v3.oas.annotations.media.Schema schemaAnn
+              && schemaAnn.nullable()) {
+            resolved.setNullable(Boolean.TRUE);
+          }
+        }
+      }
+      return resolved;
     }
     return chain.hasNext() ? chain.next().resolve(type, context, chain) : null;
   }

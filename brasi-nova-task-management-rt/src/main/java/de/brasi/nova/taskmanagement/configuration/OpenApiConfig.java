@@ -69,13 +69,27 @@ public class OpenApiConfig {
   }
 
   /**
+   * KSF-Swagger-UI-Landegruppe {@code overview}.
+   *
+   * <p>Die KSF-OpenAPI-UI ist per {@code brasi.openapi.ui.groups[0]=OVERVIEW}
+   * ({@code KsfSwaggerGroup.OVERVIEW.id = "overview"}) auf eine springdoc-Gruppe namens
+   * {@code overview} verdrahtet; fehlt diese, oeffnet die UI auf einem 404. Die fruehere
+   * {@code overview}-Gruppe matchte faelschlich {@code /api/v1/overview} (kein Endpunkt -> leeres
+   * Dokument); hier auf die tatsaechliche v1-REST-Flaeche {@code /api/v1/**} korrigiert
+   * (Pre-Release-Audit). Die anonyme {@code all}-Gruppe entfaellt (war nicht referenziert).
+   */
+  @Bean
+  GroupedOpenApi overviewGroup() {
+    return GroupedOpenApi.builder().group("overview").pathsToMatch("/api/v1/**").build();
+  }
+
+  /**
    * Registriert die Task-Management-Gruppe unter der Scaffold-Gruppen-Id
    * ({@link TaskManagementOpenApiGroups#TASK_MANAGEMENT}) und matcht die gesamte v1-REST-Flaeche.
    *
-   * <p>Ersetzt die frueheren Boilerplate-Gruppen {@code overview} (matchte {@code /api/v1/overview}
-   * - kein Endpunkt, leeres/totes Dokument) und {@code all} (anonyme Gruppe, nicht mit der
-   * Scaffold-Gruppen-Id verknuepft). Damit ist die in {@code @ScaffoldSchemaConfig} referenzierte
-   * Gruppen-Id endlich als {@link GroupedOpenApi}-Bean registriert (Pre-Release-Audit).
+   * <p>Damit ist die in {@code @ScaffoldSchemaConfig} referenzierte Gruppen-Id als
+   * {@link GroupedOpenApi}-Bean registriert (Pre-Release-Audit, zuvor disjunkt). Wird von der
+   * KSF-UI ueber {@code include-discovered-groups=true} zusaetzlich zur Landegruppe angeboten.
    */
   @Bean
   GroupedOpenApi taskManagementGroup() {

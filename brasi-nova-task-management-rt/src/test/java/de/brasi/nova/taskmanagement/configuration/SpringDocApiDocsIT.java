@@ -101,6 +101,7 @@ import org.springframework.web.context.WebApplicationContext;
       "ksf.module-registration.enabled=false",
       "springdoc.api-docs.path=/v3/api-docs",
       "springdoc.api-docs.enabled=true",
+      "springdoc.api-docs.version=openapi_3_0",
     })
 @RefSchemaItEnabled
 @Execution(ExecutionMode.SAME_THREAD)
@@ -223,6 +224,77 @@ class SpringDocApiDocsIT {
     assertThat(patchSchema.toString())
         .as("TaskPatchInput darf die PatchValue-Interna nicht exponieren")
         .doesNotContain("PatchValue");
+
+    // 5. Nullable-PATCH-Feld: dueDate darf explizit null gesetzt werden (Codex-P2).
+    //    OpenAPI 3.1 drueckt Nullability als "null" im type-Set aus; 3.0 als nullable=true.
+    final JsonNode dueDate = patchSchema.path("properties").path("dueDate");
+    assertThat(isNullable(dueDate))
+        .as("TaskPatchInput.dueDate muss nullable sein (null = Datum loeschen): " + dueDate)
+        .isTrue();
+
+    // 6. Keyset-Items typisiert: GET /api/v1/tasks (aktive Aufgaben) -> 200-Schema referenziert den
+    //    Typparameter TaskSummaryModel, nicht einen untypisierten KeysetPage (Codex-P2)
+    final JsonNode activeSchema =
+        doc.path("paths").path("/api/v1/tasks").path("get").path("responses").path("200")
+            .path("content").path("application/json").path("schema");
+    assertThat(activeSchema.isMissingNode()).as("GET /api/v1/tasks 200-Schema vorhanden").isFalse();
+    assertThat(activeSchema.toString())
+        .as("Aktive-Aufgaben-Seite muss den Item-Typ TaskSummaryModel referenzieren")
+        .contains("TaskSummaryModel");
+
+    // 7. Create-Response typisiert: POST /api/v1/tasks 201 referenziert CreatedResourceResponse,
+    //    und dessen id-Feld ist eine UUID (Codex-P2)
+    final JsonNode createSchema =
+        doc.path("paths").path("/api/v1/tasks").path("post").path("responses").path("201")
+            .path("content").path("application/json").path("schema");
+    assertThat(createSchema.toString())
+        .as("POST /api/v1/tasks 201 muss CreatedResourceResponse referenzieren")
+        .contains("CreatedResourceResponse");
+    final JsonNode createdId =
+        schemas.path("CreatedResourceResponse").path("properties").path("id");
+    assertThat(createdId.path("format").asText("")).as("CreatedResourceResponse.id Format uuid")
+        .isEqualTo("uuid");
+  }
+
+  @Test
+  @DisplayName(
+      "overview_gruppe_landet_nicht_auf_404: /v3/api-docs/overview -> 200 + nicht-leeres Dokument"
+          + " (KSF-UI brasi.openapi.ui.groups[0]=OVERVIEW)")
+  void overview_gruppe_landet_nicht_auf_404() throws Exception {
+    final MockMvc mvc =
+        MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .apply(SecurityMockMvcConfigurers.springSecurity())
+            .build();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String body =
+        mvc.perform(get("/v3/api-docs/overview"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode paths = om.readTree(body).get("paths");
+    assertThat(paths).as("overview-Gruppe liefert ein paths-Dokument").isNotNull();
+    assertThat(paths.size())
+        .as("die von der KSF-UI referenzierte overview-Gruppe ist nicht leer/tot")
+        .isGreaterThanOrEqualTo(10);
+  }
+
+  /** Nullability tolerant gegen OpenAPI 3.0 (nullable=true) und 3.1 ("null" im type-Set/-String). */
+  private static boolean isNullable(final JsonNode schema) {
+    if (schema.path("nullable").asBoolean(false)) {
+      return true;
+    }
+    final JsonNode type = schema.path("type");
+    if (type.isArray()) {
+      for (final JsonNode t : type) {
+        if ("null".equals(t.asText())) {
+          return true;
+        }
+      }
+    }
+    return "null".equals(type.asText(""));
   }
 
   private static boolean anySchemaPropertyHasDescription(final JsonNode schemas) {

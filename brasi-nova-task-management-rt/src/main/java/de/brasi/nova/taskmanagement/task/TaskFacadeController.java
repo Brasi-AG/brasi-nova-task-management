@@ -6,6 +6,7 @@ import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
+import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -75,7 +76,7 @@ public class TaskFacadeController {
           description = "Aufgabe erfolgreich angelegt.",
           content = @Content(
               mediaType = "application/json",
-              schema = @Schema(type = "object"),
+              schema = @Schema(implementation = CreatedResourceResponse.class),
               examples = @ExampleObject(value = "{\"id\": \"550e8400-e29b-41d4-a716-446655440000\"}"))),
       @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter priorityCode)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),

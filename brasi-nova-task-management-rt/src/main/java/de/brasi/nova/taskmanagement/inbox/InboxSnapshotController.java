@@ -86,12 +86,11 @@ public class InboxSnapshotController {
       description = "Liefert eine Keyset-paginierte Seite aktiver (OPEN) Aufgaben des angemeldeten Benutzers."
           + " Setzt das asOf-Wasserzeichen bei der ersten Seite (cursor=leer).")
   @ApiResponses({
-      @ApiResponse(
-          responseCode = "200",
-          description = "Seite aktiver Aufgaben.",
-          content = @Content(
-              mediaType = "application/json",
-              schema = @Schema(implementation = KeysetPage.class))),
+      // Kein explizites 200-content: springdoc leitet das Schema aus dem parametrisierten
+      // Rueckgabetyp KeysetPage<TaskSummaryModel> ab (items dann korrekt TaskSummaryModel statt
+      // untypisiert - ein roher @Schema(implementation=KeysetPage.class) wuerde den Typparameter
+      // verlieren).
+      @ApiResponse(responseCode = "200", description = "Seite aktiver Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
@@ -120,12 +119,9 @@ public class InboxSnapshotController {
       description = "Liefert eine Keyset-paginierte Seite archivierter Aufgaben des angemeldeten Benutzers."
           + " filter=all (Standard): alle archivierten; filter=done: erledigte; filter=left: verlassene.")
   @ApiResponses({
-      @ApiResponse(
-          responseCode = "200",
-          description = "Seite archivierter Aufgaben.",
-          content = @Content(
-              mediaType = "application/json",
-              schema = @Schema(implementation = KeysetPage.class))),
+      // Kein explizites 200-content: springdoc leitet das Schema aus dem parametrisierten
+      // Rueckgabetyp KeysetPage<TaskSummaryModel> ab (siehe activeTasks).
+      @ApiResponse(responseCode = "200", description = "Seite archivierter Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
