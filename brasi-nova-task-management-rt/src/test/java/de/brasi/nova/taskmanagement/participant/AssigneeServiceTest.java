@@ -477,6 +477,20 @@ class AssigneeServiceTest {
         .hasMessageContaining("assignees");
   }
 
+  // ---- Test 8b: Re-Gate-P2 - Assignee-Obergrenze (100) -> 400 (SQL-Parameterlimit-Schutz) ------
+
+  @Test
+  @DisplayName("assignees_ueber_limit_400: 101 Assignees -> EntityValidationException (Bound-Schutz)")
+  void assignees_ueber_limit_400() {
+    final java.util.Set<UUID> tooMany = new java.util.LinkedHashSet<>();
+    for (int i = 0; i < 101; i++) {
+      tooMany.add(UUID.randomUUID());
+    }
+    assertThatThrownBy(() -> new AssigneeUpdateInput(tooMany))
+        .isInstanceOf(io.keel.framework.api.validation.EntityValidationException.class)
+        .hasMessageContaining("assignees");
+  }
+
   // ---- Test 9: P2-4 - Creator darf die Aufgabe nicht verlassen (409) --------------------------
 
   @Test

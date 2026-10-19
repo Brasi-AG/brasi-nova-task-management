@@ -33,14 +33,27 @@ public record AssigneeUpdateInput(
     Set<UUID> assignees) {
 
   /**
-   * Kompakter Konstruktor: Validiert, dass {@code assignees} nicht null ist und keine
-   * null-Elemente enthaelt. Nur explizites leeres Array ist zulaessig.
+   * Obergrenze fuer die Anzahl Assignees je Aufgabe. Begrenzt die nachgelagerte
+   * {@code findActiveByUuids}-{@code IN (:uuids)}-Validierung, damit eine (absurd) grosse Menge nicht
+   * das SQL-Server-Parameterlimit (2100) sprengt und die Zuweisung scheitern laesst. 100 ist konsistent
+   * zur Keyset-Seitengroessen-Clamp-Konvention [1,100] + dem Mention-Cap im Modul.
+   */
+  private static final int MAX_ASSIGNEES = 100;
+
+  /**
+   * Kompakter Konstruktor: Validiert, dass {@code assignees} nicht null ist, hoechstens
+   * {@link #MAX_ASSIGNEES} Eintraege und keine null-Elemente enthaelt. Nur explizites leeres Array
+   * ist zulaessig.
    */
   public AssigneeUpdateInput {
     if (assignees == null) {
       throw new EntityValidationException(
           "Das Feld 'assignees' darf nicht null sein."
               + " Verwende ein leeres Array [], um alle Assignees abzuwaehlen.");
+    }
+    if (assignees.size() > MAX_ASSIGNEES) {
+      throw new EntityValidationException(
+          "Das Feld 'assignees' darf hoechstens " + MAX_ASSIGNEES + " Eintraege enthalten.");
     }
     if (assignees.stream().anyMatch(java.util.Objects::isNull)) {
       throw new EntityValidationException(
