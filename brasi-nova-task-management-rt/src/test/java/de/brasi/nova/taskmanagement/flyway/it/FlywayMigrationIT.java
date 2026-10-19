@@ -328,6 +328,49 @@ class FlywayMigrationIT {
     assertIndexExists("TASK_HISTORY_ENTRY", "IX_TASK_HISTORY_ENTRY_TASK");
   }
 
+  // ---- 6. V4: TASK_INBOX_GENERATION (Finding 2 / Option B) ---
+
+  @Test
+  @DisplayName("flyway_schema_history_enthaelt_v4")
+  void flyway_schema_history_enthaelt_v4() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    final boolean hasV4 =
+        rows.stream().anyMatch(r -> "4".equals(String.valueOf(r.get("version"))));
+    assertThat(hasV4).as("V4 in flyway_schema_history").isTrue();
+  }
+
+  @Test
+  @DisplayName("v4_legt_task_inbox_generation_mit_unique_tenant_user_an")
+  void v4_legt_task_inbox_generation_an() {
+    assertTableExists("TASK_INBOX_GENERATION");
+    assertIndexExists("TASK_INBOX_GENERATION", "UQ_TASK_INBOX_GENERATION_TENANT_USER");
+  }
+
+  @Test
+  @DisplayName(
+      "task_inbox_generation_unique_verhindert_doppelte_zeile:"
+          + " zweiter INSERT mit gleichem (TENANT_ID, USER_REF) scheitert hart")
+  void task_inbox_generation_unique_verhindert_doppelte_zeile() {
+    final String userRef = "77777777-0000-0000-0000-00000000000a";
+    // Erste Generationszeile (TENANT_ID=500 referenziert die Sentinel-PROD_FIRMA)
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_INBOX_GENERATION]"
+            + " (ID, TENANT_ID, USER_REF, GENERATION) VALUES (8101, 500, ?, 0)",
+        userRef);
+
+    // Zweite Zeile, gleiche (TENANT_ID, USER_REF), andere ID -> UNIQUE-Verletzung
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "INSERT INTO [dbo].[TASK_INBOX_GENERATION]"
+                        + " (ID, TENANT_ID, USER_REF, GENERATION) VALUES (8102, 500, ?, 0)",
+                    userRef))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("UNIQUE");
+  }
+
   // ---- Hilfsmethoden ---
 
   private void assertIndexExists(final String tableName, final String indexName) {

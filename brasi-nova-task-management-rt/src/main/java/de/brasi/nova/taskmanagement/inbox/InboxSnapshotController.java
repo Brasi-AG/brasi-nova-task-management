@@ -65,7 +65,11 @@ public class InboxSnapshotController {
               mediaType = "application/json",
               schema = @Schema(implementation = InboxSnapshotModel.class))),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(
+          responseCode = "410",
+          description = "Snapshot konnte unter anhaltender Membership-Aenderung nicht konsistent"
+              + " erzeugt werden (seltene Degradation); Client wiederholt die Anfrage.")
   })
   @GetMapping("/snapshot")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
@@ -93,7 +97,13 @@ public class InboxSnapshotController {
       @ApiResponse(responseCode = "200", description = "Seite aktiver Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(
+          responseCode = "410",
+          description = "Snapshot abgelaufen; Client muss neu bootstrappen. Folgeseite (cursor):"
+              + " Membership-Generation geaendert. Erste Seite (ohne cursor): Snapshot konnte unter"
+              + " anhaltender Membership-Aenderung nicht konsistent erzeugt werden (seltene"
+              + " Degradation).")
   })
   @GetMapping
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
@@ -124,7 +134,13 @@ public class InboxSnapshotController {
       @ApiResponse(responseCode = "200", description = "Seite archivierter Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(
+          responseCode = "410",
+          description = "Snapshot abgelaufen; Client muss neu bootstrappen. Folgeseite (cursor):"
+              + " Membership-Generation geaendert. Erste Seite (ohne cursor): Snapshot konnte unter"
+              + " anhaltender Membership-Aenderung nicht konsistent erzeugt werden (seltene"
+              + " Degradation).")
   })
   @GetMapping("/archive")
   @RequiresPermission(TaskManagementPermissions.TASK_READ)

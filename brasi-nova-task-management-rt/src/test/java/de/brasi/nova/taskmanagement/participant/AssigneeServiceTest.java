@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.participant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -77,6 +78,7 @@ class AssigneeServiceTest {
   @Mock private InboxSignalService inboxSignalService;
   @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
+  @Mock private InboxGenerationService inboxGenerationService;
 
   private AssigneeService service;
 
@@ -91,7 +93,8 @@ class AssigneeServiceTest {
             notificationService,
             inboxSignalService,
             userReadRepository,
-            userAccessor);
+            userAccessor,
+            inboxGenerationService);
 
     // Final-Review P1-2: Validierung angeforderter Assignees -> hier echot der Mock die UUIDs als
     // aktive Benutzer zurueck (die Unit-Tests gehen von gueltigen Benutzern aus; die Ablehnung
@@ -180,6 +183,9 @@ class AssigneeServiceTest {
     assertThat(refsCaptor.getValue())
         .as("invalidate muss ASSIGNEE_REF enthalten")
         .contains(ASSIGNEE_REF);
+
+    // Finding 2 / Option B: Zuweisung bumpt die Generation des neuen Assignees (toAdd).
+    verify(inboxGenerationService).bump(TENANT_ID, ASSIGNEE_REF);
   }
 
   // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate -----------
@@ -254,6 +260,9 @@ class AssigneeServiceTest {
     assertThat(refsCaptor.getValue())
         .as("invalidate muss ACTOR_REF enthalten")
         .contains(ACTOR_REF);
+
+    // Finding 2 / Option B: Austritt bumpt die Generation des Akteurs.
+    verify(inboxGenerationService).bump(TENANT_ID, ACTOR_REF);
   }
 
   // ---- Test 3: exit UNSUBSCRIBED -> kein HANDOVER-Notification -----------------------------------
@@ -421,6 +430,36 @@ class AssigneeServiceTest {
     verify(userStateService, never()).ensure(any(), any(), any());
   }
 
+  // ---- Test: Abwahl (toRemove) bumpt Generation des entfernten Refs --------------------------
+
+  @Test
+  @DisplayName("abwahl_bumpt_generation: PUT entfernt aktiven Assignee -> bump(removedRef)")
+  void abwahl_bumpt_generation() {
+    final Long taskId = 150L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID removedRef = ASSIGNEE_REF;
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Aktiver Nicht-Creator-Assignee A; Ziel-Menge leer -> A wird abgewaehlt (toRemove).
+    final TaskParticipant participantA = new TaskParticipant();
+    participantA.setParticipantRef(removedRef);
+    participantA.setAssigneeFlag(true);
+    participantA.setCreatorFlag(false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(participantA));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removedRef))
+        .thenReturn(List.of(participantA));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, removedRef)).thenReturn(List.of());
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of()));
+
+    verify(inboxGenerationService).bump(TENANT_ID, removedRef);
+  }
+
   // ---- Test 8: MINOR - null-assignees wirft EntityValidationException ----------------------
 
   @Test
@@ -461,11 +500,12 @@ class AssigneeServiceTest {
     assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER)))
         .isInstanceOf(BusinessRuleException.class);
 
-    // Keine Mutation, keine Notification, kein Invalidate
+    // Keine Mutation, keine Notification, kein Invalidate, kein Generation-Bump
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
     verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
   }
 
   // ---- Test 10: P2-5 - bereits ausgetretener Teilnehmer kann nicht erneut austreten (400) -----
@@ -689,9 +729,11 @@ class AssigneeServiceTest {
     // Act: idempotenter PUT mit identischer Ziel-Menge {A}.
     service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(existingRefA)));
 
-    // Assert: weder Invalidierung noch Laden der aktiven UserStates.
+    // Assert: weder Invalidierung noch Laden der aktiven UserStates - und KEIN Generation-Bump
+    // (No-Op-PUT ist keine destruktive Membership-Aenderung).
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
     verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
   }
 
   // ---- Test RG-exit: exit invalidiert Akteur UND verbleibende aktive Teilnehmer ----------------

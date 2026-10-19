@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +19,7 @@ import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
@@ -39,6 +41,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit-Tests fuer {@link InboxSnapshotService} (alle Abhaengigkeiten gemockt, kein DB).
+ *
+ * <p>Deckt zusaetzlich zu den asOf-/Keyset-Invarianten die Snapshot-Rejection (Finding 2 / Option B):
+ * 4-Token-Cursor mit Generation, check-AFTER-410 auf der Folgeseite und den Generation-Bracket mit
+ * Retry/Exhaustion auf First-Page/Bootstrap (je Einstiegspunkt).
  */
 class InboxSnapshotServiceTest {
 
@@ -56,6 +62,7 @@ class InboxSnapshotServiceTest {
   private UserReadRepository userReadRepository;
   private DictionaryCodeResolver resolver;
   private AuditTimeConverter auditTimeConverter;
+  private InboxGenerationService inboxGenerationService;
   private InboxSnapshotService service;
 
   @BeforeEach
@@ -66,6 +73,7 @@ class InboxSnapshotServiceTest {
     userReadRepository = mock(UserReadRepository.class);
     resolver = mock(DictionaryCodeResolver.class);
     auditTimeConverter = new AuditTimeConverter("Europe/Berlin");
+    inboxGenerationService = mock(InboxGenerationService.class);
 
     service =
         new InboxSnapshotService(
@@ -74,7 +82,8 @@ class InboxSnapshotServiceTest {
             tagCatalogService,
             userReadRepository,
             resolver,
-            auditTimeConverter);
+            auditTimeConverter,
+            inboxGenerationService);
 
     when(resolver.resolveTaskStatusOpen()).thenReturn(OPEN_ID);
     when(resolver.resolveTaskStatusDone()).thenReturn(DONE_ID);
@@ -84,6 +93,8 @@ class InboxSnapshotServiceTest {
     when(notificationQueryService.listFor(any(), anyLong(), any(), any(), anyInt()))
         .thenReturn(new NotificationPage(List.of(), null, false));
     when(tagCatalogService.list()).thenReturn(List.of());
+    // Default: stabile Generation 0 (First-Page-Bracket stabil, keine Ablehnung).
+    when(inboxGenerationService.currentGeneration(any())).thenReturn(0L);
   }
 
   // ---- Kern: snapshot_asOf_user_scoped_kein_sequence ------------------------------------------
@@ -92,7 +103,6 @@ class InboxSnapshotServiceTest {
   @DisplayName("snapshot_asOf_user_scoped_kein_sequence")
   void snapshot_asOf_user_scoped_kein_sequence() {
     final List<Task> pageTasks = buildTasks(2);
-    // First-Page: Sentinel-Keyset (asOf=now, la=now, ext=MAX_UUID), limit+1=51
     when(taskQueryRepository.findActivePage(
             eq(USER_REF), eq(OPEN_ID), any(LocalDateTime.class), any(LocalDateTime.class),
             eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
@@ -107,19 +117,16 @@ class InboxSnapshotServiceTest {
 
     final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
 
-    // asOf gesetzt + plausibel + identisch mit tasks.asOf (EIN Wasserzeichen)
     assertThat(snapshot.asOf()).isNotNull();
     assertThat(snapshot.asOf()).isAfter(Instant.now().minusSeconds(120));
     assertThat(snapshot.asOf()).isBefore(Instant.now().plusSeconds(120));
     assertThat(snapshot.tasks().asOf()).isEqualTo(snapshot.asOf());
 
-    // user-scoped: aktive Query mit genau diesem userRef aufgerufen
     verify(taskQueryRepository)
         .findActivePage(
             eq(USER_REF), eq(OPEN_ID), any(LocalDateTime.class), any(LocalDateTime.class),
             eq(MAX_UUID), eq(DEFAULT_LIMIT + 1));
 
-    // Inhalt
     assertThat(snapshot.tasks().items()).hasSize(2);
     assertThat(snapshot.tasks().hasMore()).isFalse();
     assertThat(snapshot.participantSummaries()).hasSize(1);
@@ -127,12 +134,10 @@ class InboxSnapshotServiceTest {
     assertThat(snapshot.archiveTotals().done()).isEqualTo(3L);
     assertThat(snapshot.archiveTotals().left()).isEqualTo(2L);
 
-    // Archiv-Zaehler teilen das asOf des Snapshots (gleiches Wasserzeichen)
     final Instant asOfInstant = snapshot.asOf();
     final LocalDateTime asOfLdt = LocalDateTime.ofInstant(asOfInstant, auditTimeConverter.zone());
     verify(taskQueryRepository).countArchiveAll(USER_REF, DONE_ID, CANCELLED_ID, asOfLdt);
 
-    // struktureller Beweis: KEIN sequence/Delta-Feld im Snapshot (arch-v2 §3)
     final List<String> components =
         Arrays.stream(InboxSnapshotModel.class.getRecordComponents())
             .map(RecordComponent::getName)
@@ -156,17 +161,15 @@ class InboxSnapshotServiceTest {
 
     assertThat(snapshot.tasks().items()).isEmpty();
     assertThat(snapshot.participantSummaries()).isEmpty();
-    // KEIN collection-IN mit leerer Menge (MSSQL IN () = Syntaxfehler)
     verify(userReadRepository, never()).findActiveParticipantsForTasks(any());
   }
 
-  // ---- aktive Fortsetzung: hasMore + nextCursor ----------------------------------------------
+  // ---- aktive Fortsetzung: hasMore + nextCursor (4-Token) -------------------------------------
 
   @Test
-  @DisplayName("loadActivePage_first_page_hasMore_true_und_nextCursor_gesetzt")
+  @DisplayName("loadActivePage_first_page_hasMore_true_und_nextCursor_4_token")
   void loadActivePage_first_page_hasMore_true_und_nextCursor_gesetzt() {
     final int limit = 2;
-    // limit+1 = 3 -> hasMore=true, 2 Items
     when(taskQueryRepository.findActivePage(
             eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
         .thenReturn(buildTasks(3));
@@ -177,8 +180,10 @@ class InboxSnapshotServiceTest {
     assertThat(page.hasMore()).isTrue();
     assertThat(page.nextCursor()).isNotBlank();
     assertThat(page.asOf()).isNotNull();
-    // nextCursor ist ein 3-Token-Cursor (asOf, lastActivityAt, externalId)
-    assertThat(KeysetCursor.decode(page.nextCursor(), 3)).hasSize(3);
+    // nextCursor ist ein 4-Token-Cursor (asOf, lastActivityAt, externalId, generation)
+    final List<String> tokens = KeysetCursor.decode(page.nextCursor(), 4);
+    assertThat(tokens).hasSize(4);
+    assertThat(tokens.get(3)).as("4. Token = Generation (stabil 0)").isEqualTo("0");
   }
 
   @Test
@@ -190,7 +195,7 @@ class InboxSnapshotServiceTest {
     final UUID lastExternal = UUID.randomUUID();
     final String cursor =
         KeysetCursor.encode(
-            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString()));
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "0"));
 
     when(taskQueryRepository.findActivePage(
             eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
@@ -201,7 +206,6 @@ class InboxSnapshotServiceTest {
     assertThat(page.items()).hasSize(1);
     assertThat(page.hasMore()).isFalse();
     assertThat(page.nextCursor()).isNull();
-    // asOf aus dem Cursor durchgereicht (kein frisches now)
     assertThat(page.asOf()).isEqualTo(auditTimeConverter.toInstant(asOf));
     verify(taskQueryRepository)
         .findActivePage(USER_REF, OPEN_ID, asOf, lastActivity, lastExternal, limit + 1);
@@ -210,9 +214,13 @@ class InboxSnapshotServiceTest {
   @Test
   @DisplayName("loadActivePage_malformed_cursor_falsche_tokenzahl_wirft_400")
   void loadActivePage_malformed_cursor_falsche_tokenzahl_wirft_400() {
-    // nur 2 Token statt 3 -> KeysetCursor.decode(cursor,3) -> EntityValidationException
+    // 3 Token statt 4 (alter Cursor) -> KeysetCursor.decode(cursor,4) -> EntityValidationException
     final String badCursor =
-        KeysetCursor.encode(List.of(LocalDateTime.now().toString(), UUID.randomUUID().toString()));
+        KeysetCursor.encode(
+            List.of(
+                LocalDateTime.now().toString(),
+                LocalDateTime.now().toString(),
+                UUID.randomUUID().toString()));
     assertThatThrownBy(() -> service.loadActivePage(USER_REF, badCursor, 10))
         .isInstanceOf(EntityValidationException.class);
   }
@@ -220,10 +228,203 @@ class InboxSnapshotServiceTest {
   @Test
   @DisplayName("loadActivePage_cursor_nicht_parsebare_tokens_wirft_400")
   void loadActivePage_cursor_nicht_parsebare_tokens_wirft_400() {
+    // 4 Token, aber keine parsebaren Werte (Datum/UUID/Zahl) -> 400
     final String badCursor =
-        KeysetCursor.encode(List.of("KEIN_DATUM", "KEIN_DATUM", "KEINE_UUID"));
+        KeysetCursor.encode(List.of("KEIN_DATUM", "KEIN_DATUM", "KEINE_UUID", "KEINE_ZAHL"));
     assertThatThrownBy(() -> service.loadActivePage(USER_REF, badCursor, 10))
         .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- Finding 2 / Option B: Folgeseite check-AFTER -> 410 ------------------------------------
+
+  @Test
+  @DisplayName("loadActivePage_folge_cursor_generation_mismatch_wirft_410")
+  void loadActivePage_folge_cursor_generation_mismatch_wirft_410() {
+    final int limit = 5;
+    final LocalDateTime asOf = LocalDateTime.of(2026, 10, 17, 10, 0, 0);
+    final LocalDateTime lastActivity = LocalDateTime.of(2026, 10, 16, 9, 30, 0);
+    final UUID lastExternal = UUID.randomUUID();
+    // Cursor traegt Generation 5; aktuelle Generation ist inzwischen 7 -> Mismatch -> 410.
+    final String cursor =
+        KeysetCursor.encode(
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "5"));
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(7L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
+        .thenReturn(buildTasks(1));
+
+    assertThatThrownBy(() -> service.loadActivePage(USER_REF, cursor, limit))
+        .isInstanceOf(SnapshotExpiredException.class);
+  }
+
+  @Test
+  @DisplayName("loadActivePage_folge_cursor_generation_gleich_liefert_seite")
+  void loadActivePage_folge_cursor_generation_gleich_liefert_seite() {
+    final int limit = 2;
+    final LocalDateTime asOf = LocalDateTime.of(2026, 10, 17, 10, 0, 0);
+    final LocalDateTime lastActivity = LocalDateTime.of(2026, 10, 16, 9, 30, 0);
+    final UUID lastExternal = UUID.randomUUID();
+    final String cursor =
+        KeysetCursor.encode(
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "5"));
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(5L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
+        .thenReturn(buildTasks(3));
+
+    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, cursor, limit);
+
+    assertThat(page.items()).hasSize(2);
+    assertThat(page.hasMore()).isTrue();
+    // nextCursor traegt die unveraenderte Snapshot-Generation (5) weiter.
+    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("5");
+  }
+
+  @Test
+  @DisplayName("loadArchivePage_folge_cursor_generation_mismatch_wirft_410")
+  void loadArchivePage_folge_cursor_generation_mismatch_wirft_410() {
+    final int limit = 5;
+    final LocalDateTime asOf = LocalDateTime.of(2026, 10, 17, 10, 0, 0);
+    final LocalDateTime lastActivity = LocalDateTime.of(2026, 10, 16, 9, 30, 0);
+    final UUID lastExternal = UUID.randomUUID();
+    final String cursor =
+        KeysetCursor.encode(
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "2"));
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(3L);
+    when(taskQueryRepository.findArchiveAllPage(
+            eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), eq(asOf), eq(lastActivity),
+            eq(lastExternal), eq(limit + 1)))
+        .thenReturn(buildTasks(1));
+
+    assertThatThrownBy(() -> service.loadArchivePage(USER_REF, "all", cursor, limit))
+        .isInstanceOf(SnapshotExpiredException.class);
+  }
+
+  // ---- Finding 2 / Option B: First-Page Generation-Bracket mit Retry/Exhaustion ---------------
+
+  @Test
+  @DisplayName("loadActivePage_first_page_bracket_retry_stabilisiert_ohne_410")
+  void loadActivePage_first_page_bracket_retry() {
+    final int limit = 2;
+    // Versuch 1: g1=0, g2=1 (Bump waehrend Assembly) -> Retry; Versuch 2: g1=1, g2=1 -> stabil.
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 1L, 1L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
+        .thenReturn(buildTasks(3));
+
+    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, null, limit);
+
+    assertThat(page.hasMore()).isTrue();
+    // Gestempelte Generation = stabiler Wert 1.
+    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("1");
+    // Zwei Versuche -> Seite zweimal abgefragt.
+    verify(taskQueryRepository, times(2))
+        .findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1));
+  }
+
+  @Test
+  @DisplayName("loadActivePage_first_page_exhaustion_wirft_410")
+  void loadActivePage_first_page_exhaustion_wirft_410() {
+    // Jeder After-Read weicht ab -> 3 Versuche scheitern -> 410.
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 2L, 3L, 4L, 5L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), anyInt()))
+        .thenReturn(buildTasks(1));
+
+    assertThatThrownBy(() -> service.loadActivePage(USER_REF, null, 10))
+        .isInstanceOf(SnapshotExpiredException.class);
+    verify(taskQueryRepository, times(3))
+        .findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), anyInt());
+  }
+
+  @Test
+  @DisplayName("loadArchivePage_first_page_bracket_retry_stabilisiert_ohne_410")
+  void loadArchivePage_first_page_bracket_retry() {
+    final int limit = 2;
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 4L, 4L, 4L);
+    when(taskQueryRepository.findArchiveAllPage(
+            eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
+        .thenReturn(buildTasks(3));
+
+    final KeysetPage<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "all", null, limit);
+
+    assertThat(page.hasMore()).isTrue();
+    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("4");
+  }
+
+  @Test
+  @DisplayName("loadArchivePage_first_page_exhaustion_wirft_410")
+  void loadArchivePage_first_page_exhaustion_wirft_410() {
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 2L, 3L, 4L, 5L);
+    when(taskQueryRepository.findArchiveAllPage(
+            eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), anyInt()))
+        .thenReturn(buildTasks(1));
+
+    assertThatThrownBy(() -> service.loadArchivePage(USER_REF, "all", null, 10))
+        .isInstanceOf(SnapshotExpiredException.class);
+  }
+
+  @Test
+  @DisplayName("loadSnapshot_bracket_retry_bump_zwischen_seite_und_counts")
+  void loadSnapshot_bracket_retry() {
+    // Versuch 1: g1=0, g2=1 (Bump zwischen aktiver Seite und Counts) -> Retry; Versuch 2 stabil (1).
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 1L, 1L);
+    // > DEFAULT_LIMIT -> hasMore=true, damit der auf der stabilen Generation gestempelte nextCursor
+    // tatsaechlich geprueft werden kann (Codex-Auflage 2).
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(DEFAULT_LIMIT + 1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(1L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(1L);
+    when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
+
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+
+    assertThat(snapshot.tasks().items()).hasSize(DEFAULT_LIMIT);
+    assertThat(snapshot.tasks().hasMore()).isTrue();
+    assertThat(snapshot.archiveTotals().all()).isEqualTo(1L);
+    // nextCursor traegt die STABILE Generation (1, aus dem erfolgreichen 2. Versuch).
+    assertThat(KeysetCursor.decode(snapshot.tasks().nextCursor(), 4).get(3)).isEqualTo("1");
+    // Zwei Versuche -> aktive Seite zweimal abgefragt.
+    verify(taskQueryRepository, times(2))
+        .findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1));
+  }
+
+  @Test
+  @DisplayName("loadSnapshot_exhaustion_wirft_410")
+  void loadSnapshot_exhaustion_wirft_410() {
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 2L, 3L, 4L, 5L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+
+    assertThatThrownBy(() -> service.loadSnapshot(USER_REF, TENANT_ID))
+        .isInstanceOf(SnapshotExpiredException.class);
+  }
+
+  @Test
+  @DisplayName("loadSnapshot_participantSummaries_live_ausserhalb_generation_bracket")
+  void loadSnapshot_participantSummaries_live_scope() {
+    // Stabile requester-Generation -> genau 2 Generation-Reads (g1, g2); participantSummaries
+    // (LIVE, nach dem Bracket) loesen KEINE weiteren Generation-Reads aus und kein 410.
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+    when(userReadRepository.findActiveParticipantsForTasks(any()))
+        .thenReturn(List.of(buildUser("a@brasi.de", "A"), buildUser("b@brasi.de", "B")));
+
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+
+    assertThat(snapshot.participantSummaries()).hasSize(2);
+    verify(inboxGenerationService, times(2)).currentGeneration(USER_REF);
   }
 
   // ---- Limit-Clamp ---------------------------------------------------------------------------
@@ -234,7 +435,7 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID),
             eq(2)))
         .thenReturn(List.of());
-    service.loadActivePage(USER_REF, null, 0); // 0 -> clamp 1 -> limit+1=2
+    service.loadActivePage(USER_REF, null, 0);
     verify(taskQueryRepository)
         .findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(2));
   }
@@ -245,7 +446,7 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID),
             eq(101)))
         .thenReturn(List.of());
-    service.loadActivePage(USER_REF, null, 999); // 999 -> clamp 100 -> limit+1=101
+    service.loadActivePage(USER_REF, null, 999);
     verify(taskQueryRepository)
         .findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(101));
   }

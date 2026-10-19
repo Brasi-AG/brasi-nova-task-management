@@ -357,6 +357,70 @@ class InboxSnapshotControllerIT {
     }
   }
 
+  // ---- IT: Snapshot-Rejection (Finding 2 / Option B) - echte Exit-Mutation -> Folge-Cursor 410 --
+
+  /**
+   * Beweist die VOLLSTAENDIGE Kette end-to-end gegen echtes MSSQL: First-Page stempelt Generation 0
+   * in den Cursor; eine ECHTE Membership-Mutation ueber {@code POST /tasks/{id}/exit}
+   * ({@code AssigneeService.exit}) bumpt die Generation ATOMAR in derselben Transaktion (0 -> 1);
+   * der alte Cursor liefert daraufhin HTTP 410 (ResponseStatusException-Pfad durch den
+   * KSF-GlobalApiExceptionHandler); ein frischer Bootstrap (ohne Cursor) liefert wieder 200.
+   */
+  @Test
+  @DisplayName("exit_mutation_bumpt_generation_dann_alter_cursor_410_und_frischer_bootstrap_200")
+  void exit_mutation_bumpt_generation_dann_alter_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    // Dedizierter Benutzer, damit die Mutation keine anderen Tests beeinflusst.
+    final UUID genUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000701");
+    final String genLogin = "gen-410-user@brasi.de";
+
+    // 2 aktive Tasks, genUser als NICHT-Creator-Assignee (darf austreten) -> limit=1 => hasMore.
+    final UUID exitTaskUuid = UUID.randomUUID();
+    for (int i = 0; i < 2; i++) {
+      final long taskId = ID_BASE + 700 + i;
+      final UUID uuid = (i == 0) ? exitTaskUuid : UUID.randomUUID();
+      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
+          LocalDateTime.now().minusMinutes(20 - i), "Gen410-Task-" + i);
+      seedParticipant(jdbcTemplate, ID_BASE + 710 + i, taskId, genUser, TENANT_A_ID,
+          false, true, true, null);
+      seedUserState(jdbcTemplate, ID_BASE + 720 + i, taskId, genUser, TENANT_A_ID, null);
+    }
+
+    final String token = jwt(TENANT_A_UUID, genUser, genLogin,
+        "task-management:TASK_READ", "task-management:TASK_WRITE");
+
+    // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // ECHTE destruktive Membership-Mutation: genUser verlaesst einen Task -> AssigneeService.exit
+    // bumpt die Generation ATOMAR in derselben Transaktion (0 -> 1).
+    mvc.perform(post("/api/v1/tasks/" + exitTaskUuid + "/exit")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        .andExpect(status().isNoContent());
+
+    // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isGone());
+
+    // Frischer Bootstrap ohne Cursor -> 200 (neuer Snapshot mit aktueller Generation).
+    mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk());
+  }
+
   // ---- IT 3: Archiv je Filter + Totals -------------------------------------------------------
 
   @Test
@@ -564,7 +628,7 @@ class InboxSnapshotControllerIT {
     mvc.perform(get("/api/v1/tasks/archive").header("Authorization", "Bearer " + noRead))
         .andExpect(status().isForbidden());
 
-    // 3. malformed Cursor (2 Token statt 3) -> 400
+    // 3. malformed Cursor (2 Token statt 4) -> 400
     final String token = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
     final String badCursor =
         KeysetCursor.encode(List.of(LocalDateTime.now().toString(), UUID.randomUUID().toString()));

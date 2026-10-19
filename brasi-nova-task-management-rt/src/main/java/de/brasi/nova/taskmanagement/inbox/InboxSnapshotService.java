@@ -8,6 +8,7 @@ import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantSummary;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
@@ -31,12 +32,26 @@ import org.springframework.stereotype.Service;
  * <p>Alle Reads sind benutzer-scoped ({@code userRef} aus dem Security-Context, nie aus
  * Clientdaten) und laufen im Request-Mandanten-Kontext (vom KSF-Filter gesetzt). Es gibt EIN
  * {@code asOf}-Wasserzeichen je Scroll: der Snapshot erzeugt es, die Folge-Reads tragen es im
- * Cursor weiter ({@code LAST_ACTIVITY_AT <= :asOf}). Kein {@code sequence}/Delta in 1a (arch-v2
- * §3: Reconnect = Re-Bootstrap mit neuem {@code asOf}).
+ * Cursor weiter ({@code LAST_ACTIVITY_AT <= :asOf}).
  *
- * <p><b>Cursor:</b> opaker 3-Token-{@link KeysetCursor} ({@code asOf, lastActivityAt, externalId}),
- * ohne HMAC (ratifiziert in Task 13a; arch-v2 §3 HMAC/1..200 bewusst nicht umgesetzt). Limit wird
- * auf {@code [1,100]} geclampt (Default 50), analog {@link NotificationQueryService}.
+ * <p><b>Snapshot-Rejection (Finding 2 / Option B):</b> Membership-Zustandsfelder
+ * ({@code UNSUBSCRIBED_AT}/{@code EXIT_KIND}/{@code EXIT_AT}) werden destruktiv ueberschrieben und
+ * brechen die asOf-Invariante. Jeder Cursor traegt zusaetzlich die {@code GENERATION}
+ * ({@link InboxGenerationService}) des Anfragers, unter der sein Snapshot erzeugt wurde:
+ * <ul>
+ *   <li><b>Folgeseite (Cursor):</b> Page-Query ZUERST, Generation DANACH lesen; weicht sie ab ->
+ *       {@link SnapshotExpiredException} (HTTP 410), der Client re-bootstrapt (check-AFTER).
+ *   <li><b>First-Page/Bootstrap (kein Cursor):</b> Generation-Bracket mit Retry — Generation lesen,
+ *       membership-abhaengige Assembly mit frischem {@code asOf}, Generation erneut lesen; nur bei
+ *       Stabilitaet ({@code g1 == g2}) wird die Generation in den Cursor gestempelt, sonst Retry.
+ *       Nach {@code MAX_SNAPSHOT_ATTEMPTS} -> 410 (seltene sichere Degradation statt Mischantwort).
+ * </ul>
+ * Die Generation-Invariante deckt NUR die requester-gescopten, asOf-gebundenen Querys (aktive Seite
+ * + Archiv-Counts). {@code participantSummaries} zeigen bewusst den LIVE-Teilnehmerstand und werden
+ * ueber den Push-Invalidate-Kanal aktuell gehalten, nicht ueber Cursor/Generation.
+ *
+ * <p><b>Cursor:</b> opaker 4-Token-{@link KeysetCursor} ({@code asOf, lastActivityAt, externalId,
+ * generation}), ohne HMAC. Limit wird auf {@code [1,100]} geclampt (Default 50).
  */
 @Service
 public class InboxSnapshotService {
@@ -49,6 +64,13 @@ public class InboxSnapshotService {
 
   /** Minimale Seitengroesse. */
   private static final int MIN_LIMIT = 1;
+
+  /**
+   * Maximale Versuche fuer den First-Page/Bootstrap-Generation-Bracket. Ein Versuch scheitert nur,
+   * wenn waehrend der Assembly ein Membership-Bump des Anfragers committet. Bei anhaltender
+   * Aenderung (praktisch unerreichbarer Bump-Sturm) -> {@link SnapshotExpiredException} (410).
+   */
+  private static final int MAX_SNAPSHOT_ATTEMPTS = 3;
 
   private static final String FILTER_ALL = "all";
   private static final String FILTER_DONE = "done";
@@ -68,6 +90,7 @@ public class InboxSnapshotService {
   private final UserReadRepository userReadRepository;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
+  private final InboxGenerationService inboxGenerationService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public InboxSnapshotService(
@@ -76,13 +99,15 @@ public class InboxSnapshotService {
       final TagCatalogService tagCatalogService,
       final UserReadRepository userReadRepository,
       final DictionaryCodeResolver resolver,
-      final AuditTimeConverter auditTimeConverter) {
+      final AuditTimeConverter auditTimeConverter,
+      final InboxGenerationService inboxGenerationService) {
     this.taskQueryRepository = taskQueryRepository;
     this.notificationQueryService = notificationQueryService;
     this.tagCatalogService = tagCatalogService;
     this.userReadRepository = userReadRepository;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
+    this.inboxGenerationService = inboxGenerationService;
   }
 
   /**
@@ -90,52 +115,66 @@ public class InboxSnapshotService {
    *
    * <p>Ein frisches {@code asOf}-Wasserzeichen wird erzeugt und an die aktive Aufgabenseite UND die
    * Archiv-Zaehlungen durchgereicht, damit {@code snapshot.asOf == tasks.asOf} und die Zaehler
-   * konsistent zum selben Zeitpunkt sind. Notifications = erste Seite (all), Tags = globaler
-   * Katalog, participantSummaries = distinkte Teilnehmer NUR der Aufgaben dieser aktiven Seite.
+   * konsistent zum selben Zeitpunkt sind. Die requester-membership-abhaengigen Querys (aktive Seite
+   * + Archiv-Counts) laufen im Generation-Bracket mit Retry (siehe Klassen-Javadoc).
+   * Notifications = erste Seite (all), Tags = globaler Katalog, participantSummaries = distinkte
+   * (LIVE-)Teilnehmer der Aufgaben dieser aktiven Seite.
    *
    * @param userRef  UUID des Benutzers (aus Security-Context)
    * @param tenantId interne Mandanten-ID (aus Security-Context)
    * @return aufgebauter {@link InboxSnapshotModel}
+   * @throws SnapshotExpiredException (HTTP 410) wenn unter anhaltender Membership-Aenderung kein
+   *     konsistenter Snapshot erzeugt werden konnte
    */
   public InboxSnapshotModel loadSnapshot(final UUID userRef, final long tenantId) {
-    final LocalDateTime asOf = now();
     final int effLimit = DEFAULT_LIMIT;
-
-    // Aktive Seite (teilt das asOf des Snapshots) - First-Page via Sentinel-Keyset
     final Long openStatusId = resolver.resolveTaskStatusOpen();
-    final List<Task> rawActive =
-        taskQueryRepository.findActivePage(userRef, openStatusId, asOf, asOf, MAX_UUID, effLimit + 1);
-    final boolean hasMore = rawActive.size() > effLimit;
-    final List<Task> pageTasks = hasMore ? rawActive.subList(0, effLimit) : rawActive;
-    final Instant asOfInstant = auditTimeConverter.toInstant(asOf);
+    final Long doneId = resolver.resolveTaskStatusDone();
+    final Long cancelledId = resolver.resolveTaskStatusCancelled();
+
+    // Generation-Bracket um die requester-membership-abhaengigen Querys (aktive Seite + Counts).
+    BootstrapMembership membership = null;
+    for (int attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt++) {
+      final long g1 = inboxGenerationService.currentGeneration(userRef);
+      final LocalDateTime asOf = now();
+      final List<Task> rawActive =
+          taskQueryRepository.findActivePage(
+              userRef, openStatusId, asOf, asOf, MAX_UUID, effLimit + 1);
+      final ArchiveTotals archiveTotals =
+          new ArchiveTotals(
+              taskQueryRepository.countArchiveAll(userRef, doneId, cancelledId, asOf),
+              taskQueryRepository.countArchiveDone(userRef, doneId, cancelledId, asOf),
+              taskQueryRepository.countArchiveLeft(userRef, asOf));
+      final long g2 = inboxGenerationService.currentGeneration(userRef);
+      if (g1 == g2) {
+        membership = new BootstrapMembership(asOf, rawActive, archiveTotals, g1);
+        break;
+      }
+    }
+    if (membership == null) {
+      throw new SnapshotExpiredException();
+    }
+
+    // Stabiler requester-Stand -> aktive Seite bauen (Generation stempeln).
+    final boolean hasMore = membership.rawActive().size() > effLimit;
+    final List<Task> pageTasks =
+        hasMore ? membership.rawActive().subList(0, effLimit) : membership.rawActive();
+    final Instant asOfInstant = auditTimeConverter.toInstant(membership.asOf());
     final KeysetPage<TaskSummaryModel> tasks =
         new KeysetPage<>(
             pageTasks.stream().map(this::toSummary).toList(),
-            hasMore ? encodeCursor(asOf, pageTasks) : null,
+            hasMore ? encodeCursor(membership.asOf(), membership.generation(), pageTasks) : null,
             hasMore,
             asOfInstant);
 
-    // Notifications: erste Seite (all)
+    // LIVE-Teile ausserhalb der Generation-Invariante (siehe Klassen-Javadoc):
     final NotificationPage notifications =
         notificationQueryService.listFor(userRef, tenantId, FILTER_ALL, null, effLimit);
-
-    // Tags: globaler Katalog
     final List<TagModel> tags = tagCatalogService.list();
-
-    // participantSummaries: NUR Teilnehmer der Aufgaben dieser Seite
     final List<ParticipantSummary> participantSummaries = participantSummariesFor(pageTasks);
 
-    // Archiv-Gesamtzahlen (asOf-gebunden)
-    final Long doneId = resolver.resolveTaskStatusDone();
-    final Long cancelledId = resolver.resolveTaskStatusCancelled();
-    final ArchiveTotals archiveTotals =
-        new ArchiveTotals(
-            taskQueryRepository.countArchiveAll(userRef, doneId, cancelledId, asOf),
-            taskQueryRepository.countArchiveDone(userRef, doneId, cancelledId, asOf),
-            taskQueryRepository.countArchiveLeft(userRef, asOf));
-
     return new InboxSnapshotModel(
-        asOfInstant, tasks, notifications, tags, participantSummaries, archiveTotals);
+        asOfInstant, tasks, notifications, tags, participantSummaries, membership.archiveTotals());
   }
 
   /**
@@ -143,20 +182,23 @@ public class InboxSnapshotService {
    * Snapshots, {@code GET /api/v1/tasks}).
    *
    * @param userRef UUID des Benutzers
-   * @param cursor  opaker 3-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
    * @param limit   Seitengroesse (wird geclampt)
    * @return Seite aktiver Aufgaben
+   * @throws SnapshotExpiredException (HTTP 410) wenn ein Folge-Read eine abgelaufene Generation
+   *     traegt oder die First-Page unter Dauer-Mutation nicht konsistent erzeugbar war
    */
   public KeysetPage<TaskSummaryModel> loadActivePage(
       final UUID userRef, final String cursor, final int limit) {
     final int effLimit = clampLimit(limit);
-    final Window window = resolveWindow(cursor);
     final Long openStatusId = resolver.resolveTaskStatusOpen();
-    final List<Task> raw =
-        taskQueryRepository.findActivePage(
-            userRef, openStatusId, window.asOf(), window.lastActivityAt(), window.externalId(),
-            effLimit + 1);
-    return buildTaskPage(raw, window.asOf(), effLimit);
+    return readPage(
+        userRef,
+        cursor,
+        effLimit,
+        (asOf, lastActivityAt, externalId) ->
+            taskQueryRepository.findActivePage(
+                userRef, openStatusId, asOf, lastActivityAt, externalId, effLimit + 1));
   }
 
   /**
@@ -165,10 +207,11 @@ public class InboxSnapshotService {
    *
    * @param userRef UUID des Benutzers
    * @param filter  {@code all} (Default/null) | {@code done} | {@code left}
-   * @param cursor  opaker 3-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
    * @param limit   Seitengroesse (wird geclampt)
    * @return Seite archivierter Aufgaben
    * @throws EntityValidationException bei ungueltigem Filter (HTTP 400)
+   * @throws SnapshotExpiredException (HTTP 410) wie {@link #loadActivePage}
    */
   public KeysetPage<TaskSummaryModel> loadArchivePage(
       final UUID userRef, final String filter, final String cursor, final int limit) {
@@ -181,56 +224,89 @@ public class InboxSnapshotService {
     }
 
     final int effLimit = clampLimit(limit);
-    final Window window = resolveWindow(cursor);
-
-    final List<Task> raw;
-    switch (resolvedFilter) {
-      case FILTER_DONE -> {
-        final Long doneId = resolver.resolveTaskStatusDone();
-        final Long cancelledId = resolver.resolveTaskStatusCancelled();
-        raw =
-            taskQueryRepository.findArchiveDonePage(
-                userRef, doneId, cancelledId, window.asOf(), window.lastActivityAt(),
-                window.externalId(), effLimit + 1);
-      }
-      case FILTER_LEFT ->
-          raw =
-              taskQueryRepository.findArchiveLeftPage(
-                  userRef, window.asOf(), window.lastActivityAt(), window.externalId(),
-                  effLimit + 1);
-      default -> {
-        final Long doneId = resolver.resolveTaskStatusDone();
-        final Long cancelledId = resolver.resolveTaskStatusCancelled();
-        raw =
-            taskQueryRepository.findArchiveAllPage(
-                userRef, doneId, cancelledId, window.asOf(), window.lastActivityAt(),
-                window.externalId(), effLimit + 1);
-      }
-    }
-    return buildTaskPage(raw, window.asOf(), effLimit);
+    final PageFetch fetch =
+        switch (resolvedFilter) {
+          case FILTER_DONE -> {
+            final Long doneId = resolver.resolveTaskStatusDone();
+            final Long cancelledId = resolver.resolveTaskStatusCancelled();
+            yield (asOf, lastActivityAt, externalId) ->
+                taskQueryRepository.findArchiveDonePage(
+                    userRef, doneId, cancelledId, asOf, lastActivityAt, externalId, effLimit + 1);
+          }
+          case FILTER_LEFT ->
+              (asOf, lastActivityAt, externalId) ->
+                  taskQueryRepository.findArchiveLeftPage(
+                      userRef, asOf, lastActivityAt, externalId, effLimit + 1);
+          default -> {
+            final Long doneId = resolver.resolveTaskStatusDone();
+            final Long cancelledId = resolver.resolveTaskStatusCancelled();
+            yield (asOf, lastActivityAt, externalId) ->
+                taskQueryRepository.findArchiveAllPage(
+                    userRef, doneId, cancelledId, asOf, lastActivityAt, externalId, effLimit + 1);
+          }
+        };
+    return readPage(userRef, cursor, effLimit, fetch);
   }
 
   // ---- intern ---------------------------------------------------------------------------------
 
-  /** Keyset-Fenster: Wasserzeichen + Keyset-Position (asOf, lastActivityAt, externalId). */
-  private record Window(LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId) {}
+  /** Abruf einer Rohseite ({@code limit+1}) fuer ein Keyset-Fenster (asOf, lastActivityAt, ext). */
+  @FunctionalInterface
+  private interface PageFetch {
+    List<Task> fetch(LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId);
+  }
+
+  /** Keyset-Fenster: Wasserzeichen + Keyset-Position + Snapshot-Generation. */
+  private record Window(
+      LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId, long generation) {}
+
+  /** Stabiler requester-Membership-Stand aus dem Bootstrap-Bracket. */
+  private record BootstrapMembership(
+      LocalDateTime asOf, List<Task> rawActive, ArchiveTotals archiveTotals, long generation) {}
 
   /**
-   * Loest das Keyset-Fenster aus dem Cursor auf. First-Page (null/blank): frisches
-   * {@code asOf=jetzt} mit Sentinel-Keyset ({@code la=asOf}, {@code ext=MAX_UUID}). Folgeseite:
-   * 3-Token-Cursor dekodieren; malformed -> 400.
+   * Einheitlicher Seiten-Read: First-Page (kein Cursor) via Generation-Bracket mit Retry;
+   * Folgeseite (Cursor) via check-AFTER -> 410 bei Generation-Mismatch.
    */
-  private Window resolveWindow(final String cursor) {
+  private KeysetPage<TaskSummaryModel> readPage(
+      final UUID userRef, final String cursor, final int effLimit, final PageFetch fetch) {
     if (cursor == null || cursor.isBlank()) {
-      final LocalDateTime asOf = now();
-      return new Window(asOf, asOf, MAX_UUID);
+      // First-Page: Generation-Bracket. Die einzige membership-Query ist die Seite selbst.
+      for (int attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt++) {
+        final long g1 = inboxGenerationService.currentGeneration(userRef);
+        final LocalDateTime asOf = now();
+        final List<Task> raw = fetch.fetch(asOf, asOf, MAX_UUID);
+        final long g2 = inboxGenerationService.currentGeneration(userRef);
+        if (g1 == g2) {
+          return buildTaskPage(raw, asOf, g1, effLimit);
+        }
+      }
+      throw new SnapshotExpiredException();
     }
-    final List<String> tokens = KeysetCursor.decode(cursor, 3);
+
+    // Folgeseite: Page-Query ZUERST, Generation DANACH (check-AFTER).
+    final Window window = decodeWindow(cursor);
+    final List<Task> raw = fetch.fetch(window.asOf(), window.lastActivityAt(), window.externalId());
+    final long current = inboxGenerationService.currentGeneration(userRef);
+    if (current != window.generation()) {
+      throw new SnapshotExpiredException();
+    }
+    return buildTaskPage(raw, window.asOf(), window.generation(), effLimit);
+  }
+
+  /**
+   * Dekodiert den 4-Token-Cursor (asOf, lastActivityAt, externalId, generation). Malformed
+   * (Tokenzahl, Datum, UUID, Zahl) -> {@link EntityValidationException} (HTTP 400). Ein alter
+   * 3-Token-Cursor scheitert bereits an der Tokenzahl.
+   */
+  private Window decodeWindow(final String cursor) {
+    final List<String> tokens = KeysetCursor.decode(cursor, 4);
     try {
       final LocalDateTime asOf = LocalDateTime.parse(tokens.get(0));
       final LocalDateTime lastActivityAt = LocalDateTime.parse(tokens.get(1));
       final UUID externalId = UUID.fromString(tokens.get(2));
-      return new Window(asOf, lastActivityAt, externalId);
+      final long generation = Long.parseLong(tokens.get(3));
+      return new Window(asOf, lastActivityAt, externalId, generation);
     } catch (DateTimeParseException | IllegalArgumentException e) {
       throw new EntityValidationException("Ungueltiger cursor.");
     }
@@ -238,10 +314,10 @@ public class InboxSnapshotService {
 
   /** Baut die Seite aus dem {@code limit+1}-Rohergebnis (hasMore + nextCursor + Mapping). */
   private KeysetPage<TaskSummaryModel> buildTaskPage(
-      final List<Task> raw, final LocalDateTime asOf, final int effLimit) {
+      final List<Task> raw, final LocalDateTime asOf, final long generation, final int effLimit) {
     final boolean hasMore = raw.size() > effLimit;
     final List<Task> page = hasMore ? raw.subList(0, effLimit) : raw;
-    final String nextCursor = hasMore ? encodeCursor(asOf, page) : null;
+    final String nextCursor = hasMore ? encodeCursor(asOf, generation, page) : null;
     return new KeysetPage<>(
         page.stream().map(this::toSummary).toList(),
         nextCursor,
@@ -249,11 +325,16 @@ public class InboxSnapshotService {
         auditTimeConverter.toInstant(asOf));
   }
 
-  /** Enkodiert den 3-Token-Cursor aus dem letzten Element der Seite. */
-  private String encodeCursor(final LocalDateTime asOf, final List<Task> page) {
+  /** Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation. */
+  private String encodeCursor(
+      final LocalDateTime asOf, final long generation, final List<Task> page) {
     final Task last = page.get(page.size() - 1);
     return KeysetCursor.encode(
-        List.of(asOf.toString(), last.getLastActivityAt().toString(), last.getUuid().toString()));
+        List.of(
+            asOf.toString(),
+            last.getLastActivityAt().toString(),
+            last.getUuid().toString(),
+            Long.toString(generation)));
   }
 
   /** Mappt eine {@link Task} auf das kompakte {@link TaskSummaryModel} (CODEs + Instant). */
@@ -269,8 +350,8 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Loest die distinkten Teilnehmer der Seiten-Aufgaben auf. Leere Seite -> leere Liste (schuetzt
-   * vor MSSQL {@code IN ()}-Syntaxfehler).
+   * Loest die distinkten (LIVE-)Teilnehmer der Seiten-Aufgaben auf. Leere Seite -> leere Liste
+   * (schuetzt vor MSSQL {@code IN ()}-Syntaxfehler). Bewusst ausserhalb der Generation-Invariante.
    */
   private List<ParticipantSummary> participantSummariesFor(final List<Task> pageTasks) {
     if (pageTasks.isEmpty()) {

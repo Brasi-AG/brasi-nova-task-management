@@ -58,6 +58,7 @@ public class AssigneeService {
   private final InboxSignalService inboxSignalService;
   private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
+  private final InboxGenerationService inboxGenerationService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public AssigneeService(
@@ -68,7 +69,8 @@ public class AssigneeService {
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
       final UserReadRepository userReadRepository,
-      final UserAccessor userAccessor) {
+      final UserAccessor userAccessor,
+      final InboxGenerationService inboxGenerationService) {
     this.taskRepository = taskRepository;
     this.participantQueryRepository = participantQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -77,6 +79,7 @@ public class AssigneeService {
     this.inboxSignalService = inboxSignalService;
     this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
+    this.inboxGenerationService = inboxGenerationService;
   }
 
   /**
@@ -209,6 +212,10 @@ public class AssigneeService {
           actorRef);
 
       affectedRefs.add(assigneeRef);
+      // Finding 2 / Option B: Zuweisung reaktiviert destruktiv die Membership-Felder dieses Refs
+      // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation atomar in dieser Tx bumpen, damit alte
+      // Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410).
+      inboxGenerationService.bump(tenantId, assigneeRef);
       log.info(
           "AssigneeService.updateAssignees: Assignee {} der Aufgabe {} (id={}) zugewiesen"
               + " von Akteur {} in Mandant {}.",
@@ -239,6 +246,9 @@ public class AssigneeService {
         }
 
         affectedRefs.add(removedRef);
+        // Finding 2 / Option B: Abwahl ueberschreibt destruktiv EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT
+        // dieses Refs -> Generation atomar in dieser Tx bumpen (alte Inbox-Cursor -> 410).
+        inboxGenerationService.bump(tenantId, removedRef);
         log.info(
             "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
                 + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
@@ -369,6 +379,12 @@ public class AssigneeService {
           task.getTitle(),
           actorRef);
     }
+
+    // Finding 2 / Option B: Austritt ueberschreibt destruktiv EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT des
+    // Akteurs -> Generation atomar in dieser Tx bumpen, damit alte Inbox-Cursor des Akteurs beim
+    // naechsten Read abgelehnt werden (410). Liegt NACH allen Abweiszweigen (Creator-/Doppel-
+    // Austritt-/Wettlauf-Verlierer werfen vorher) -> Bump nur bei tatsaechlichem Austritt.
+    inboxGenerationService.bump(tenantId, actorRef);
 
     // After-Commit: Invalidate fuer den Akteur UND alle verbleibenden aktiven Teilnehmer.
     // Der Austritt entfernt den Akteur aus participantSummaries -> der Snapshot jedes verbleibenden

@@ -312,6 +312,61 @@
       ]
     },
     {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskInboxGeneration",
+      "kind": "ENTITY",
+      "name": "TaskInboxGeneration",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_INBOX_GENERATION" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "userRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "USER_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "generation",
+          "javaType": "long",
+          "source": "PERSISTED",
+          "columnName": "GENERATION",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskInboxGenerationCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskInboxGenerationUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskInboxGenerationModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskInboxGenerationInfoModel"
+        }
+      ]
+    },
+    {
       "id": "de.brasi.nova.taskmanagement.entity.TaskNotification",
       "kind": "ENTITY",
       "name": "TaskNotification",

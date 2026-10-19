@@ -23,6 +23,7 @@ public final class KsfMetamodelIndex {
         de.brasi.nova.taskmanagement.entity.Task.class,
         de.brasi.nova.taskmanagement.entity.TaskComment.class,
         de.brasi.nova.taskmanagement.entity.TaskHistoryEntry.class,
+        de.brasi.nova.taskmanagement.entity.TaskInboxGeneration.class,
         de.brasi.nova.taskmanagement.entity.TaskNotification.class,
         de.brasi.nova.taskmanagement.entity.TaskParticipant.class,
         de.brasi.nova.taskmanagement.entity.TaskReminderReceipt.class,
