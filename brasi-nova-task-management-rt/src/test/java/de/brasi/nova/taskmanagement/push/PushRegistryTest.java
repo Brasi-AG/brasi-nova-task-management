@@ -51,7 +51,7 @@ class PushRegistryTest {
     registry.register(TENANT_ID, USER, a, true);
     registry.register(TENANT_ID, USER, b, true);
     assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactlyInAnyOrder(a, b);
-    registry.unregister("s-a");
+    registry.unregister(TENANT_ID, USER, "s-a");
     assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactly(b);
   }
 
@@ -76,10 +76,29 @@ class PushRegistryTest {
   void unregister_letzte_session_leert_den_key() {
     final PushRegistry registry = new PushRegistry();
     registry.register(TENANT_ID, USER, session("s-1"), true);
-    registry.unregister("s-1");
+    registry.unregister(TENANT_ID, USER, "s-1");
     assertThat(registry.sessionsFor(TENANT_ID, USER)).isEmpty();
     // Unbekannte Session-ID -> No-op (kein Fehler)
-    registry.unregister("unbekannt");
+    registry.unregister(TENANT_ID, USER, "unbekannt");
+    assertThat(registry.sessionsFor(TENANT_ID, USER)).isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "unregister_mit_fremdem_key_entfernt_nichts:"
+          + " key-scoped Unregister - falscher (Mandant,Benutzer) laesst die Session unberuehrt")
+  void unregister_mit_fremdem_key_entfernt_nichts() {
+    final PushRegistry registry = new PushRegistry();
+    final WebSocketSession s = session("s-1");
+    registry.register(TENANT_ID, USER, s, true);
+
+    // Unregister mit falschem Benutzer bzw. Mandant -> No-op (Bucket des korrekten Keys unveraendert).
+    registry.unregister(TENANT_ID, UUID.randomUUID(), "s-1");
+    registry.unregister(999L, USER, "s-1");
+    assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactly(s);
+
+    // Mit korrektem Key -> entfernt.
+    registry.unregister(TENANT_ID, USER, "s-1");
     assertThat(registry.sessionsFor(TENANT_ID, USER)).isEmpty();
   }
 
@@ -101,7 +120,7 @@ class PushRegistryTest {
             pool.submit(
                 () -> {
                   await(barrier);
-                  registry.unregister(oldId);
+                  registry.unregister(TENANT_ID, USER, oldId);
                 });
         // Die neue Session ist bewusst NICHT notification-berechtigt (gemischte Capability unter
         // der Race) -> beweist, dass der SessionEntry-Umbau die atomare Bucket-Liveness nicht bricht.
@@ -125,7 +144,7 @@ class PushRegistryTest {
             .doesNotContain(freshSession);
 
         // Aufraeumen fuer die naechste Iteration.
-        registry.unregister(newId);
+        registry.unregister(TENANT_ID, USER, newId);
       }
     } finally {
       pool.shutdownNow();

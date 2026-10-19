@@ -74,7 +74,18 @@ public class TaskWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionClosed(final WebSocketSession session, final CloseStatus status) {
-    registry.unregister(session.getId());
-    log.debug("TaskWebSocketHandler: Session {} entfernt ({}).", session.getId(), status);
+    // Schluessel aus den Handshake-Attributen rekonstruieren (kein Reverse-Index in der Registry).
+    // Fehlen die Attribute (Session wurde nie regulaer etabliert), gibt es nichts zu entfernen.
+    final Object tenantAttr = session.getAttributes().get(ATTR_TENANT_ID);
+    final Object userAttr = session.getAttributes().get(ATTR_USER_REF);
+    if (tenantAttr instanceof Long tenantId && userAttr instanceof UUID userRef) {
+      registry.unregister(tenantId, userRef, session.getId());
+      log.debug("TaskWebSocketHandler: Session {} entfernt ({}).", session.getId(), status);
+    } else {
+      log.debug(
+          "TaskWebSocketHandler: Session {} ohne Principal-Attribute beim Schliessen -> nichts zu"
+              + " entfernen ({}).",
+          session.getId(), status);
+    }
   }
 }

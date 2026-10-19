@@ -15,8 +15,15 @@ import org.springframework.web.socket.WebSocketSession;
  * {@link org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator} (der Handler
  * dekoriert vor dem Registrieren), damit parallele Sends auf dieselbe Session serialisiert werden.
  *
- * <p>Unregistrierung laeuft ueber die Session-ID (beim Schliessen liefert Spring die undekorierte
- * Session; deren {@code getId()} ist identisch mit der dekorierten).
+ * <p>Unregistrierung laeuft ueber den (Mandant, Benutzer)-Schluessel UND die Session-ID: beim
+ * Schliessen rekonstruiert der {@link TaskWebSocketHandler} den Schluessel aus den
+ * Handshake-Attributen der Session und ruft {@link #unregister(long, UUID, String)}. Bewusst KEIN
+ * Reverse-Index (SessionId-&gt;Key): ein solcher wurde frueher NACH {@code byKey.compute}
+ * geschrieben und oeffnete ein Fenster, in dem ein {@code unregister} den Key nicht fand und eine
+ * geschlossene Session dauerhaft im Bucket verblieb. Mit genau EINER Map ist Registrierung/Entfernen
+ * je Key atomar ueber {@code compute} koordiniert; da Spring {@code afterConnectionEstablished} und
+ * {@code afterConnectionClosed} je Session STRIKT ordnet (nie nebenlaeufig), kann kein Close verloren
+ * gehen.
  */
 @Component
 public class PushRegistry {
@@ -31,12 +38,9 @@ public class PushRegistry {
    */
   private record SessionEntry(WebSocketSession session, boolean notificationRead) {}
 
-  /** Key -> (SessionId -> SessionEntry). */
+  /** Key -> (SessionId -> SessionEntry). EINZIGE Quelle der Wahrheit (kein Reverse-Index). */
   private final ConcurrentHashMap<Key, ConcurrentHashMap<String, SessionEntry>> byKey =
       new ConcurrentHashMap<>();
-
-  /** SessionId -> Key (fuer O(1)-Unregister beim Schliessen). */
-  private final ConcurrentHashMap<String, Key> keyBySession = new ConcurrentHashMap<>();
 
   /**
    * Registriert eine (dekorierte) Session fuer den Empfaenger.
@@ -65,24 +69,24 @@ public class PushRegistry {
           b.put(session.getId(), new SessionEntry(session, notificationRead));
           return b;
         });
-    keyBySession.put(session.getId(), key);
   }
 
   /**
-   * Entfernt eine Session anhand ihrer ID (beim Schliessen).
+   * Entfernt eine Session beim Schliessen. Der (Mandant, Benutzer)-Schluessel wird vom
+   * {@link TaskWebSocketHandler} aus den Handshake-Attributen der schliessenden Session
+   * rekonstruiert; so gibt es keinen Reverse-Index und damit kein Fenster, in dem ein Close
+   * den Key nicht faende.
    *
+   * @param tenantId  interner Mandanten-Schluessel der Session
+   * @param userRef   UUID des Benutzers der Session
    * @param sessionId Session-ID der zu entfernenden Session
    */
-  public void unregister(final String sessionId) {
-    final Key key = keyBySession.remove(sessionId);
-    if (key == null) {
-      return;
-    }
+  public void unregister(final long tenantId, final UUID userRef, final String sessionId) {
     // Entfernen der Session UND Entfernen des leeren Buckets atomar unter dem Bin-Lock des Keys.
     // Serialisiert gegen register.compute auf demselben Key -> ein gleichzeitiger Reconnect kann den
     // Bucket nicht entfernen, waehrend register gerade die neue Session hinzufuegt.
     byKey.compute(
-        key,
+        new Key(tenantId, userRef),
         (k, bucket) -> {
           if (bucket == null) {
             return null;
