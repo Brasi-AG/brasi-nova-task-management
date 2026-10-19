@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -140,6 +141,11 @@ class TaskFacadeControllerIT {
   private static final String USER_B_LOGIN = "user-b@brasi.de";
   private static final long USER_B_DB_ID = 503L;
 
+  /** Zweiter Tenant-A-User fuer den Assignee-Read-Contract (P2). */
+  private static final UUID USER_A2_REF = UUID.randomUUID();
+  private static final String USER_A2_LOGIN = "user-a2@brasi.de";
+  private static final long USER_A2_DB_ID = 504L;
+
   /** User mit READ-Only-Recht (kein TASK_WRITE -> 403 bei POST). */
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
   private static final String USER_READ_ONLY_LOGIN = "read-only@brasi.de";
@@ -217,6 +223,7 @@ class TaskFacadeControllerIT {
     seedFirmaIfAbsent(jt, TENANT_B_ID, TENANT_B_UUID);
     // PROD_BENUTZER: User A (Mandant A) + User B (Mandant B)
     seedBenutzerIfAbsent(jt, USER_A_DB_ID, USER_A_REF, USER_A_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, USER_A2_DB_ID, USER_A2_REF, USER_A2_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_B_ID);
   }
 
@@ -296,6 +303,39 @@ class TaskFacadeControllerIT {
     assertThat(readAtSet)
         .as("READ_AT muss nach GET fuer den Benutzer gesetzt sein")
         .isGreaterThanOrEqualTo(1);
+  }
+
+  // ---- P2 IT: GET Detail liefert aktuelle Assignees (Read-before-edit) -----------------------
+
+  @Test
+  @DisplayName(
+      "detail_liefert_aktuelle_assignees:"
+          + " PUT assignees -> GET /tasks/{id}.assignees enthaelt Creator + Assignee (stabil"
+          + " sortiert), tagIds leer")
+  void detail_liefert_aktuelle_assignees() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Assignee-Detail-Test");
+
+    // PUT assignees=[USER_A (Creator), USER_A2] - beide Tenant A (findActiveByUuids mandanten-scoped).
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(USER_A_REF, USER_A2_REF)))))
+        .andExpect(status().is2xxSuccessful());
+
+    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA, taskId);
+    final List<String> assignees = readStringArray(detail.get("assignees"));
+    final List<String> expected =
+        new java.util.ArrayList<>(List.of(USER_A_REF.toString(), USER_A2_REF.toString()));
+    java.util.Collections.sort(expected);
+    assertThat(assignees)
+        .as("assignees muss Creator + hinzugefuegten Assignee stabil sortiert enthalten")
+        .containsExactlyElementsOf(expected);
+    assertThat(detail.get("tagIds").size()).as("keine Tags zugeordnet").isEqualTo(0);
   }
 
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
@@ -634,6 +674,46 @@ class TaskFacadeControllerIT {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
         .build();
+  }
+
+  /** Legt eine Aufgabe via POST /api/v1/tasks an und liefert ihre externe UUID. */
+  private UUID createTask(
+      final MockMvc mvc, final ObjectMapper om, final String token, final String title)
+      throws Exception {
+    final String response =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", title))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(response, com.fasterxml.jackson.databind.JsonNode.class)
+        .get("id")
+        .traverse(om)
+        .readValueAs(UUID.class);
+  }
+
+  /** GET /tasks/{id} und liefert das Detail-JSON. */
+  private com.fasterxml.jackson.databind.JsonNode getDetail(
+      final MockMvc mvc, final ObjectMapper om, final String token, final UUID taskUuid)
+      throws Exception {
+    final String body =
+        mvc.perform(get("/api/v1/tasks/" + taskUuid).header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readTree(body);
+  }
+
+  private static List<String> readStringArray(final com.fasterxml.jackson.databind.JsonNode node) {
+    final List<String> out = new java.util.ArrayList<>();
+    if (node != null && node.isArray()) {
+      node.forEach(n -> out.add(n.asText()));
+    }
+    return out;
   }
 
   /**

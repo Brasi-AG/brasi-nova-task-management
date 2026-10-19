@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.task.model;
 
+import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,6 +24,10 @@ import java.util.UUID;
  * @param lastActivityAt Zeitpunkt der letzten Aktivitaet (UTC)
  * @param commentCount   Anzahl der Kommentare (denormalisiert)
  * @param history        Liste der Historieneintraege (neueste zuerst)
+ * @param assignees      aktuelle Assignee-GUIDs (PROD_BENUTZER.EXTERNALID) dieser Aufgabe, stabil
+ *                       sortiert; Read-before-edit fuer {@code PUT /tasks/{id}/assignees}
+ * @param tagIds         aktuelle Tag-GUIDs (TASK_TAG.EXTERNALID) dieser Aufgabe, stabil sortiert;
+ *                       Read-before-edit fuer {@code PATCH /tasks/{id}} (tagIds)
  */
 public record TaskDetailModel(
     @Schema(description = "Externe UUID der Aufgabe.", example = "550e8400-e29b-41d4-a716-446655440000")
@@ -46,4 +51,13 @@ public record TaskDetailModel(
     @Schema(description = "Anzahl der Kommentare (denormalisiert).", example = "3")
     int commentCount,
     @Schema(description = "Liste der Historieneintraege (neueste zuerst).")
-    List<HistoryModel> history) {}
+    List<HistoryModel> history,
+    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
+        description = "GUID eines aktuellen Assignees (PROD_BENUTZER.EXTERNALID)."))
+    @Schema(description = "Aktuelle Assignee-GUIDs (stabil sortiert); Read-before-edit fuer PUT assignees.")
+    List<UUID> assignees,
+    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
+        description = "GUID eines aktuell zugeordneten Tags (TASK_TAG.EXTERNALID)."))
+    @Schema(description = "Aktuelle Tag-GUIDs (stabil sortiert); Read-before-edit fuer PATCH tagIds."
+        + " Enthaelt auch katalog-inaktive, aber noch zugeordnete Tags (faithful).")
+    List<UUID> tagIds) {}

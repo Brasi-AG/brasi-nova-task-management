@@ -2,14 +2,23 @@ package de.brasi.nova.taskmanagement.task;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskHistoryEntry;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskTag;
+import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
+import io.keel.framework.api.security.tenant.TenantContextHolder;
+import io.keel.framework.api.security.tenant.TenantInfo;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,6 +36,9 @@ public class TaskDetailService {
 
   private final BaseTaskRepository taskRepository;
   private final TaskHistoryEntryQueryRepository historyRepository;
+  private final TaskParticipantQueryRepository participantQueryRepository;
+  private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  private final TaskTagRepository tagRepository;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
 
@@ -34,10 +46,16 @@ public class TaskDetailService {
   public TaskDetailService(
       final BaseTaskRepository taskRepository,
       final TaskHistoryEntryQueryRepository historyRepository,
+      final TaskParticipantQueryRepository participantQueryRepository,
+      final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
+      final TaskTagRepository tagRepository,
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
+    this.participantQueryRepository = participantQueryRepository;
+    this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
+    this.tagRepository = tagRepository;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
   }
@@ -89,6 +107,34 @@ public class TaskDetailService {
                         auditTimeConverter.toInstant(e.getCreatedAt())))
             .toList();
 
+    // Aktuelle Assignee-GUIDs (faithful: alle aktiven Assignee-Assignments, stabil sortiert) -
+    // Read-before-edit fuer PUT /assignees. Resubmit bestehender Assignees ist clean (PUT validiert
+    // nur toAdd), daher kein User-ACTIVE-Filter noetig.
+    final List<UUID> assignees =
+        participantQueryRepository.findActiveAssigneesByTaskId(task.getId()).stream()
+            .map(TaskParticipant::getParticipantRef)
+            .sorted(Comparator.comparing(UUID::toString))
+            .toList();
+
+    // Aktuelle Tag-GUIDs (faithful: alle aktiven Assignments -> interne TAG_IDs -> BULK auf UUID
+    // aufloesen, OHNE Katalog-ACTIVE-Filter, damit ein noch zugeordneter, aber katalog-inaktiver Tag
+    // sichtbar bleibt; Konfliktregel: dessen Resubmit scheitert laut per PATCH, kein stiller Verlust).
+    // Nur die Tag-ID-Aufloesung laeuft im globalen Dictionary-Scope; leere Menge -> kein IN ().
+    final List<Long> assignedTagIds =
+        tagAssignmentQueryRepository.findActiveByTaskId(task.getId()).stream()
+            .map(TaskTagAssignment::getTagId)
+            .toList();
+    final List<UUID> tagIds =
+        assignedTagIds.isEmpty()
+            ? List.of()
+            : TenantContextHolder.runWithTenant(
+                TenantInfo.global(),
+                () ->
+                    tagRepository.findByIdIn(assignedTagIds).stream()
+                        .map(TaskTag::getUuid)
+                        .sorted(Comparator.comparing(UUID::toString))
+                        .toList());
+
     return new TaskDetailModel(
         task.getUuid(),
         task.getTitle(),
@@ -100,7 +146,9 @@ public class TaskDetailService {
         task.getDueDate(),
         auditTimeConverter.toInstant(task.getLastActivityAt()),
         task.getCommentCount(),
-        history);
+        history,
+        assignees,
+        tagIds);
   }
 
   /**

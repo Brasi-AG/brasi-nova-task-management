@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -438,7 +439,126 @@ class TaskTagPatchIT {
         .isEqualTo(0);
   }
 
+  // ---- P2 IT: GET Detail liefert aktuelle tagIds (Read-before-edit) ---------------------------
+
+  @Test
+  @DisplayName(
+      "detail_liefert_aktuelle_tagIds:"
+          + " PATCH tagIds=[tag1,tag2] -> GET /tasks/{id}.tagIds enthaelt beide (stabil sortiert)")
+  void detail_liefert_aktuelle_tagIds() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token = buildJwtWithAuthority(
+        TENANT_UUID, USER_REF, USER_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-Detail-1");
+    mvc.perform(patch("/api/v1/tasks/" + taskUuid)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("tagIds", List.of(tagOneUuid, tagTwoUuid)))))
+        .andExpect(status().isNoContent());
+
+    final JsonNode detail = getDetail(mvc, om, token, taskUuid);
+    final List<String> tagIds = readStringArray(detail.get("tagIds"));
+    assertThat(tagIds).containsExactlyInAnyOrder(tagOneUuid.toString(), tagTwoUuid.toString());
+    // stabil sortiert (lexikografisch nach UUID-String)
+    assertThat(tagIds).isSorted();
+  }
+
+  @Test
+  @DisplayName("detail_tagIds_leer_wenn_keine_zuordnung: GET /tasks/{id}.tagIds = []")
+  void detail_tagIds_leer_wenn_keine_zuordnung() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token = buildJwtWithAuthority(
+        TENANT_UUID, USER_REF, USER_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-Detail-leer");
+    final JsonNode detail = getDetail(mvc, om, token, taskUuid);
+    assertThat(detail.get("tagIds").isArray()).isTrue();
+    assertThat(detail.get("tagIds").size()).isEqualTo(0);
+  }
+
+  // ---- P2 IT (Codex-BLOCKER): katalog-inaktiver, aber zugeordneter Tag - faithful + laute 400 ---
+
+  @Test
+  @DisplayName(
+      "inaktiver_zugeordneter_tag_bleibt_im_detail_resubmit_400_kein_verlust:"
+          + " Tag zugeordnet -> Katalog inaktiv -> GET listet ihn weiter -> Resubmit PATCH 400,"
+          + " Zuordnung bleibt AKTIV (kein stiller Verlust)")
+  void inaktiver_zugeordneter_tag_bleibt_im_detail_resubmit_400_kein_verlust() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token = buildJwtWithAuthority(
+        TENANT_UUID, USER_REF, USER_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Dedizierter Tag (eigene ID), damit andere Tests nicht beeinflusst werden.
+    final UUID lifecycleTag = seedGlobalTag(jdbcTemplate, 9150L, "IT-Tag-Lifecycle");
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-Lifecycle");
+
+    // 1. Tag aktiv zuordnen
+    mvc.perform(patch("/api/v1/tasks/" + taskUuid)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("tagIds", List.of(lifecycleTag)))))
+        .andExpect(status().isNoContent());
+
+    // 2. Katalog-Tag deaktivieren (gueltiger EntityState DEACTIVE; Zuordnung bleibt aktiv).
+    // DEACTIVE wird von findActiveByUuid (ENTITY_STATUS='ACTIVE') abgelehnt, ist aber ein gueltiger
+    // Enum-Wert und daher vom faithful findByIdIn weiterhin mappbar/zurueckgebbar.
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_TAG] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", lifecycleTag);
+
+    // 3. GET Detail listet den Tag WEITERHIN (faithful) - Client sieht den vollen Ist-Stand
+    final JsonNode detail = getDetail(mvc, om, token, taskUuid);
+    assertThat(readStringArray(detail.get("tagIds")))
+        .as("katalog-inaktiver, aber noch zugeordneter Tag MUSS im Detail sichtbar bleiben")
+        .contains(lifecycleTag.toString());
+
+    // 4. Resubmit der gelesenen tagIds -> LAUT 400 (findActiveByUuid lehnt inaktiv ab), KEIN stiller Verlust
+    mvc.perform(patch("/api/v1/tasks/" + taskUuid)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("tagIds", List.of(lifecycleTag)))))
+        .andExpect(status().isBadRequest());
+
+    // 5. DB-Beweis: die Zuordnung ist UNVERAENDERT AKTIV (kein stiller Verlust durch den 400)
+    final Integer stillActive = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+            + " JOIN [dbo].[TASK] t ON a.TASK_ID = t.ID"
+            + " JOIN [dbo].[TASK_TAG] tag ON a.TAG_ID = tag.ID"
+            + " WHERE t.EXTERNALID = ? AND tag.EXTERNALID = ? AND a.ENTITY_STATUS = 'ACTIVE'",
+        Integer.class, taskUuid, lifecycleTag);
+    assertThat(stillActive)
+        .as("Zuordnung des inaktiven Tags darf durch den 400-Resubmit NICHT deaktiviert werden")
+        .isEqualTo(1);
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  /** GET /tasks/{id} und liefert das Detail-JSON. */
+  private JsonNode getDetail(
+      final MockMvc mvc, final ObjectMapper om, final String token, final UUID taskUuid)
+      throws Exception {
+    final String body =
+        mvc.perform(get("/api/v1/tasks/" + taskUuid).header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readTree(body);
+  }
+
+  private static List<String> readStringArray(final JsonNode arrayNode) {
+    final java.util.List<String> out = new java.util.ArrayList<>();
+    if (arrayNode != null && arrayNode.isArray()) {
+      arrayNode.forEach(n -> out.add(n.asText()));
+    }
+    return out;
+  }
 
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)

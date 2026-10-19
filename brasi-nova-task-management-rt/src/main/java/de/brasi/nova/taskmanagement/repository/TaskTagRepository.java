@@ -2,8 +2,10 @@ package de.brasi.nova.taskmanagement.repository;
 
 import de.brasi.nova.taskmanagement.entity.TaskTag;
 import io.keel.framework.api.annotation.db.NovaQuery;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.repository.query.Param;
 
 /**
  * Handgeschriebene Erweiterung des generierten {@link BaseTaskTagRepository}
@@ -78,4 +80,35 @@ public interface TaskTagRepository extends BaseTaskTagRepository {
               + "AND TENANT_ID = :tenantId "
               + "AND EXTERNALID = :externalId")
   Optional<TaskTag> findActiveByUuid(String externalId);
+
+  /**
+   * FAITHFUL-Bulk-Aufloesung interner Tag-IDs auf Tags - OHNE ACTIVE-/Gueltigkeitsfilter (im
+   * Gegensatz zu {@link #findActiveByUuid}/{@link #findAllValidAndActive}).
+   *
+   * <p>Dient dem per-Task-Read-Contract ({@code TaskDetailService.loadDetail}): ein noch AKTIV
+   * ZUGEORDNETER, aber inzwischen katalog-inaktiver Tag MUSS im Detail sichtbar bleiben, sonst
+   * verloere ein Read-modify-write-Client die ungesehene Zuordnung still. Konfliktregel: ein Resubmit
+   * eines katalog-inaktiven Tags scheitert dann laut per PATCH ({@code findActiveByUuid} -> 400) statt
+   * stillen Verlusts. Deshalb hier bewusst KEIN Status-/Gueltigkeitsfilter - nur das Tenant-/
+   * Visibility-Praedikat des globalen Dictionary-Scopes.
+   *
+   * <p><b>Pflicht des Aufrufers:</b> {@code ids} nie leer uebergeben (MSSQL {@code IN ()} ist ein
+   * Syntaxfehler) und {@code TenantContextHolder.runWithTenant(TenantInfo.global(), ...)} setzen. Die
+   * Collection wird fuer {@code IN (:ids)} expandiert.
+   *
+   * @param ids interne Tag-IDs (nicht leer)
+   * @return Liste der Tags (beliebige Reihenfolge; Aufrufer sortiert nach UUID)
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM TASK_TAG "
+              + "WHERE /* NOVA:DICTIONARY_VISIBILITY */ "
+              + "TENANT_ID = :tenantId "
+              + "AND ID IN (:ids)",
+      mssql =
+          "SELECT * FROM [dbo].[TASK_TAG] "
+              + "WHERE /* NOVA:DICTIONARY_VISIBILITY */ "
+              + "TENANT_ID = :tenantId "
+              + "AND ID IN (:ids)")
+  List<TaskTag> findByIdIn(@Param("ids") Collection<Long> ids);
 }
