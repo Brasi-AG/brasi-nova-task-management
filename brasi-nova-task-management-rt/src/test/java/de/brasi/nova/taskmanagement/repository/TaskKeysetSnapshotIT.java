@@ -96,6 +96,10 @@ class TaskKeysetSnapshotIT {
   private static final long TASK_ADDED_AFTER_ID = 590004L;
   private static final long TASK_LEFT_EXIT_NULL_AT_ID = 590005L;
   private static final long TASK_PARTICIPANT_AFTER_ASOF_ID = 590006L;
+  // Finding #2 (Codex Re-Gate 93781f4): UserState NACH asOf beigetreten (ANGELEGT_AM) aber
+  // UNSUBSCRIBED_AT VOR asOf (Backfill/Clock-Skew) -> Membership existierte beim Wasserzeichen
+  // noch nicht, darf NICHT als "verlassen" archiviert/gezaehlt werden.
+  private static final long TASK_UNSUB_JOIN_AFTER_ID = 590007L;
   private static final UUID TASK_ACTIVE_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000590001");
   private static final UUID TASK_LEFT_UNSUB_UUID =
@@ -108,10 +112,13 @@ class TaskKeysetSnapshotIT {
       UUID.fromString("00000059-0000-0059-aaaa-000000590005");
   private static final UUID TASK_PARTICIPANT_AFTER_ASOF_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000590006");
+  private static final UUID TASK_UNSUB_JOIN_AFTER_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000590007");
 
   // Bekannte Seed-IDs aus V1-Migration
   private static final long STATUS_OPEN = 101L;
   private static final long STATUS_DONE = 102L;
+  private static final long STATUS_CANCELLED = 103L;
   private static final long PRIORITY_LOW = 201L;
   private static final long DIRECTION_BRASI_CUSTOMER = 301L;
 
@@ -209,6 +216,15 @@ class TaskKeysetSnapshotIT {
         STATUS_OPEN, T0, "IT-P1-ParticipantAfterAsOf");
     insertParticipantNullExit(
         jt, 590060L, TASK_PARTICIPANT_AFTER_ASOF_ID, TENANT_ID, USER_A_REF, T_AFTER);
+
+    // T7 (IT 7-9 - Finding #2): OPEN-Task, UserState UNSUBSCRIBED_AT = T_BEFORE (vor asOf) aber
+    //            ANGELEGT_AM = T_AFTER (nach asOf). Anomalie durch Backfill/Clock-Skew:
+    //            Mitgliedschaft existierte beim Wasserzeichen T0 noch nicht -> darf NICHT als
+    //            "verlassen" in archive-left/archive-all erscheinen oder gezaehlt werden.
+    insertTask(
+        jt, TASK_UNSUB_JOIN_AFTER_ID, TASK_UNSUB_JOIN_AFTER_UUID, TENANT_ID, STATUS_OPEN, T0,
+        "IT-P1-UnsubJoinAfter");
+    insertUserState(jt, 590070L, TASK_UNSUB_JOIN_AFTER_ID, TENANT_ID, USER_A_REF, T_BEFORE, T_AFTER);
   }
 
   @BeforeEach
@@ -351,6 +367,74 @@ class TaskKeysetSnapshotIT {
             T_AFTER, T0)
         .extracting(Task::getId)
         .doesNotContain(TASK_PARTICIPANT_AFTER_ASOF_ID);
+  }
+
+  // ---- IT 7 (Finding #2 - ANGELEGT_AM-Bound unsubscribte UserState): archive-left Seite ----
+
+  /**
+   * Diskriminator (Finding #2): UNSUBSCRIBED_AT &lt;= asOf aber ANGELEGT_AM &gt; asOf
+   * (Backfill/Clock-Skew) -&gt; Mitgliedschaft existierte beim Wasserzeichen noch nicht -&gt;
+   * Task darf NICHT in findArchiveLeftPage erscheinen.
+   */
+  @Test
+  @DisplayName(
+      "findArchiveLeftPage_schliesst_nach_asof_beigetretenen_unsubscribed_aus: "
+          + "UNSUBSCRIBED_AT <= asOf aber ANGELEGT_AM > asOf -> Beitritt nach Wasserzeichen -> NICHT in archive-left")
+  void findArchiveLeftPage_schliesst_nach_asof_beigetretenen_unsubscribed_aus(
+      @Autowired TaskKeysetQueryRepository repo) {
+    final List<Task> page =
+        repo.findArchiveLeftPage(USER_A_REF, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+
+    assertThat(page)
+        .as("T7 darf NICHT erscheinen: ANGELEGT_AM=%s > asOf=%s trotz UNSUBSCRIBED_AT=%s <= asOf",
+            T_AFTER, T0, T_BEFORE)
+        .extracting(Task::getId)
+        .doesNotContain(TASK_UNSUB_JOIN_AFTER_ID);
+  }
+
+  // ---- IT 8 (Finding #2 - countArchiveLeft) ----
+
+  /**
+   * Zaehler-Deckungsgleichheit (Finding #2): countArchiveLeft darf den nach asOf beigetretenen,
+   * vor asOf abgemeldeten UserState nicht mitzaehlen. Zum Wasserzeichen T0 ist genau T5
+   * (Participant null-exit, ANGELEGT_AM vor asOf) verlassen -&gt; erwartete Zahl = 1.
+   */
+  @Test
+  @DisplayName(
+      "countArchiveLeft_zaehlt_nach_asof_beigetretenen_unsubscribed_nicht: erwartet genau 1 (nur T5)")
+  void countArchiveLeft_zaehlt_nach_asof_beigetretenen_unsubscribed_nicht(
+      @Autowired TaskKeysetQueryRepository repo) {
+    final long count = repo.countArchiveLeft(USER_A_REF, T0);
+
+    assertThat(count)
+        .as("archive-left zum Wasserzeichen T0 = {T5}; T7 (ANGELEGT_AM>asOf) darf nicht zaehlen")
+        .isEqualTo(1L);
+  }
+
+  // ---- IT 9 (Finding #2 - archive-all Seite + Zaehler, s2-Zweig) ----
+
+  /**
+   * Diskriminator + Zaehler (Finding #2, s2-Zweig): findArchiveAllPage/countArchiveAll duerfen
+   * den nach asOf beigetretenen, vor asOf abgemeldeten UserState nicht enthalten/zaehlen. Zum
+   * Wasserzeichen T0 ist archive-all = {T2 (DONE, bei asOf aktiv), T5 (verlassen)} -&gt; erwartet 2.
+   */
+  @Test
+  @DisplayName(
+      "findArchiveAllPage_und_count_schliessen_nach_asof_beigetretenen_unsubscribed_aus: erwartet genau 2 (T2+T5)")
+  void findArchiveAllPage_und_count_schliessen_nach_asof_beigetretenen_unsubscribed_aus(
+      @Autowired TaskKeysetQueryRepository repo) {
+    final List<Task> page =
+        repo.findArchiveAllPage(
+            USER_A_REF, STATUS_DONE, STATUS_CANCELLED, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+    final long count = repo.countArchiveAll(USER_A_REF, STATUS_DONE, STATUS_CANCELLED, T0);
+
+    assertThat(page)
+        .as("T7 darf NICHT in archive-all erscheinen (s2-Zweig, ANGELEGT_AM>asOf)")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_UNSUB_JOIN_AFTER_ID);
+    assertThat(count)
+        .as("archive-all zum Wasserzeichen T0 = {T2, T5}; T7 darf nicht zaehlen")
+        .isEqualTo(2L);
   }
 
   // ---- Hilfsmethoden -----------------------------------------------------------------------

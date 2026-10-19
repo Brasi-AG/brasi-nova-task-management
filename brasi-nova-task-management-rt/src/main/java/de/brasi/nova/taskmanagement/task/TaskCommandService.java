@@ -358,6 +358,29 @@ public class TaskCommandService {
   }
 
   /**
+   * Kuerzt {@code s} auf hoechstens {@code max} UTF-16-Code-Units inkl. abschliessender Ellipse
+   * ("...") und schneidet dabei NICHT mitten in ein Surrogatpaar (z.B. Emoji) - sonst entstuende
+   * ein ungepaartes Surrogat (korrupter Unicode / Insert-Fehler). Paketsichtbar fuer Unit-Tests.
+   *
+   * @param s   der zu kuerzende Wert (null-sicher)
+   * @param max maximale Gesamtlaenge inkl. Ellipse
+   * @return der ggf. gekuerzte Wert
+   */
+  static String truncate(final String s, final int max) {
+    if (s == null || s.length() <= max) {
+      return s;
+    }
+    int end = max - 3;
+    if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) {
+      // Letztes eingeschlossenes Zeichen ist das High-Surrogate eines Paares, dessen
+      // Low-Surrogate gerade abgeschnitten wuerde -> das High-Surrogate ebenfalls weglassen
+      // (sonst ungepaartes Surrogat vor der Ellipse).
+      end--;
+    }
+    return s.substring(0, end) + "...";
+  }
+
+  /**
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
    * <p>Beide Fehlerfaelle (nicht gefunden / fremder Mandant) liefern eine identische, neutrale
@@ -369,13 +392,6 @@ public class TaskCommandService {
    * @return die gefundene Aufgabe
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */
-  private static String truncate(final String s, final int max) {
-    if (s == null || s.length() <= max) {
-      return s;
-    }
-    return s.substring(0, max - 3) + "...";
-  }
-
   private Task requireTask(final UUID taskExternalId, final long tenantId) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {

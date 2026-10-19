@@ -440,6 +440,43 @@ class TaskCommandServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- Surrogat-sichere Truncation (Codex Re-Gate 93781f4, Finding #1) --------------------
+
+  @Test
+  @DisplayName(
+      "truncate_zerschneidet_kein_surrogatpaar_vor_ellipse: "
+          + "Emoji am Kappungsrand -> kein ungepaartes High-Surrogate vor der Ellipse")
+  void truncate_zerschneidet_kein_surrogatpaar_vor_ellipse() {
+    // max=500 -> Inhalt wird bei max-3=497 gekappt (plus "..."). Das Emoji (U+1F600 = D83D DE00)
+    // sitzt so, dass sein High-Surrogate das letzte eingeschlossene Zeichen (Index 496) waere und
+    // das Low-Surrogate (497) abgeschnitten wuerde -> ungepaartes Surrogat vor der Ellipse.
+    final String emoji = "😀";
+    final String value = "a".repeat(496) + emoji + "b".repeat(50);
+
+    final String result = TaskCommandService.truncate(value, 500);
+
+    assertThat(result).endsWith("...");
+    final String body = result.substring(0, result.length() - 3);
+    assertThat(Character.isHighSurrogate(body.charAt(body.length() - 1)))
+        .as("kein ungepaartes High-Surrogate vor der Ellipse")
+        .isFalse();
+    assertThat(result.codePoints().anyMatch(cp -> cp == 0xD83D || cp == 0xDE00))
+        .as("kein halbes Surrogat im Ergebnis")
+        .isFalse();
+  }
+
+  @Test
+  @DisplayName("truncate_null_kurz_und_vollstaendiges_paar_bleiben_intakt")
+  void truncate_null_kurz_und_vollstaendiges_paar_bleiben_intakt() {
+    assertThat(TaskCommandService.truncate(null, 500)).isNull();
+    assertThat(TaskCommandService.truncate("kurz", 500)).isEqualTo("kurz");
+    // Emoji endet VOR der Kappungsgrenze -> vollstaendiges Paar bleibt erhalten, Ellipse angehaengt.
+    final String value = "a".repeat(400) + "😀" + "b".repeat(200);
+    final String result = TaskCommandService.truncate(value, 500);
+    assertThat(result).endsWith("...");
+    assertThat(result.codePoints().filter(cp -> cp == 0x1F600).count()).isEqualTo(1L);
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {
