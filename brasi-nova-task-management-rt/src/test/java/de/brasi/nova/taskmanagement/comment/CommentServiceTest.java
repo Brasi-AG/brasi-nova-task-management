@@ -440,6 +440,19 @@ class CommentServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- Test 7c: mentions ueber Obergrenze (100) -> 400 (SQL-Parameterlimit-Schutz) -------------
+
+  @Test
+  @DisplayName("mentions_ueber_limit_400: 101 Mentions -> EntityValidationException (Bound-Schutz)")
+  void mentions_ueber_limit_400() {
+    final List<UUID> tooMany = new ArrayList<>();
+    for (int i = 0; i < 101; i++) {
+      tooMany.add(UUID.randomUUID());
+    }
+    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, tooMany))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
   // ---- Test 8: fremder Eltern-Kommentar -> 400 --------------------------------------------------
 
   @Test

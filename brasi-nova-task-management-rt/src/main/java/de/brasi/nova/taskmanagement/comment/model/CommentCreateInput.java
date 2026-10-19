@@ -35,8 +35,17 @@ public record CommentCreateInput(
     List<UUID> mentions) {
 
   /**
+   * Obergrenze fuer die Anzahl Mentions je Kommentar. Begrenzt die nachgelagerte
+   * {@code IN (:uuids)}-Aufloesung, damit eine (absurd) grosse Menge nicht das
+   * SQL-Server-Parameterlimit (2100) sprengt und den Kommentar scheitern laesst. 100 ist konsistent
+   * zur Keyset-Seitengroessen-Clamp-Konvention [1,100] im Modul.
+   */
+  private static final int MAX_MENTIONS = 100;
+
+  /**
    * Kompakter Konstruktor: Validiert {@code text} (nicht null/leer) und normalisiert {@code mentions}
-   * (null -&gt; leere Liste; null-Elemente -&gt; 400; sonst immutable Kopie).
+   * (null -&gt; leere Liste; &gt; {@link #MAX_MENTIONS} -&gt; 400; null-Elemente -&gt; 400; sonst
+   * immutable Kopie).
    */
   public CommentCreateInput {
     if (text == null || text.isBlank()) {
@@ -46,6 +55,10 @@ public record CommentCreateInput(
     if (mentions == null) {
       mentions = List.of();
     } else {
+      if (mentions.size() > MAX_MENTIONS) {
+        throw new EntityValidationException(
+            "mentions darf hoechstens " + MAX_MENTIONS + " Eintraege enthalten.");
+      }
       // null-Element-Pruefung VOR List.copyOf (das sonst NPE wirft) - Muster wie TaskPatchInput.
       for (final UUID mention : mentions) {
         if (mention == null) {
