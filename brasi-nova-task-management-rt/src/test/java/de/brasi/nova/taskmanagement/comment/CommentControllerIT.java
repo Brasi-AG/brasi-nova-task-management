@@ -503,6 +503,37 @@ class CommentControllerIT {
         .andExpect(status().isBadRequest());
   }
 
+  // ---- IT 6: langer Kommentartext > 255 Zeichen -> 201 (nvarchar max, kein 255-Validierungscap) --
+
+  @Test
+  @DisplayName(
+      "langer_kommentartext_ueber_255_wird_akzeptiert:"
+          + " TEXT mit > 255 Zeichen -> 201 (TaskComment.TEXT ist nvarchar(max))")
+  void langer_kommentartext_ueber_255_wird_akzeptiert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "LangText-Kommentar-Task");
+    final String longText = "L".repeat(300); // > 255
+
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("text", longText))))
+        .andExpect(status().isCreated());
+
+    // DB-Beweis: der volle Text wurde persistiert (nicht gekappt/abgewiesen).
+    final Integer longCount = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c"
+            + " JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND LEN(c.TEXT) = 300",
+        Integer.class, taskUuid);
+    assertThat(longCount).as("Kommentar mit 300 Zeichen muss vollstaendig persistiert sein").isEqualTo(1);
+  }
+
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test

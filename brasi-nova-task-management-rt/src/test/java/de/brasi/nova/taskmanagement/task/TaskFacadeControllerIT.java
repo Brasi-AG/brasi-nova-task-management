@@ -338,6 +338,38 @@ class TaskFacadeControllerIT {
     assertThat(detail.get("tagIds").size()).as("keine Tags zugeordnet").isEqualTo(0);
   }
 
+  // ---- IT: lange Beschreibung > 255 Zeichen -> 201 + GET zeigt vollen Text (nvarchar max) -------
+
+  @Test
+  @DisplayName(
+      "lange_beschreibung_ueber_255_wird_akzeptiert:"
+          + " description > 255 Zeichen -> 201, GET Detail liefert den vollen Text")
+  void lange_beschreibung_ueber_255_wird_akzeptiert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final String longDesc = "B".repeat(300); // > 255
+    final String postResp =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "LangDesc", "description", longDesc))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id").traverse(om).readValueAs(UUID.class);
+
+    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA, taskId);
+    assertThat(detail.get("description").asText())
+        .as("volle Beschreibung (300 Zeichen) muss persistiert + ausgeliefert werden")
+        .isEqualTo(longDesc);
+  }
+
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test

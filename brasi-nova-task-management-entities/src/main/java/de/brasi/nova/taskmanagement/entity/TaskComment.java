@@ -36,8 +36,12 @@ public class TaskComment extends NovaEntity<TaskComment> {
   @NovaColumn(name = "PARENT_COMMENT_ID", nullable = true)
   private Long parentCommentId;
 
-  /** Kommentartext (Markdown mit @handle-Mentions). */
-  @NovaColumn(name = "TEXT", nullable = false)
+  /**
+   * Kommentartext (Markdown; DB: {@code nvarchar(max)}). {@code length = Integer.MAX_VALUE} = der
+   * KSF-unbegrenzt-Sentinel, damit die implizite HasMaxLengthRule normale (laengere) Kommentare
+   * NICHT mit dem 255-Default abweist.
+   */
+  @NovaColumn(name = "TEXT", nullable = false, length = Integer.MAX_VALUE)
   private String text;
 
   /** Kennzeichen: Kommentar wurde nachtraeglich bearbeitet. */

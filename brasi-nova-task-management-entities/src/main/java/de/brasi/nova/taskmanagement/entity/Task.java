@@ -35,8 +35,12 @@ public class Task extends NovaEntity<Task> {
   @NovaColumn(name = "TITLE", nullable = false, length = 500)
   private String title;
 
-  /** Optionale Beschreibung (nvarchar max). */
-  @NovaColumn(name = "DESCRIPTION", nullable = true)
+  /**
+   * Optionale Beschreibung (DB: {@code nvarchar(max)}). {@code length = Integer.MAX_VALUE} = der
+   * KSF-unbegrenzt-Sentinel (analog NovaSqlDialect/NovaRowMapper), damit die implizite
+   * HasMaxLengthRule lange Texte NICHT mit dem 255-Default abweist.
+   */
+  @NovaColumn(name = "DESCRIPTION", nullable = true, length = Integer.MAX_VALUE)
   private String description;
 
   /** FK auf {@code DIC_TASK_STATUS} (global). */
