@@ -109,6 +109,36 @@ class TagCatalogServiceTest {
   }
 
   @Test
+  @DisplayName(
+      "create_name_ueber_200_liefert_400: Name > 200 Zeichen (nvarchar(200)-Spalte) -> 400 statt DB-500")
+  void create_name_ueber_200_liefert_400() {
+    assertThatThrownBy(
+            () -> service.create(new TagCreateInput("x".repeat(201), SEVERITY_CODE_PRIMARY)))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName(
+      "update_name_ueber_200_liefert_400: Name-Patch > 200 Zeichen -> 400 (keine DB-500)")
+  void update_name_ueber_200_liefert_400() {
+    final UUID tagUuid = UUID.randomUUID();
+    final TaskTag existing = new TaskTag();
+    existing.setUuid(tagUuid);
+    existing.setId(1000001099L);
+    existing.setEntryValue("OldName");
+    existing.setSeverityId(SEVERITY_ID_PRIMARY);
+    existing.setTenantId(0L);
+    when(tagRepository.findByUuid(tagUuid.toString())).thenReturn(Optional.of(existing));
+
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    tagUuid,
+                    new TagUpdateInput(PatchValue.of("x".repeat(201)), PatchValue.absent())))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
   @DisplayName("create_unbekannter_severityCode_liefert_400: EntityValidationException bei unbekanntem Code")
   void create_unbekannter_severity_code_liefert_400() {
     when(resolver.resolveTagSeverity("GIBTS_NICHT"))

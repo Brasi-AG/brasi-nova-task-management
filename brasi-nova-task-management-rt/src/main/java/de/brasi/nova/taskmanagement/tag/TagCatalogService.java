@@ -38,6 +38,14 @@ public class TagCatalogService {
 
   private static final Logger log = LoggerFactory.getLogger(TagCatalogService.class);
 
+  /**
+   * Max. Laenge des Tag-Namens (BEZEICHNUNG) - entspricht der V1-Spalte {@code nvarchar(200)}. Die
+   * geerbte {@code NovaDictionaryEntry.entryValue}-Validierung erlaubt 255; ohne diesen expliziten
+   * Check wuerde ein 201-255-Zeichen-Name die DB-Zeile mit einem rohen DB-Fehler (500) statt einem
+   * sauberen 400 ablehnen. Deshalb in beiden Write-Paths (create/update) explizit validieren.
+   */
+  private static final int MAX_NAME_LENGTH = 200;
+
   private final TaskTagRepository tagRepository;
   private final DictionaryCodeResolver resolver;
 
@@ -75,6 +83,10 @@ public class TagCatalogService {
     // Name-Validierung
     if (in.name() == null || in.name().isBlank()) {
       throw new EntityValidationException("Tag-Name darf nicht leer sein.");
+    }
+    if (in.name().length() > MAX_NAME_LENGTH) {
+      throw new EntityValidationException(
+          "Tag-Name darf hoechstens " + MAX_NAME_LENGTH + " Zeichen haben.");
     }
 
     // severityCode-Pflichtfeld: null/blank -> 400 (verhindert NPE in resolveTagSeverity, F-P2a)
@@ -133,6 +145,10 @@ public class TagCatalogService {
       final String newName = in.name().get();
       if (newName == null || newName.isBlank()) {
         throw new EntityValidationException("Tag-Name darf nicht leer sein.");
+      }
+      if (newName.length() > MAX_NAME_LENGTH) {
+        throw new EntityValidationException(
+            "Tag-Name darf hoechstens " + MAX_NAME_LENGTH + " Zeichen haben.");
       }
       tag.setEntryValue(newName);
     }
