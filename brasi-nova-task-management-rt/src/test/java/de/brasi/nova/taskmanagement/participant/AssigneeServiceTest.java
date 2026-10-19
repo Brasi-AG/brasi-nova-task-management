@@ -186,6 +186,10 @@ class AssigneeServiceTest {
 
     // Finding 2 / Option B: Zuweisung bumpt die Generation des neuen Assignees (toAdd).
     verify(inboxGenerationService).bump(TENANT_ID, ASSIGNEE_REF);
+
+    // P2 #3: optimistischer TASK-Lock -> bei tatsaechlicher Aenderung wird die Aufgabe gespeichert
+    // (VERSION-Bump serialisiert nebenlaeufige Ersetzungen).
+    verify(taskRepository).save(task);
   }
 
   // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate -----------
@@ -393,6 +397,8 @@ class AssigneeServiceTest {
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
     // UserStateQueryRepository: kein UNSUBSCRIBED_AT fuer Creator
     verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
+    // P2 #3: reiner Creator-Schutz-No-Op bumpt die TASK-Version NICHT.
+    verify(taskRepository, never()).save(any(Task.class));
   }
 
   // ---- Test 7: MAJOR 3 - Reassign ruft reactivate auf ----------------------------------------
@@ -734,6 +740,8 @@ class AssigneeServiceTest {
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
     verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
+    // P2 #3: No-Op-PUT bumpt die TASK-Version NICHT (kein optimistischer Lock-Write ohne Aenderung).
+    verify(taskRepository, never()).save(any(Task.class));
   }
 
   // ---- Test RG-exit: exit invalidiert Akteur UND verbleibende aktive Teilnehmer ----------------

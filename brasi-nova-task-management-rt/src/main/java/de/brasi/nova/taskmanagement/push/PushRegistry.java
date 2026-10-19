@@ -40,7 +40,18 @@ public class PushRegistry {
    */
   public void register(final long tenantId, final UUID userRef, final WebSocketSession session) {
     final Key key = new Key(tenantId, userRef);
-    byKey.computeIfAbsent(key, k -> new ConcurrentHashMap<>()).put(session.getId(), session);
+    // Bucket-Erzeugung UND Session-Einfuegen atomar unter dem Bin-Lock des Keys: sonst koennte
+    // ein nebenlaeufiges unregister den (noch leeren) Bucket zwischen computeIfAbsent und put
+    // als leer entfernen -> die neue Session landet in einem verwaisten Bucket und ist fuer
+    // sessionsFor unsichtbar (Push verloren).
+    byKey.compute(
+        key,
+        (k, bucket) -> {
+          final ConcurrentHashMap<String, WebSocketSession> b =
+              (bucket == null) ? new ConcurrentHashMap<>() : bucket;
+          b.put(session.getId(), session);
+          return b;
+        });
     keyBySession.put(session.getId(), key);
   }
 
@@ -54,12 +65,18 @@ public class PushRegistry {
     if (key == null) {
       return;
     }
-    final ConcurrentHashMap<String, WebSocketSession> sessions = byKey.get(key);
-    if (sessions != null) {
-      sessions.remove(sessionId);
-      // Leere Buckets entfernen (nur wenn weiterhin leer, atomar)
-      byKey.computeIfPresent(key, (k, v) -> v.isEmpty() ? null : v);
-    }
+    // Entfernen der Session UND Entfernen des leeren Buckets atomar unter dem Bin-Lock des Keys.
+    // Serialisiert gegen register.compute auf demselben Key -> ein gleichzeitiger Reconnect kann den
+    // Bucket nicht entfernen, waehrend register gerade die neue Session hinzufuegt.
+    byKey.compute(
+        key,
+        (k, bucket) -> {
+          if (bucket == null) {
+            return null;
+          }
+          bucket.remove(sessionId);
+          return bucket.isEmpty() ? null : bucket;
+        });
   }
 
   /**

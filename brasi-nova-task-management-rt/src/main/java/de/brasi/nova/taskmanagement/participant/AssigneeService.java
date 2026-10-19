@@ -268,6 +268,15 @@ public class AssigneeService {
     // Teilnehmer - deshalb die Vereinigung aus geaenderten Refs (affectedRefs, inkl. der gerade
     // abgewaehlten) UND allen aktuell aktiven Teilnehmer-Refs der Aufgabe invalidieren.
     if (!affectedRefs.isEmpty()) {
+      // Whole-Branch-Re-Gate P2 #3: Nebenlaeufige PUT-Set-Ersetzungen serialisieren. Zwei parallele
+      // Ersetzungen ab demselben Ist-Stand ({creator} -> {creator,A} bzw. {creator,B}) koennten sonst
+      // beide committen und die Ziel-Menge still zu {creator,A,B} mergen (PUT-Set-Semantik verletzt).
+      // Ein optimistischer Lock auf die Aufgabe (VERSION-Bump via save) laesst genau eine Transaktion
+      // gewinnen; die verlierende bricht mit BusinessRuleException (409) ab (0 betroffene Zeilen beim
+      // versionierten UPDATE) und der Client wiederholt den PUT gegen frischen Stand. Nur bei
+      // tatsaechlicher Aenderung (affectedRefs nicht leer) - ein No-Op-PUT bumpt die Version nicht.
+      taskRepository.save(task);
+
       final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
       userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
           .map(TaskUserState::getUserRef)
