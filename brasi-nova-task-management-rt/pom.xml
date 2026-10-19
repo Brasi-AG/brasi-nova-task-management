@@ -132,6 +132,10 @@
 				<configuration>
 					<mainClass>de.brasi.nova.taskmanagement.BrasiNovaApplication</mainClass>
 					<layout>JAR</layout>
+					<layers>
+						<enabled>true</enabled>
+						<configuration>${project.basedir}/src/layers.xml</configuration>
+					</layers>
 					<excludes>
 						<exclude>
 							<groupId>org.projectlombok</groupId>
@@ -184,6 +188,71 @@
 
 	<!-- Scaffold-Profile folgen in einem spaeterem Task -->
 	<profiles>
+
+		<!--
+			Inkrementeller Thin-JAR-Deploy-Apparat (wie application/production/diamant):
+			dependency:list schreibt die Runtime-Abhaengigkeitsliste, danach baut der
+			DeploymentDistBuilder (eigenes Modul) aus dem layered Boot-JAR die
+			deployment-dist (Thin-App-JAR + klassifizierte Bundles + deployment-manifest.json).
+			Aufruf: mvn -Pdeployment verify -Dmaven.test.skip=true
+		-->
+		<profile>
+			<id>deployment</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-dependency-plugin</artifactId>
+						<version>${maven-dependency-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>write-runtime-dependency-list</id>
+								<phase>prepare-package</phase>
+								<goals>
+									<goal>list</goal>
+								</goals>
+								<configuration>
+									<includeScope>runtime</includeScope>
+									<excludeTransitive>false</excludeTransitive>
+									<outputAbsoluteArtifactFilename>true</outputAbsoluteArtifactFilename>
+									<outputFile>${project.build.directory}/deployment-work/runtime-dependencies.txt</outputFile>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>${exec-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>build-incremental-deployment-dist</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>java</executable>
+									<arguments>
+										<argument>-cp</argument>
+										<argument>${project.parent.basedir}/brasi-nova-task-management-deployment-tools/target/classes</argument>
+										<argument>de.brasi.nova.taskmanagement.deployment.DeploymentDistBuilder</argument>
+										<argument>--fat-jar</argument>
+										<argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+										<argument>--dependency-list</argument>
+										<argument>${project.build.directory}/deployment-work/runtime-dependencies.txt</argument>
+										<argument>--output-dir</argument>
+										<argument>${project.build.directory}/deployment-dist</argument>
+										<argument>--work-dir</argument>
+										<argument>${project.build.directory}/deployment-work</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
 
 		<profile>
 			<id>generate-scaffold-api</id>
