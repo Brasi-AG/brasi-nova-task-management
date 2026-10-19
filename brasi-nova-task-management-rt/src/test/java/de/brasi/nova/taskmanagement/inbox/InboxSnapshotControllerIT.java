@@ -155,6 +155,14 @@ class InboxSnapshotControllerIT {
   private static final UUID USER_RO_REF = UUID.randomUUID();
   private static final String USER_RO_LOGIN = "user-ro-inbox@brasi.de";
 
+  /** USER_NOTIF: Snapshot-Notification-Gating (NOTIFICATION_READ). */
+  private static final UUID USER_NOTIF_REF = UUID.randomUUID();
+  private static final String USER_NOTIF_LOGIN = "user-notif-inbox@brasi.de";
+  private static final long USER_NOTIF_DB_ID = 569L;
+
+  /** Feste Dictionary-Seed-ID aus Flyway V1 DIC_NOTIFICATION_TYPE: 401 = ASSIGN. */
+  private static final long TYPE_ID_ASSIGN = 401L;
+
   /** Deterministischer ID-Block fuer Task/State/Participant (eigener 56xx-Block). */
   private static final long ID_BASE = 5600L;
 
@@ -229,6 +237,7 @@ class InboxSnapshotControllerIT {
     seedBenutzerIfAbsent(jt, USER_ARCH_DB_ID, USER_ARCH_REF, USER_ARCH_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_POST_DB_ID, USER_POST_REF, USER_POST_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_DEL_DB_ID, USER_DEL_REF, USER_DEL_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, USER_NOTIF_DB_ID, USER_NOTIF_REF, USER_NOTIF_LOGIN, TENANT_A_ID);
   }
 
   // ---- IT 1: snapshot user-scoped + Bausteine -----------------------------------------------
@@ -608,6 +617,70 @@ class InboxSnapshotControllerIT {
     assertThat(idsOf(active)).doesNotContain(openUuid.toString());
   }
 
+  // ---- IT: Snapshot-Notifications NOTIFICATION_READ-gated (echte Daten + Near-Miss) ----------
+
+  /**
+   * Beweist Auflage 1 des SPEC-Gates mit ECHTEM Datenbestand: fuer USER_NOTIF existiert eine echte
+   * Notification. Nur mit {@code NOTIFICATION_READ} erscheint sie im Bootstrap-Snapshot; mit allein
+   * {@code TASK_READ} ist die Notification-Seite LEER (konsistent zum dedizierten
+   * {@code GET /api/v1/notifications}, das denselben Benutzer mit 403 ablehnt). Near-Miss-Authorities
+   * (falsche Grossschreibung, {@code _COMPANY_<uuid>}-Suffix) gelten als FEHLEND (exakte Pruefung,
+   * kein Stripping/Case - aspekt-treu zu {@code @RequiresPermission}).
+   */
+  @Test
+  @DisplayName("snapshot_notifications_nur_mit_notification_read_sonst_leer_echte_daten")
+  void snapshot_notifications_gated_by_notification_read() throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // Echte Notification seeden (leerer Bestand waere kein Sicherheitsnachweis).
+    seedNotification(jdbcTemplate, ID_BASE + 900, USER_NOTIF_REF, TENANT_A_ID, TYPE_ID_ASSIGN,
+        "Snapshot-Notif-Gate");
+
+    // (1) Nur TASK_READ -> Snapshot 200, notifications LEER; dedizierter Endpunkt -> 403.
+    final String tokenReadOnly =
+        jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN, "task-management:TASK_READ");
+    final JsonNode roSnap = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/snapshot")
+                .header("Authorization", "Bearer " + tokenReadOnly))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(roSnap.get("notifications").get("items")).isEmpty();
+    assertThat(roSnap.get("notifications").get("hasMore").asBoolean()).isFalse();
+    assertThat(roSnap.get("notifications").get("nextCursor").isNull()).isTrue();
+    mvc.perform(get("/api/v1/notifications").header("Authorization", "Bearer " + tokenReadOnly))
+        .andExpect(status().isForbidden());
+
+    // (2) Near-Miss-Authorities gelten als FEHLEND (exakt, kein Stripping/Case) -> weiter leer.
+    final String tokenNearMiss = jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN,
+        "task-management:TASK_READ",
+        "task-management:notification_read",
+        "task-management:NOTIFICATION_READ_COMPANY_" + UUID.randomUUID());
+    final JsonNode nmSnap = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/snapshot")
+                .header("Authorization", "Bearer " + tokenNearMiss))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(nmSnap.get("notifications").get("items")).isEmpty();
+
+    // (3) Mit NOTIFICATION_READ -> Notification sichtbar.
+    final String tokenFull = jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN,
+        "task-management:TASK_READ", "task-management:NOTIFICATION_READ");
+    final JsonNode fullSnap = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/snapshot")
+                .header("Authorization", "Bearer " + tokenFull))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    boolean foundNotif = false;
+    for (final JsonNode n : fullSnap.get("notifications").get("items")) {
+      if ("Snapshot-Notif-Gate".equals(n.get("text").asText())) {
+        foundNotif = true;
+      }
+    }
+    assertThat(foundNotif)
+        .as("Mit NOTIFICATION_READ muss die Notification im Snapshot erscheinen")
+        .isTrue();
+  }
+
   // ---- IT 6: Negativ 401 / 403 + malformed Cursor 400 ---------------------------------------
 
   @Test
@@ -708,6 +781,22 @@ class InboxSnapshotControllerIT {
             + "VALUES (?, 'ACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, ?, ?, ?, ?)",
         id, id, UUID.randomUUID(), tenantId, taskId, participantRef, tenantId,
         creator ? 1 : 0, assignee ? 1 : 0, participant ? 1 : 0, exitKind);
+  }
+
+  private static void seedNotification(
+      final JdbcTemplate jt,
+      final long id,
+      final UUID recipientRef,
+      final long tenantId,
+      final long typeId,
+      final String text) {
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_NOTIFICATION] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_NOTIFICATION] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
+            + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
+            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, 0, ?, getdate())",
+        id, id, UUID.randomUUID(), tenantId, recipientRef, typeId, text);
   }
 
   private static void seedUserState(

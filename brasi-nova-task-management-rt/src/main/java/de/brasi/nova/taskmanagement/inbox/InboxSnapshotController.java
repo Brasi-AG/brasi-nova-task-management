@@ -5,6 +5,7 @@ import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,12 +39,16 @@ public class InboxSnapshotController {
 
   private final InboxSnapshotService snapshotService;
   private final UserAccessor userAccessor;
+  private final PermissionEvaluator permissionEvaluator;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public InboxSnapshotController(
-      final InboxSnapshotService snapshotService, final UserAccessor userAccessor) {
+      final InboxSnapshotService snapshotService,
+      final UserAccessor userAccessor,
+      final PermissionEvaluator permissionEvaluator) {
     this.snapshotService = snapshotService;
     this.userAccessor = userAccessor;
+    this.permissionEvaluator = permissionEvaluator;
   }
 
   /**
@@ -56,7 +61,11 @@ public class InboxSnapshotController {
       description = "Liefert den vollstaendigen Bootstrap-Snapshot der Inbox:"
           + " aktive Aufgaben (erste Seite), Benachrichtigungen, Tag-Katalog,"
           + " Teilnehmer-Zusammenfassungen und Archiv-Gesamtzahlen."
-          + " Erzeugt ein asOf-Wasserzeichen fuer konsistente Keyset-Paginierung.")
+          + " Erzeugt ein asOf-Wasserzeichen fuer konsistente Keyset-Paginierung."
+          + " Die Benachrichtigungs-Seite (notifications) wird NUR befuellt, wenn der Benutzer"
+          + " die Permission NOTIFICATION_READ besitzt (konsistent zu GET /api/v1/notifications);"
+          + " andernfalls ist sie eine leere Seite (items=[], nextCursor=null, hasMore=false) -"
+          + " eine leere Seite unterscheidet 'kein Recht' nicht von 'keine Eintraege'.")
   @ApiResponses({
       @ApiResponse(
           responseCode = "200",
@@ -75,7 +84,13 @@ public class InboxSnapshotController {
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<InboxSnapshotModel> snapshot() {
     final CurrentActor actor = CurrentActor.require(userAccessor);
-    return ResponseEntity.ok(snapshotService.loadSnapshot(actor.user().id(), actor.tenant().id()));
+    // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
+    // @RequiresPermission). Der Service bleibt framework-neutral und erhaelt nur die Capability.
+    final boolean notificationsVisible =
+        permissionEvaluator.hasExactAuthority(TaskManagementPermissions.NOTIFICATION_READ);
+    return ResponseEntity.ok(
+        snapshotService.loadSnapshot(
+            actor.user().id(), actor.tenant().id(), notificationsVisible));
   }
 
   /**

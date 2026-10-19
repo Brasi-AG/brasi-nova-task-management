@@ -115,7 +115,7 @@ class InboxSnapshotServiceTest {
         .thenReturn(3L);
     when(taskQueryRepository.countArchiveLeft(eq(USER_REF), any())).thenReturn(2L);
 
-    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
 
     assertThat(snapshot.asOf()).isNotNull();
     assertThat(snapshot.asOf()).isAfter(Instant.now().minusSeconds(120));
@@ -157,11 +157,56 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
     when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
 
-    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
 
     assertThat(snapshot.tasks().items()).isEmpty();
     assertThat(snapshot.participantSummaries()).isEmpty();
     verify(userReadRepository, never()).findActiveParticipantsForTasks(any());
+  }
+
+  // ---- Authz: NOTIFICATION_READ gatet die Snapshot-Notifications ------------------------------
+
+  @Test
+  @DisplayName("snapshot_ohne_notification_read_liefert_leere_notifications")
+  void snapshot_ohne_notification_read_liefert_leere_notifications() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+    when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
+
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, false);
+
+    // Fehlendes NOTIFICATION_READ -> leere Notification-Seite (contract-stabil, nicht null).
+    assertThat(snapshot.notifications().items()).isEmpty();
+    assertThat(snapshot.notifications().nextCursor()).isNull();
+    assertThat(snapshot.notifications().hasMore()).isFalse();
+    // fail-closed: die Notification-Quelle wird NIE angefragt (kein DB-Leak ohne Recht).
+    verify(notificationQueryService, never()).listFor(any(), anyLong(), any(), any(), anyInt());
+  }
+
+  @Test
+  @DisplayName("snapshot_mit_notification_read_liefert_notifications_durchgereicht")
+  void snapshot_mit_notification_read_liefert_notifications() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+    when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
+    // Distinktive Seite (all, cursor=null) -> beweist Pass-Through ohne NotificationModel zu bauen.
+    final NotificationPage distinct = new NotificationPage(List.of(), "cursor-xyz", true);
+    when(notificationQueryService.listFor(eq(USER_REF), eq(TENANT_ID), eq("all"), any(), anyInt()))
+        .thenReturn(distinct);
+
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
+
+    assertThat(snapshot.notifications()).isSameAs(distinct);
+    verify(notificationQueryService, times(1))
+        .listFor(eq(USER_REF), eq(TENANT_ID), eq("all"), any(), anyInt());
   }
 
   // ---- aktive Fortsetzung: hasMore + nextCursor (4-Token) -------------------------------------
@@ -379,7 +424,7 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(1L);
     when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
 
-    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
 
     assertThat(snapshot.tasks().items()).hasSize(DEFAULT_LIMIT);
     assertThat(snapshot.tasks().hasMore()).isTrue();
@@ -403,7 +448,7 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
     when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
 
-    assertThatThrownBy(() -> service.loadSnapshot(USER_REF, TENANT_ID))
+    assertThatThrownBy(() -> service.loadSnapshot(USER_REF, TENANT_ID, true))
         .isInstanceOf(SnapshotExpiredException.class);
   }
 
@@ -421,7 +466,7 @@ class InboxSnapshotServiceTest {
     when(userReadRepository.findActiveParticipantsForTasks(any()))
         .thenReturn(List.of(buildUser("a@brasi.de", "A"), buildUser("b@brasi.de", "B")));
 
-    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID);
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
 
     assertThat(snapshot.participantSummaries()).hasSize(2);
     verify(inboxGenerationService, times(2)).currentGeneration(USER_REF);

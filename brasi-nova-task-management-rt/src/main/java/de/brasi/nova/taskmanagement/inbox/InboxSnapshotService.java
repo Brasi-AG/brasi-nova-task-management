@@ -122,11 +122,17 @@ public class InboxSnapshotService {
    *
    * @param userRef  UUID des Benutzers (aus Security-Context)
    * @param tenantId interne Mandanten-ID (aus Security-Context)
+   * @param notificationsVisible {@code true}, wenn der Aufrufer die Permission
+   *     {@code task-management:NOTIFICATION_READ} besitzt (vom Controller als Autz-Grenze
+   *     ausgewertet). Bei {@code false} wird die Notification-Seite NICHT geladen, sondern als
+   *     leere Seite zurueckgegeben (fail-closed) - NOTIFICATION_READ gatet die Notification-Nutzlast
+   *     im Bootstrap-Snapshot konsistent zum dedizierten {@code GET /api/v1/notifications}.
    * @return aufgebauter {@link InboxSnapshotModel}
    * @throws SnapshotExpiredException (HTTP 410) wenn unter anhaltender Membership-Aenderung kein
    *     konsistenter Snapshot erzeugt werden konnte
    */
-  public InboxSnapshotModel loadSnapshot(final UUID userRef, final long tenantId) {
+  public InboxSnapshotModel loadSnapshot(
+      final UUID userRef, final long tenantId, final boolean notificationsVisible) {
     final int effLimit = DEFAULT_LIMIT;
     final Long openStatusId = resolver.resolveTaskStatusOpen();
     final Long doneId = resolver.resolveTaskStatusDone();
@@ -168,8 +174,12 @@ public class InboxSnapshotService {
             asOfInstant);
 
     // LIVE-Teile ausserhalb der Generation-Invariante (siehe Klassen-Javadoc):
+    // Notifications nur mit NOTIFICATION_READ (fail-closed): ohne Recht wird die Quelle NICHT
+    // angefragt, sondern eine leere Seite zurueckgegeben (kein DB-Leak, contract-stabiles non-null-Feld).
     final NotificationPage notifications =
-        notificationQueryService.listFor(userRef, tenantId, FILTER_ALL, null, effLimit);
+        notificationsVisible
+            ? notificationQueryService.listFor(userRef, tenantId, FILTER_ALL, null, effLimit)
+            : new NotificationPage(List.of(), null, false);
     final List<TagModel> tags = tagCatalogService.list();
     final List<ParticipantSummary> participantSummaries = participantSummariesFor(pageTasks);
 
