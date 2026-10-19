@@ -37,11 +37,13 @@ public class TaskComment extends NovaEntity<TaskComment> {
   private Long parentCommentId;
 
   /**
-   * Kommentartext (Markdown; DB: {@code nvarchar(max)}). {@code length = Integer.MAX_VALUE} = der
-   * KSF-unbegrenzt-Sentinel, damit die implizite HasMaxLengthRule normale (laengere) Kommentare
-   * NICHT mit dem 255-Default abweist.
+   * Kommentartext (Markdown; DB: {@code nvarchar(max)} laut V1). {@code length = 4000} statt des
+   * 255-Defaults, damit die implizite KSF-HasMaxLengthRule normale, laengere Kommentare nicht
+   * abweist. 4000 ist die groesste DDL-valide numerische NVARCHAR-Laenge (SQL Server lehnt
+   * {@code NVARCHAR(n)} mit n&gt;4000 ab; {@code NVARCHAR(MAX)} kann der KSF-Schema-Generator nicht
+   * ausdruecken, daher KEIN {@code Integer.MAX_VALUE}). Die DB-Spalte bleibt {@code nvarchar(max)}.
    */
-  @NovaColumn(name = "TEXT", nullable = false, length = Integer.MAX_VALUE)
+  @NovaColumn(name = "TEXT", nullable = false, length = 4000)
   private String text;
 
   /** Kennzeichen: Kommentar wurde nachtraeglich bearbeitet. */

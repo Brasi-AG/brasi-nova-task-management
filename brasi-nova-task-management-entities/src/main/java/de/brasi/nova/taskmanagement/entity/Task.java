@@ -36,11 +36,14 @@ public class Task extends NovaEntity<Task> {
   private String title;
 
   /**
-   * Optionale Beschreibung (DB: {@code nvarchar(max)}). {@code length = Integer.MAX_VALUE} = der
-   * KSF-unbegrenzt-Sentinel (analog NovaSqlDialect/NovaRowMapper), damit die implizite
-   * HasMaxLengthRule lange Texte NICHT mit dem 255-Default abweist.
+   * Optionale Beschreibung (DB: {@code nvarchar(max)} laut V1). {@code length = 4000} statt des
+   * 255-Defaults, damit die implizite KSF-HasMaxLengthRule normale, laengere Texte nicht abweist.
+   * 4000 ist die groesste DDL-valide numerische NVARCHAR-Laenge (SQL Server lehnt {@code NVARCHAR(n)}
+   * mit n&gt;4000 ab; {@code NVARCHAR(MAX)} kann der KSF-Schema-Generator nicht ausdruecken, daher
+   * KEIN {@code Integer.MAX_VALUE}). Die DB-Spalte bleibt {@code nvarchar(max)}; die App-Validierung
+   * deckelt pragmatisch bei 4000.
    */
-  @NovaColumn(name = "DESCRIPTION", nullable = true, length = Integer.MAX_VALUE)
+  @NovaColumn(name = "DESCRIPTION", nullable = true, length = 4000)
   private String description;
 
   /** FK auf {@code DIC_TASK_STATUS} (global). */
