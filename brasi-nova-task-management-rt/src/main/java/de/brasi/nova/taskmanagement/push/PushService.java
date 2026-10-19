@@ -95,7 +95,12 @@ public class PushService {
       }
       try {
         session.sendMessage(message);
-      } catch (IOException | IllegalStateException e) {
+      } catch (IOException | RuntimeException e) {
+        // Best-Effort je Session: dieser Code laeuft im After-Commit-Seam. JEDER Zustellfehler EINER
+        // Session (IOException; IllegalStateException; insb. SessionLimitExceededException des
+        // ConcurrentWebSocketSessionDecorator bei langsamem Client / gesprengtem Send-Time-/Buffer-
+        // Limit - eine RuntimeException) darf NICHT propagieren: sonst koennte die bereits committete
+        // Mutation als HTTP-Fehler erscheinen und der Fan-out an weitere Sessions/Empfaenger abbrechen.
         log.warn(
             "PushService: Zustellung an Session {} (Empfaenger {}/Mandant {}) fehlgeschlagen.",
             session.getId(),

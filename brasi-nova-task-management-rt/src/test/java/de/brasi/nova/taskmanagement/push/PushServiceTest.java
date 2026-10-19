@@ -140,6 +140,32 @@ class PushServiceTest {
   }
 
   @Test
+  @DisplayName(
+      "push_best_effort_bei_session_limit_exceeded:"
+          + " eine Session sprengt das Send-Limit (RuntimeException) -> andere Session erhaelt"
+          + " trotzdem, kein Fehler propagiert")
+  void push_best_effort_bei_session_limit_exceeded() throws Exception {
+    final WebSocketSession slow = openSession("s-slow");
+    final WebSocketSession healthy = openSession("s-ok");
+    // Langsamer Client -> ConcurrentWebSocketSessionDecorator wirft SessionLimitExceededException.
+    org.mockito.Mockito.doThrow(
+            new org.springframework.web.socket.handler.SessionLimitExceededException(
+                "send-limit", org.springframework.web.socket.CloseStatus.SESSION_NOT_RELIABLE))
+        .when(slow)
+        .sendMessage(org.mockito.ArgumentMatchers.any());
+    registry.register(TENANT_ID, USER_A, slow, true);
+    registry.register(TENANT_ID, USER_A, healthy, true);
+
+    // Darf NICHT propagieren (After-Commit best-effort).
+    service.push(
+        TENANT_ID, USER_A,
+        NotificationPushEnvelope.of(UUID.randomUUID(), Instant.now(), "ASSIGN", null, "x", null));
+
+    // Die gesunde Session erhaelt die Nachricht trotz Fehler der langsamen.
+    verify(healthy).sendMessage(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   @DisplayName("pushSnapshotInvalidated_sendet_an_alle_userRefs")
   void pushSnapshotInvalidated_sendet_an_alle_userRefs() throws Exception {
     final WebSocketSession sessionA = openSession("s-a");
