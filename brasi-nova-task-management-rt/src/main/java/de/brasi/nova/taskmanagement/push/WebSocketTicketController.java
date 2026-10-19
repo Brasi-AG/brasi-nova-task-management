@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.push;
 import de.brasi.nova.taskmanagement.push.model.WsTicketResponse;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,12 +31,16 @@ public class WebSocketTicketController {
 
   private final WebSocketTicketService ticketService;
   private final UserAccessor userAccessor;
+  private final PermissionEvaluator permissionEvaluator;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public WebSocketTicketController(
-      final WebSocketTicketService ticketService, final UserAccessor userAccessor) {
+      final WebSocketTicketService ticketService,
+      final UserAccessor userAccessor,
+      final PermissionEvaluator permissionEvaluator) {
     this.ticketService = ticketService;
     this.userAccessor = userAccessor;
+    this.permissionEvaluator = permissionEvaluator;
   }
 
   /**
@@ -46,7 +51,12 @@ public class WebSocketTicketController {
   @Operation(
       summary = "WebSocket-Ticket ausstellen",
       description = "Stellt ein kurzlebiges Einmal-Ticket fuer den WebSocket-Handshake aus."
-          + " Das Ticket wird bei WS /ws?ticket=... eingeloest und danach verworfen (einmalig, TTL ca. 30s).")
+          + " Das Ticket wird bei WS /ws?ticket=... eingeloest und danach verworfen (einmalig, TTL ca. 30s)."
+          + " Die NOTIFICATION_READ-Capability wird zum Ausgabezeitpunkt am Ticket festgeschrieben:"
+          + " nur Sessions aus einem Ticket MIT NOTIFICATION_READ erhalten Notification-Pushes"
+          + " (snapshot-invalidated-Signale gehen task-level an alle TASK_READ-Sessions)."
+          + " Hinweis: ein spaeterer Rechteentzug wirkt erst beim naechsten Ticket/Reconnect -"
+          + " eine bereits offene WS-Session behaelt ihre Capability bis zum Verbindungsende.")
   @ApiResponses({
       @ApiResponse(
           responseCode = "200",
@@ -65,6 +75,12 @@ public class WebSocketTicketController {
   @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<WsTicketResponse> issueTicket() {
     final CurrentActor actor = CurrentActor.require(userAccessor);
-    return ResponseEntity.ok(ticketService.issue(actor.tenant().id(), actor.user().id()));
+    // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
+    // @RequiresPermission) und am Ticket festschreiben; das Push-Routing gatet darueber
+    // Notification-Pushes (snapshot-invalidated bleibt task-level fuer alle TASK_READ-Sessions).
+    final boolean notificationRead =
+        permissionEvaluator.hasExactAuthority(TaskManagementPermissions.NOTIFICATION_READ);
+    return ResponseEntity.ok(
+        ticketService.issue(actor.tenant().id(), actor.user().id(), notificationRead));
   }
 }

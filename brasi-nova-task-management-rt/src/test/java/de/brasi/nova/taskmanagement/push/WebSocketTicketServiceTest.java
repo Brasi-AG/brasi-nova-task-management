@@ -56,7 +56,7 @@ class WebSocketTicketServiceTest {
     final MutableClock clock = new MutableClock(Instant.parse("2026-10-18T10:00:00Z"));
     final WebSocketTicketService service = new WebSocketTicketService(TTL_SECONDS, clock);
 
-    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF, true);
     assertThat(issued.ticket()).isNotBlank();
     assertThat(issued.expiresAt()).isEqualTo(clock.instant().plusSeconds(TTL_SECONDS));
 
@@ -69,12 +69,31 @@ class WebSocketTicketServiceTest {
   }
 
   @Test
+  @DisplayName("notification_read_capability_wird_durch_ticket_getragen")
+  void notification_read_capability_wird_durch_ticket_getragen() {
+    final WebSocketTicketService service =
+        new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
+
+    final WsTicketResponse withCap = service.issue(TENANT_ID, USER_REF, true);
+    final Optional<TicketPrincipal> p1 = service.consume(withCap.ticket());
+    assertThat(p1).isPresent();
+    assertThat(p1.get().notificationRead()).as("NOTIFICATION_READ -> true am Principal").isTrue();
+
+    final WsTicketResponse withoutCap = service.issue(TENANT_ID, USER_REF, false);
+    final Optional<TicketPrincipal> p2 = service.consume(withoutCap.ticket());
+    assertThat(p2).isPresent();
+    assertThat(p2.get().notificationRead())
+        .as("kein NOTIFICATION_READ -> false am Principal (fail-closed)")
+        .isFalse();
+  }
+
+  @Test
   @DisplayName("ticket_abgelaufen_wird_abgelehnt")
   void ticket_abgelaufen_wird_abgelehnt() {
     final MutableClock clock = new MutableClock(Instant.parse("2026-10-18T10:00:00Z"));
     final WebSocketTicketService service = new WebSocketTicketService(TTL_SECONDS, clock);
 
-    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF, true);
     clock.advance(Duration.ofSeconds(TTL_SECONDS + 1)); // nach Ablauf
 
     assertThat(service.consume(issued.ticket())).as("abgelaufenes Ticket -> leer (kurzlebig)")
@@ -87,7 +106,7 @@ class WebSocketTicketServiceTest {
     final MutableClock clock = new MutableClock(Instant.parse("2026-10-18T10:00:00Z"));
     final WebSocketTicketService service = new WebSocketTicketService(TTL_SECONDS, clock);
 
-    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse issued = service.issue(TENANT_ID, USER_REF, true);
     clock.advance(Duration.ofSeconds(TTL_SECONDS)); // exakt expiresAt (nicht NACH)
 
     assertThat(service.consume(issued.ticket())).as("an der Grenze noch gueltig").isPresent();
@@ -106,8 +125,8 @@ class WebSocketTicketServiceTest {
   @DisplayName("issue_token_mindestens_128_bit_und_unterschiedlich")
   void issue_token_mindestens_128_bit_und_unterschiedlich() {
     final WebSocketTicketService service = new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
-    final WsTicketResponse a = service.issue(TENANT_ID, USER_REF);
-    final WsTicketResponse b = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse a = service.issue(TENANT_ID, USER_REF, true);
+    final WsTicketResponse b = service.issue(TENANT_ID, USER_REF, true);
 
     assertThat(a.ticket()).isNotEqualTo(b.ticket());
     final byte[] decoded = Base64.getUrlDecoder().decode(a.ticket());
@@ -126,7 +145,7 @@ class WebSocketTicketServiceTest {
 
     // N Tickets ausstellen (werden nie konsumiert)
     for (int i = 0; i < 5; i++) {
-      service.issue(TENANT_ID, USER_REF);
+      service.issue(TENANT_ID, USER_REF, true);
     }
     assertThat(service.storeSize()).as("Vor Ablauf: 5 Eintraege im Store").isEqualTo(5);
 
@@ -134,7 +153,7 @@ class WebSocketTicketServiceTest {
     clock.advance(Duration.ofSeconds(2));
 
     // Naechstes issue soll die abgelaufenen Tickets bereinigen
-    service.issue(TENANT_ID, USER_REF);
+    service.issue(TENANT_ID, USER_REF, true);
 
     assertThat(service.storeSize())
         .as("Nach issue mit abgelaufenen Eintraegen: nur noch 1 (der neue) im Store")
@@ -146,7 +165,7 @@ class WebSocketTicketServiceTest {
   void zwei_gleichzeitige_consume_genau_ein_erfolg() throws Exception {
     final WebSocketTicketService service =
         new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
-    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF, true);
 
     final int threads = 8;
     final java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);

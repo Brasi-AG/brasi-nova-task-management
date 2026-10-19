@@ -244,7 +244,9 @@ class TaskWebSocketHandlerIT {
   void push_nach_commit() throws Exception {
     final String tokenA =
         jwt(USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ", "task-management:TASK_WRITE");
-    final String tokenB = jwt(USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
+    // B braucht NOTIFICATION_READ, damit der Notification-Push ihn erreicht (Gate seit Slice 2).
+    final String tokenB =
+        jwt(USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ", "task-management:NOTIFICATION_READ");
 
     final UUID taskId = createTask(tokenA, "Push-nach-Commit-Task");
 
@@ -260,6 +262,54 @@ class TaskWebSocketHandlerIT {
       assertThat(frame.get("category").asText()).isEqualTo(NotificationTypeCodes.MENTION);
       assertThat(frame.get("notificationId").asText()).isNotBlank();
       assertThat(frame.get("payload").get("text").asText()).isNotBlank();
+    } finally {
+      close(b);
+    }
+  }
+
+  // ---- IT 1b: WS-Notification-Gate (ohne NOTIFICATION_READ kein notification-Frame) ----------
+
+  @Test
+  @DisplayName(
+      "ohne_notification_read_kein_notification_frame_aber_snapshot_invalidated:"
+          + " TASK_READ-only-Ticket erhaelt trotz echtem MENTION-Event KEINEN notification-Frame,"
+          + " aber das task-level snapshot-invalidated-Signal kommt an (Positiv-Kontrolle)")
+  void ohne_notification_read_kein_notification_frame() throws Exception {
+    final String tokenA =
+        jwt(USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ", "task-management:TASK_WRITE");
+    // B bewusst OHNE NOTIFICATION_READ -> Ticket traegt notificationRead=false.
+    final String tokenB = jwt(USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
+
+    final UUID taskId = createTask(tokenA, "Gate-ohne-notif-read-Task");
+
+    final WsClientSession b = connect(issueTicket(tokenB));
+    try {
+      awaitRegistered(USER_B_REF);
+
+      // Echtes, committetes MENTION-Notification-Event fuer B -> Push WIRD GEGATET (kein Frame).
+      postComment(tokenA, taskId, "Bitte pruefen @" + USER_B_LOGIN + " danke.");
+
+      // Positiv-Kontrolle: committete task-level Invalidierung fuer B -> MUSS ankommen.
+      final TransactionTemplate tx = new TransactionTemplate(transactionManager);
+      tx.execute(
+          status -> {
+            inboxSignalService.invalidate(TENANT_A_ID, List.of(USER_B_REF));
+            return null;
+          });
+
+      // Der erste (und einzige) Frame ist das snapshot-invalidated - NIE ein notification.
+      final JsonNode frame = awaitFrame(b, 5);
+      assertThat(frame.get("type").asText())
+          .as("ohne NOTIFICATION_READ darf kein notification-Frame kommen; nur snapshot-invalidated")
+          .isEqualTo("snapshot-invalidated");
+
+      // Kein nachgelagerter notification-Frame im Puffer.
+      final String extra = b.queue().poll(1, TimeUnit.SECONDS);
+      if (extra != null) {
+        assertThat(OM.readTree(extra).get("type").asText())
+            .as("kein notification-Frame im Puffer (Gate greift)")
+            .isNotEqualTo(NotificationPushEnvelope.TYPE_NOTIFICATION);
+      }
     } finally {
       close(b);
     }

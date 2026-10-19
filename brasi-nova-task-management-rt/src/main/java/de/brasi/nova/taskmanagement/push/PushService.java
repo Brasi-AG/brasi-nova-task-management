@@ -36,18 +36,20 @@ public class PushService {
   }
 
   /**
-   * Sendet einen Envelope an alle offenen Sessions des Empfaengers.
+   * Sendet einen Notification-Envelope an die NOTIFICATION_READ-berechtigten Sessions des
+   * Empfaengers (Gate). Sessions ohne Capability werden ausgelassen (fail-closed): so setzt sich
+   * NOTIFICATION_READ auch im Push-Kanal durch, konsistent zu {@code GET /api/v1/notifications}.
    *
    * @param tenantId     interner Mandanten-Schluessel (Routing)
    * @param recipientRef UUID des Empfaengers (Routing)
-   * @param envelope     serialisierbarer Envelope (z.B. {@code NotificationPushEnvelope})
+   * @param envelope     serialisierbarer Notification-Envelope ({@code NotificationPushEnvelope})
    */
   public void push(final long tenantId, final UUID recipientRef, final Object envelope) {
     final TextMessage message = serialize(envelope);
     if (message == null) {
       return;
     }
-    sendTo(tenantId, recipientRef, message);
+    sendTo(registry.notificationSessionsFor(tenantId, recipientRef), message, recipientRef, tenantId);
   }
 
   /**
@@ -66,7 +68,8 @@ public class PushService {
       return;
     }
     for (final UUID userRef : userRefs) {
-      sendTo(tenantId, userRef, message);
+      // snapshot-invalidated ist task-level: an ALLE Sessions, unabhaengig von NOTIFICATION_READ.
+      sendTo(registry.sessionsFor(tenantId, userRef), message, userRef, tenantId);
     }
   }
 
@@ -80,9 +83,13 @@ public class PushService {
     }
   }
 
-  /** Stellt die Nachricht an alle offenen Sessions des Empfaengers zu (Best-Effort je Session). */
-  private void sendTo(final long tenantId, final UUID recipientRef, final TextMessage message) {
-    for (final WebSocketSession session : registry.sessionsFor(tenantId, recipientRef)) {
+  /** Stellt die Nachricht an die uebergebenen Sessions zu (Best-Effort je Session). */
+  private void sendTo(
+      final Collection<WebSocketSession> sessions,
+      final TextMessage message,
+      final UUID recipientRef,
+      final long tenantId) {
+    for (final WebSocketSession session : sessions) {
       if (!session.isOpen()) {
         continue;
       }

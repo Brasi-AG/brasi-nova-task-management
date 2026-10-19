@@ -38,7 +38,7 @@ class PushRegistryTest {
   void register_dann_sessionsFor_liefert_session() {
     final PushRegistry registry = new PushRegistry();
     final WebSocketSession s = session("s-1");
-    registry.register(TENANT_ID, USER, s);
+    registry.register(TENANT_ID, USER, s, true);
     assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactly(s);
   }
 
@@ -48,18 +48,34 @@ class PushRegistryTest {
     final PushRegistry registry = new PushRegistry();
     final WebSocketSession a = session("s-a");
     final WebSocketSession b = session("s-b");
-    registry.register(TENANT_ID, USER, a);
-    registry.register(TENANT_ID, USER, b);
+    registry.register(TENANT_ID, USER, a, true);
+    registry.register(TENANT_ID, USER, b, true);
     assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactlyInAnyOrder(a, b);
     registry.unregister("s-a");
     assertThat(registry.sessionsFor(TENANT_ID, USER)).containsExactly(b);
   }
 
   @Test
+  @DisplayName("notificationSessionsFor_liefert_nur_berechtigte_sessionsFor_liefert_alle")
+  void notificationSessionsFor_filtert_nach_capability() {
+    final PushRegistry registry = new PushRegistry();
+    final WebSocketSession capable = session("s-cap");
+    final WebSocketSession notCapable = session("s-nocap");
+    registry.register(TENANT_ID, USER, capable, true);
+    registry.register(TENANT_ID, USER, notCapable, false);
+
+    // sessionsFor (task-level, snapshot-invalidated) -> ALLE Sessions.
+    assertThat(registry.sessionsFor(TENANT_ID, USER))
+        .containsExactlyInAnyOrder(capable, notCapable);
+    // notificationSessionsFor (Notification-Gate) -> NUR die berechtigte Session.
+    assertThat(registry.notificationSessionsFor(TENANT_ID, USER)).containsExactly(capable);
+  }
+
+  @Test
   @DisplayName("unregister_letzte_session_leert_den_key")
   void unregister_letzte_session_leert_den_key() {
     final PushRegistry registry = new PushRegistry();
-    registry.register(TENANT_ID, USER, session("s-1"));
+    registry.register(TENANT_ID, USER, session("s-1"), true);
     registry.unregister("s-1");
     assertThat(registry.sessionsFor(TENANT_ID, USER)).isEmpty();
     // Unbekannte Session-ID -> No-op (kein Fehler)
@@ -76,8 +92,8 @@ class PushRegistryTest {
       for (int i = 0; i < 1000; i++) {
         final String oldId = "old-" + i;
         final String newId = "new-" + i;
-        // Ausgangszustand: eine alte Session offen.
-        registry.register(TENANT_ID, USER, session(oldId));
+        // Ausgangszustand: eine alte (notification-berechtigte) Session offen.
+        registry.register(TENANT_ID, USER, session(oldId), true);
 
         // Gleichzeitig: alte Session schliessen UND neue Session registrieren.
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -87,20 +103,26 @@ class PushRegistryTest {
                   await(barrier);
                   registry.unregister(oldId);
                 });
+        // Die neue Session ist bewusst NICHT notification-berechtigt (gemischte Capability unter
+        // der Race) -> beweist, dass der SessionEntry-Umbau die atomare Bucket-Liveness nicht bricht.
         final WebSocketSession freshSession = session(newId);
         final Future<?> reg =
             pool.submit(
                 () -> {
                   await(barrier);
-                  registry.register(TENANT_ID, USER, freshSession);
+                  registry.register(TENANT_ID, USER, freshSession, false);
                 });
         unreg.get(5, TimeUnit.SECONDS);
         reg.get(5, TimeUnit.SECONDS);
 
-        // Die neue Session MUSS sichtbar bleiben (kein verwaister Bucket).
+        // Die neue Session MUSS sichtbar bleiben (kein verwaister Bucket) - unabhaengig von Capability.
         assertThat(registry.sessionsFor(TENANT_ID, USER))
             .as("Iteration %d: neue Session muss nach Reconnect-Race sichtbar sein", i)
             .contains(freshSession);
+        // Capability respektiert: die nicht-berechtigte Session taucht NICHT im Notification-View auf.
+        assertThat(registry.notificationSessionsFor(TENANT_ID, USER))
+            .as("Iteration %d: nicht-berechtigte Session nicht im Notification-View", i)
+            .doesNotContain(freshSession);
 
         // Aufraeumen fuer die naechste Iteration.
         registry.unregister(newId);

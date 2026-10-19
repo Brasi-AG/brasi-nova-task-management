@@ -30,6 +30,13 @@ public class TaskWebSocketHandler extends TextWebSocketHandler {
   /** Handshake-Attribut: Benutzer-UUID ({@link UUID}). */
   public static final String ATTR_USER_REF = "taskmgmt.userRef";
 
+  /**
+   * Handshake-Attribut: NOTIFICATION_READ-Capability ({@link Boolean}) aus dem Ticket. Fehlt das
+   * Attribut oder ist es kein {@code Boolean.TRUE}, gilt die Session als NICHT notification-berechtigt
+   * (fail-closed).
+   */
+  public static final String ATTR_NOTIFICATION_READ = "taskmgmt.notificationRead";
+
   private final PushRegistry registry;
   private final int sendTimeLimitMs;
   private final int sendBufferSizeBytes;
@@ -55,11 +62,14 @@ public class TaskWebSocketHandler extends TextWebSocketHandler {
       session.close(CloseStatus.POLICY_VIOLATION);
       return;
     }
+    // Notification-Capability aus dem Handshake-Attribut lesen; fehlend/typfalsch -> false (fail-closed).
+    final boolean notificationRead =
+        session.getAttributes().get(ATTR_NOTIFICATION_READ) instanceof Boolean b && b;
     final WebSocketSession decorated =
         new ConcurrentWebSocketSessionDecorator(session, sendTimeLimitMs, sendBufferSizeBytes);
-    registry.register(tenantId, userRef, decorated);
-    log.debug("TaskWebSocketHandler: Session {} registriert (Mandant {}, Benutzer {}).",
-        session.getId(), tenantId, userRef);
+    registry.register(tenantId, userRef, decorated, notificationRead);
+    log.debug("TaskWebSocketHandler: Session {} registriert (Mandant {}, Benutzer {}, notificationRead={}).",
+        session.getId(), tenantId, userRef, notificationRead);
   }
 
   @Override

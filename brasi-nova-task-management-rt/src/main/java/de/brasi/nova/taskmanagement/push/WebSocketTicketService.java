@@ -66,9 +66,16 @@ public class WebSocketTicketService {
    *
    * @param tenantId interner Mandanten-Schluessel (aus Security-Context)
    * @param userRef  UUID des Benutzers (aus Security-Context)
+   * @param notificationRead {@code true}, wenn der Aufrufer zum Ausgabezeitpunkt die Permission
+   *     {@code task-management:NOTIFICATION_READ} besitzt (vom Controller als Autz-Grenze exakt
+   *     ausgewertet). Die Capability wird am Ticket festgeschrieben (point-in-time) und spaeter beim
+   *     Push-Routing ausgewertet: nur Sessions mit {@code true} erhalten Notification-Pushes. Ein
+   *     spaeterer Rechteentzug wirkt erst beim naechsten Ticket/Reconnect, nicht mitten in einer
+   *     offenen Session (bewusste 1a-Grenze).
    * @return {@link WsTicketResponse} mit opakem Token und Ablaufzeitpunkt
    */
-  public WsTicketResponse issue(final long tenantId, final UUID userRef) {
+  public WsTicketResponse issue(
+      final long tenantId, final UUID userRef, final boolean notificationRead) {
     // Periodischer Cleanup: abgelaufene, nie-konsumierte Tickets entfernen (max. 1x pro
     // TTL-Periode). CAS-Guard stellt sicher dass bei nebenlaeufigen issue()-Aufrufen genau
     // ein Thread den O(n)-Scan uebernimmt; alle anderen ueberspringen ihn.
@@ -84,7 +91,7 @@ public class WebSocketTicketService {
     final String token = encoder.encodeToString(raw);
     // expiresAt nach dem Cleanup-Scan berechnen um korrekte verbleibende Lebensdauer zu gewaehrleisten.
     final Instant expiresAt = clock.instant().plusSeconds(ttlSeconds);
-    store.put(token, new Entry(tenantId, userRef, expiresAt));
+    store.put(token, new Entry(tenantId, userRef, notificationRead, expiresAt));
     return new WsTicketResponse(token, expiresAt);
   }
 
@@ -109,7 +116,8 @@ public class WebSocketTicketService {
     if (clock.instant().isAfter(entry.expiresAt())) {
       return Optional.empty();
     }
-    return Optional.of(new TicketPrincipal(entry.tenantId(), entry.userRef()));
+    return Optional.of(
+        new TicketPrincipal(entry.tenantId(), entry.userRef(), entry.notificationRead()));
   }
 
   /** Anzahl Eintraege im Store (fuer Tests). */
@@ -118,13 +126,15 @@ public class WebSocketTicketService {
   }
 
   /** Interner Store-Eintrag. */
-  private record Entry(long tenantId, UUID userRef, Instant expiresAt) {}
+  private record Entry(long tenantId, UUID userRef, boolean notificationRead, Instant expiresAt) {}
 
   /**
    * Aufgeloester Ticket-Principal (Routing-Identitaet fuer die WS-Session).
    *
    * @param tenantId interner Mandanten-Schluessel
    * @param userRef  UUID des Benutzers
+   * @param notificationRead ob der Benutzer zum Ticket-Ausgabezeitpunkt NOTIFICATION_READ hatte
+   *     (Push-Gate-Capability, point-in-time)
    */
-  public record TicketPrincipal(long tenantId, UUID userRef) {}
+  public record TicketPrincipal(long tenantId, UUID userRef, boolean notificationRead) {}
 }

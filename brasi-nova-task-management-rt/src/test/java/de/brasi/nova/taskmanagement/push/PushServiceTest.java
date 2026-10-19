@@ -55,7 +55,7 @@ class PushServiceTest {
   @DisplayName("push_sendet_notification_envelope_als_json_an_empfaenger_sessions")
   void push_sendet_notification_envelope_als_json_an_empfaenger_sessions() throws Exception {
     final WebSocketSession session = openSession("s-a");
-    registry.register(TENANT_ID, USER_A, session);
+    registry.register(TENANT_ID, USER_A, session, true);
 
     final UUID notifId = UUID.randomUUID();
     final NotificationPushEnvelope envelope =
@@ -84,7 +84,7 @@ class PushServiceTest {
   @DisplayName("push_nicht_an_fremden_empfaenger")
   void push_nicht_an_fremden_empfaenger() throws Exception {
     final WebSocketSession sessionA = openSession("s-a");
-    registry.register(TENANT_ID, USER_A, sessionA);
+    registry.register(TENANT_ID, USER_A, sessionA, true);
 
     service.push(
         TENANT_ID, USER_B,
@@ -99,7 +99,7 @@ class PushServiceTest {
     final WebSocketSession closed = mock(WebSocketSession.class);
     when(closed.getId()).thenReturn("s-closed");
     when(closed.isOpen()).thenReturn(false);
-    registry.register(TENANT_ID, USER_A, closed);
+    registry.register(TENANT_ID, USER_A, closed, true);
 
     service.push(
         TENANT_ID, USER_A,
@@ -109,12 +109,44 @@ class PushServiceTest {
   }
 
   @Test
+  @DisplayName("push_nicht_an_session_ohne_notification_read_aber_an_berechtigte")
+  void push_gated_by_notification_read() throws Exception {
+    // Gleicher Empfaenger, zwei Sessions: eine berechtigt, eine nicht.
+    final WebSocketSession capable = openSession("s-cap");
+    final WebSocketSession notCapable = openSession("s-nocap");
+    registry.register(TENANT_ID, USER_A, capable, true);
+    registry.register(TENANT_ID, USER_A, notCapable, false);
+
+    service.push(
+        TENANT_ID, USER_A,
+        NotificationPushEnvelope.of(UUID.randomUUID(), Instant.now(), "ASSIGN", null, "x", null));
+
+    // Nur die berechtigte Session erhaelt den Notification-Push (fail-closed Gate).
+    verify(capable).sendMessage(org.mockito.ArgumentMatchers.any());
+    verify(notCapable, never()).sendMessage(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  @DisplayName("snapshot_invalidated_auch_an_session_ohne_notification_read")
+  void snapshot_invalidated_ignoriert_das_gate() throws Exception {
+    // Eine NICHT notification-berechtigte Session muss das task-level snapshot-invalidated-Signal
+    // trotzdem erhalten (Gate gilt nur fuer Notification-Pushes).
+    final WebSocketSession notCapable = openSession("s-nocap");
+    registry.register(TENANT_ID, USER_A, notCapable, false);
+
+    service.pushSnapshotInvalidated(TENANT_ID, List.of(USER_A));
+
+    assertSnapshotInvalidated(notCapable);
+  }
+
+  @Test
   @DisplayName("pushSnapshotInvalidated_sendet_an_alle_userRefs")
   void pushSnapshotInvalidated_sendet_an_alle_userRefs() throws Exception {
     final WebSocketSession sessionA = openSession("s-a");
     final WebSocketSession sessionB = openSession("s-b");
-    registry.register(TENANT_ID, USER_A, sessionA);
-    registry.register(TENANT_ID, USER_B, sessionB);
+    // Bewusst OHNE NOTIFICATION_READ: snapshot-invalidated ist task-level und ignoriert das Gate.
+    registry.register(TENANT_ID, USER_A, sessionA, false);
+    registry.register(TENANT_ID, USER_B, sessionB, false);
 
     service.pushSnapshotInvalidated(TENANT_ID, List.of(USER_A, USER_B));
 

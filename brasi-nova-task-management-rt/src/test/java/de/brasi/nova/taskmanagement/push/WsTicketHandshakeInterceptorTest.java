@@ -67,7 +67,7 @@ class WsTicketHandshakeInterceptorTest {
     final WebSocketTicketService service =
         new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
     final WsTicketHandshakeInterceptor interceptor = new WsTicketHandshakeInterceptor(service);
-    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF, true);
 
     final ServerHttpRequest request =
         requestWithUri("http://host/task-management/ws?ticket=" + ticket.ticket());
@@ -79,6 +79,26 @@ class WsTicketHandshakeInterceptorTest {
     assertThat(allowed).isTrue();
     assertThat(attributes.get(TaskWebSocketHandler.ATTR_TENANT_ID)).isEqualTo(TENANT_ID);
     assertThat(attributes.get(TaskWebSocketHandler.ATTR_USER_REF)).isEqualTo(USER_REF);
+    assertThat(attributes.get(TaskWebSocketHandler.ATTR_NOTIFICATION_READ)).isEqualTo(true);
+  }
+
+  @Test
+  @DisplayName("ticket_ohne_notification_read_setzt_attribut_false")
+  void ticket_ohne_notification_read_setzt_attribut_false() {
+    final WebSocketTicketService service =
+        new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
+    final WsTicketHandshakeInterceptor interceptor = new WsTicketHandshakeInterceptor(service);
+    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF, false);
+
+    final ServerHttpRequest request =
+        requestWithUri("http://host/task-management/ws?ticket=" + ticket.ticket());
+    final Map<String, Object> attributes = new HashMap<>();
+
+    final boolean allowed =
+        interceptor.beforeHandshake(request, mock(ServerHttpResponse.class), null, attributes);
+
+    assertThat(allowed).isTrue();
+    assertThat(attributes.get(TaskWebSocketHandler.ATTR_NOTIFICATION_READ)).isEqualTo(false);
   }
 
   @Test
@@ -103,7 +123,7 @@ class WsTicketHandshakeInterceptorTest {
     final WebSocketTicketService service =
         new WebSocketTicketService(TTL_SECONDS, Clock.systemUTC());
     final WsTicketHandshakeInterceptor interceptor = new WsTicketHandshakeInterceptor(service);
-    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF, true);
     final String uri = "http://host/task-management/ws?ticket=" + ticket.ticket();
 
     // Erster Handshake verbraucht das Ticket
@@ -124,7 +144,7 @@ class WsTicketHandshakeInterceptorTest {
     final MutableClock clock = new MutableClock(Instant.parse("2026-10-18T10:00:00Z"));
     final WebSocketTicketService service = new WebSocketTicketService(TTL_SECONDS, clock);
     final WsTicketHandshakeInterceptor interceptor = new WsTicketHandshakeInterceptor(service);
-    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF);
+    final WsTicketResponse ticket = service.issue(TENANT_ID, USER_REF, true);
 
     clock.advance(Duration.ofSeconds(TTL_SECONDS + 1));
 

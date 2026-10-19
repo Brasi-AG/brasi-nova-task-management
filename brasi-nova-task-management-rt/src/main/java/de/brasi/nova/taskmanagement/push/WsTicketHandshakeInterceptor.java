@@ -56,6 +56,9 @@ public class WsTicketHandshakeInterceptor implements HandshakeInterceptor {
 
     attributes.put(TaskWebSocketHandler.ATTR_TENANT_ID, principal.get().tenantId());
     attributes.put(TaskWebSocketHandler.ATTR_USER_REF, principal.get().userRef());
+    // NOTIFICATION_READ-Capability (am Ticket festgeschrieben) in die Session-Attribute reichen;
+    // der Handler registriert die Session damit als notification-berechtigt oder nicht (fail-closed).
+    attributes.put(TaskWebSocketHandler.ATTR_NOTIFICATION_READ, principal.get().notificationRead());
     return true;
   }
 

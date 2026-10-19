@@ -24,8 +24,15 @@ public class PushRegistry {
   /** (Mandant, Benutzer) als Registry-Schluessel. */
   private record Key(long tenantId, UUID userRef) {}
 
-  /** Key -> (SessionId -> Session). */
-  private final ConcurrentHashMap<Key, ConcurrentHashMap<String, WebSocketSession>> byKey =
+  /**
+   * Registrierter Session-Eintrag inkl. der am Ticket festgeschriebenen NOTIFICATION_READ-Capability.
+   * Notification-Pushes gehen nur an Eintraege mit {@code notificationRead=true}; das task-level
+   * {@code snapshot-invalidated}-Signal an alle Sessions (unabhaengig von der Capability).
+   */
+  private record SessionEntry(WebSocketSession session, boolean notificationRead) {}
+
+  /** Key -> (SessionId -> SessionEntry). */
+  private final ConcurrentHashMap<Key, ConcurrentHashMap<String, SessionEntry>> byKey =
       new ConcurrentHashMap<>();
 
   /** SessionId -> Key (fuer O(1)-Unregister beim Schliessen). */
@@ -37,8 +44,14 @@ public class PushRegistry {
    * @param tenantId interner Mandanten-Schluessel
    * @param userRef  UUID des Benutzers
    * @param session  dekorierte WebSocket-Session
+   * @param notificationRead ob die Session (aus ihrem Ticket) NOTIFICATION_READ besitzt und damit
+   *     Notification-Pushes empfangen darf (fail-closed: {@code false} = keine Notification-Pushes)
    */
-  public void register(final long tenantId, final UUID userRef, final WebSocketSession session) {
+  public void register(
+      final long tenantId,
+      final UUID userRef,
+      final WebSocketSession session,
+      final boolean notificationRead) {
     final Key key = new Key(tenantId, userRef);
     // Bucket-Erzeugung UND Session-Einfuegen atomar unter dem Bin-Lock des Keys: sonst koennte
     // ein nebenlaeufiges unregister den (noch leeren) Bucket zwischen computeIfAbsent und put
@@ -47,9 +60,9 @@ public class PushRegistry {
     byKey.compute(
         key,
         (k, bucket) -> {
-          final ConcurrentHashMap<String, WebSocketSession> b =
+          final ConcurrentHashMap<String, SessionEntry> b =
               (bucket == null) ? new ConcurrentHashMap<>() : bucket;
-          b.put(session.getId(), session);
+          b.put(session.getId(), new SessionEntry(session, notificationRead));
           return b;
         });
     keyBySession.put(session.getId(), key);
@@ -80,14 +93,38 @@ public class PushRegistry {
   }
 
   /**
-   * Liefert eine Momentaufnahme der offenen Sessions des Empfaengers.
+   * Liefert eine Momentaufnahme ALLER offenen Sessions des Empfaengers (unabhaengig von der
+   * NOTIFICATION_READ-Capability). Nutzung: task-level {@code snapshot-invalidated}-Signal.
    *
    * @param tenantId interner Mandanten-Schluessel
    * @param userRef  UUID des Benutzers
    * @return Liste der Sessions (leer, wenn keine Session offen)
    */
   public Collection<WebSocketSession> sessionsFor(final long tenantId, final UUID userRef) {
-    final ConcurrentHashMap<String, WebSocketSession> sessions = byKey.get(new Key(tenantId, userRef));
-    return sessions == null ? List.of() : List.copyOf(sessions.values());
+    final ConcurrentHashMap<String, SessionEntry> sessions = byKey.get(new Key(tenantId, userRef));
+    if (sessions == null) {
+      return List.of();
+    }
+    return sessions.values().stream().map(SessionEntry::session).toList();
+  }
+
+  /**
+   * Liefert eine Momentaufnahme der offenen Sessions des Empfaengers, die NOTIFICATION_READ besitzen.
+   * Nutzung: Notification-Pushes (Gate). Sessions ohne Capability werden ausgelassen (fail-closed).
+   *
+   * @param tenantId interner Mandanten-Schluessel
+   * @param userRef  UUID des Benutzers
+   * @return Liste der notification-berechtigten Sessions (leer, wenn keine)
+   */
+  public Collection<WebSocketSession> notificationSessionsFor(
+      final long tenantId, final UUID userRef) {
+    final ConcurrentHashMap<String, SessionEntry> sessions = byKey.get(new Key(tenantId, userRef));
+    if (sessions == null) {
+      return List.of();
+    }
+    return sessions.values().stream()
+        .filter(SessionEntry::notificationRead)
+        .map(SessionEntry::session)
+        .toList();
   }
 }
