@@ -377,6 +377,19 @@ public class AssigneeService {
       userStateQueryRepository.save(state);
     }
 
+    // Final-Re-Gate P2: Austritt am gemeinsamen TASK-Version-Guard teilnehmen lassen.
+    // updateAssignees bumpt bei Membership-Aenderung die TASK-VERSION (optimistischer Lock); exit tat
+    // das bisher NICHT (nur die Participant-VERSION ueber save(participant)). Dadurch konnten ein PUT,
+    // der einen beibehaltenen Assignee als aktiv liest ohne dessen Participant-Zeile zu aendern, und
+    // ein nebenlaeufiger exit DIESES Assignees beide committen -> der finale Assignee-Satz verletzt das
+    // Ziel-Set des mit 204 quittierten PUT. Der TASK-save (VERSION-Bump) macht die Aufgabe zum
+    // gemeinsamen Serialisierungspunkt beider Membership-Mutationen: genau eine Transaktion gewinnt,
+    // die verlierende bricht mit BusinessRuleException (409) ab (0 Zeilen beim versionierten UPDATE)
+    // und wird gegen frischen Stand wiederholt. Bewusst NICHT in den Participant-Doppel-Austritt-400-
+    // Zweig uebersetzt: ein TASK-Versionskonflikt ist eine echte nebenlaeufige Membership-Mutation
+    // (Retry), kein Doppel-Austritt.
+    taskRepository.save(task);
+
     // Bei HANDOVER: HANDOVER-Notification emittieren (an den Akteur selbst als Bestaetigung)
     if (ExitKind.HANDOVER == input.exitKind()) {
       notificationService.emit(

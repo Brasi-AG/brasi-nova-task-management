@@ -333,6 +333,43 @@ class AssigneeServiceTest {
         .isNotNull();
   }
 
+  // ---- Test RG3: exit bumpt die TASK-Version (gemeinsamer Guard gegen PUT /assignees) ----------
+
+  /**
+   * Final-Re-Gate (P2): exit muss am gemeinsamen TASK-Version-Guard teilnehmen, damit ein
+   * nebenlaeufiger {@code PUT /assignees} (der die TASK-Version bumpt) und ein Austritt eines
+   * beibehaltenen Assignees nicht beide committen und den PUT-Ziel-Satz verletzen. Wiring-Beweis:
+   * ein erfolgreicher Austritt ruft {@code taskRepository.save(task)} (VERSION-Bump). Der
+   * Lock-Mechanismus selbst (zweiter save derselben Version -> BusinessRuleException) ist in
+   * {@code TaskOptimisticLockIT} deterministisch gegen echtes MSSQL bewiesen.
+   */
+  @Test
+  @DisplayName("exit_bumpt_task_version_guard: erfolgreicher Austritt ruft taskRepository.save(task)")
+  void exit_bumpt_task_version_guard() {
+    final Long taskId = 94L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant participant = new TaskParticipant();
+    participant.setId(12L);
+    participant.setTenantId(TENANT_ID);
+    participant.setTaskId(taskId);
+    participant.setParticipantRef(ACTOR_REF);
+    participant.setParticipantKind(ParticipantKind.PERSON);
+    participant.setAssigneeFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(participant));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    // Gemeinsamer Guard: die TASK-Version wird gebumpt (serialisiert gegen nebenlaeufiges PUT).
+    verify(taskRepository).save(task);
+  }
+
   // ---- Test 4: 404-Masking bei unbekannter UUID ------------------------------------------------
 
   @Test
