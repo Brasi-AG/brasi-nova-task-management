@@ -59,4 +59,33 @@ public interface TaskTagAssignmentQueryRepository extends BaseTaskTagAssignmentR
   java.util.Optional<TaskTagAssignment> findByTaskIdAndTagId(
       @Param("taskId") Long taskId,
       @Param("tagId") Long tagId);
+
+  /**
+   * FAITHFUL-Projektion der EXTERNALIDs aller aktiv zugeordneten Tags einer Aufgabe (per-Task
+   * Read-Contract, {@code TaskDetailService}). JOIN TASK_TAG_ASSIGNMENT -> TASK_TAG ueber die interne
+   * ID; liefert die Tag-UUID (als String) fuer JEDE aktive Zuordnung, UNABHAENGIG vom Status
+   * ({@code ACTIVE}/{@code DEACTIVE}) oder der Katalog-Visibility des Tags. So geht KEIN zugeordneter
+   * Tag im Detail verloren (kein stiller Verlust beim Read-modify-write); die Konfliktpruefung
+   * (inaktiv/abgelaufen) bleibt beim PATCH ({@code findActiveByUuid}).
+   *
+   * <p>Bewusst KEINE Katalog-Visibility- und KEINE Status-/Gueltigkeitsfilterung auf {@code tag} -
+   * die Autorisierung erfolgt auf Task-Ebene (TASK_READ + Tenant + aktive Aufgabe), nicht als
+   * Katalog-Browsing. Nur die Assignment-Seite ist tenant-scoped ({@code a.TENANT_ID = :tenantId});
+   * {@code tag.TENANT_ID = 0} ist der feste globale Dictionary-Scope. Genau EIN gebundener
+   * {@code :taskId}-Parameter (plus auto-{@code :tenantId}) -> kein SQL-Parameterlimit-Risiko bei
+   * vielen Zuordnungen.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @return EXTERNALIDs (UUID-Strings) der aktiv zugeordneten Tags (beliebige Reihenfolge)
+   */
+  @NovaQuery(
+      value =
+          "SELECT tag.EXTERNALID FROM TASK_TAG_ASSIGNMENT a"
+              + " JOIN TASK_TAG tag ON a.TAG_ID = tag.ID AND tag.TENANT_ID = 0"
+              + " WHERE a.ENTITY_STATUS = 'ACTIVE' AND a.TENANT_ID = :tenantId AND a.TASK_ID = :taskId",
+      mssql =
+          "SELECT tag.EXTERNALID FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+              + " JOIN [dbo].[TASK_TAG] tag ON a.TAG_ID = tag.ID AND tag.TENANT_ID = 0"
+              + " WHERE a.ENTITY_STATUS = 'ACTIVE' AND a.TENANT_ID = :tenantId AND a.TASK_ID = :taskId")
+  List<String> findActiveTagUuidsByTaskId(@Param("taskId") Long taskId);
 }

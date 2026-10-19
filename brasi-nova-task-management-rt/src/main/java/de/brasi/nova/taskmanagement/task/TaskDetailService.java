@@ -3,21 +3,16 @@ package de.brasi.nova.taskmanagement.task;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskHistoryEntry;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
-import de.brasi.nova.taskmanagement.entity.TaskTag;
-import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
-import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
-import io.keel.framework.api.security.tenant.TenantContextHolder;
-import io.keel.framework.api.security.tenant.TenantInfo;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -38,7 +33,6 @@ public class TaskDetailService {
   private final TaskHistoryEntryQueryRepository historyRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
-  private final TaskTagRepository tagRepository;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
 
@@ -48,14 +42,12 @@ public class TaskDetailService {
       final TaskHistoryEntryQueryRepository historyRepository,
       final TaskParticipantQueryRepository participantQueryRepository,
       final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
-      final TaskTagRepository tagRepository,
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.participantQueryRepository = participantQueryRepository;
     this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
-    this.tagRepository = tagRepository;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
   }
@@ -116,24 +108,16 @@ public class TaskDetailService {
             .sorted(Comparator.comparing(UUID::toString))
             .toList();
 
-    // Aktuelle Tag-GUIDs (faithful: alle aktiven Assignments -> interne TAG_IDs -> BULK auf UUID
-    // aufloesen, OHNE Katalog-ACTIVE-Filter, damit ein noch zugeordneter, aber katalog-inaktiver Tag
-    // sichtbar bleibt; Konfliktregel: dessen Resubmit scheitert laut per PATCH, kein stiller Verlust).
-    // Nur die Tag-ID-Aufloesung laeuft im globalen Dictionary-Scope; leere Menge -> kein IN ().
-    final List<Long> assignedTagIds =
-        tagAssignmentQueryRepository.findActiveByTaskId(task.getId()).stream()
-            .map(TaskTagAssignment::getTagId)
-            .toList();
+    // Aktuelle Tag-GUIDs (faithful): EINE JOIN-Projektion liefert die EXTERNALIDs ALLER aktiven
+    // Tag-Zuordnungen - unabhaengig von Katalog-Status/Visibility des Tags -, damit kein zugeordneter
+    // Tag im Detail verloren geht (kein stiller Verlust beim Read-modify-write). Die Konfliktpruefung
+    // (inaktiv/abgelaufen) bleibt beim PATCH (findActiveByUuid -> 400). Nur EIN gebundener :taskId-
+    // Parameter (plus auto-:tenantId) -> kein SQL-Parameterlimit-Risiko bei vielen Zuordnungen.
     final List<UUID> tagIds =
-        assignedTagIds.isEmpty()
-            ? List.of()
-            : TenantContextHolder.runWithTenant(
-                TenantInfo.global(),
-                () ->
-                    tagRepository.findByIdIn(assignedTagIds).stream()
-                        .map(TaskTag::getUuid)
-                        .sorted(Comparator.comparing(UUID::toString))
-                        .toList());
+        tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(task.getId()).stream()
+            .map(UUID::fromString)
+            .sorted(Comparator.comparing(UUID::toString))
+            .toList();
 
     return new TaskDetailModel(
         task.getUuid(),
