@@ -254,9 +254,9 @@ class CommentControllerIT {
             Integer.class,
             taskUuid);
 
-    // Kommentar mit @-Mention posten
-    final String commentText = "Hallo @" + USER_B_LOGIN + ", bitte pruefen.";
-    final String commentBody = om.writeValueAsString(Map.of("text", commentText));
+    // Kommentar mit STRUKTURIERTER Mention posten (Ziel-GUID, NICHT aus dem Text geparst).
+    final String commentBody = om.writeValueAsString(
+        Map.of("text", "Hallo, bitte pruefen.", "mentions", List.of(USER_B_REF)));
     final String commentResponse =
         mvc.perform(
                 post("/api/v1/tasks/" + taskUuid + "/comments")
@@ -414,6 +414,95 @@ class CommentControllerIT {
         .isGreaterThanOrEqualTo(1);
   }
 
+  // ---- IT 3: fremd-tenant Mention-GUID -> KEINE Notification (cross-tenant dicht) ---------------
+
+  @Test
+  @DisplayName(
+      "fremd_tenant_mention_keine_notification:"
+          + " mentions=[USER_C(Tenant B)] -> 201, KEIN TASK_NOTIFICATION-Satz fuer USER_C")
+  void fremd_tenant_mention_keine_notification() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-FremdMention");
+
+    // GUID aus Tenant B -> loest in Tenant A NICHT auf (findActiveByUuids mandanten-scoped)
+    final String body = om.writeValueAsString(
+        Map.of("text", "Fremd-Mention.", "mentions", List.of(USER_C_REF)));
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isCreated());
+
+    final Integer notifForC = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+        Integer.class, taskUuid, USER_C_REF);
+    assertThat(notifForC)
+        .as("fremd-tenant Mention darf KEINE Notification erzeugen (cross-tenant dicht)")
+        .isEqualTo(0);
+  }
+
+  // ---- IT 4: Email-Text OHNE mentions -> KEINE MENTION (kein Text-Parsing mehr) -----------------
+
+  @Test
+  @DisplayName(
+      "email_text_ohne_mentions_keine_notification:"
+          + " Text mit @email aber OHNE mentions-Feld -> 201, KEINE MENTION-Notification")
+  void email_text_ohne_mentions_keine_notification() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-EmailText");
+
+    // Text enthaelt Email-Erwaehnungen, aber KEIN strukturiertes mentions-Feld -> kein Text-Parsing.
+    final String body = om.writeValueAsString(
+        Map.of("text", "Bitte pruefen @" + USER_B_LOGIN + "@brasi.de und foo@bar.de danke."));
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isCreated());
+
+    final Integer mentionNotifs = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND n.TYPE_ID = 404",
+        Integer.class, taskUuid);
+    assertThat(mentionNotifs)
+        .as("ohne strukturierte mentions darf KEINE MENTION aus dem Text entstehen")
+        .isEqualTo(0);
+  }
+
+  // ---- IT 5: mentions=[null] -> HTTP 400 -------------------------------------------------------
+
+  @Test
+  @DisplayName("mentions_null_element_400: {\"mentions\":[null]} -> 400")
+  void mentions_null_element_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-NullMention");
+
+    // null-Element im mentions-Array -> CommentCreateInput-Konstruktor wirft bei der Deserialisierung.
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"text\":\"Test\",\"mentions\":[null]}"))
+        .andExpect(status().isBadRequest());
+  }
+
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test
@@ -458,6 +547,25 @@ class CommentControllerIT {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
         .build();
+  }
+
+  /** Legt eine Aufgabe via POST /api/v1/tasks an und liefert ihre externe UUID. */
+  private UUID createTask(
+      final MockMvc mvc, final ObjectMapper om, final String token, final String title)
+      throws Exception {
+    final String response =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", title))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(response, com.fasterxml.jackson.databind.JsonNode.class)
+        .get("id")
+        .traverse(om)
+        .readValueAs(UUID.class);
   }
 
   private static String buildJwtWithAuthority(

@@ -9,6 +9,8 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityC
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
@@ -20,9 +22,11 @@ import io.keel.framework.api.validation.EntityValidationException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -54,7 +58,7 @@ public class CommentService {
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
-  private final MentionResolver mentionResolver;
+  private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
 
@@ -65,7 +69,7 @@ public class CommentService {
       final TaskUserStateQueryRepository userStateQueryRepository,
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
-      final MentionResolver mentionResolver,
+      final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
@@ -73,7 +77,7 @@ public class CommentService {
     this.userStateQueryRepository = userStateQueryRepository;
     this.notificationService = notificationService;
     this.inboxSignalService = inboxSignalService;
-    this.mentionResolver = mentionResolver;
+    this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
   }
@@ -161,8 +165,20 @@ public class CommentService {
       }
     }
 
-    // Mentions aufloesen und MENTION-Benachrichtigungen emittieren
-    final List<UUID> mentionRefs = mentionResolver.resolve(input.text());
+    // Mentions: explizite Ziel-GUIDs des Clients (NICHT aus dem Text geparst). Deduplizieren +
+    // mandanten-scoped auf AKTIVE Benutzer validieren (findActiveByUuids -> fremd-tenant-/inaktive
+    // GUIDs loesen NICHT auf = kein Cross-Tenant-Leak); nicht aufloesbare GUIDs still verwerfen
+    // (best-effort: eine kaputte Mention darf den Kommentar nicht scheitern lassen).
+    final List<UUID> mentionRefs;
+    if (input.mentions().isEmpty()) {
+      mentionRefs = List.of();
+    } else {
+      final Set<UUID> dedupedMentions = new LinkedHashSet<>(input.mentions());
+      mentionRefs =
+          userReadRepository.findActiveByUuids(dedupedMentions).stream()
+              .map(User::getUuid)
+              .toList();
+    }
     final UUID finalReplyRecipient = replyRecipient;
     for (final UUID mentionRef : mentionRefs) {
       // Selbst-Notify ausschliessen + Deduplizierung: wer REPLY bekommt, bekommt kein MENTION

@@ -255,7 +255,7 @@ class TaskWebSocketHandlerIT {
       awaitRegistered(USER_B_REF);
 
       // Mention @user-b-wsctl -> MENTION-Notification an B (committet) -> Push an B-Session
-      postComment(tokenA, taskId, "Bitte pruefen @" + USER_B_LOGIN + " danke.");
+      postComment(tokenA, taskId, "Bitte pruefen.", USER_B_REF);
 
       final JsonNode frame = awaitFrame(b, 5);
       assertThat(frame.get("type").asText()).isEqualTo(NotificationPushEnvelope.TYPE_NOTIFICATION);
@@ -287,7 +287,7 @@ class TaskWebSocketHandlerIT {
       awaitRegistered(USER_B_REF);
 
       // Echtes, committetes MENTION-Notification-Event fuer B -> Push WIRD GEGATET (kein Frame).
-      postComment(tokenA, taskId, "Bitte pruefen @" + USER_B_LOGIN + " danke.");
+      postComment(tokenA, taskId, "Bitte pruefen.", USER_B_REF);
 
       // Positiv-Kontrolle: committete task-level Invalidierung fuer B -> MUSS ankommen.
       final TransactionTemplate tx = new TransactionTemplate(transactionManager);
@@ -513,14 +513,27 @@ class TaskWebSocketHandlerIT {
     return UUID.fromString(readJson(resp.getBody()).get("id").asText());
   }
 
-  private void postComment(final String token, final UUID taskId, final String text) {
+  private void postComment(
+      final String token, final UUID taskId, final String text, final UUID... mentions) {
+    final StringBuilder body = new StringBuilder("{\"text\":\"").append(text).append("\"");
+    if (mentions.length > 0) {
+      body.append(",\"mentions\":[");
+      for (int i = 0; i < mentions.length; i++) {
+        if (i > 0) {
+          body.append(",");
+        }
+        body.append("\"").append(mentions[i]).append("\"");
+      }
+      body.append("]");
+    }
+    body.append("}");
     final ResponseEntity<String> resp =
         rest()
             .post()
             .uri("/api/v1/tasks/" + taskId + "/comments")
             .header("Authorization", "Bearer " + token)
             .contentType(MediaType.APPLICATION_JSON)
-            .body("{\"text\":\"" + text + "\"}")
+            .body(body.toString())
             .retrieve()
             .toEntity(String.class);
     assertThat(resp.getStatusCode().value()).isEqualTo(201);

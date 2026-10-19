@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
@@ -18,6 +19,8 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityC
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
@@ -31,6 +34,8 @@ import io.keel.framework.api.validation.EntityValidationException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -52,12 +57,13 @@ import org.mockito.quality.Strictness;
  * <p>TDD-Rationale: beweist die Kern-Invarianten fuer Kommentar-Erstellung:
  * <ol>
  *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT + save(task) + 1 Kommentar gespeichert + invalidate
- *   <li>Mention-Benachrichtigungen werden korrekt emittiert
+ *   <li>MENTION-Benachrichtigungen aus den EXPLIZITEN Ziel-GUIDs des Clients (NICHT aus dem Text),
+ *       mandanten-scoped auf aktive Benutzer validiert; nicht aufloesbare GUIDs still verworfen
  *   <li>REPLY-Benachrichtigung an Eltern-Autor
- *   <li>Deduplizierung: Eltern-Autor erhaelt nur REPLY, nicht zusaetzlich MENTION
+ *   <li>Deduplizierung: Eltern-Autor erhaelt nur REPLY, nicht zusaetzlich MENTION; doppelte GUID -> 1x
  *   <li>Kein Selbst-Notify
  *   <li>404 bei unbekannter Aufgabe
- *   <li>400 bei leerem Text / ungueltigem Eltern-Kommentar
+ *   <li>400 bei leerem Text / ungueltigem Eltern-Kommentar / null-Element in mentions
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
@@ -69,13 +75,14 @@ class CommentServiceTest {
   private static final UUID ACTOR_REF = UUID.randomUUID();
   private static final UUID ALICE_UUID = UUID.randomUUID();
   private static final UUID BOB_UUID = UUID.randomUUID();
+  private static final UUID GHOST_UUID = UUID.randomUUID();
 
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskCommentRepository commentRepository;
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private NotificationService notificationService;
   @Mock private InboxSignalService inboxSignalService;
-  @Mock private MentionResolver mentionResolver;
+  @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
 
   private CommentService service;
@@ -88,7 +95,7 @@ class CommentServiceTest {
         userStateQueryRepository,
         notificationService,
         inboxSignalService,
-        mentionResolver,
+        userReadRepository,
         userAccessor,
         new AuditTimeConverter("Europe/Berlin"));
 
@@ -111,7 +118,7 @@ class CommentServiceTest {
   @Test
   @DisplayName(
       "kommentar_zaehlt_hoch_und_setzt_aktivitaet: commentCount+1 + lastActivityAt"
-          + " + save(task) + 1 Kommentar + invalidate")
+          + " + save(task) + 1 Kommentar + invalidate; keine mentions -> kein User-Lookup")
   void kommentar_zaehlt_hoch_und_setzt_aktivitaet() {
     final Long taskId = 42L;
     final UUID taskUuid = UUID.randomUUID();
@@ -131,10 +138,7 @@ class CommentServiceTest {
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(List.of(state1));
 
-    // Keine Mentions
-    when(mentionResolver.resolve(any())).thenReturn(List.of());
-
-    final CommentCreateInput input = new CommentCreateInput("Einfacher Kommentar.", null);
+    final CommentCreateInput input = new CommentCreateInput("Einfacher Kommentar.", null, List.of());
     final CommentModel model = service.createComment(taskUuid, input);
 
     // Kommentar gespeichert
@@ -162,6 +166,9 @@ class CommentServiceTest {
     verify(notificationService, never()).emit(
         any(), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
 
+    // Leere mentions -> gar kein User-Lookup (fail-fast / kein unnoetiger Repo-Call)
+    verifyNoInteractions(userReadRepository);
+
     // Invalidate aufgerufen
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
@@ -176,11 +183,12 @@ class CommentServiceTest {
     assertThat(model.edited()).isFalse();
   }
 
-  // ---- Test 2: Mention-Benachrichtigung ----------------------------------------------------------
+  // ---- Test 2: Mention-Benachrichtigung aus expliziten GUIDs (unaufloesbare verworfen) ----------
 
   @Test
   @DisplayName(
-      "mention_emittiert_mention_notification: @alice @bob @ghost -> 2 MENTION-Emits (alice+bob)")
+      "mention_emittiert_mention_notification: mentions=[alice,bob,ghost],"
+          + " ghost nicht aufloesbar -> genau 2 MENTION-Emits (alice+bob)")
   void mention_emittiert_mention_notification() {
     final Long taskId = 43L;
     final UUID taskUuid = UUID.randomUUID();
@@ -196,33 +204,89 @@ class CommentServiceTest {
     when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
-    // alice und bob aufloesbar, ghost nicht
-    when(mentionResolver.resolve("Hallo @alice @bob und @ghost."))
-        .thenReturn(List.of(ALICE_UUID, BOB_UUID));
+    // alice + bob loesen auf, ghost NICHT (nicht im Ergebnis von findActiveByUuids)
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ALICE_UUID), userWith(BOB_UUID)));
 
-    service.createComment(taskUuid, new CommentCreateInput("Hallo @alice @bob und @ghost.", null));
+    service.createComment(
+        taskUuid,
+        new CommentCreateInput(
+            "Hallo zusammen.", null, List.of(ALICE_UUID, BOB_UUID, GHOST_UUID)));
 
-    // Genau 2 MENTION-Notifications
+    // Genau 2 MENTION-Notifications (alice + bob); ghost still verworfen
     verify(notificationService, times(1)).emit(
-        eq(ALICE_UUID),
-        eq(taskId),
-        eq(NotificationTypeCodes.MENTION),
-        eq(NotificationSeverityCodes.INFO),
-        any(),
-        any(),
-        eq(ACTOR_REF));
+        eq(ALICE_UUID), eq(taskId), eq(NotificationTypeCodes.MENTION),
+        eq(NotificationSeverityCodes.INFO), any(), any(), eq(ACTOR_REF));
     verify(notificationService, times(1)).emit(
-        eq(BOB_UUID),
-        eq(taskId),
-        eq(NotificationTypeCodes.MENTION),
-        eq(NotificationSeverityCodes.INFO),
-        any(),
-        any(),
-        eq(ACTOR_REF));
+        eq(BOB_UUID), eq(taskId), eq(NotificationTypeCodes.MENTION),
+        eq(NotificationSeverityCodes.INFO), any(), any(), eq(ACTOR_REF));
+    verify(notificationService, never()).emit(
+        eq(GHOST_UUID), any(), any(), any(), any(), any(), any());
 
     // Keine REPLY-Notification
     verify(notificationService, never()).emit(
         any(), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
+  }
+
+  // ---- Test 2b: unaufloesbare/fremd-tenant GUID -> verworfen, Kommentar trotzdem angelegt -------
+
+  @Test
+  @DisplayName(
+      "unaufloesbare_mention_verworfen_kommentar_bleibt: mentions=[bob] loest NICHT auf"
+          + " -> keine MENTION, Kommentar dennoch gespeichert")
+  void unaufloesbare_mention_verworfen_kommentar_bleibt() {
+    final Long taskId = 51L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(LocalDateTime.now());
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    // Nicht aufloesbar (z.B. fremder Tenant / inaktiv) -> leeres Ergebnis
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of());
+
+    final CommentModel model =
+        service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of(BOB_UUID)));
+
+    assertThat(model).isNotNull();
+    verify(commentRepository).save(any(TaskComment.class));
+    verify(notificationService, never()).emit(
+        any(), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+  }
+
+  // ---- Test 2c: doppelte GUID -> genau eine MENTION ---------------------------------------------
+
+  @Test
+  @DisplayName("doppelte_mention_guid_ein_notify: mentions=[alice,alice] -> genau 1 MENTION an alice")
+  void doppelte_mention_guid_ein_notify() {
+    final Long taskId = 52L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(LocalDateTime.now());
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ALICE_UUID)));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Doppelt.", null, List.of(ALICE_UUID, ALICE_UUID)));
+
+    verify(notificationService, times(1)).emit(
+        eq(ALICE_UUID), eq(taskId), eq(NotificationTypeCodes.MENTION),
+        any(), any(), any(), eq(ACTOR_REF));
   }
 
   // ---- Test 3: REPLY an Eltern-Autor -------------------------------------------------------------
@@ -248,20 +312,14 @@ class CommentServiceTest {
     });
     when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
-    when(mentionResolver.resolve(any())).thenReturn(List.of());
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Antwort auf deinen Kommentar.", parentUuid));
+        taskUuid, new CommentCreateInput("Antwort auf deinen Kommentar.", parentUuid, List.of()));
 
     // 1 REPLY-Notification an Eltern-Autor
     verify(notificationService, times(1)).emit(
-        eq(parentAuthorRef),
-        eq(taskId),
-        eq(NotificationTypeCodes.REPLY),
-        eq(NotificationSeverityCodes.INFO),
-        any(),
-        any(),
-        eq(ACTOR_REF));
+        eq(parentAuthorRef), eq(taskId), eq(NotificationTypeCodes.REPLY),
+        eq(NotificationSeverityCodes.INFO), any(), any(), eq(ACTOR_REF));
 
     // Keine MENTION
     verify(notificationService, never()).emit(
@@ -273,7 +331,7 @@ class CommentServiceTest {
   @Test
   @DisplayName(
       "reply_dedupe_kein_mention_wenn_schon_reply:"
-          + " Eltern-Autor auch @mentioned -> nur REPLY, kein MENTION")
+          + " Eltern-Autor auch in mentions -> nur REPLY, kein MENTION")
   void reply_dedupe_kein_mention_wenn_schon_reply() {
     final Long taskId = 45L;
     final UUID taskUuid = UUID.randomUUID();
@@ -294,23 +352,17 @@ class CommentServiceTest {
     when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
-    // alice ist im Mention-Resolver-Ergebnis (sie ist auch Eltern-Autor)
-    when(mentionResolver.resolve(any())).thenReturn(List.of(ALICE_UUID));
+    // alice ist in den Mentions (sie ist auch Eltern-Autor)
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("@alice danke!", parentUuid));
+        taskUuid, new CommentCreateInput("danke!", parentUuid, List.of(ALICE_UUID)));
 
     // alice bekommt nur REPLY, nicht MENTION
     verify(notificationService, times(1)).emit(
-        eq(ALICE_UUID),
-        eq(taskId),
-        eq(NotificationTypeCodes.REPLY),
-        any(), any(), any(), any());
+        eq(ALICE_UUID), eq(taskId), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
     verify(notificationService, never()).emit(
-        eq(ALICE_UUID),
-        any(),
-        eq(NotificationTypeCodes.MENTION),
-        any(), any(), any(), any());
+        eq(ALICE_UUID), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
   }
 
   // ---- Test 5: kein Selbst-Notify ----------------------------------------------------------------
@@ -339,11 +391,11 @@ class CommentServiceTest {
     when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
-    // Akteur erwaehnt sich selbst
-    when(mentionResolver.resolve(any())).thenReturn(List.of(ACTOR_REF));
+    // Akteur erwaehnt sich selbst (loest auf, wird aber per Self-Notify-Ausschluss gefiltert)
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ACTOR_REF)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("@actor eigene Anmerkung.", parentUuid));
+        taskUuid, new CommentCreateInput("eigene Anmerkung.", parentUuid, List.of(ACTOR_REF)));
 
     // Kein emit an Akteur (weder REPLY noch MENTION)
     verify(notificationService, never()).emit(
@@ -359,7 +411,7 @@ class CommentServiceTest {
 
     assertThatThrownBy(
             () -> service.createComment(
-                UUID.randomUUID(), new CommentCreateInput("Text.", null)))
+                UUID.randomUUID(), new CommentCreateInput("Text.", null, List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -369,13 +421,22 @@ class CommentServiceTest {
   @Test
   @DisplayName("leerer_text_400: Text leer -> EntityValidationException")
   void leerer_text_400() {
-    assertThatThrownBy(() -> new CommentCreateInput("", null))
+    assertThatThrownBy(() -> new CommentCreateInput("", null, List.of()))
         .isInstanceOf(EntityValidationException.class);
 
-    assertThatThrownBy(() -> new CommentCreateInput("   ", null))
+    assertThatThrownBy(() -> new CommentCreateInput("   ", null, List.of()))
         .isInstanceOf(EntityValidationException.class);
 
-    assertThatThrownBy(() -> new CommentCreateInput(null, null))
+    assertThatThrownBy(() -> new CommentCreateInput(null, null, List.of()))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- Test 7b: null-Element in mentions -> 400 (F-P2b-Muster) ---------------------------------
+
+  @Test
+  @DisplayName("mentions_null_element_400: mentions=[null] -> EntityValidationException")
+  void mentions_null_element_400() {
+    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, Arrays.asList((UUID) null)))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -399,7 +460,7 @@ class CommentServiceTest {
 
     assertThatThrownBy(
             () -> service.createComment(
-                taskUuid, new CommentCreateInput("Antwort.", parentUuid)))
+                taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -419,7 +480,8 @@ class CommentServiceTest {
     when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(inactiveParent));
 
     assertThatThrownBy(
-            () -> service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid)))
+            () -> service.createComment(
+                taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -445,10 +507,10 @@ class CommentServiceTest {
     });
     when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
-    when(mentionResolver.resolve(any())).thenReturn(List.of());
 
     final CommentModel model =
-        service.createComment(taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null));
+        service.createComment(
+            taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null, List.of()));
 
     assertThat(model.createdAt()).isEqualTo(expectedInstant);
   }
@@ -487,5 +549,13 @@ class CommentServiceTest {
     state.setTaskId(taskId);
     state.setUserRef(userRef);
     return state;
+  }
+
+  private static User userWith(final UUID uuid) {
+    final User u = new User();
+    u.setId(1L);
+    u.setUuid(uuid);
+    u.setLoginName("test");
+    return u;
   }
 }
