@@ -8,7 +8,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds).
+ * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate).
  *
  * <p>{@link PatchValue#absent()} bedeutet: Feld nicht aendern.
  * {@link PatchValue#of(Object)} bedeutet: Feld auf den angegebenen Wert setzen.
@@ -18,10 +18,15 @@ import java.util.UUID;
  * die aktuelle Ziel-Menge ersetzt die aktuellen aktiven Assignments exakt (R-PATCH).
  * Unbekannte/inaktive Tag-UUIDs fuehren zu HTTP 400 (keine Teil-Anwendung).
  *
+ * <p>{@code startDate} (BE-5): absent = unveraendert; present(date) = setzen;
+ * present(null) = Startdatum loeschen (Spalte nullable). Keine Datumsreihenfolge-Pruefung gegen
+ * {@code dueDate} (konsistent zu Create und dem bestehenden dueDate-PATCH).
+ *
  * @param title      neuer Titel (oder absent)
  * @param dueDate    neues Faelligkeitsdatum (oder absent/null)
  * @param statusCode neuer STATUS-CODE (z.B. "DONE"; oder absent)
  * @param tagIds     neue Tag-UUID-Menge (PUT-Set; oder absent = unberuehrt)
+ * @param startDate  neues Startdatum (oder absent/null)
  */
 public record TaskPatchInput(
     // Hinweis springdoc 2.8.12: PatchValue<T> wird als Wrapper kollabiert/missinterpretiert.
@@ -39,11 +44,16 @@ public record TaskPatchInput(
     @ArraySchema(schema = @Schema(type = "string", format = "uuid",
         description = "UUID eines zugewiesenen Tags."))
     @Schema(description = "Neue Tag-UUID-Menge (PUT-Set-Semantik; absent = unberuehrt).")
-    PatchValue<Set<UUID>> tagIds) {
+    PatchValue<Set<UUID>> tagIds,
+    @Schema(nullable = true,
+        description = "Neues Startdatum ISO 8601 (absent = unveraendert, null = Datum loeschen).",
+        example = "2026-11-01")
+    PatchValue<LocalDate> startDate) {
 
   /** Erzeugt eine leere Patch-Eingabe (alle Felder absent). */
   public static TaskPatchInput empty() {
     return new TaskPatchInput(
-        PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent());
+        PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(),
+        PatchValue.absent());
   }
 }

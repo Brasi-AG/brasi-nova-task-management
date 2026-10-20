@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.task;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +33,7 @@ import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.service.model.PatchValue;
 import io.keel.framework.api.validation.EntityValidationException;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -221,7 +223,7 @@ class TaskCommandServiceTest {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
 
     assertThatThrownBy(
-            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -236,7 +238,7 @@ class TaskCommandServiceTest {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(foreignTask));
 
     assertThatThrownBy(
-            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -272,7 +274,8 @@ class TaskCommandServiceTest {
     service.patch(
         task.getUuid(),
         new TaskPatchInput(
-            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent(), PatchValue.absent()));
+            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(),
+            PatchValue.absent()));
 
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
@@ -314,6 +317,7 @@ class TaskCommandServiceTest {
                     PatchValue.absent(),
                     PatchValue.absent(),
                     PatchValue.of("UNGUELTIG_STATUS"),
+                    PatchValue.absent(),
                     PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNGUELTIG_STATUS");
@@ -332,6 +336,7 @@ class TaskCommandServiceTest {
                     PatchValue.absent(),
                     PatchValue.absent(),
                     PatchValue.of(""),
+                    PatchValue.absent(),
                     PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
@@ -356,7 +361,8 @@ class TaskCommandServiceTest {
                     PatchValue.absent(),
                     PatchValue.absent(),
                     PatchValue.absent(),
-                    PatchValue.of(java.util.Set.of(inactiveTagUuid)))))
+                    PatchValue.of(java.util.Set.of(inactiveTagUuid)),
+                    PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining(inactiveTagUuid.toString());
   }
@@ -380,7 +386,8 @@ class TaskCommandServiceTest {
                     PatchValue.absent(),
                     PatchValue.absent(),
                     PatchValue.absent(),
-                    PatchValue.of(tagIdsWithNull))))
+                    PatchValue.of(tagIdsWithNull),
+                    PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -403,6 +410,7 @@ class TaskCommandServiceTest {
         task.getUuid(),
         new TaskPatchInput(
             PatchValue.of(newLongTitle),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent()));
@@ -436,8 +444,84 @@ class TaskCommandServiceTest {
                     PatchValue.of("   "),
                     PatchValue.absent(),
                     PatchValue.absent(),
+                    PatchValue.absent(),
                     PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- BE-5: PATCH startDate (PatchValue<LocalDate>) -------------------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_startdate_setzen: present(date) -> setStartDate + History 'Startdatum geaendert' + save")
+  void patch_startdate_setzen() {
+    final Long taskId = 85L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setStartDate(null);
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final LocalDate neu = LocalDate.of(2026, 11, 1);
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(neu)));
+
+    assertThat(task.getStartDate()).as("startDate gesetzt").isEqualTo(neu);
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Startdatum geaendert"), any());
+    verify(taskRepository).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_startdate_loeschen: present(null) -> setStartDate(null) + History + save")
+  void patch_startdate_loeschen() {
+    final Long taskId = 86L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setStartDate(LocalDate.of(2026, 1, 15));
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.ofNull()));
+
+    assertThat(task.getStartDate()).as("startDate geloescht (null)").isNull();
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Startdatum geaendert"), any());
+    verify(taskRepository).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_nur_startdate_absent_ist_noop: alle Felder absent -> kein setStartDate, keine History,"
+          + " KEIN save, KEIN invalidate (changed-Guard)")
+  void patch_nur_startdate_absent_ist_noop() {
+    final Long taskId = 87L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    final LocalDate vorher = LocalDate.of(2026, 3, 20);
+    task.setStartDate(vorher);
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    service.patch(task.getUuid(), TaskPatchInput.empty());
+
+    assertThat(task.getStartDate()).as("startDate unveraendert").isEqualTo(vorher);
+    verify(historyService, never())
+        .record(any(), any(), any(), eq("Startdatum geaendert"), any());
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
   // ---- Surrogat-sichere Truncation (Codex Re-Gate 93781f4, Finding #1) --------------------

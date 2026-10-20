@@ -232,6 +232,22 @@ public class TaskCommandService {
       changed = true;
     }
 
+    // startDate (BE-5): present(date) = setzen, present(null) = loeschen; absent = unberuehrt.
+    // Semantik gespiegelt zu dueDate (keine Gleichheitspruefung: ein praesenter Wert erzeugt bewusst
+    // History/Save/Invalidate, auch wenn er dem Ist-Wert gleicht). Keine startDate<=dueDate-Pruefung
+    // (konsistent zu Create und dem dueDate-PATCH).
+    if (input.startDate().isPresent()) {
+      final java.time.LocalDate newStartDate = input.startDate().get();
+      historyService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          "Startdatum geaendert",
+          task.getStartDate() + " -> " + newStartDate);
+      task.setStartDate(newStartDate);
+      changed = true;
+    }
+
     // statusCode: Client-Eingabe validieren -> unbekannt/leer -> 400
     if (input.statusCode().isPresent()) {
       final String newStatusCode = input.statusCode().get();

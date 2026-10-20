@@ -702,6 +702,65 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- BE-5: PATCH startDate (set / clear / absent) -------------------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_startdate_set_clear: PATCH startDate=2026-11-01 -> Detail.startDate gesetzt + History;"
+          + " PATCH startDate=null -> Detail.startDate null (DB START_DATE null); absent = No-Op")
+  void patch_startdate_set_clear() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE5-StartDate");
+
+    // 1. Setzen
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("startDate", "2026-11-01"))))
+        .andExpect(status().isNoContent());
+
+    final com.fasterxml.jackson.databind.JsonNode afterSet = getDetail(mvc, om, tokenA, taskId);
+    assertThat(afterSet.get("startDate").asText())
+        .as("Detail.startDate gesetzt").isEqualTo("2026-11-01");
+    boolean startDateHistory = false;
+    for (final com.fasterxml.jackson.databind.JsonNode h : afterSet.get("history")) {
+      if ("Startdatum geaendert".equals(h.path("text").asText())
+          && h.path("changeDetail").asText().contains("2026-11-01")) {
+        startDateHistory = true;
+        break;
+      }
+    }
+    assertThat(startDateHistory)
+        .as("History-Eintrag 'Startdatum geaendert' mit Neuwert 2026-11-01 vorhanden").isTrue();
+
+    // 2. Absent = No-Op: ein PATCH ohne startDate aendert das Startdatum nicht.
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", "BE5-StartDate-umbenannt"))))
+        .andExpect(status().isNoContent());
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("startDate").asText())
+        .as("startDate durch startDate-absenten PATCH unveraendert").isEqualTo("2026-11-01");
+
+    // 3. Loeschen via rohem JSON (Map.of akzeptiert keinen null-Wert)
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"startDate\":null}"))
+        .andExpect(status().isNoContent());
+
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("startDate").isNull())
+        .as("Detail.startDate null nach Loeschen").isTrue();
+    final Integer startDateNull = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE EXTERNALID = ? AND START_DATE IS NULL",
+        Integer.class, taskId);
+    assertThat(startDateNull).as("DB START_DATE ist NULL nach Loeschen").isEqualTo(1);
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
