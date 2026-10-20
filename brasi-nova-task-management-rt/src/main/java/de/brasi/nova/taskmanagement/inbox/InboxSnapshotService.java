@@ -1,7 +1,11 @@
 package de.brasi.nova.taskmanagement.inbox;
 
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveTotals;
+import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
@@ -13,6 +17,10 @@ import de.brasi.nova.taskmanagement.participant.model.ParticipantSummary;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagUuidRow;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.tag.TagCatalogService;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
@@ -22,33 +30,43 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 /**
  * Lese-Service fuer den Inbox-Bootstrap-Snapshot sowie die aktive/Archiv-Fortsetzungs-Reads
- * (arch-v2 §2.1/§3, plan-v3 Task 14).
+ * (arch-v2 §2.1/§3, plan-v3 Task 14, BE-1 Read-Enrichment).
  *
  * <p>Alle Reads sind benutzer-scoped ({@code userRef} aus dem Security-Context, nie aus
  * Clientdaten) und laufen im Request-Mandanten-Kontext (vom KSF-Filter gesetzt). Es gibt EIN
  * {@code asOf}-Wasserzeichen je Scroll: der Snapshot erzeugt es, die Folge-Reads tragen es im
  * Cursor weiter ({@code LAST_ACTIVITY_AT <= :asOf}).
  *
+ * <p><b>BE-1 Read-Enrichment (keyset-then-enrich):</b> Nach der geordneten Keyset-Seite wird die
+ * Seite EINMALIG per Batch-Querys angereichert (Ersteller/Erstellzeit/Beschreibung,
+ * Assignees/Teilnehmer/Tags pro Zeile, persoenliche Marker, {@code isDone}, Archiv-{@code exit}) -
+ * konstante Query-Zahl pro Seite, kein N+1. Die Anreicherung laeuft INNERHALB des
+ * Generation-Brackets VOR dem abschliessenden Generation-Read, damit das asOf-gebundene
+ * {@code exit}-Praedikat des Anfragers unter derselben Invariante wie die Seiten-Sichtbarkeit
+ * ermittelt wird (SPEC O-1/O-2).
+ *
  * <p><b>Snapshot-Rejection (Finding 2 / Option B):</b> Membership-Zustandsfelder
  * ({@code UNSUBSCRIBED_AT}/{@code EXIT_KIND}/{@code EXIT_AT}) werden destruktiv ueberschrieben und
  * brechen die asOf-Invariante. Jeder Cursor traegt zusaetzlich die {@code GENERATION}
  * ({@link InboxGenerationService}) des Anfragers, unter der sein Snapshot erzeugt wurde:
  * <ul>
- *   <li><b>Folgeseite (Cursor):</b> Page-Query ZUERST, Generation DANACH lesen; weicht sie ab ->
- *       {@link SnapshotExpiredException} (HTTP 410), der Client re-bootstrapt (check-AFTER).
+ *   <li><b>Folgeseite (Cursor):</b> Page-Query + Anreicherung ZUERST, Generation DANACH lesen;
+ *       weicht sie ab -> {@link SnapshotExpiredException} (HTTP 410), der Client re-bootstrapt
+ *       (check-AFTER).
  *   <li><b>First-Page/Bootstrap (kein Cursor):</b> Generation-Bracket mit Retry — Generation lesen,
- *       membership-abhaengige Assembly mit frischem {@code asOf}, Generation erneut lesen; nur bei
- *       Stabilitaet ({@code g1 == g2}) wird die Generation in den Cursor gestempelt, sonst Retry.
- *       Nach {@code MAX_SNAPSHOT_ATTEMPTS} -> 410 (seltene sichere Degradation statt Mischantwort).
+ *       membership-abhaengige Assembly + Anreicherung mit frischem {@code asOf}, Generation erneut
+ *       lesen; nur bei Stabilitaet ({@code g1 == g2}) wird die Generation in den Cursor gestempelt,
+ *       sonst Retry. Nach {@code MAX_SNAPSHOT_ATTEMPTS} -> 410.
  * </ul>
  * Die Generation-Invariante deckt NUR die requester-gescopten, asOf-gebundenen Querys (aktive Seite
- * + Archiv-Counts). {@code participantSummaries} zeigen bewusst den LIVE-Teilnehmerstand und werden
- * ueber den Push-Invalidate-Kanal aktuell gehalten, nicht ueber Cursor/Generation.
+ * + Archiv-Counts + Anreicherung). {@code participantSummaries} zeigen bewusst den LIVE-Teilnehmerstand
+ * und werden ueber den Push-Invalidate-Kanal aktuell gehalten, nicht ueber Cursor/Generation.
  *
  * <p><b>Cursor:</b> opaker 4-Token-{@link KeysetCursor} ({@code asOf, lastActivityAt, externalId,
  * generation}), ohne HMAC. Limit wird auf {@code [1,100]} geclampt (Default 50).
@@ -85,6 +103,10 @@ public class InboxSnapshotService {
   private static final UUID MAX_UUID = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
   private final TaskKeysetQueryRepository taskQueryRepository;
+  private final TaskParticipantQueryRepository participantQueryRepository;
+  private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final InboxEnrichmentAssembler enrichmentAssembler;
   private final NotificationQueryService notificationQueryService;
   private final TagCatalogService tagCatalogService;
   private final UserReadRepository userReadRepository;
@@ -95,6 +117,10 @@ public class InboxSnapshotService {
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public InboxSnapshotService(
       final TaskKeysetQueryRepository taskQueryRepository,
+      final TaskParticipantQueryRepository participantQueryRepository,
+      final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
+      final TaskUserStateQueryRepository userStateQueryRepository,
+      final InboxEnrichmentAssembler enrichmentAssembler,
       final NotificationQueryService notificationQueryService,
       final TagCatalogService tagCatalogService,
       final UserReadRepository userReadRepository,
@@ -102,6 +128,10 @@ public class InboxSnapshotService {
       final AuditTimeConverter auditTimeConverter,
       final InboxGenerationService inboxGenerationService) {
     this.taskQueryRepository = taskQueryRepository;
+    this.participantQueryRepository = participantQueryRepository;
+    this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
+    this.userStateQueryRepository = userStateQueryRepository;
+    this.enrichmentAssembler = enrichmentAssembler;
     this.notificationQueryService = notificationQueryService;
     this.tagCatalogService = tagCatalogService;
     this.userReadRepository = userReadRepository;
@@ -116,17 +146,16 @@ public class InboxSnapshotService {
    * <p>Ein frisches {@code asOf}-Wasserzeichen wird erzeugt und an die aktive Aufgabenseite UND die
    * Archiv-Zaehlungen durchgereicht, damit {@code snapshot.asOf == tasks.asOf} und die Zaehler
    * konsistent zum selben Zeitpunkt sind. Die requester-membership-abhaengigen Querys (aktive Seite
-   * + Archiv-Counts) laufen im Generation-Bracket mit Retry (siehe Klassen-Javadoc).
+   * + Archiv-Counts + Anreicherung) laufen im Generation-Bracket mit Retry (siehe Klassen-Javadoc).
    * Notifications = erste Seite (all), Tags = globaler Katalog, participantSummaries = distinkte
-   * (LIVE-)Teilnehmer der Aufgaben dieser aktiven Seite.
+   * (LIVE-)Teilnehmer der Aufgaben dieser aktiven Seite, {@code currentUserId} = Anfrager.
    *
    * @param userRef  UUID des Benutzers (aus Security-Context)
    * @param tenantId interne Mandanten-ID (aus Security-Context)
    * @param notificationsVisible {@code true}, wenn der Aufrufer die Permission
    *     {@code task-management:NOTIFICATION_READ} besitzt (vom Controller als Autz-Grenze
    *     ausgewertet). Bei {@code false} wird die Notification-Seite NICHT geladen, sondern als
-   *     leere Seite zurueckgegeben (fail-closed) - NOTIFICATION_READ gatet die Notification-Nutzlast
-   *     im Bootstrap-Snapshot konsistent zum dedizierten {@code GET /api/v1/notifications}.
+   *     leere Seite zurueckgegeben (fail-closed).
    * @return aufgebauter {@link InboxSnapshotModel}
    * @throws SnapshotExpiredException (HTTP 410) wenn unter anhaltender Membership-Aenderung kein
    *     konsistenter Snapshot erzeugt werden konnte
@@ -138,7 +167,8 @@ public class InboxSnapshotService {
     final Long doneId = resolver.resolveTaskStatusDone();
     final Long cancelledId = resolver.resolveTaskStatusCancelled();
 
-    // Generation-Bracket um die requester-membership-abhaengigen Querys (aktive Seite + Counts).
+    // Generation-Bracket um die requester-membership-abhaengigen Querys (aktive Seite + Counts +
+    // Anreicherung). Die Anreicherung laeuft VOR dem abschliessenden Generation-Read (g2).
     BootstrapMembership membership = null;
     for (int attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt++) {
       final long g1 = inboxGenerationService.currentGeneration(userRef);
@@ -151,9 +181,13 @@ public class InboxSnapshotService {
               taskQueryRepository.countArchiveAll(userRef, doneId, cancelledId, asOf),
               taskQueryRepository.countArchiveDone(userRef, doneId, cancelledId, asOf),
               taskQueryRepository.countArchiveLeft(userRef, asOf));
+      final boolean hasMore = rawActive.size() > effLimit;
+      final List<Task> pageTasks = hasMore ? rawActive.subList(0, effLimit) : rawActive;
+      final Map<Long, TaskEnrichment> enrichment = enrich(pageTasks, userRef, asOf);
       final long g2 = inboxGenerationService.currentGeneration(userRef);
       if (g1 == g2) {
-        membership = new BootstrapMembership(asOf, rawActive, archiveTotals, g1);
+        membership =
+            new BootstrapMembership(asOf, pageTasks, hasMore, archiveTotals, g1, enrichment);
         break;
       }
     }
@@ -162,15 +196,14 @@ public class InboxSnapshotService {
     }
 
     // Stabiler requester-Stand -> aktive Seite bauen (Generation stempeln).
-    final boolean hasMore = membership.rawActive().size() > effLimit;
-    final List<Task> pageTasks =
-        hasMore ? membership.rawActive().subList(0, effLimit) : membership.rawActive();
     final Instant asOfInstant = auditTimeConverter.toInstant(membership.asOf());
     final KeysetPage<TaskSummaryModel> tasks =
         new KeysetPage<>(
-            pageTasks.stream().map(this::toSummary).toList(),
-            hasMore ? encodeCursor(membership.asOf(), membership.generation(), pageTasks) : null,
-            hasMore,
+            enrichedSummaries(membership.pageTasks(), membership.enrichment()),
+            membership.hasMore()
+                ? encodeCursor(membership.asOf(), membership.generation(), membership.pageTasks())
+                : null,
+            membership.hasMore(),
             asOfInstant);
 
     // LIVE-Teile ausserhalb der Generation-Invariante (siehe Klassen-Javadoc):
@@ -181,10 +214,17 @@ public class InboxSnapshotService {
             ? notificationQueryService.listFor(userRef, tenantId, FILTER_ALL, null, effLimit)
             : new NotificationPage(List.of(), null, false);
     final List<TagModel> tags = tagCatalogService.list();
-    final List<ParticipantSummary> participantSummaries = participantSummariesFor(pageTasks);
+    final List<ParticipantSummary> participantSummaries =
+        participantSummariesFor(membership.pageTasks());
 
     return new InboxSnapshotModel(
-        asOfInstant, tasks, notifications, tags, participantSummaries, membership.archiveTotals());
+        asOfInstant,
+        userRef,
+        tasks,
+        notifications,
+        tags,
+        participantSummaries,
+        membership.archiveTotals());
   }
 
   /**
@@ -270,38 +310,70 @@ public class InboxSnapshotService {
   private record Window(
       LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId, long generation) {}
 
-  /** Stabiler requester-Membership-Stand aus dem Bootstrap-Bracket. */
+  /** Stabiler requester-Membership-Stand aus dem Bootstrap-Bracket (inkl. Anreicherung). */
   private record BootstrapMembership(
-      LocalDateTime asOf, List<Task> rawActive, ArchiveTotals archiveTotals, long generation) {}
+      LocalDateTime asOf,
+      List<Task> pageTasks,
+      boolean hasMore,
+      ArchiveTotals archiveTotals,
+      long generation,
+      Map<Long, TaskEnrichment> enrichment) {}
 
   /**
    * Einheitlicher Seiten-Read: First-Page (kein Cursor) via Generation-Bracket mit Retry;
-   * Folgeseite (Cursor) via check-AFTER -> 410 bei Generation-Mismatch.
+   * Folgeseite (Cursor) via check-AFTER -> 410 bei Generation-Mismatch. Die Batch-Anreicherung der
+   * Seite laeuft in beiden Pfaden VOR dem abschliessenden Generation-Read.
    */
   private KeysetPage<TaskSummaryModel> readPage(
       final UUID userRef, final String cursor, final int effLimit, final PageFetch fetch) {
     if (cursor == null || cursor.isBlank()) {
-      // First-Page: Generation-Bracket. Die einzige membership-Query ist die Seite selbst.
+      // First-Page: Generation-Bracket. Seiten-Query + Anreicherung, dann Generation-Re-Read.
       for (int attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt++) {
         final long g1 = inboxGenerationService.currentGeneration(userRef);
         final LocalDateTime asOf = now();
         final List<Task> raw = fetch.fetch(asOf, asOf, MAX_UUID);
+        final boolean hasMore = raw.size() > effLimit;
+        final List<Task> page = hasMore ? raw.subList(0, effLimit) : raw;
+        final Map<Long, TaskEnrichment> enrichment = enrich(page, userRef, asOf);
         final long g2 = inboxGenerationService.currentGeneration(userRef);
         if (g1 == g2) {
-          return buildTaskPage(raw, asOf, g1, effLimit);
+          return assemblePage(page, hasMore, asOf, g1, enrichment);
         }
       }
       throw new SnapshotExpiredException();
     }
 
-    // Folgeseite: Page-Query ZUERST, Generation DANACH (check-AFTER).
+    // Folgeseite: Page-Query + Anreicherung ZUERST, Generation DANACH (check-AFTER).
     final Window window = decodeWindow(cursor);
     final List<Task> raw = fetch.fetch(window.asOf(), window.lastActivityAt(), window.externalId());
+    final boolean hasMore = raw.size() > effLimit;
+    final List<Task> page = hasMore ? raw.subList(0, effLimit) : raw;
+    final Map<Long, TaskEnrichment> enrichment = enrich(page, userRef, window.asOf());
     final long current = inboxGenerationService.currentGeneration(userRef);
     if (current != window.generation()) {
       throw new SnapshotExpiredException();
     }
-    return buildTaskPage(raw, window.asOf(), window.generation(), effLimit);
+    return assemblePage(page, hasMore, window.asOf(), window.generation(), enrichment);
+  }
+
+  /**
+   * Fuehrt die drei Batch-Anreicherungs-Querys EINMALIG fuer die (fixe) Seite aus und delegiert an
+   * den {@link InboxEnrichmentAssembler}. Leere Seite -> KEINE Query (schuetzt vor MSSQL
+   * {@code IN ()}-Syntaxfehler), leere Map. Konstante Query-Zahl pro Seite (kein N+1).
+   */
+  private Map<Long, TaskEnrichment> enrich(
+      final List<Task> pageTasks, final UUID userRef, final LocalDateTime asOf) {
+    if (pageTasks.isEmpty()) {
+      return Map.of();
+    }
+    final List<Long> taskIds = pageTasks.stream().map(Task::getId).toList();
+    final List<TaskParticipant> participantRows =
+        participantQueryRepository.findActiveByTaskIds(taskIds);
+    final List<TaskTagUuidRow> tagRows =
+        tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(taskIds);
+    final List<TaskUserState> actorStateRows =
+        userStateQueryRepository.findByTaskIdsAndUserRef(taskIds, userRef);
+    return enrichmentAssembler.assemble(taskIds, participantRows, tagRows, actorStateRows, userRef, asOf);
   }
 
   /**
@@ -322,17 +394,24 @@ public class InboxSnapshotService {
     }
   }
 
-  /** Baut die Seite aus dem {@code limit+1}-Rohergebnis (hasMore + nextCursor + Mapping). */
-  private KeysetPage<TaskSummaryModel> buildTaskPage(
-      final List<Task> raw, final LocalDateTime asOf, final long generation, final int effLimit) {
-    final boolean hasMore = raw.size() > effLimit;
-    final List<Task> page = hasMore ? raw.subList(0, effLimit) : raw;
+  /** Baut die Seite (Mapping mit Anreicherung + hasMore + nextCursor) aus der FIXEN Seite. */
+  private KeysetPage<TaskSummaryModel> assemblePage(
+      final List<Task> page,
+      final boolean hasMore,
+      final LocalDateTime asOf,
+      final long generation,
+      final Map<Long, TaskEnrichment> enrichment) {
     final String nextCursor = hasMore ? encodeCursor(asOf, generation, page) : null;
     return new KeysetPage<>(
-        page.stream().map(this::toSummary).toList(),
-        nextCursor,
-        hasMore,
-        auditTimeConverter.toInstant(asOf));
+        enrichedSummaries(page, enrichment), nextCursor, hasMore, auditTimeConverter.toInstant(asOf));
+  }
+
+  /** Mappt die Seiten-Aufgaben mit ihrer Anreicherung auf {@link TaskSummaryModel}. */
+  private List<TaskSummaryModel> enrichedSummaries(
+      final List<Task> page, final Map<Long, TaskEnrichment> enrichment) {
+    return page.stream()
+        .map(t -> toEnrichedSummary(t, enrichment.getOrDefault(t.getId(), TaskEnrichment.EMPTY)))
+        .toList();
   }
 
   /** Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation. */
@@ -347,16 +426,37 @@ public class InboxSnapshotService {
             Long.toString(generation)));
   }
 
-  /** Mappt eine {@link Task} auf das kompakte {@link TaskSummaryModel} (CODEs + Instant). */
-  private TaskSummaryModel toSummary(final Task task) {
+  /**
+   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das angereicherte
+   * {@link TaskSummaryModel} (CODEs + Instant + Anreicherungsfelder).
+   */
+  private TaskSummaryModel toEnrichedSummary(final Task task, final TaskEnrichment e) {
+    final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
+    final ExitModel exit = e.exitKind() == null ? null : new ExitModel(e.exitKind());
     return new TaskSummaryModel(
         task.getUuid(),
         task.getTitle(),
-        resolver.resolveTaskStatusCode(task.getTaskStatusId()),
+        statusCode,
         resolver.resolveTaskPriorityCode(task.getPriorityId()),
         task.getDueDate(),
         auditTimeConverter.toInstant(task.getLastActivityAt()),
-        task.getCommentCount());
+        task.getCommentCount(),
+        e.createdById(),
+        auditTimeConverter.toInstant(task.getCreatedAt()),
+        task.getDescription(),
+        e.assigneeIds(),
+        e.participantIds(),
+        e.tagIds(),
+        e.isPinned(),
+        e.isFlagged(),
+        e.isMuted(),
+        isDoneStatus(statusCode),
+        exit);
+  }
+
+  /** {@code isDone} = Status DONE ODER CANCELLED (abgeschlossen; SPEC O-5). */
+  static boolean isDoneStatus(final String statusCode) {
+    return TaskStatusCodes.DONE.equals(statusCode) || TaskStatusCodes.CANCELLED.equals(statusCode);
   }
 
   /**
