@@ -702,6 +702,125 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- BE-3: TaskDetailModel-Anreicherung (createdById/participantIds/Marker/exit) -----------
+
+  @Test
+  @DisplayName(
+      "detail_be3_createdById_participantIds_marker_actor_scoped:"
+          + " GET /tasks/{id} liefert createdById=Ersteller, participantIds, Actor-Marker;"
+          + " zweiter Actor ohne Marker -> isPinned=false (actor-scoped), 200 (kein Membership-Gate)")
+  void detail_be3_createdById_participantIds_marker_actor_scoped() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "BE3-Detail-Enrichment");
+    final Long internalId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskUuid);
+
+    // Reiner PERSON-Teilnehmer (participantFlag) USER_A2 direkt seeden (POST /participants = BE-6).
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, TASK_ID, PARTICIPANT_REF, "
+            + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
+            + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
+            + "VALUES (590900, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, NULL, NULL, "
+            + " 'it-seed', '2020-01-01T00:00:00')",
+        TENANT_A_ID, internalId, USER_A2_REF, TENANT_A_ID);
+
+    // Actor-Marker fuer USER_A setzen (Upsert ueber den Marker-Endpunkt).
+    mvc.perform(put("/api/v1/tasks/" + taskUuid + "/pin")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":true}"))
+        .andExpect(status().is2xxSuccessful());
+    mvc.perform(put("/api/v1/tasks/" + taskUuid + "/mute")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":true}"))
+        .andExpect(status().is2xxSuccessful());
+
+    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA, taskUuid);
+    assertThat(detail.get("createdById").asText())
+        .as("Ersteller aus CREATOR_FLAG-Row")
+        .isEqualTo(USER_A_REF.toString());
+    assertThat(readStringArray(detail.get("participantIds")))
+        .as("reiner Teilnehmer, ohne Ersteller/Assignees")
+        .containsExactly(USER_A2_REF.toString());
+    assertThat(detail.get("isPinned").asBoolean()).isTrue();
+    assertThat(detail.get("isMuted").asBoolean()).isTrue();
+    assertThat(detail.get("isFlagged").asBoolean()).isFalse();
+    assertThat(detail.get("exit").isNull()).as("aktiver Ersteller -> exit null").isTrue();
+
+    // Zweiter Actor USER_A2 (Tenant A, TASK_READ): 200, createdById gleich, aber eigene Marker false.
+    final String tokenA2 = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN, "task-management:TASK_READ");
+    final com.fasterxml.jackson.databind.JsonNode detailA2 = getDetail(mvc, om, tokenA2, taskUuid);
+    assertThat(detailA2.get("createdById").asText()).isEqualTo(USER_A_REF.toString());
+    assertThat(detailA2.get("isPinned").asBoolean())
+        .as("Marker sind actor-scoped: USER_A2 hat nicht gepinnt")
+        .isFalse();
+    assertThat(detailA2.get("exit").isNull()).isTrue();
+  }
+
+  @Test
+  @DisplayName(
+      "detail_be3_ausgetretener_actor_exit_gesetzt:"
+          + " Actor mit EXIT_KIND=HANDOVER -> detail.exit.kind=handover (Live-Read)")
+  void detail_be3_ausgetretener_actor_exit_gesetzt() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "BE3-Detail-Exit");
+    final Long internalId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskUuid);
+
+    // Ersteller-Row von USER_A als ausgetreten markieren (HANDOVER, EXIT_AT in der Vergangenheit).
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_PARTICIPANT] SET EXIT_KIND = 'HANDOVER', EXIT_AT = '2020-01-01T00:00:00' "
+            + "WHERE TASK_ID = ? AND PARTICIPANT_REF = ? AND TENANT_ID = ?",
+        internalId, USER_A_REF, TENANT_A_ID);
+
+    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA, taskUuid);
+    assertThat(detail.get("exit").isNull()).as("ausgetretener Actor -> exit gesetzt").isFalse();
+    assertThat(detail.get("exit").get("kind").asText()).isEqualTo("handover");
+    // Ersteller bleibt aufgeloest (createdById unabhaengig vom Austritt).
+    assertThat(detail.get("createdById").asText()).isEqualTo(USER_A_REF.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "detail_be3_nicht_teilnehmer_actor_200:"
+          + " TASK_READ-Nutzer im gleichen Mandanten OHNE Teilnehmer-Rolle -> 200,"
+          + " createdById gesetzt, Marker false, exit null (kein Membership-Gate, D1)")
+  void detail_be3_nicht_teilnehmer_actor_200() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Aufgabe von USER_A; USER_A2 ist WEDER Ersteller NOCH Teilnehmer dieser Aufgabe.
+    final UUID taskUuid = createTask(mvc, om, tokenA, "BE3-Detail-NonMember");
+
+    final String tokenA2 = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN, "task-management:TASK_READ");
+    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA2, taskUuid);
+
+    assertThat(detail.get("createdById").asText())
+        .as("Ersteller sichtbar auch fuer Nicht-Teilnehmer")
+        .isEqualTo(USER_A_REF.toString());
+    assertThat(readStringArray(detail.get("participantIds"))).isEmpty();
+    assertThat(detail.get("isPinned").asBoolean()).isFalse();
+    assertThat(detail.get("isFlagged").asBoolean()).isFalse();
+    assertThat(detail.get("isMuted").asBoolean()).isFalse();
+    assertThat(detail.get("exit").isNull()).isTrue();
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
