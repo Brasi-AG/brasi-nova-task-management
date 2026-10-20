@@ -6,14 +6,17 @@ import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,17 +28,54 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>Jeder Handler traegt eine {@link RequiresPermission}-Annotation (Pflicht gemaess arch-v2 §8).
  * Actor-UUID kommt ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten.
- * Der Controller enthaelt keine Fachlogik — er delegiert an {@link CommentService}.
+ * Der Controller enthaelt keine Fachlogik — er delegiert an {@link CommentService} (Schreiben) und
+ * {@link CommentQueryService} (Lesen).
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
 public class CommentController {
 
   private final CommentService commentService;
+  private final CommentQueryService commentQueryService;
 
-  /** Konstruktor-Injektion des {@link CommentService}. */
-  public CommentController(final CommentService commentService) {
+  /** Konstruktor-Injektion der Kommentar-Services. */
+  public CommentController(
+      final CommentService commentService, final CommentQueryService commentQueryService) {
     this.commentService = commentService;
+    this.commentQueryService = commentQueryService;
+  }
+
+  /**
+   * Liefert alle aktiven Kommentare einer Aufgabe als flache, chronologische Liste.
+   *
+   * <p>Der Client baut den Antwort-Baum ueber {@code parentCommentId}. Task-scoped autorisiert
+   * ({@code TASK_READ} + Mandant); nicht gefundene/fremde/deaktivierte Aufgabe wird neutral als
+   * 404 maskiert (keine separate Mitgliedschaftspruefung, konsistent mit {@code GET /tasks/{id}}).
+   *
+   * @param id externe UUID der Aufgabe
+   * @return 200 OK mit chronologischer Liste von {@link CommentModel}
+   */
+  @Operation(
+      summary = "Kommentare einer Aufgabe lesen",
+      description = "Liefert die flache, chronologische Kommentarliste einer Aufgabe."
+          + " Der Client rekonstruiert den Antwort-Baum ueber parentCommentId.")
+  @ApiResponses({
+      @ApiResponse(
+          responseCode = "200",
+          description = "Kommentare chronologisch aufsteigend.",
+          content = @Content(
+              mediaType = "application/json",
+              array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)))),
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+  })
+  @GetMapping("/{id}/comments")
+  @RequiresPermission(TaskManagementPermissions.TASK_READ)
+  public ResponseEntity<List<CommentModel>> getComments(
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true)
+          @PathVariable final UUID id) {
+    return ResponseEntity.ok(commentQueryService.getComments(id));
   }
 
   /**
