@@ -20,6 +20,7 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
+import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
@@ -49,6 +50,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DuplicateKeyException;
 
 /**
  * Unit-Tests fuer {@link AssigneeService} (gemockt, kein DB-Zugriff).
@@ -850,6 +852,286 @@ class AssigneeServiceTest {
     assertThat(refsCaptor.getValue())
         .as("invalidate muss den austretenden Akteur UND den verbleibenden aktiven B enthalten")
         .contains(ACTOR_REF, remainingRefB);
+  }
+
+  // ============================================================================================
+  // BE-6: addParticipants (additiv, idempotent, ausschliesslich Teilnehmer-Rolle)
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "addParticipants_neuer_ref: neuer Ref -> Teilnehmer (PARTICIPANT_FLAG=1, kein Assignee/Creator)"
+          + " + ensure + bump + invalidate; KEINE Notification, KEIN Task-VERSION-Bump")
+  void addParticipants_neuer_ref() {
+    final Long taskId = 200L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository).save(pCaptor.capture());
+    final TaskParticipant saved = pCaptor.getValue();
+    assertThat(saved.isParticipantFlag()).as("PARTICIPANT_FLAG=1").isTrue();
+    assertThat(saved.isAssigneeFlag()).as("ASSIGNEE_FLAG=0 (nie Assignee)").isFalse();
+    assertThat(saved.isCreatorFlag()).as("CREATOR_FLAG=0").isFalse();
+    assertThat(saved.getParticipantKind()).isEqualTo(ParticipantKind.PERSON);
+    assertThat(saved.getParticipantRef()).isEqualTo(ref);
+    assertThat(saved.getExitKind()).isNull();
+
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(inboxGenerationService).bump(TENANT_ID, ref);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
+    assertThat(refsCaptor.getValue()).contains(ref);
+
+    // D5: keine Notification; D8: kein Task-VERSION-Bump (kommutative Union).
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_aktiver_ref_skip: bereits aktiver Ref (Creator/Assignee/Teilnehmer)"
+          + " -> idempotenter SKIP (kein save/ensure/bump/invalidate)")
+  void addParticipants_aktiver_ref_skip() {
+    final Long taskId = 201L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant active = new TaskParticipant();
+    active.setId(1L);
+    active.setTaskId(taskId);
+    active.setParticipantRef(ref);
+    active.setParticipantFlag(true); // EXIT_KIND null -> aktiv
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(active));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_exited_ref_reactivate: ausgetretene Zeile -> als reiner Teilnehmer reaktiviert"
+          + " (PARTICIPANT_FLAG=1, EXIT_KIND null) + reactivate + bump")
+  void addParticipants_exited_ref_reactivate() {
+    final Long taskId = 202L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant exited = new TaskParticipant();
+    exited.setId(2L);
+    exited.setTaskId(taskId);
+    exited.setParticipantRef(ref);
+    exited.setParticipantFlag(true);
+    exited.setAssigneeFlag(false);
+    exited.setExitKind(ExitKind.UNSUBSCRIBED);
+    exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(exited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository).save(pCaptor.capture());
+    final TaskParticipant saved = pCaptor.getValue();
+    assertThat(saved.isParticipantFlag()).isTrue();
+    assertThat(saved.getExitKind()).as("EXIT_KIND zurueckgesetzt").isNull();
+    assertThat(saved.getExitAt()).isNull();
+
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(inboxGenerationService).bump(TENANT_ID, ref);
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_exited_ex_assignee_clears_flag (D4-BLOCKER): exited Ex-Assignee"
+          + " -> reaktiviert mit ASSIGNEE_FLAG=false")
+  void addParticipants_exited_ex_assignee_clears_flag() {
+    final Long taskId = 203L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant exitedAssignee = new TaskParticipant();
+    exitedAssignee.setId(3L);
+    exitedAssignee.setTaskId(taskId);
+    exitedAssignee.setParticipantRef(ref);
+    exitedAssignee.setAssigneeFlag(true); // war Assignee
+    exitedAssignee.setParticipantFlag(true);
+    exitedAssignee.setExitKind(ExitKind.UNSUBSCRIBED);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(exitedAssignee));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository).save(pCaptor.capture());
+    final TaskParticipant saved = pCaptor.getValue();
+    assertThat(saved.isAssigneeFlag())
+        .as("ASSIGNEE_FLAG muss geloescht sein (Add-Participants verleiht nie Assignee)")
+        .isFalse();
+    assertThat(saved.isParticipantFlag()).isTrue();
+    assertThat(saved.getExitKind()).isNull();
+  }
+
+  @Test
+  @DisplayName("addParticipants_unbekannter_ref_400: unbekannter Ref -> 400, keine Mutation")
+  void addParticipants_unbekannter_ref_400() {
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(204L, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    // unbekannt -> findActiveByUuids liefert den Ref NICHT. doReturn (statt when/thenReturn), weil der
+    // setUp-Stub thenAnswer nutzt: ein when(...)-Re-Stub wuerde die alte Answer-Lambda ausloesen
+    // (verschachteltes when()) -> Mockito-Fehler.
+    org.mockito.Mockito.doReturn(List.of())
+        .when(userReadRepository)
+        .findActiveByUuids(any());
+
+    assertThatThrownBy(
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref))))
+        .isInstanceOf(EntityValidationException.class);
+
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName("addParticipants_leeres_array_noop: [] -> No-Op (keine Validierung/Mutation/Signal)")
+  void addParticipants_leeres_array_noop() {
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(205L, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of()));
+
+    verify(userReadRepository, never()).findActiveByUuids(any());
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_race_catch_skip (Auflage 3): save -> BRE(cause=DuplicateKey) + Re-Read liefert"
+          + " aktiven Gewinner -> idempotenter SKIP (kein ensure/bump/invalidate, keine Exception)")
+  void addParticipants_race_catch_skip() {
+    final Long taskId = 206L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant winner = new TaskParticipant();
+    winner.setId(9L);
+    winner.setTaskId(taskId);
+    winner.setParticipantRef(ref);
+    winner.setParticipantFlag(true); // aktiver Gewinner, EXIT_KIND null
+    // Erst leer (neu-Pfad), nach Konflikt Re-Read -> Gewinner-Zeile.
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(), List.of(winner));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(new BusinessRuleException("UNIQUE", new DuplicateKeyException("dup")));
+
+    // darf NICHT werfen (idempotenter SKIP)
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_race_recheck_leer_rethrow: save -> BRE(cause=DuplicateKey) + Re-Read leer"
+          + " -> urspruengliche Exception propagiert (kein stilles Schlucken)")
+  void addParticipants_race_recheck_leer_rethrow() {
+    final Long taskId = 207L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(), List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(new BusinessRuleException("UNIQUE", new DuplicateKeyException("dup")));
+
+    assertThatThrownBy(
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref))))
+        .isInstanceOf(BusinessRuleException.class);
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_unverwandte_ursache_rethrow (Auflage 3): BRE OHNE DuplicateKey/OptimisticLock-"
+          + "cause TROTZ passendem Re-Read -> rethrow (nur passender Konflikt wird zu SKIP)")
+  void addParticipants_unverwandte_ursache_rethrow() {
+    final Long taskId = 208L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant activeWinner = new TaskParticipant();
+    activeWinner.setId(10L);
+    activeWinner.setTaskId(taskId);
+    activeWinner.setParticipantRef(ref);
+    activeWinner.setParticipantFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(), List.of(activeWinner));
+    // Unverwandte BusinessRuleException (z.B. Validator-Guard) OHNE DAO-Ursache.
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(new BusinessRuleException("unverwandter Validator-Verstoss"));
+
+    assertThatThrownBy(
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref))))
+        .isInstanceOf(BusinessRuleException.class);
+
+    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_dedupliziert: [ref, ref] -> genau ein save/bump (Duplikate zusammengefuehrt)")
+  void addParticipants_dedupliziert() {
+    final Long taskId = 209L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref, ref)));
+
+    verify(participantQueryRepository).save(any(TaskParticipant.class)); // genau 1x
+    verify(inboxGenerationService).bump(TENANT_ID, ref); // genau 1x
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------
