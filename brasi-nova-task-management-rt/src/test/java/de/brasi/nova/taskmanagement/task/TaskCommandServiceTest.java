@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.task;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,11 +12,16 @@ import static org.mockito.Mockito.when;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
@@ -35,6 +41,7 @@ import io.keel.framework.api.validation.EntityValidationException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -80,6 +87,9 @@ class TaskCommandServiceTest {
   @Mock private InboxSignalService inboxSignalService;
   @Mock private TaskTagRepository tagRepository;
   @Mock private TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  @Mock private UserReadRepository userReadRepository;
+  @Mock private NotificationService notificationService;
+  @Mock private InboxGenerationService inboxGenerationService;
 
   private TaskCommandService service;
 
@@ -96,7 +106,10 @@ class TaskCommandServiceTest {
             historyService,
             inboxSignalService,
             tagRepository,
-            tagAssignmentQueryRepository);
+            tagAssignmentQueryRepository,
+            userReadRepository,
+            notificationService,
+            inboxGenerationService);
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -132,7 +145,7 @@ class TaskCommandServiceTest {
     when(taskRepository.save(any(Task.class))).thenReturn(savedTask);
 
     // Act
-    service.create(new TaskCreateInput("Testtitel", null, null, null, null));
+    service.create(new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
 
     // Assert: gespeicherte Task hat DIRECTION_ID = CUSTOMER_INTERNAL
     final ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
@@ -156,7 +169,7 @@ class TaskCommandServiceTest {
     final UUID taskUuid = UUID.randomUUID();
     when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, taskUuid));
 
-    service.create(new TaskCreateInput("Testtitel", null, null, null, null));
+    service.create(new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
 
     // TaskParticipant: CREATOR_FLAG=1, ASSIGNEE_FLAG=1, PARTICIPANT_REF=USER_REF
     final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
@@ -193,7 +206,7 @@ class TaskCommandServiceTest {
       final Task savedTask = taskWithId(10L, UUID.randomUUID());
       when(taskRepository.save(any(Task.class))).thenReturn(savedTask);
 
-      service.create(new TaskCreateInput("Invalidierungstest", null, null, null, null));
+      service.create(new TaskCreateInput("Invalidierungstest", null, null, null, null, null, null, null, null));
 
       // InboxSignalService.invalidate wurde mit tenantId + [USER_REF] aufgerufen
       @SuppressWarnings("unchecked")
@@ -211,6 +224,189 @@ class TaskCommandServiceTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  // ---- BE-4: Create-Enrichment (assignees/tagIds/marker, All-or-Nothing) -----------------------
+
+  @Test
+  @DisplayName(
+      "create_mit_assignee_legt_participant_ensure_notify_bump_an: Nicht-Creator-Assignee ->"
+          + " Participant(ASSIGNEE)+ensure+ASSIGN-Notify+Bump; Creator+Assignee invalidiert")
+  void create_mit_assignee_legt_participant_ensure_notify_bump_an() {
+    final Long taskId = 70L;
+    final UUID assigneeRef = UUID.randomUUID();
+    when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, UUID.randomUUID()));
+
+    final User activeAssignee = org.mockito.Mockito.mock(User.class);
+    when(activeAssignee.getUuid()).thenReturn(assigneeRef);
+    when(userReadRepository.findActiveByUuids(Set.of(assigneeRef)))
+        .thenReturn(List.of(activeAssignee));
+
+    service.create(
+        new TaskCreateInput(
+            "Titel", null, null, null, null, List.of(assigneeRef), null, null, null));
+
+    // Zwei Participant-Rows: Creator (CREATOR_FLAG) + Assignee (ASSIGNEE_FLAG, nicht Creator)
+    final ArgumentCaptor<TaskParticipant> pc = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantRepository, org.mockito.Mockito.times(2)).save(pc.capture());
+    final List<TaskParticipant> saved = pc.getAllValues();
+    assertThat(saved)
+        .as("Creator-Participant vorhanden")
+        .anySatisfy(
+            p -> {
+              assertThat(p.isCreatorFlag()).isTrue();
+              assertThat(p.getParticipantRef()).isEqualTo(USER_REF);
+            });
+    assertThat(saved)
+        .as("Assignee-Participant (ASSIGNEE_FLAG, nicht Creator) fuer A2")
+        .anySatisfy(
+            p -> {
+              assertThat(p.isCreatorFlag()).isFalse();
+              assertThat(p.isAssigneeFlag()).isTrue();
+              assertThat(p.isParticipantFlag()).isTrue();
+              assertThat(p.getParticipantRef()).isEqualTo(assigneeRef);
+              assertThat(p.getTaskId()).isEqualTo(taskId);
+            });
+
+    // ensure fuer Creator UND Assignee (inbox-sichtbar)
+    verify(userStateService).ensure(taskId, USER_REF, TENANT_ID);
+    verify(userStateService).ensure(taskId, assigneeRef, TENANT_ID);
+
+    // ASSIGN-Notification fuer Assignee, Akteur = Creator (kein Self-Notify)
+    verify(notificationService)
+        .emit(
+            eq(assigneeRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.ASSIGN),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+
+    // Generation-Bump fuer Creator (D3b) UND Assignee (D3)
+    verify(inboxGenerationService).bump(TENANT_ID, USER_REF);
+    verify(inboxGenerationService).bump(TENANT_ID, assigneeRef);
+
+    // invalidate Creator + Assignee
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refs = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), refs.capture());
+    assertThat(refs.getValue()).containsExactlyInAnyOrder(USER_REF, assigneeRef);
+  }
+
+  @Test
+  @DisplayName(
+      "create_ohne_zusatz_nur_creator_und_creator_bump: title-only -> nur Creator,"
+          + " kein Notify, findActiveByUuids nicht aufgerufen, genau 1 Creator-Bump (D3b)")
+  void create_ohne_zusatz_nur_creator_und_creator_bump() {
+    final Long taskId = 71L;
+    when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, UUID.randomUUID()));
+
+    service.create(new TaskCreateInput("Titel", null, null, null, null, null, null, null, null));
+
+    verify(participantRepository, org.mockito.Mockito.times(1)).save(any(TaskParticipant.class));
+    verify(userStateService).ensure(taskId, USER_REF, TENANT_ID);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(userReadRepository, never()).findActiveByUuids(any());
+    verify(inboxGenerationService).bump(TENANT_ID, USER_REF);
+    verify(inboxGenerationService, org.mockito.Mockito.times(1)).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "create_creator_in_assignees_wird_uebersprungen (D2): kein zweiter Participant,"
+          + " kein Self-Notify, findActiveByUuids nicht aufgerufen (leere Rest-Menge)")
+  void create_creator_in_assignees_wird_uebersprungen() {
+    final Long taskId = 72L;
+    when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, UUID.randomUUID()));
+
+    service.create(
+        new TaskCreateInput("Titel", null, null, null, null, List.of(USER_REF), null, null, null));
+
+    verify(participantRepository, org.mockito.Mockito.times(1)).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(userReadRepository, never()).findActiveByUuids(any());
+    verify(inboxGenerationService).bump(TENANT_ID, USER_REF);
+    verify(inboxGenerationService, org.mockito.Mockito.times(1)).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "create_unbekannter_assignee_liefert_400_keine_anlage (D1): 400 VOR jeder Mutation"
+          + " (kein Task, kein Participant, kein Notify, kein Bump)")
+  void create_unbekannter_assignee_liefert_400_keine_anlage() {
+    final UUID unknown = UUID.randomUUID();
+    when(userReadRepository.findActiveByUuids(Set.of(unknown))).thenReturn(List.of());
+
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    new TaskCreateInput(
+                        "Titel", null, null, null, null, List.of(unknown), null, null, null)))
+        .isInstanceOf(EntityValidationException.class);
+
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(participantRepository, never()).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "create_unbekannter_tag_mit_gueltigem_assignee_liefert_400_keine_anlage (D1): auch mit"
+          + " gueltigem Assignee -> 400, KEINE Task-/Participant-/Notify-/Bump-Anlage")
+  void create_unbekannter_tag_mit_gueltigem_assignee_liefert_400_keine_anlage() {
+    final UUID assigneeRef = UUID.randomUUID();
+    final UUID unknownTag = UUID.randomUUID();
+    final User activeAssignee = org.mockito.Mockito.mock(User.class);
+    when(activeAssignee.getUuid()).thenReturn(assigneeRef);
+    when(userReadRepository.findActiveByUuids(Set.of(assigneeRef)))
+        .thenReturn(List.of(activeAssignee));
+    when(tagRepository.findActiveByUuid(unknownTag.toString())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    new TaskCreateInput(
+                        "Titel",
+                        null,
+                        null,
+                        null,
+                        null,
+                        List.of(assigneeRef),
+                        List.of(unknownTag),
+                        null,
+                        null)))
+        .isInstanceOf(EntityValidationException.class);
+
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(participantRepository, never()).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "create_setzt_marker_auf_creator_userstate (D5): isPinned/isFlagged werden auf die"
+          + " Creator-UserState gesetzt und gespeichert")
+  void create_setzt_marker_auf_creator_userstate() {
+    final Long taskId = 73L;
+    when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, UUID.randomUUID()));
+
+    final TaskUserState creatorState = new TaskUserState();
+    creatorState.setTaskId(taskId);
+    creatorState.setUserRef(USER_REF);
+    creatorState.setTenantId(TENANT_ID);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, USER_REF))
+        .thenReturn(List.of(creatorState));
+
+    service.create(
+        new TaskCreateInput(
+            "Titel", null, null, null, null, null, null, Boolean.TRUE, Boolean.TRUE));
+
+    assertThat(creatorState.isPinned()).as("IS_PINNED auf Creator-State").isTrue();
+    assertThat(creatorState.isFlagged()).as("IS_FLAGGED auf Creator-State").isTrue();
+    verify(userStateQueryRepository).save(creatorState);
   }
 
   // ---- MAJOR 1: patch auf unbekannte UUID -> 404 -----------------------------------------------
@@ -293,7 +489,7 @@ class TaskCommandServiceTest {
 
     assertThatThrownBy(
             () -> service.create(
-                new TaskCreateInput("Titel", null, "UNBEKANNT_CODE", null, null)))
+                new TaskCreateInput("Titel", null, "UNBEKANNT_CODE", null, null, null, null, null, null)))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNBEKANNT_CODE");
   }
@@ -419,7 +615,7 @@ class TaskCommandServiceTest {
   @Test
   @DisplayName("create_leerer_titel_liefert_400: Whitespace-only Titel -> EntityValidationException")
   void create_leerer_titel_liefert_400() {
-    assertThatThrownBy(() -> service.create(new TaskCreateInput("   ", null, null, null, null)))
+    assertThatThrownBy(() -> service.create(new TaskCreateInput("   ", null, null, null, null, null, null, null, null)))
         .isInstanceOf(EntityValidationException.class);
   }
 

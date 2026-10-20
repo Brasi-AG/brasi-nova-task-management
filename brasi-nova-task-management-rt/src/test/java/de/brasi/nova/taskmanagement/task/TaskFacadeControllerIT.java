@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
@@ -702,6 +703,207 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- BE-4: Create-Enrichment (assignees + tagIds + marker, All-or-Nothing) -------------------
+
+  @Test
+  @DisplayName(
+      "post_mit_assignee_tag_marker_201_db_beweis: POST mit assignees=[A2]+tagIds=[tag]+isPinned"
+          + " -> 201; Assignee-Participant, aktives Tag-Assignment, Creator IS_PINNED=1,"
+          + " ASSIGN-Notification fuer A2, genau EINE Aufgabe")
+  void post_mit_assignee_tag_marker_201_db_beweis() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    om.registerModule(new JavaTimeModule());
+
+    final UUID tag = seedGlobalTag(jdbcTemplate, 9301L, "IT-Create-Tag");
+    final String title = "BE4-Create-Enrichment";
+
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final String body = om.writeValueAsString(Map.of(
+        "title", title,
+        "assignees", List.of(USER_A2_REF),
+        "tagIds", List.of(tag),
+        "isPinned", Boolean.TRUE,
+        "isFlagged", Boolean.TRUE));
+
+    // Generation VOR dem POST festhalten (Delta-Beweis fuer den Bump DURCH diesen Create).
+    final long creatorGenBefore = readGeneration(USER_A_REF);
+    final long assigneeGenBefore = readGeneration(USER_A2_REF);
+
+    final String postResp =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+    final UUID taskExternalId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id").traverse(om).readValueAs(UUID.class);
+
+    final Long internalTaskId = jdbcTemplate.queryForObject(
+        "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskExternalId);
+
+    // (a) Assignee-Participant: ASSIGNEE_FLAG=1, CREATOR_FLAG=0, PARTICIPANT_REF=USER_A2
+    final Integer assigneeParticipant = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT]"
+            + " WHERE TASK_ID = ? AND PARTICIPANT_REF = ? AND ASSIGNEE_FLAG = 1 AND CREATOR_FLAG = 0",
+        Integer.class, internalTaskId, USER_A2_REF);
+    assertThat(assigneeParticipant)
+        .as("Assignee-Participant fuer USER_A2 (ASSIGNEE, nicht Creator)").isEqualTo(1);
+
+    // (b) Tag-Assignment aktiv
+    final Integer tagActive = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+            + " JOIN [dbo].[TASK_TAG] tag ON a.TAG_ID = tag.ID"
+            + " WHERE a.TASK_ID = ? AND tag.EXTERNALID = ? AND a.ENTITY_STATUS = 'ACTIVE'",
+        Integer.class, internalTaskId, tag);
+    assertThat(tagActive).as("Tag-Assignment fuer den Initial-Tag muss AKTIV sein").isEqualTo(1);
+
+    // (c) Creator-UserState IS_PINNED=1 UND IS_FLAGGED=1 (D5)
+    final Integer creatorMarkers = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE]"
+            + " WHERE TASK_ID = ? AND USER_REF = ? AND IS_PINNED = 1 AND IS_FLAGGED = 1",
+        Integer.class, internalTaskId, USER_A_REF);
+    assertThat(creatorMarkers).as("Creator-UserState IS_PINNED=1 und IS_FLAGGED=1").isEqualTo(1);
+
+    // (c2) Assignee-UserState existiert (ensure -> inbox-faehig)
+    final Integer assigneeState = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?",
+        Integer.class, internalTaskId, USER_A2_REF);
+    assertThat(assigneeState).as("Assignee-UserState angelegt (ensure)").isEqualTo(1);
+
+    // (c3) Persistierte Generation-Bumps DURCH DIESEN POST (Delta == +1), scoped Tenant+User:
+    // Creator (D3b) UND Assignee (D3) je GENAU einmal in derselben Tx gebumpt.
+    assertThat(readGeneration(USER_A_REF))
+        .as("Creator-Generation exakt +1 durch den Create (D3b)")
+        .isEqualTo(creatorGenBefore + 1);
+    assertThat(readGeneration(USER_A2_REF))
+        .as("Assignee-Generation exakt +1 durch den Create (D3)")
+        .isEqualTo(assigneeGenBefore + 1);
+
+    // (d) ASSIGN-Notification fuer USER_A2 (TYPE_ID = ASSIGN)
+    final Long assignTypeId;
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      assignTypeId = dictionaryCodeResolver.resolveNotificationType(NotificationTypeCodes.ASSIGN);
+    } finally {
+      TenantContextHolder.clear();
+    }
+    final Integer assignNotif = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION]"
+            + " WHERE TASK_ID = ? AND RECIPIENT_REF = ? AND TYPE_ID = ?",
+        Integer.class, internalTaskId, USER_A2_REF, assignTypeId);
+    assertThat(assignNotif).as("ASSIGN-Notification fuer USER_A2").isGreaterThanOrEqualTo(1);
+
+    // (e) genau EINE Aufgabe mit diesem Titel (kein Teil-/Doppel-Insert)
+    final Integer taskCount = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE TITLE = ? AND TENANT_ID = ?",
+        Integer.class, title, TENANT_A_ID);
+    assertThat(taskCount).as("genau eine Aufgabe angelegt").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "post_unbekannter_assignee_400_kein_task: unbekannte Assignee-UUID -> 400 + KEINE Aufgabe")
+  void post_unbekannter_assignee_400_kein_task() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String title = "BE4-Unknown-Assignee";
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+
+    final String body = om.writeValueAsString(Map.of(
+        "title", title, "assignees", List.of(UUID.randomUUID())));
+
+    mvc.perform(post("/api/v1/tasks")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+
+    final Integer taskCount = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE TITLE = ? AND TENANT_ID = ?",
+        Integer.class, title, TENANT_A_ID);
+    assertThat(taskCount).as("KEINE Aufgabe nach 400 (All-or-Nothing)").isEqualTo(0);
+  }
+
+  @Test
+  @DisplayName(
+      "post_unbekannter_tag_mit_gueltigem_assignee_400_kein_task: unbekannter Tag (trotz gueltigem"
+          + " Assignee) -> 400 + KEINE Aufgabe, KEIN Assignee-Participant")
+  void post_unbekannter_tag_mit_gueltigem_assignee_400_kein_task() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String title = "BE4-Unknown-Tag";
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+
+    final String body = om.writeValueAsString(Map.of(
+        "title", title,
+        "assignees", List.of(USER_A2_REF),
+        "tagIds", List.of(UUID.randomUUID())));
+
+    mvc.perform(post("/api/v1/tasks")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+
+    final Integer taskCount = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE TITLE = ? AND TENANT_ID = ?",
+        Integer.class, title, TENANT_A_ID);
+    assertThat(taskCount).as("KEINE Aufgabe nach 400 (All-or-Nothing, auch mit gueltigem Assignee)")
+        .isEqualTo(0);
+
+    final Integer assigneeParticipant = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+            + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.TENANT_ID = ? AND p.PARTICIPANT_REF = ? AND t.TITLE = ?",
+        Integer.class, TENANT_A_ID, USER_A2_REF, title);
+    assertThat(assigneeParticipant).as("kein Assignee-Participant nach 400").isEqualTo(0);
+  }
+
+  @Test
+  @DisplayName(
+      "post_mehr_als_100_ids_400_auch_bei_duplikaten (Codex-MAJOR): 101 Eintraege (auch identische"
+          + " UUIDs) in assignees bzw. tagIds -> 400 auf ROHER Array-Laenge, KEINE Aufgabe")
+  void post_mehr_als_100_ids_400_auch_bei_duplikaten() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+
+    // 101x dieselbe (gueltige) Assignee-UUID -> Dedup wuerde auf 1 kollabieren; die ROHE Laenge 101
+    // muss dennoch zu 400 fuehren (sonst Umgehung der MAX_IDS-Grenze).
+    final String titleA = "BE4-TooMany-Assignees-Dup";
+    final String bodyAssignees = om.writeValueAsString(Map.of(
+        "title", titleA,
+        "assignees", java.util.Collections.nCopies(de.brasi.nova.taskmanagement.task.model.TaskCreateInput.MAX_IDS + 1, USER_A2_REF)));
+    mvc.perform(post("/api/v1/tasks")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(bodyAssignees))
+        .andExpect(status().isBadRequest());
+
+    final String titleB = "BE4-TooMany-Tags-Dup";
+    final String bodyTags = om.writeValueAsString(Map.of(
+        "title", titleB,
+        "tagIds", java.util.Collections.nCopies(de.brasi.nova.taskmanagement.task.model.TaskCreateInput.MAX_IDS + 1, UUID.randomUUID())));
+    mvc.perform(post("/api/v1/tasks")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(bodyTags))
+        .andExpect(status().isBadRequest());
+
+    final Integer taskCount = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE (TITLE = ? OR TITLE = ?) AND TENANT_ID = ?",
+        Integer.class, titleA, titleB, TENANT_A_ID);
+    assertThat(taskCount).as("KEINE Aufgabe nach 400 (MAX_IDS-Grenze auf roher Laenge)").isEqualTo(0);
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
@@ -746,6 +948,17 @@ class TaskFacadeControllerIT {
       node.forEach(n -> out.add(n.asText()));
     }
     return out;
+  }
+
+  /**
+   * Liest die persistierte Inbox-Generation eines Benutzers in Mandant A (scoped ueber die
+   * UNIQUE(TENANT_ID, USER_REF)); 0, wenn noch keine Zeile existiert.
+   */
+  private long readGeneration(final UUID userRef) {
+    final List<Long> rows = jdbcTemplate.queryForList(
+        "SELECT GENERATION FROM [dbo].[TASK_INBOX_GENERATION] WHERE TENANT_ID = ? AND USER_REF = ?",
+        Long.class, TENANT_A_ID, userRef);
+    return rows.isEmpty() ? 0L : rows.get(0);
   }
 
   /**
@@ -809,6 +1022,24 @@ class TaskFacadeControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
         id, id, externalId, tenantId, loginName);
+  }
+
+  /**
+   * Seedet einen globalen {@code TASK_TAG} (TENANT_ID=0) und liefert dessen EXTERNALID.
+   * SEVERITY_ID=601 = PRIMARY (aus Flyway V1-Seed), konsistent zu {@code TaskTagPatchIT}.
+   */
+  private static UUID seedGlobalTag(
+      final JdbcTemplate jt, final long id, final String bezeichnung) {
+    final UUID externalId = UUID.randomUUID();
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_TAG] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_TAG] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, BEZEICHNUNG, ENTRY_TYPE,"
+            + " GUELTIG_VON, SEVERITY_ID) "
+            + "VALUES (?, 'ACTIVE', ?, 1, 0, ?, 'SYSTEM_PUBLIC', CAST(GETDATE() AS DATE), 601)",
+        id, id, externalId, bezeichnung);
+    return jt.queryForObject(
+        "SELECT EXTERNALID FROM [dbo].[TASK_TAG] WHERE ID = ?", UUID.class, id);
   }
 
   private static String toPem(final byte[] der) {

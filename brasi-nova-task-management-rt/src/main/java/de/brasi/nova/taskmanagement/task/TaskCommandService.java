@@ -2,19 +2,26 @@ package de.brasi.nova.taskmanagement.task;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskTag;
 import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
@@ -28,6 +35,7 @@ import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -67,6 +75,9 @@ public class TaskCommandService {
   private final InboxSignalService inboxSignalService;
   private final TaskTagRepository tagRepository;
   private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  private final UserReadRepository userReadRepository;
+  private final NotificationService notificationService;
+  private final InboxGenerationService inboxGenerationService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -79,7 +90,10 @@ public class TaskCommandService {
       final TaskHistoryService historyService,
       final InboxSignalService inboxSignalService,
       final TaskTagRepository tagRepository,
-      final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository) {
+      final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
+      final UserReadRepository userReadRepository,
+      final NotificationService notificationService,
+      final InboxGenerationService inboxGenerationService) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -90,6 +104,9 @@ public class TaskCommandService {
     this.inboxSignalService = inboxSignalService;
     this.tagRepository = tagRepository;
     this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
+    this.userReadRepository = userReadRepository;
+    this.notificationService = notificationService;
+    this.inboxGenerationService = inboxGenerationService;
   }
 
   /**
@@ -139,6 +156,34 @@ public class TaskCommandService {
       throw new EntityValidationException("Titel darf nicht leer sein.");
     }
 
+    // BE-4 / D1 + D8 Schritt 2: ALLE Zusatzangaben VOR jeder Mutation validieren (All-or-Nothing).
+    // Creator-Dedupe (D2): der Ersteller ist bereits Creator+Assignee -> aus der Initial-Assignee-
+    // Menge entfernen (kein Doppel-Participant, kein Self-ASSIGN-Notify).
+    final Set<UUID> initialAssignees =
+        input.assignees().stream()
+            .filter(ref -> !ref.equals(creatorRef))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+    // Assignees validieren: aktive Benutzer DES Mandanten (findActiveByUuids ist tenant-scoped).
+    // Nur aufrufen wenn nicht leer (MSSQL IN () ist ein Syntaxfehler). Unbekannt/fremd/inaktiv -> 400.
+    if (!initialAssignees.isEmpty()) {
+      final Set<UUID> activeRefs =
+          userReadRepository.findActiveByUuids(initialAssignees).stream()
+              .map(User::getUuid)
+              .collect(Collectors.toSet());
+      final Set<UUID> unknown =
+          initialAssignees.stream()
+              .filter(ref -> !activeRefs.contains(ref))
+              .collect(Collectors.toCollection(LinkedHashSet::new));
+      if (!unknown.isEmpty()) {
+        throw new EntityValidationException(
+            "Unbekannte oder nicht zugelassene Assignee-Benutzer: " + unknown);
+      }
+    }
+    // Tags validieren + aufloesen (globaler Katalog, Tenant 0): unbekannt/inaktiv -> 400. Laeuft VOR
+    // dem Task-Insert -> ein ungueltiger Tag (auch zusammen mit gueltigen Assignees) verhindert jede
+    // Anlage (fail-fast; die Transaktion wuerde sonst ohnehin zurueckrollen).
+    final Map<UUID, Long> tagUuidToId = resolveInitialTags(input.tagIds());
+
     // Aufgabe anlegen
     final Task task = new Task();
     task.setTenantId(tenantId);
@@ -179,10 +224,108 @@ public class TaskCommandService {
     // UserState fuer Creator in DERSELBEN Transaktion sicherstellen
     userStateService.ensure(taskId, creatorRef, tenantId);
 
-    // After-Commit: snapshot-invalidated Signal registrieren
-    inboxSignalService.invalidate(tenantId, List.of(creatorRef));
+    // D5: Initial-Marker (isPinned/isFlagged) auf die gerade angelegte Creator-UserState setzen.
+    // Nur anwenden wenn im Input gesetzt (null -> Default false bleibt). isMuted nicht im Vertrag.
+    if (input.isPinned() != null || input.isFlagged() != null) {
+      final List<TaskUserState> creatorStates =
+          userStateQueryRepository.findByTaskIdAndUserRef(taskId, creatorRef);
+      if (!creatorStates.isEmpty()) {
+        final TaskUserState creatorState = creatorStates.get(0);
+        if (input.isPinned() != null) {
+          creatorState.setPinned(input.isPinned());
+        }
+        if (input.isFlagged() != null) {
+          creatorState.setFlagged(input.isFlagged());
+        }
+        userStateQueryRepository.save(creatorState);
+      }
+    }
+
+    // D3: Nicht-Creator-Assignees initial zuweisen (volle Semantik wie AssigneeService):
+    // neuer Participant (ASSIGNEE+PARTICIPANT_FLAG) + UserState + ASSIGN-Notification + Generation-Bump.
+    for (final UUID assigneeRef : initialAssignees) {
+      final TaskParticipant assigneeParticipant = new TaskParticipant();
+      assigneeParticipant.setTenantId(tenantId);
+      assigneeParticipant.setTaskId(taskId);
+      assigneeParticipant.setParticipantRef(assigneeRef);
+      assigneeParticipant.setParticipantKind(ParticipantKind.PERSON);
+      assigneeParticipant.setParticipantTenantId(tenantId);
+      assigneeParticipant.setCreatorFlag(false);
+      assigneeParticipant.setAssigneeFlag(true);
+      assigneeParticipant.setParticipantFlag(true);
+      participantRepository.save(assigneeParticipant);
+
+      userStateService.ensure(taskId, assigneeRef, tenantId);
+
+      notificationService.emit(
+          assigneeRef,
+          taskId,
+          NotificationTypeCodes.ASSIGN,
+          NotificationSeverityCodes.INFO,
+          "Du wurdest der Aufgabe zugewiesen.",
+          task.getTitle(),
+          creatorRef);
+
+      // Finding 2 / Option B: die Zuweisung legt eine neue Inbox-Membership dieses Benutzers an ->
+      // Generation atomar in dieser Tx bumpen (alte Inbox-Cursor -> 410 beim naechsten Read).
+      inboxGenerationService.bump(tenantId, assigneeRef);
+    }
+
+    // D4: Initial-Tags zuordnen (frischer Task -> immer Neuanlage, keine Reaktivierung noetig).
+    for (final Long tagId : new LinkedHashSet<>(tagUuidToId.values())) {
+      final TaskTagAssignment assignment = new TaskTagAssignment();
+      assignment.setTenantId(tenantId);
+      assignment.setTaskId(taskId);
+      assignment.setTagId(tagId);
+      tagAssignmentQueryRepository.save(assignment);
+    }
+
+    // D3b (Codex-Gate-1 MAJOR): Auch der Ersteller erhaelt beim Create eine NEUE Inbox-Membership
+    // (Participant+UserState) -> seine Generation EINMAL in derselben Tx bumpen, sonst koennte ein
+    // paralleler Read mit altem Cursor den neuen Task auf einer Folgeseite sehen
+    // (LAST_ACTIVITY_AT < asOf < commit).
+    inboxGenerationService.bump(tenantId, creatorRef);
+
+    // D8 Schritt 8 / After-Commit: snapshot-invalidated Signal fuer Ersteller + alle initialen
+    // Assignees registrieren.
+    final Set<UUID> invalidateRefs = new LinkedHashSet<>();
+    invalidateRefs.add(creatorRef);
+    invalidateRefs.addAll(initialAssignees);
+    inboxSignalService.invalidate(tenantId, invalidateRefs);
 
     return taskExternalId;
+  }
+
+  /**
+   * Loest die initialen Tag-UUIDs gegen den globalen Katalog (Tenant 0) auf (D4).
+   *
+   * <p>Laeuft im globalen Tenant-Scope ({@link TenantContextHolder#runWithTenant}); unbekannte oder
+   * inaktive/abgelaufene Tags fuehren zu {@link EntityValidationException} (400), BEVOR irgendetwas
+   * angelegt wird. Leere Eingabe -&gt; leere Map (kein DB-Zugriff; {@code IN ()} vermeiden).
+   *
+   * @param tagIds die bereits laengen-/null-validierten, angeforderten Tag-UUIDs (ggf. mit Duplikaten)
+   * @return Zuordnung UUID -&gt; interne Tag-ID
+   */
+  private Map<UUID, Long> resolveInitialTags(final List<UUID> tagIds) {
+    if (tagIds.isEmpty()) {
+      return Map.of();
+    }
+    // Duplikate vor der Aufloesung entfernen (keine redundanten findActiveByUuid-Aufrufe).
+    final Set<UUID> distinctTagIds = new LinkedHashSet<>(tagIds);
+    return TenantContextHolder.runWithTenant(
+        TenantInfo.global(),
+        () -> {
+          final Map<UUID, Long> result = new java.util.HashMap<>();
+          for (final UUID tagUuid : distinctTagIds) {
+            final Optional<TaskTag> found = tagRepository.findActiveByUuid(tagUuid.toString());
+            if (found.isEmpty()) {
+              throw new EntityValidationException(
+                  "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");
+            }
+            result.put(tagUuid, found.get().getId());
+          }
+          return result;
+        });
   }
 
   /**
