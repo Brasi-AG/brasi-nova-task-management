@@ -99,12 +99,9 @@ public class OpenApiConfig {
         .build();
   }
 
-  /**
-   * Registriert den {@link PatchValueModelConverter}, der den KSF-{@code PatchValue<T>}-Wrapper in
-   * den PATCH-DTOs auf den fachlichen Typ reduziert (springdoc-Fallstrick, Pre-Release-Audit).
-   */
-  @Bean
-  PatchValueModelConverter patchValueModelConverter() {
-    return new PatchValueModelConverter();
-  }
+  // Hinweis: KEIN eigener PatchValueModelConverter-Bean mehr. KSF (ksf-web) stellt den
+  // PatchValue<T>-ModelConverter seit 2.3.x selbst als @ConditionalOnMissingBean bereit
+  // (io.keel.framework.web.openapi.KsfOpenApiConfig#patchValueModelConverter). Ein eigener Bean
+  // gleichen Namens mit abweichendem Typ kollidierte (BeanDefinitionOverrideException) und wurde
+  // entfernt; die vormalige service-lokale PatchValueModelConverter-Klasse entfaellt.
 }
