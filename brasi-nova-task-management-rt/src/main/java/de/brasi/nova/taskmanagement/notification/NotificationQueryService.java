@@ -172,12 +172,12 @@ public class NotificationQueryService {
   }
 
   /**
-   * Markiert eine Benachrichtigung als gelesen.
+   * Setzt den Lese-Zustand einer Benachrichtigung (gelesen/ungelesen) (BE-8).
    *
-   * <p>Idempotent: bereits gelesene Benachrichtigungen werden ohne Fehler gespeichert.
+   * <p>Idempotent: der Zielzustand wird ohne Fehler gespeichert, auch wenn er bereits vorliegt.
    * 404-Masking (R5/P2): nicht gefunden, deaktiviert UND falscher Tenant/Empfaenger liefern
-   * identische neutrale {@link EntityNotFoundException} — kein Hinweis auf Existenz.
-   * Kein Invalidate/Notification nach dem Lesen (R5).
+   * identische neutrale {@link EntityNotFoundException} — kein Hinweis auf Existenz, keine
+   * Zustandsaenderung. Kein Invalidate/Notification nach dem Setzen (R5).
    *
    * <p>Der Lookup ueber {@code queryRepository.findActiveByUuid} scopet auf
    * {@code ENTITY_STATUS='ACTIVE'}, damit deaktivierte Benachrichtigungen konsistent
@@ -186,12 +186,15 @@ public class NotificationQueryService {
    * @param notificationExternalId externe UUID der Benachrichtigung
    * @param actorRef               UUID des aktuellen Benutzers (aus Security-Context)
    * @param tenantId               interne Mandanten-ID
+   * @param read                   gewuenschter Lese-Zielzustand ({@code true}=gelesen,
+   *     {@code false}=ungelesen)
    */
   @Transactional
-  public void markRead(
+  public void setReadState(
       final UUID notificationExternalId,
       final UUID actorRef,
-      final long tenantId) {
+      final long tenantId,
+      final boolean read) {
 
     final Optional<TaskNotification> found =
         queryRepository.findActiveByUuid(notificationExternalId.toString());
@@ -203,12 +206,13 @@ public class NotificationQueryService {
     }
 
     final TaskNotification notification = found.get();
-    notification.setRead(true);
+    notification.setRead(read);
     notificationRepository.save(notification);
 
     log.info(
-        "NotificationQueryService.markRead: Benachrichtigung {} als gelesen markiert (Actor={}).",
+        "NotificationQueryService.setReadState: Benachrichtigung {} auf read={} gesetzt (Actor={}).",
         notificationExternalId,
+        read,
         actorRef);
   }
 

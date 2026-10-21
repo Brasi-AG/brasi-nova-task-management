@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.notification;
 
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
+import de.brasi.nova.taskmanagement.notification.model.NotificationReadInput;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
@@ -17,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -127,17 +129,25 @@ public class NotificationController {
   }
 
   /**
-   * Markiert eine einzelne Benachrichtigung als gelesen.
+   * Setzt den Lese-Zustand einer einzelnen Benachrichtigung (gelesen/ungelesen).
    *
-   * @param id externe UUID der Benachrichtigung
+   * <p>Optionaler Body {@link NotificationReadInput} {@code { value }}: {@code true} = gelesen,
+   * {@code false} = ungelesen. Fehlt der Body ODER {@code value}, gilt {@code true} (gelesen) -
+   * backward-compatible zum frueheren No-Body-Verhalten. Idempotent.
+   *
+   * @param id    externe UUID der Benachrichtigung
+   * @param input optionaler Lese-Zielzustand (fehlend/null -> gelesen)
    * @return 204 No Content
    */
   @Operation(
-      summary = "Benachrichtigung als gelesen markieren",
-      description = "Markiert eine einzelne Benachrichtigung als gelesen (idempotent)."
-          + " Liefert 404 wenn die Benachrichtigung nicht gefunden wird oder einem anderen Benutzer/Mandanten gehoert.")
+      summary = "Lese-Zustand einer Benachrichtigung setzen",
+      description = "Setzt eine einzelne Benachrichtigung auf gelesen (value=true, Default) oder"
+          + " ungelesen (value=false). Der Body ist OPTIONAL; fehlt er oder value, gilt gelesen"
+          + " (backward-compatible). Idempotent. Liefert 404 wenn die Benachrichtigung nicht gefunden"
+          + " wird oder einem anderen Benutzer/Mandanten gehoert (neutral maskiert).")
   @ApiResponses({
-      @ApiResponse(responseCode = "204", description = "Benachrichtigung erfolgreich als gelesen markiert."),
+      @ApiResponse(responseCode = "204", description = "Lese-Zustand erfolgreich gesetzt."),
+      @ApiResponse(responseCode = "400", description = "Syntaktisch ODER typmaessig ungueltiger JSON-Body (ein fehlendes value ist KEIN 400)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung."),
       @ApiResponse(responseCode = "404", description = "Benachrichtigung nicht gefunden (neutral maskiert).")
@@ -146,9 +156,12 @@ public class NotificationController {
   @RequiresPermission(TaskManagementPermissions.NOTIFICATION_WRITE)
   public ResponseEntity<Void> markRead(
       @Parameter(description = "Externe UUID der Benachrichtigung.", required = true)
-      @PathVariable final UUID id) {
+      @PathVariable final UUID id,
+      @RequestBody(required = false) final NotificationReadInput input) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
-    queryService.markRead(id, actor.user().id(), actor.tenant().id());
+    // Backward-compat (D2): kein Body / value null -> gelesen (true).
+    final boolean read = input == null || input.value() == null || input.value();
+    queryService.setReadState(id, actor.user().id(), actor.tenant().id(), read);
     return ResponseEntity.noContent().build();
   }
 }
