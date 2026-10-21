@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.task.model;
 
+import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
@@ -11,7 +12,9 @@ import java.util.UUID;
  * Antwort-DTO fuer das Detail einer Aufgabe.
  *
  * <p>Alle Status-/Prioritaets-/Direction-Felder werden als CODE-Strings (nie als interne ID oder
- * Enum) nach aussen gegeben.
+ * Enum) nach aussen gegeben. BE-3 ergaenzt additiv die Actor-/Personen-Felder ({@code createdById},
+ * persoenliche Marker, {@code participantIds}, {@code exit}); die bestehenden Felder bleiben
+ * unveraendert.
  *
  * @param id             externe UUID der Aufgabe (EXTERNALID)
  * @param title          Titel der Aufgabe
@@ -28,6 +31,12 @@ import java.util.UUID;
  *                       sortiert; Read-before-edit fuer {@code PUT /tasks/{id}/assignees}
  * @param tagIds         aktuelle Tag-GUIDs (TASK_TAG.EXTERNALID) dieser Aufgabe, stabil sortiert;
  *                       Read-before-edit fuer {@code PATCH /tasks/{id}} (tagIds)
+ * @param createdById    UUID des Erstellers ({@code CREATOR_FLAG}, PERSON) oder {@code null}
+ * @param participantIds UUIDs der aktiven PERSON-Teilnehmer ohne Assignees/Ersteller (stabil sortiert)
+ * @param isPinned       persoenlicher Marker des Anfragers (Actor)
+ * @param isFlagged      persoenlicher Marker des Anfragers (Actor)
+ * @param isMuted        persoenlicher Marker des Anfragers (Actor)
+ * @param exit           aktueller Austritt des Anfragers (handover/unsubscribed) oder {@code null}
  */
 public record TaskDetailModel(
     @Schema(description = "Externe UUID der Aufgabe.", example = "550e8400-e29b-41d4-a716-446655440000")
@@ -60,4 +69,20 @@ public record TaskDetailModel(
         description = "GUID eines aktuell zugeordneten Tags (TASK_TAG.EXTERNALID)."))
     @Schema(description = "Aktuelle Tag-GUIDs (stabil sortiert); Read-before-edit fuer PATCH tagIds."
         + " Enthaelt auch katalog-inaktive, aber noch zugeordnete Tags (faithful).")
-    List<UUID> tagIds) {}
+    List<UUID> tagIds,
+    @Schema(
+        description = "UUID des Erstellers (CREATOR_FLAG, PERSON) oder null.",
+        example = "550e8400-e29b-41d4-a716-446655440000")
+    UUID createdById,
+    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
+        description = "GUID eines aktiven PERSON-Teilnehmers (ohne Assignees/Ersteller)."))
+    @Schema(description = "Aktive PERSON-Teilnehmer ohne Assignees/Ersteller (stabil sortiert).")
+    List<UUID> participantIds,
+    @Schema(description = "Persoenlicher Marker des Anfragers: angepinnt.", example = "false")
+    boolean isPinned,
+    @Schema(description = "Persoenlicher Marker des Anfragers: markiert.", example = "false")
+    boolean isFlagged,
+    @Schema(description = "Persoenlicher Marker des Anfragers: stummgeschaltet.", example = "false")
+    boolean isMuted,
+    @Schema(description = "Aktueller Austritt des Anfragers (handover/unsubscribed) oder null.")
+    ExitModel exit) {}

@@ -3,16 +3,22 @@ package de.brasi.nova.taskmanagement.task;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskHistoryEntry;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.inbox.InboxEnrichmentAssembler;
+import de.brasi.nova.taskmanagement.inbox.TaskEnrichment;
+import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -33,6 +39,8 @@ public class TaskDetailService {
   private final TaskHistoryEntryQueryRepository historyRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final InboxEnrichmentAssembler enrichmentAssembler;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
 
@@ -42,12 +50,16 @@ public class TaskDetailService {
       final TaskHistoryEntryQueryRepository historyRepository,
       final TaskParticipantQueryRepository participantQueryRepository,
       final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
+      final TaskUserStateQueryRepository userStateQueryRepository,
+      final InboxEnrichmentAssembler enrichmentAssembler,
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.participantQueryRepository = participantQueryRepository;
     this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
+    this.userStateQueryRepository = userStateQueryRepository;
+    this.enrichmentAssembler = enrichmentAssembler;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
   }
@@ -62,10 +74,12 @@ public class TaskDetailService {
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param tenantId       aktueller Mandanten-Schluessel (Plausibilitaetspruefung)
+   * @param userRef        UUID des Anfragers (Actor) fuer persoenliche Marker + Austritt
    * @return aufgebautes {@link TaskDetailModel}
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Mandanten zugehoerig (HTTP 404)
    */
-  public TaskDetailModel loadDetail(final UUID taskExternalId, final long tenantId) {
+  public TaskDetailModel loadDetail(
+      final UUID taskExternalId, final long tenantId, final UUID userRef) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {
       throw new EntityNotFoundException("Aufgabe nicht gefunden.");
@@ -119,6 +133,24 @@ public class TaskDetailService {
             .sorted(Comparator.comparing(UUID::toString))
             .toList();
 
+    // Actor-/Personen-Anreicherung (BE-3): der BE-1-Assembler wird fuer DIESE eine Aufgabe
+    // wiederverwendet. Der Detail-Read ist LIVE (kein asOf-Wasserzeichen): asOf=now() liefert den
+    // AKTUELLEN Actor-Austritt. Tags sind bereits oben (faithful) geladen -> leere Tag-Rows an den
+    // Assembler. Nicht-Teilnehmer-Actor -> EMPTY-Anreicherung (Marker false, exit null), waehrend
+    // createdById/participantIds den Ersteller/Teilnehmer der Aufgabe spiegeln.
+    final List<Long> taskIds = List.of(task.getId());
+    final List<TaskParticipant> participantRows =
+        participantQueryRepository.findActiveByTaskIds(taskIds);
+    final List<TaskUserState> actorStateRows =
+        userStateQueryRepository.findByTaskIdsAndUserRef(taskIds, userRef);
+    final LocalDateTime asOf = LocalDateTime.now(auditTimeConverter.zone());
+    final TaskEnrichment enrichment =
+        enrichmentAssembler
+            .assemble(taskIds, participantRows, List.of(), actorStateRows, userRef, asOf)
+            .getOrDefault(task.getId(), TaskEnrichment.EMPTY);
+    final ExitModel exit =
+        enrichment.exitKind() == null ? null : new ExitModel(enrichment.exitKind());
+
     return new TaskDetailModel(
         task.getUuid(),
         task.getTitle(),
@@ -132,7 +164,13 @@ public class TaskDetailService {
         task.getCommentCount(),
         history,
         assignees,
-        tagIds);
+        tagIds,
+        enrichment.createdById(),
+        enrichment.participantIds(),
+        enrichment.isPinned(),
+        enrichment.isFlagged(),
+        enrichment.isMuted(),
+        exit);
   }
 
   /**
