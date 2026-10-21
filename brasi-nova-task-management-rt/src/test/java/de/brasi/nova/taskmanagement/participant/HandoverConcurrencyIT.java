@@ -89,7 +89,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *       committete REINE-Teilnehmer-Zeile (ASSIGNEE_FLAG=0) desselben Ziels eingefuegt -> UNIQUE ->
  *       Gewinnerpraedikat verfehlt -> definierter Konflikt ({@link BusinessRuleException}) + voller
  *       Rollback.
- *   <li><b>IT7 Versions-Verlierer, DREI Paarungen</b> ({@link #it7_vs_handover_voller_rollback},
+ *   <li><b>IT7 Versions-Verlierer, DREI Paarungen</b> ({@link #it7_vs_stay_handover_voller_rollback},
  *       {@link #it7_vs_exit_voller_rollback}, {@link #it7_vs_put_voller_rollback}): der Verlierer
  *       (ACTOR -&gt; TARGET_LOSE, HANDOVER !shouldStay) pausiert am Top-of-exit-Seam
  *       ({@code onBeforeExitMutationForTest}) - zu diesem Zeitpunkt haelt er NOCH KEINE
@@ -315,8 +315,9 @@ class HandoverConcurrencyIT {
         .as("Gewinner-Ereignis ist ein Stay-Handover (SHOULD_STAY=1)").isEqualTo(1);
     assertThat(handoverTargetCount(TASK_HANDOVER_ID, TARGET_WIN)).as("Gewinner-Target").isEqualTo(1);
     assertThat(activeAssigneeCount(TASK_HANDOVER_ID, TARGET_WIN)).as("TARGET_WIN Assignee").isEqualTo(1);
-    assertThat(actorExitedCount(TASK_HANDOVER_ID, ACTOR2_REF))
-        .as("Gewinner ACTOR2 NICHT ausgetreten (stay)").isZero();
+    assertThat(stayedActiveParticipantCount(TASK_HANDOVER_ID, ACTOR2_REF))
+        .as("Gewinner ACTOR2 bleibt aktiv (EXIT_KIND IS NULL + PARTICIPANT_FLAG=1 + ASSIGNEE_FLAG=0)")
+        .isEqualTo(1);
     assertThat(historyCount(TASK_HANDOVER_ID, ACTOR2_REF)).as("Gewinner-History").isEqualTo(1);
     assertThat(notificationPushPort.pushedTo(TARGET_WIN)).as("Push an TARGET_WIN").isTrue();
     assertThat(inboxSignalPort.signaled(TARGET_WIN)).as("Signal an TARGET_WIN").isTrue();
@@ -547,6 +548,14 @@ class HandoverConcurrencyIT {
     return count(
         "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND PARTICIPANT_REF=?"
             + " AND EXIT_KIND='HANDOVER'",
+        taskId, ref);
+  }
+
+  /** De-assignter, aber aktiv gebliebener Teilnehmer (Stay-Handover-Akteur). */
+  private int stayedActiveParticipantCount(final long taskId, final UUID ref) {
+    return count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND PARTICIPANT_REF=?"
+            + " AND EXIT_KIND IS NULL AND PARTICIPANT_FLAG=1 AND ASSIGNEE_FLAG=0",
         taskId, ref);
   }
 
