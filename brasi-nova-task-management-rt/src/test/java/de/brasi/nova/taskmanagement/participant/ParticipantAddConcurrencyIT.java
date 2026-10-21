@@ -442,6 +442,10 @@ class ParticipantAddConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final InboxGenerationService inboxGenerationService,
+        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository handoverRepository,
+        final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
+                handoverTargetRepository,
+        final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
         final JdbcTemplate probeJdbc) {
       super(
           taskRepository,
@@ -452,7 +456,10 @@ class ParticipantAddConcurrencyIT {
           inboxSignalService,
           userReadRepository,
           userAccessor,
-          inboxGenerationService);
+          inboxGenerationService,
+          handoverRepository,
+          handoverTargetRepository,
+          taskHistoryService);
       this.probeJdbc = probeJdbc;
     }
 
@@ -601,6 +608,12 @@ class ParticipantAddConcurrencyIT {
     }
 
     @Bean
+    de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService(
+        final de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository repo) {
+      return new de.brasi.nova.taskmanagement.task.TaskHistoryService(repo);
+    }
+
+    @Bean
     TestAssigneeService testAssigneeService(
         final BaseTaskRepository taskRepository,
         final TaskParticipantQueryRepository participantQueryRepository,
@@ -611,6 +624,10 @@ class ParticipantAddConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final InboxGenerationService inboxGenerationService,
+        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository handoverRepository,
+        final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
+                handoverTargetRepository,
+        final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
         final JdbcTemplate jdbcTemplate) {
       return new TestAssigneeService(
           taskRepository,
@@ -622,6 +639,9 @@ class ParticipantAddConcurrencyIT {
           userReadRepository,
           userAccessor,
           inboxGenerationService,
+          handoverRepository,
+          handoverTargetRepository,
+          taskHistoryService,
           jdbcTemplate);
     }
   }

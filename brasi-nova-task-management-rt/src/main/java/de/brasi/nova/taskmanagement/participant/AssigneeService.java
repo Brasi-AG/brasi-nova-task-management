@@ -1,6 +1,8 @@
 package de.brasi.nova.taskmanagement.participant;
 
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskHandover;
+import de.brasi.nova.taskmanagement.entity.TaskHandoverTarget;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
@@ -12,12 +14,15 @@ import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
+import de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.task.TaskHistoryService;
 import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
@@ -27,6 +32,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -63,6 +69,9 @@ public class AssigneeService {
   private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
   private final InboxGenerationService inboxGenerationService;
+  private final TaskHandoverQueryRepository handoverRepository;
+  private final BaseTaskHandoverTargetRepository handoverTargetRepository;
+  private final TaskHistoryService taskHistoryService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public AssigneeService(
@@ -74,7 +83,10 @@ public class AssigneeService {
       final InboxSignalService inboxSignalService,
       final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
-      final InboxGenerationService inboxGenerationService) {
+      final InboxGenerationService inboxGenerationService,
+      final TaskHandoverQueryRepository handoverRepository,
+      final BaseTaskHandoverTargetRepository handoverTargetRepository,
+      final TaskHistoryService taskHistoryService) {
     this.taskRepository = taskRepository;
     this.participantQueryRepository = participantQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -84,6 +96,9 @@ public class AssigneeService {
     this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
     this.inboxGenerationService = inboxGenerationService;
+    this.handoverRepository = handoverRepository;
+    this.handoverTargetRepository = handoverTargetRepository;
+    this.taskHistoryService = taskHistoryService;
   }
 
   /**
@@ -139,12 +154,13 @@ public class AssigneeService {
             .collect(Collectors.toSet());
 
     // Abgewaehlte Assignees: in current, aber nicht in desired.
-    // Creator-Schutz: Participants mit CREATOR_FLAG=1 werden aus toRemove ausgeschlossen
-    // (Creator ist unveraenderlich Teilnehmer seiner eigenen Aufgabe - Task-8-Invariante).
+    // BE-7 (A3): Creator-Schutz ist nun MITGLIEDSCHAFTS-Schutz (nicht mehr "Creator nie aus
+    // toRemove"): ein ausgelassener Creator wird DE-ASSIGNT (ASSIGNEE_FLAG=false), behaelt aber
+    // CREATOR_FLAG + PARTICIPANT_FLAG + aktiven UserState + EXIT_KIND=null (KEIN Austritt). Ein
+    // ausgelassener Nicht-Creator wird wie bisher mit EXIT_KIND=UNSUBSCRIBED ausgetreten.
     final Set<UUID> toRemove =
         currentRefs.stream()
             .filter(ref -> !desiredRefs.contains(ref))
-            .filter(ref -> !creatorRefs.contains(ref))
             .collect(Collectors.toSet());
 
     // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
@@ -230,12 +246,31 @@ public class AssigneeService {
           tenantId);
     }
 
-    // Abgewaehlte Assignees: EXIT_KIND=UNSUBSCRIBED + EXIT_AT setzen
+    // Abgewaehlte Assignees abhandeln (A3: Creator = reiner Mitgliedschafts-Schutz).
     for (final UUID removedRef : toRemove) {
       final List<TaskParticipant> existing =
           participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removedRef);
-      if (!existing.isEmpty()) {
-        final TaskParticipant p = existing.get(0);
+      if (existing.isEmpty()) {
+        continue;
+      }
+      final TaskParticipant p = existing.get(0);
+      final boolean isCreator = creatorRefs.contains(removedRef);
+
+      if (isCreator) {
+        // Creator: NUR de-assignen (ASSIGNEE_FLAG=false). CREATOR_FLAG + PARTICIPANT_FLAG +
+        // aktiver UserState + EXIT_KIND=null bleiben -> permanentes, immobiles Mitglied.
+        p.setAssigneeFlag(false);
+        participantQueryRepository.save(p);
+        log.info(
+            "AssigneeService.updateAssignees: Creator {} aus Aufgabe {} (id={}) de-assignt"
+                + " (ASSIGNEE_FLAG=false, kein Austritt) von Akteur {} in Mandant {}.",
+            removedRef,
+            taskExternalId,
+            taskId,
+            actorRef,
+            tenantId);
+      } else {
+        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt).
         p.setExitKind(ExitKind.UNSUBSCRIBED);
         p.setExitAt(LocalDateTime.now());
         participantQueryRepository.save(p);
@@ -248,11 +283,6 @@ public class AssigneeService {
           state.setUnsubscribedAt(LocalDateTime.now());
           userStateQueryRepository.save(state);
         }
-
-        affectedRefs.add(removedRef);
-        // Finding 2 / Option B: Abwahl ueberschreibt destruktiv EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT
-        // dieses Refs -> Generation atomar in dieser Tx bumpen (alte Inbox-Cursor -> 410).
-        inboxGenerationService.bump(tenantId, removedRef);
         log.info(
             "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
                 + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
@@ -262,6 +292,11 @@ public class AssigneeService {
             actorRef,
             tenantId);
       }
+
+      affectedRefs.add(removedRef);
+      // Finding 2 / Option B: die Abwahl ueberschreibt destruktiv Membership-Felder dieses Refs
+      // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation atomar bumpen.
+      inboxGenerationService.bump(tenantId, removedRef);
     }
 
     // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).
@@ -499,26 +534,33 @@ public class AssigneeService {
   }
 
   /**
-   * Aktueller Akteur verlaesst die Aufgabe (EXIT_KIND aus Input).
+   * Aktueller Akteur verlaesst die Aufgabe bzw. uebergibt sie (BE-7, SPEC v3 Abschnitt 4).
    *
-   * <p>Ablauf:
-   * <ol>
-   *   <li>Aufgabe tenant-scoped laden (404-Masking).
-   *   <li>Participant des aktuellen Akteurs laden; falls kein Eintrag -> 400
-   *       ({@link EntityValidationException}).
-   *   <li>EXIT_KIND + EXIT_AT auf dem Participant setzen.
-   *   <li>Bei JEDEM ExitKind: UNSUBSCRIBED_AT im {@link de.brasi.nova.taskmanagement.entity.TaskUserState}
-   *       setzen (Inbox-Konsistenz: Verlassen = raus aus aktiver Inbox, unabhaengig von der Exit-Art).
-   *   <li>Wenn HANDOVER: HANDOVER-Notification an den Akteur selbst emittieren (Selbstbestaetigung).
-   *       <b>1a-Einschraenkung:</b> Ein echtes Handover-Ziel ({@code handoverTo}) ist in Phase 1a
-   *       noch nicht modelliert; die Benachrichtigung des Uebernehmers ist ein spaeterer Schritt.
-   *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer den Akteur.
-   * </ol>
+   * <p>Zwei Austrittsarten (Input {@link ExitInput#exitKind()}):
+   * <ul>
+   *   <li><b>UNSUBSCRIBED:</b> der Akteur meldet sich ab. {@code handedOverToIds} muss leer und
+   *       {@code shouldStay} false sein (sonst 400). Nicht-Creator -> EXIT_KIND=UNSUBSCRIBED;
+   *       Creator -> 409.
+   *   <li><b>HANDOVER:</b> der Akteur uebergibt die Aufgabe an {@code handedOverToIds} (werden
+   *       Assignees). Optionaler Verbleib ({@code shouldStay}) laesst den Akteur reiner Teilnehmer.
+   *       Der Akteur wird IMMER de-assignt (ASSIGNEE_FLAG=false). Nicht-Creator + !shouldStay ->
+   *       EXIT_KIND=HANDOVER + Austritt; Creator -> nur shouldStay=true erlaubt (sonst 409), bleibt
+   *       dann immobiler Teilnehmer (CREATOR+PARTICIPANT + aktiver UserState, ASSIGNEE_FLAG=false).
+   * </ul>
+   *
+   * <p>Alles in EINER Transaktion: TASK_HANDOVER-Ereignis + Ziele + Rollenwechsel + History +
+   * LAST_ACTIVITY_AT + {@code taskRepository.save} (VERSION-Guard) + Notification-Persistenz; Signale
+   * (Push/Invalidate) strikt after-commit. Der VERSION-Guard macht die Aufgabe zum gemeinsamen
+   * Serialisierungspunkt gegen nebenlaeufige Membership-Mutationen (PUT/exit); der Verlierer bricht
+   * mit {@link BusinessRuleException} (409) ab und committet NICHTS.
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param input          Austritts-Eingabe (exitKind)
+   * @param input          Austritts-Eingabe (exitKind, handedOverToIds, shouldStay)
    * @throws EntityNotFoundException   wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
-   * @throws EntityValidationException wenn der Akteur kein aktiver Teilnehmer der Aufgabe ist
+   * @throws EntityValidationException (400) bei ungueltiger Eingabe oder wenn der Akteur kein aktiver
+   *     Teilnehmer der Aufgabe ist
+   * @throws BusinessRuleException     (409) Creator-Austritt ohne Verbleib / nebenlaeufiger
+   *     Versionskonflikt
    */
   @Transactional
   public void exit(final UUID taskExternalId, final ExitInput input) {
@@ -529,43 +571,112 @@ public class AssigneeService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
-    // Participant des aktuellen Akteurs suchen
+    final boolean handover = ExitKind.HANDOVER == input.exitKind();
+    final boolean shouldStay = Boolean.TRUE.equals(input.shouldStay());
+    final List<UUID> rawTargets = input.handedOverToIds();
+
+    // (2) Eingabe-Konsistenz VOR jeder Mutation (SPEC F4/A5) - insbesondere VOR dem Creator-409.
+    if (!handover) {
+      // UNSUBSCRIBED: keine Ziele, kein Verbleib.
+      if (!rawTargets.isEmpty() || shouldStay) {
+        throw new EntityValidationException(
+            "Bei exitKind=UNSUBSCRIBED sind handedOverToIds und shouldStay nicht zulaessig.");
+      }
+    } else {
+      // HANDOVER: Selbstziel verboten; shouldStay=true verlangt >=1 Ziel (leer-stay -> 400, auch
+      // fuer Creator VOR dem Creator-409).
+      if (rawTargets.contains(actorRef)) {
+        throw new EntityValidationException(
+            "Der Akteur kann die Aufgabe nicht an sich selbst uebergeben.");
+      }
+      if (shouldStay && rawTargets.isEmpty()) {
+        throw new EntityValidationException(
+            "Bei shouldStay=true muss mindestens ein Uebergabeziel angegeben sein.");
+      }
+    }
+
+    // Deduplizierte Zielmenge (stabile Reihenfolge). Alle Ziele muessen aktive Benutzer DES
+    // Mandanten sein (All-or-Nothing 400, keine Mutation bei Verstoss).
+    final Set<UUID> dedupedTargets = new LinkedHashSet<>(rawTargets);
+    if (!dedupedTargets.isEmpty()) {
+      final Set<UUID> activeUserRefs =
+          userReadRepository.findActiveByUuids(dedupedTargets).stream()
+              .map(User::getUuid)
+              .collect(Collectors.toSet());
+      final Set<UUID> unknown =
+          dedupedTargets.stream()
+              .filter(ref -> !activeUserRefs.contains(ref))
+              .collect(Collectors.toSet());
+      if (!unknown.isEmpty()) {
+        throw new EntityValidationException(
+            "Unbekannte oder nicht zugelassene Uebergabeziele: " + unknown);
+      }
+    }
+
+    // (3) Akteur-Participant laden; kein Eintrag / bereits ausgetreten -> 400.
     final List<TaskParticipant> existing =
         participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef);
-
     if (existing.isEmpty()) {
       throw new EntityValidationException(
           "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
     }
-
     final TaskParticipant participant = existing.get(0);
-
-    // Final-Review P2-4: Der Ersteller kann seine eigene Aufgabe nicht verlassen
-    // (Creator-Immobilitaet, konsistent zu updateAssignees, das den Creator aus toRemove
-    // ausschliesst). Ein Creator-Exit wuerde den Ersteller aus der aktiven Inbox entfernen und
-    // die in Task 8 erzwungene Invariante verletzen -> Ablehnung als Geschaeftsregel (HTTP 409).
-    if (participant.isCreatorFlag()) {
-      throw new BusinessRuleException("Der Ersteller kann die Aufgabe nicht verlassen.");
-    }
-
-    // Final-Review P2-5: Ein bereits ausgetretener Teilnehmer (EXIT_KIND gesetzt) darf nicht
-    // erneut austreten - sonst gaebe es eine zweite Erfolgsantwort und (bei HANDOVER) eine zweite
-    // Notification. Neutral wie "kein aktiver Teilnehmer" ablehnen (HTTP 400).
     if (participant.getExitKind() != null) {
       throw new EntityValidationException(
           "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
     }
 
-    // EXIT_KIND + EXIT_AT setzen. Der save() laeuft ueber KSFs Optimistic-Lock (VERSION-Spalte):
-    // Bei zwei nebenlaeufigen Austritts-Anfragen koennen beide den EXIT_KIND-Guard oben passieren,
-    // solange noch keine committet hat. Der Versionsvergleich beim Commit laesst genau eine
-    // gewinnen; die verlierende Transaktion meldet KSF als BusinessRuleException (HTTP 409). Diesen
-    // Wettlauf-Verlierer uebersetzen wir - sofern der Teilnehmer inzwischen tatsaechlich ausgetreten
-    // ist - in dieselbe neutrale 400-Antwort wie den sequentiellen Doppel-Austritt (P2-5), statt
-    // einen generischen 409 nach aussen zu geben. So bleibt die Doppel-Austritts-Invariante auch
-    // unter Nebenlaeufigkeit konsistent (keine zweite Erfolgsantwort / keine zweite Notification).
-    participant.setExitKind(input.exitKind());
-    participant.setExitAt(LocalDateTime.now());
+    // (4) Creator-Zweig (A2): HANDOVER+shouldStay=true erlaubt; sonst 409 (NACH Eingabepruefung).
+    final boolean isCreator = participant.isCreatorFlag();
+    if (isCreator && !(handover && shouldStay)) {
+      throw new BusinessRuleException("Der Ersteller kann die Aufgabe nicht verlassen.");
+    }
+
+    final LocalDateTime now = LocalDateTime.now();
+    final List<UUID> notifyTargets = new ArrayList<>();
+
+    // (5) HANDOVER: Ereignis + Ziele (-> Assignees) + Reaktivierung + Ziel-Notify + Ziel-Bump.
+    if (handover) {
+      final TaskHandover event = new TaskHandover();
+      event.setTenantId(tenantId);
+      event.setTaskId(taskId);
+      event.setFromRef(actorRef);
+      event.setShouldStay(shouldStay);
+      final TaskHandover savedEvent = handoverRepository.save(event);
+      final Long handoverId = savedEvent.getId();
+
+      for (final UUID targetRef : dedupedTargets) {
+        final TaskHandoverTarget targetRow = new TaskHandoverTarget();
+        targetRow.setTenantId(tenantId);
+        targetRow.setHandoverId(handoverId);
+        targetRow.setToRef(targetRef);
+        handoverTargetRepository.save(targetRow);
+
+        ensureAssignee(taskId, targetRef, tenantId);
+        userStateService.reactivate(taskId, targetRef, tenantId);
+        notificationService.emit(
+            targetRef,
+            taskId,
+            NotificationTypeCodes.HANDOVER,
+            NotificationSeverityCodes.INFO,
+            "Dir wurde die Aufgabe uebergeben.",
+            task.getTitle(),
+            actorRef);
+        inboxGenerationService.bump(tenantId, targetRef);
+        notifyTargets.add(targetRef);
+      }
+    }
+
+    // (6) Akteur-Rollenwechsel. ASSIGNEE_FLAG=false IMMER (auch Creator). Nicht-Creator + !shouldStay
+    // (bei HANDOVER) ODER UNSUBSCRIBED -> echter Austritt (EXIT_KIND + EXIT_AT + UNSUBSCRIBED_AT).
+    final boolean actorExits = !isCreator && !shouldStay;
+    participant.setAssigneeFlag(false);
+    if (actorExits) {
+      participant.setExitKind(handover ? ExitKind.HANDOVER : ExitKind.UNSUBSCRIBED);
+      participant.setExitAt(now);
+    }
+    // (9) VERSION-/Optimistic-Lock-Guard auf dem Participant. Wettlauf-Verlierer -> 409 bzw. bei
+    // tatsaechlichem Doppel-Austritt neutral 400 (Invariante: keine zweite Erfolgsantwort).
     try {
       participantQueryRepository.save(participant);
     } catch (final BusinessRuleException concurrentConflict) {
@@ -575,71 +686,183 @@ public class AssigneeService {
         throw new EntityValidationException(
             "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
       }
-      // Unverwandter Konflikt (Teilnehmer weiterhin aktiv) -> unveraendert durchreichen.
       throw concurrentConflict;
     }
 
-    // Bei JEDEM Exit: UNSUBSCRIBED_AT im UserState setzen (Inbox-Konsistenz - MAJOR 2).
-    // findActivePage filtert auf UNSUBSCRIBED_AT IS NULL -> nach HANDOVER UND UNSUBSCRIBED
-    // muss der Task aus der aktiven Inbox verschwinden.
-    final List<TaskUserState> states =
-        userStateQueryRepository.findByTaskIdAndUserRef(taskId, actorRef);
-    if (!states.isEmpty()) {
-      final TaskUserState state = states.get(0);
-      state.setUnsubscribedAt(LocalDateTime.now());
-      userStateQueryRepository.save(state);
+    if (actorExits) {
+      final List<TaskUserState> states =
+          userStateQueryRepository.findByTaskIdAndUserRef(taskId, actorRef);
+      if (!states.isEmpty()) {
+        final TaskUserState state = states.get(0);
+        state.setUnsubscribedAt(now);
+        userStateQueryRepository.save(state);
+      }
     }
 
-    // Final-Re-Gate P2: Austritt am gemeinsamen TASK-Version-Guard teilnehmen lassen.
-    // updateAssignees bumpt bei Membership-Aenderung die TASK-VERSION (optimistischer Lock); exit tat
-    // das bisher NICHT (nur die Participant-VERSION ueber save(participant)). Dadurch konnten ein PUT,
-    // der einen beibehaltenen Assignee als aktiv liest ohne dessen Participant-Zeile zu aendern, und
-    // ein nebenlaeufiger exit DIESES Assignees beide committen -> der finale Assignee-Satz verletzt das
-    // Ziel-Set des mit 204 quittierten PUT. Der TASK-save (VERSION-Bump) macht die Aufgabe zum
-    // gemeinsamen Serialisierungspunkt beider Membership-Mutationen: genau eine Transaktion gewinnt,
-    // die verlierende bricht mit BusinessRuleException (409) ab (0 Zeilen beim versionierten UPDATE)
-    // und wird gegen frischen Stand wiederholt. Bewusst NICHT in den Participant-Doppel-Austritt-400-
-    // Zweig uebersetzt: ein TASK-Versionskonflikt ist eine echte nebenlaeufige Membership-Mutation
-    // (Retry), kein Doppel-Austritt.
+    // (7) History (Namen-Snapshot): "<AkteurName> -> <Ziel-Namen>".
+    recordHandoverHistory(taskId, tenantId, actorRef, dedupedTargets, handover, shouldStay);
+
+    // (8)+(9) LAST_ACTIVITY_AT-Bump VOR dem versionierten TASK-save. Der TASK-VERSION-Bump
+    // serialisiert bei JEDEM erfolgreichen Austritt/Handover gegen nebenlaeufiges PUT/exit; der
+    // Verlierer bricht mit BusinessRuleException (409) ab und committet NICHTS.
+    task.setLastActivityAt(now);
     taskRepository.save(task);
 
-    // Bei HANDOVER: HANDOVER-Notification emittieren (an den Akteur selbst als Bestaetigung)
-    if (ExitKind.HANDOVER == input.exitKind()) {
+    // (10) Selbstbestaetigungs-Notify an den Akteur.
+    if (handover) {
       notificationService.emit(
           actorRef,
           taskId,
           NotificationTypeCodes.HANDOVER,
           NotificationSeverityCodes.INFO,
-          "Du hast die Aufgabe uebergeben.",
+          shouldStay ? "Du hast die Aufgabe uebergeben." : "Du hast die Aufgabe uebergeben und verlassen.",
           task.getTitle(),
           actorRef);
     }
 
-    // Finding 2 / Option B: Austritt ueberschreibt destruktiv EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT des
-    // Akteurs -> Generation atomar in dieser Tx bumpen, damit alte Inbox-Cursor des Akteurs beim
-    // naechsten Read abgelehnt werden (410). Liegt NACH allen Abweiszweigen (Creator-/Doppel-
-    // Austritt-/Wettlauf-Verlierer werfen vorher) -> Bump nur bei tatsaechlichem Austritt.
-    inboxGenerationService.bump(tenantId, actorRef);
+    // Finding 2 / Option B: Akteur-Generation nur bei tatsaechlichem Austritt bumpen (destruktive
+    // Membership-Mutation). Bei shouldStay/Creator-Verbleib bleibt die Akteur-Inbox valide.
+    if (actorExits) {
+      inboxGenerationService.bump(tenantId, actorRef);
+    }
 
-    // After-Commit: Invalidate fuer den Akteur UND alle verbleibenden aktiven Teilnehmer.
-    // Der Austritt entfernt den Akteur aus participantSummaries -> der Snapshot jedes verbleibenden
-    // aktiven Teilnehmers aendert sich ebenfalls (analog updateAssignees). Der Akteur selbst ist
-    // nach dem UNSUBSCRIBED_AT-Set nicht mehr in findActiveUserRefsByTaskId -> explizit erganzen.
+    // (11) After-Commit: Invalidate fuer Akteur (bei Austritt) + alle Ziele + verbleibende aktive
+    // Teilnehmer. Signale strikt after-commit (ueber den InboxSignalService-Hook).
     final Set<UUID> toInvalidate = new HashSet<>();
-    toInvalidate.add(actorRef);
+    if (actorExits) {
+      toInvalidate.add(actorRef);
+    }
+    toInvalidate.addAll(notifyTargets);
     userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
         .map(TaskUserState::getUserRef)
         .forEach(toInvalidate::add);
     inboxSignalService.invalidate(tenantId, toInvalidate);
 
     log.info(
-        "AssigneeService.exit: Akteur {} hat Aufgabe {} (id={}) verlassen"
-            + " (EXIT_KIND={}) in Mandant {}.",
+        "AssigneeService.exit: Akteur {} hat Aufgabe {} (id={}) {} (EXIT_KIND={}, shouldStay={},"
+            + " Ziele={}) in Mandant {}.",
         actorRef,
         taskExternalId,
         taskId,
-        input.exitKind(),
+        handover ? "uebergeben" : "verlassen",
+        actorExits ? input.exitKind() : null,
+        shouldStay,
+        dedupedTargets.size(),
         tenantId);
+  }
+
+  /**
+   * Stellt sicher, dass {@code targetRef} aktiver Assignee der Aufgabe ist (BE-7, SPEC F3). Eigener
+   * Pfad (NICHT {@code addSingleParticipant}, dessen SKIP ASSIGNEE_FLAG=false akzeptiert): bestehende
+   * Zeile -> ASSIGNEE_FLAG+PARTICIPANT_FLAG=true, EXIT_KIND/EXIT_AT=null; keine Zeile -> neue
+   * ASSIGNEE+PARTICIPANT-Zeile (PERSON). Gleich-Ref-Race via Re-Read-Translate mit
+   * Assignee-Gewinnerpraedikat: SKIP nur, wenn der Re-Read {@code ASSIGNEE_FLAG=true AND EXIT_KIND
+   * IS NULL} bestaetigt; sonst Konflikt weiterwerfen -> voller Rollback (kein 204 ohne Assignee).
+   */
+  private void ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
+    final List<TaskParticipant> existing =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, targetRef);
+    final TaskParticipant p;
+    if (!existing.isEmpty()) {
+      p = existing.get(0);
+      p.setAssigneeFlag(true);
+      p.setParticipantFlag(true);
+      p.setExitKind(null);
+      p.setExitAt(null);
+    } else {
+      p = new TaskParticipant();
+      p.setTenantId(tenantId);
+      p.setTaskId(taskId);
+      p.setParticipantRef(targetRef);
+      p.setParticipantKind(ParticipantKind.PERSON);
+      p.setParticipantTenantId(tenantId);
+      p.setCreatorFlag(false);
+      p.setAssigneeFlag(true);
+      p.setParticipantFlag(true);
+    }
+    // Test-Seam: deterministische Synchronisation der Ziel-Race-ITs ZWISCHEN Vorab-Read und save.
+    onBeforeHandoverAssigneeSaveForTest(taskId, targetRef);
+    try {
+      participantQueryRepository.save(p);
+    } catch (final BusinessRuleException conflict) {
+      final List<TaskParticipant> recheck =
+          participantQueryRepository.findByTaskIdAndParticipantRef(taskId, targetRef);
+      if (recheck.isEmpty()) {
+        throw conflict;
+      }
+      final TaskParticipant winner = recheck.get(0);
+      // Assignee-Gewinnerpraedikat: nur ein aktiver Assignee ist ein akzeptabler SKIP.
+      if (winner.isAssigneeFlag() && winner.getExitKind() == null) {
+        log.debug(
+            "AssigneeService.ensureAssignee: nebenlaeufiger Ziel-Konflikt fuer Task {} Ref {} -"
+                + " idempotenter SKIP (Gewinner ist aktiver Assignee).",
+            taskId,
+            targetRef);
+        return;
+      }
+      // z.B. paralleles reines-Teilnehmer-Add (ASSIGNEE_FLAG=false) -> KEIN akzeptabler Zustand fuer
+      // ein Handover-Ziel: Konflikt weiterwerfen -> voller Rollback (kein 204 ohne Assignee).
+      throw conflict;
+    }
+  }
+
+  /**
+   * Test-Seam (Default No-Op): Haken ZWISCHEN Vorab-Read und save in {@link #ensureAssignee}.
+   * Ermoeglicht deterministische Ziel-Race-ITs (BE-7 IT6). Produktiv ein No-Op.
+   *
+   * @param taskId    interne Aufgaben-ID
+   * @param targetRef UUID des Uebergabeziels
+   */
+  protected void onBeforeHandoverAssigneeSaveForTest(final Long taskId, final UUID targetRef) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Schreibt den Handover-/Austritts-Historieneintrag mit Namen-Snapshot (SPEC v3 Schritt 7). Refs
+   * bleiben im Ereignis; die Namen werden zum Zeitpunkt aufgeloest ({@code findActiveByUuids} fuer
+   * Ziele, {@code userReadRepository} fuer den Akteur). Faellt ein Name aus, wird die Ref als Fallback
+   * verwendet.
+   */
+  private void recordHandoverHistory(
+      final Long taskId,
+      final long tenantId,
+      final UUID actorRef,
+      final Set<UUID> targets,
+      final boolean handover,
+      final boolean shouldStay) {
+    final String text =
+        shouldStay ? "hat die Aufgabe uebergeben" : "hat die Aufgabe uebergeben und verlassen";
+    final String unsubscribeText = "hat die Aufgabe verlassen";
+
+    final Map<UUID, String> names = resolveNames(targets, actorRef);
+    final String actorName = names.getOrDefault(actorRef, actorRef.toString());
+
+    final String detail;
+    if (handover) {
+      final String targetNames =
+          targets.isEmpty()
+              ? "(keine Ziele)"
+              : targets.stream()
+                  .map(ref -> names.getOrDefault(ref, ref.toString()))
+                  .collect(Collectors.joining(", "));
+      detail = actorName + " -> " + targetNames;
+    } else {
+      detail = actorName;
+    }
+    taskHistoryService.record(taskId, tenantId, actorRef, handover ? text : unsubscribeText, detail);
+  }
+
+  /** Loest die Anzeigenamen fuer Akteur + Ziele in EINER Abfrage auf (Namen-Snapshot). */
+  private Map<UUID, String> resolveNames(final Set<UUID> targets, final UUID actorRef) {
+    final Set<UUID> all = new LinkedHashSet<>(targets);
+    all.add(actorRef);
+    return userReadRepository.findActiveByUuids(all).stream()
+        .filter(u -> u.getUuid() != null)
+        .collect(
+            Collectors.toMap(
+                User::getUuid,
+                u -> u.getFullName() != null ? u.getFullName() : u.getUuid().toString(),
+                (a, b) -> a));
   }
 
   /**
