@@ -63,6 +63,7 @@ import org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConf
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -581,6 +582,114 @@ class NotificationControllerIT {
     assertThat(isRead).as("IS_READ muss nach 404 unveraendert 0 bleiben").isEqualTo(0);
   }
 
+  // ---- BE-8: PUT /{id}/read mit optionalem {value} -> read/unread + Backward-Compat ---------
+
+  @Test
+  @DisplayName("be8_put_read_value_true_setzt_is_read_1")
+  void be8_put_read_value_true_setzt_is_read_1() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final UUID notifId = UUID.randomUUID();
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 60, notifId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, false, "value=true", LocalDateTime.now().minusMinutes(30));
+
+    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
+            .header("Authorization", "Bearer " + tokenAReadWrite())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+
+    assertThat(isReadInDb(notifId)).as("value=true -> IS_READ=1").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("be8_put_read_value_false_setzt_is_read_0_unread")
+  void be8_put_read_value_false_setzt_is_read_0() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final UUID notifId = UUID.randomUUID();
+    // Startzustand gelesen -> wird auf ungelesen gesetzt.
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 61, notifId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, true, "value=false", LocalDateTime.now().minusMinutes(30));
+
+    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
+            .header("Authorization", "Bearer " + tokenAReadWrite())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+        .andExpect(status().isNoContent());
+
+    assertThat(isReadInDb(notifId)).as("value=false -> IS_READ=0 (unread)").isEqualTo(0);
+  }
+
+  @Test
+  @DisplayName("be8_put_read_leerer_body_und_value_null_defaulten_auf_1 (Backward-Compat)")
+  void be8_put_read_backward_compat_defaults() throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // {} (leerer JSON-Body) -> read=1
+    final UUID n1 = UUID.randomUUID();
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 62, n1, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, false, "empty body", LocalDateTime.now().minusMinutes(30));
+    mvc.perform(put("/api/v1/notifications/" + n1 + "/read")
+            .header("Authorization", "Bearer " + tokenAReadWrite())
+            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isNoContent());
+    assertThat(isReadInDb(n1)).as("{} -> IS_READ=1").isEqualTo(1);
+
+    // {"value":null} -> read=1
+    final UUID n2 = UUID.randomUUID();
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 63, n2, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, false, "value null", LocalDateTime.now().minusMinutes(30));
+    mvc.perform(put("/api/v1/notifications/" + n2 + "/read")
+            .header("Authorization", "Bearer " + tokenAReadWrite())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":null}"))
+        .andExpect(status().isNoContent());
+    assertThat(isReadInDb(n2)).as("{\"value\":null} -> IS_READ=1").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("be8_put_read_toggle_true_false_true_endet_gelesen")
+  void be8_put_read_toggle() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final UUID notifId = UUID.randomUUID();
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 64, notifId, TENANT_A_ID, USER_A_REF,
+        TYPE_ID_ASSIGN, false, "toggle", LocalDateTime.now().minusMinutes(30));
+    final String tokenA = tokenAReadWrite();
+
+    putReadValue(mvc, tokenA, notifId, "true");
+    assertThat(isReadInDb(notifId)).isEqualTo(1);
+    putReadValue(mvc, tokenA, notifId, "false");
+    assertThat(isReadInDb(notifId)).isEqualTo(0);
+    putReadValue(mvc, tokenA, notifId, "true");
+    assertThat(isReadInDb(notifId)).as("Endzustand gelesen").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("be8_put_read_value_false_fremder_empfaenger_404_is_read_unveraendert")
+  void be8_put_read_value_false_fremd_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final UUID notifId = UUID.randomUUID();
+    // Notification gehoert USER_B; USER_A versucht unread -> neutrale 404, kein State-Change.
+    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 65, notifId, TENANT_A_ID, USER_B_REF,
+        TYPE_ID_ASSIGN, true, "fremd", LocalDateTime.now().minusMinutes(30));
+
+    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
+            .header("Authorization", "Bearer " + tokenAReadWrite())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+        .andExpect(status().isNotFound());
+
+    assertThat(isReadInDb(notifId)).as("fremde Notif unveraendert IS_READ=1").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("be8_put_read_value_false_nur_notification_read_403")
+  void be8_put_read_value_false_nur_read_403() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenNoWrite = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
+        "task-management:NOTIFICATION_READ");
+    mvc.perform(put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
+            .header("Authorization", "Bearer " + tokenNoWrite)
+            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+        .andExpect(status().isForbidden());
+  }
+
   // ---- Negativ-Tests: 401 / 403 / 404 ---------------------------------------------------
 
   @Test
@@ -624,6 +733,28 @@ class NotificationControllerIT {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
         .build();
+  }
+
+  private String tokenAReadWrite() {
+    return buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:NOTIFICATION_READ", "task-management:NOTIFICATION_WRITE");
+  }
+
+  private Integer isReadInDb(final UUID externalId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+        Integer.class, externalId);
+  }
+
+  private void putReadValue(
+      final MockMvc mvc, final String token, final UUID notifId, final String valueLiteral)
+      throws Exception {
+    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":" + valueLiteral + "}"))
+        .andExpect(status().isNoContent());
   }
 
   private static String buildJwtWithAuthority(
