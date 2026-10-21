@@ -98,7 +98,7 @@ public class TaskFacadeController {
   }
 
   /**
-   * Patcht eine bestehende Aufgabe (title, dueDate, statusCode).
+   * Patcht eine bestehende Aufgabe (title, dueDate, statusCode, tagIds, startDate).
    *
    * @param id    externe UUID der Aufgabe
    * @param input Patch-Eingabe
@@ -106,8 +106,9 @@ public class TaskFacadeController {
    */
   @Operation(
       summary = "Aufgabe patchen",
-      description = "Aktualisiert einzelne Felder einer Aufgabe (title, dueDate, statusCode, tagIds)."
-          + " Nur gesendete Felder werden geaendert (PatchValue-Semantik: absent = unveraendert).")
+      description = "Aktualisiert einzelne Felder einer Aufgabe (title, dueDate, statusCode, tagIds,"
+          + " startDate). Nur gesendete Felder werden geaendert (PatchValue-Semantik: absent ="
+          + " unveraendert, null = Datumsfeld loeschen).")
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
       @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID)."),
