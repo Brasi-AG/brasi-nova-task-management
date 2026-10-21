@@ -9,6 +9,8 @@ import de.brasi.nova.taskmanagement.inbox.TaskEnrichment;
 import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.HandoverTargetRow;
+import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
@@ -40,6 +42,7 @@ public class TaskDetailService {
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final TaskHandoverQueryRepository handoverQueryRepository;
   private final InboxEnrichmentAssembler enrichmentAssembler;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
@@ -51,6 +54,7 @@ public class TaskDetailService {
       final TaskParticipantQueryRepository participantQueryRepository,
       final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
+      final TaskHandoverQueryRepository handoverQueryRepository,
       final InboxEnrichmentAssembler enrichmentAssembler,
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter) {
@@ -59,6 +63,7 @@ public class TaskDetailService {
     this.participantQueryRepository = participantQueryRepository;
     this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
+    this.handoverQueryRepository = handoverQueryRepository;
     this.enrichmentAssembler = enrichmentAssembler;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
@@ -144,12 +149,19 @@ public class TaskDetailService {
     final List<TaskUserState> actorStateRows =
         userStateQueryRepository.findByTaskIdsAndUserRef(taskIds, userRef);
     final LocalDateTime asOf = LocalDateTime.now(auditTimeConverter.zone());
+    // BE-7: Uebergabeziele des sichtbaren Austritts-Handover-Ereignisses des Anfragers. LIVE-Read
+    // (asOf=now, KEIN Generation-Bracket - PA7): das juengste SHOULD_STAY=false-Ereignis <=now.
+    final List<HandoverTargetRow> handoverRows =
+        handoverQueryRepository.findVisibleHandoverTargets(taskIds, userRef, asOf);
     final TaskEnrichment enrichment =
         enrichmentAssembler
-            .assemble(taskIds, participantRows, List.of(), actorStateRows, userRef, asOf)
+            .assemble(
+                taskIds, participantRows, List.of(), actorStateRows, handoverRows, userRef, asOf)
             .getOrDefault(task.getId(), TaskEnrichment.EMPTY);
     final ExitModel exit =
-        enrichment.exitKind() == null ? null : new ExitModel(enrichment.exitKind());
+        enrichment.exitKind() == null
+            ? null
+            : new ExitModel(enrichment.exitKind(), enrichment.handedOverToIds());
 
     return new TaskDetailModel(
         task.getUuid(),

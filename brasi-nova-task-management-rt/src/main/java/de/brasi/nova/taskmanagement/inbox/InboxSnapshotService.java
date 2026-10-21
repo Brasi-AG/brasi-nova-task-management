@@ -16,6 +16,8 @@ import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantSummary;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
+import de.brasi.nova.taskmanagement.repository.HandoverTargetRow;
+import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
@@ -106,6 +108,7 @@ public class InboxSnapshotService {
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final TaskHandoverQueryRepository handoverQueryRepository;
   private final InboxEnrichmentAssembler enrichmentAssembler;
   private final NotificationQueryService notificationQueryService;
   private final TagCatalogService tagCatalogService;
@@ -120,6 +123,7 @@ public class InboxSnapshotService {
       final TaskParticipantQueryRepository participantQueryRepository,
       final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
+      final TaskHandoverQueryRepository handoverQueryRepository,
       final InboxEnrichmentAssembler enrichmentAssembler,
       final NotificationQueryService notificationQueryService,
       final TagCatalogService tagCatalogService,
@@ -131,6 +135,7 @@ public class InboxSnapshotService {
     this.participantQueryRepository = participantQueryRepository;
     this.tagAssignmentQueryRepository = tagAssignmentQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
+    this.handoverQueryRepository = handoverQueryRepository;
     this.enrichmentAssembler = enrichmentAssembler;
     this.notificationQueryService = notificationQueryService;
     this.tagCatalogService = tagCatalogService;
@@ -373,7 +378,12 @@ public class InboxSnapshotService {
         tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(taskIds);
     final List<TaskUserState> actorStateRows =
         userStateQueryRepository.findByTaskIdsAndUserRef(taskIds, userRef);
-    return enrichmentAssembler.assemble(taskIds, participantRows, tagRows, actorStateRows, userRef, asOf);
+    // BE-7 (A6): Handover-Ziel-Batch INNERHALB des Generation-Brackets (Archiv, asOf-gebunden). EINE
+    // tenant-/actor-gebundene Query ueber ALLE Seiten-taskIds (kein N+1).
+    final List<HandoverTargetRow> handoverRows =
+        handoverQueryRepository.findVisibleHandoverTargets(taskIds, userRef, asOf);
+    return enrichmentAssembler.assemble(
+        taskIds, participantRows, tagRows, actorStateRows, handoverRows, userRef, asOf);
   }
 
   /**
@@ -432,7 +442,8 @@ public class InboxSnapshotService {
    */
   private TaskSummaryModel toEnrichedSummary(final Task task, final TaskEnrichment e) {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
-    final ExitModel exit = e.exitKind() == null ? null : new ExitModel(e.exitKind());
+    final ExitModel exit =
+        e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
     return new TaskSummaryModel(
         task.getUuid(),
         task.getTitle(),

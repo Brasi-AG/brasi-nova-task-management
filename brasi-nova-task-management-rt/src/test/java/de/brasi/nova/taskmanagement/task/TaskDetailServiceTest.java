@@ -13,6 +13,8 @@ import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxEnrichmentAssembler;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.HandoverTargetRow;
+import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
@@ -47,6 +49,7 @@ class TaskDetailServiceTest {
   private TaskParticipantQueryRepository participantQueryRepository;
   private TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
   private TaskUserStateQueryRepository userStateQueryRepository;
+  private TaskHandoverQueryRepository handoverQueryRepository;
   private DictionaryCodeResolver resolver;
   private TaskDetailService service;
 
@@ -57,6 +60,7 @@ class TaskDetailServiceTest {
     participantQueryRepository = mock(TaskParticipantQueryRepository.class);
     tagAssignmentQueryRepository = mock(TaskTagAssignmentQueryRepository.class);
     userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
+    handoverQueryRepository = mock(TaskHandoverQueryRepository.class);
     resolver = mock(DictionaryCodeResolver.class);
 
     service =
@@ -66,6 +70,7 @@ class TaskDetailServiceTest {
             participantQueryRepository,
             tagAssignmentQueryRepository,
             userStateQueryRepository,
+            handoverQueryRepository,
             new InboxEnrichmentAssembler(),
             resolver,
             new AuditTimeConverter("Europe/Berlin"));
@@ -77,6 +82,9 @@ class TaskDetailServiceTest {
     // Default: BE-3-Anreicherungs-Batch-Querys liefern leer (EMPTY-Anreicherung).
     when(participantQueryRepository.findActiveByTaskIds(any())).thenReturn(List.of());
     when(userStateQueryRepository.findByTaskIdsAndUserRef(any(), any())).thenReturn(List.of());
+    // BE-7: Default kein sichtbares Handover-Ereignis.
+    when(handoverQueryRepository.findVisibleHandoverTargets(any(), any(), any()))
+        .thenReturn(List.of());
   }
 
   @Test
@@ -145,6 +153,15 @@ class TaskDetailServiceTest {
                 participantRow(taskId, USER_REF, false, false, true, ExitKind.HANDOVER)));
     when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
         .thenReturn(List.of(userState(taskId, USER_REF, true, false, true)));
+    // BE-7: sichtbares Austritts-Handover-Ereignis mit zwei Zielen (LIVE, asOf=now).
+    final UUID targetHi = UUID.fromString("ffffffff-0000-0000-0000-00000000aaaa");
+    final UUID targetLo = UUID.fromString("00000000-0000-0000-0000-00000000bbbb");
+    when(handoverQueryRepository.findVisibleHandoverTargets(
+            org.mockito.ArgumentMatchers.eq(List.of(taskId)),
+            org.mockito.ArgumentMatchers.eq(USER_REF),
+            any()))
+        .thenReturn(
+            List.of(new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
 
     final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
 
@@ -155,6 +172,35 @@ class TaskDetailServiceTest {
     assertThat(detail.isMuted()).isTrue();
     assertThat(detail.exit()).isNotNull();
     assertThat(detail.exit().kind()).isEqualTo("handover");
+    // BE-7: Ziele stabil sortiert (BY_STRING): Lo vor Hi.
+    assertThat(detail.exit().handedOverToIds()).containsExactly(targetLo, targetHi);
+  }
+
+  @Test
+  @DisplayName("BE-7: detail handover ohne Ziele -> exit.handedOverToIds leer")
+  void detail_handover_ohne_ziele_leere_targets() {
+    final long taskId = 1004L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findActiveByTaskIds(List.of(taskId)))
+        .thenReturn(
+            List.of(participantRow(taskId, USER_REF, false, false, true, ExitKind.HANDOVER)));
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
+        .thenReturn(List.of(userState(taskId, USER_REF, false, false, false)));
+    // LEFT-JOIN-Zeile ohne Ziel (Selbst-Handover ohne Ziele): toRef=null.
+    when(handoverQueryRepository.findVisibleHandoverTargets(
+            org.mockito.ArgumentMatchers.eq(List.of(taskId)),
+            org.mockito.ArgumentMatchers.eq(USER_REF),
+            any()))
+        .thenReturn(List.of(new HandoverTargetRow(taskId, null)));
+
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+
+    assertThat(detail.exit()).isNotNull();
+    assertThat(detail.exit().kind()).isEqualTo("handover");
+    assertThat(detail.exit().handedOverToIds()).isNotNull().isEmpty();
   }
 
   @Test

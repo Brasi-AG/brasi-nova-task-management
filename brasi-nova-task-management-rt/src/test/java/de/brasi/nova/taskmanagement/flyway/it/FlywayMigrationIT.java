@@ -371,6 +371,85 @@ class FlywayMigrationIT {
         .hasMessageContaining("UNIQUE");
   }
 
+  // ---- 7. V5: TASK_HANDOVER + TASK_HANDOVER_TARGET (BE-7) ---
+
+  @Test
+  @DisplayName("flyway_schema_history_enthaelt_v5")
+  void flyway_schema_history_enthaelt_v5() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    final boolean hasV5 =
+        rows.stream().anyMatch(r -> "5".equals(String.valueOf(r.get("version"))));
+    assertThat(hasV5).as("V5 in flyway_schema_history").isTrue();
+  }
+
+  @Test
+  @DisplayName("v5_legt_task_handover_und_target_mit_index_und_uniques_an")
+  void v5_legt_task_handover_und_target_an() {
+    assertTableExists("TASK_HANDOVER");
+    assertTableExists("TASK_HANDOVER_TARGET");
+    assertIndexExists("TASK_HANDOVER", "IX_TASK_HANDOVER_READ");
+    assertIndexExists("TASK_HANDOVER", "UQ_TASK_HANDOVER_EXTERNALID");
+    assertIndexExists("TASK_HANDOVER_TARGET", "UQ_TASK_HANDOVER_TARGET_EXTERNALID");
+    assertIndexExists("TASK_HANDOVER_TARGET", "UQ_TASK_HANDOVER_TARGET_EVENT_TO");
+  }
+
+  @Test
+  @DisplayName(
+      "v5_handover_target_fk_auf_handover: INSERT mit unbekannter HANDOVER_ID scheitert hart (FK)")
+  void v5_handover_target_fk_auf_handover() {
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "INSERT INTO [dbo].[TASK_HANDOVER_TARGET]"
+                        + " (ID, TENANT_ID, HANDOVER_ID, TO_REF)"
+                        + " VALUES (8301, 500, 999999, '77777777-0000-0000-0000-00000000000b')"))
+        .isInstanceOf(DataIntegrityViolationException.class);
+  }
+
+  @Test
+  @DisplayName(
+      "v5_handover_target_unique_event_to: zweiter INSERT mit gleichem (HANDOVER_ID, TO_REF)"
+          + " scheitert hart")
+  void v5_handover_target_unique_event_to() {
+    // Zuerst ein Handover-Ereignis (FK TENANT_ID=500 -> Sentinel-PROD_FIRMA).
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_HANDOVER] (ID, TENANT_ID, TASK_ID, FROM_REF, SHOULD_STAY)"
+            + " VALUES (8310, 500, 9500, '77777777-0000-0000-0000-00000000000c', 0)");
+    final String toRef = "77777777-0000-0000-0000-00000000000d";
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_HANDOVER_TARGET] (ID, TENANT_ID, HANDOVER_ID, TO_REF)"
+            + " VALUES (8311, 500, 8310, ?)",
+        toRef);
+
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "INSERT INTO [dbo].[TASK_HANDOVER_TARGET]"
+                        + " (ID, TENANT_ID, HANDOVER_ID, TO_REF) VALUES (8312, 500, 8310, ?)",
+                    toRef))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("UNIQUE");
+  }
+
+  @Test
+  @DisplayName("v5_handover_defaults: INSERT ohne ENTITY_STATUS/EXTERNALID/VERSION -> Defaults greifen")
+  void v5_handover_defaults_greifen() {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_HANDOVER] (ID, TENANT_ID, TASK_ID, FROM_REF, SHOULD_STAY)"
+            + " VALUES (8320, 500, 9501, '77777777-0000-0000-0000-00000000000e', 1)");
+    final Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT ENTITY_STATUS, VERSION, CAST(SHOULD_STAY AS INT) AS SHOULD_STAY,"
+                + " CASE WHEN EXTERNALID IS NULL THEN 0 ELSE 1 END AS HAS_EXTERNALID"
+                + " FROM [dbo].[TASK_HANDOVER] WHERE ID = 8320");
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(((Number) row.get("VERSION")).intValue()).isEqualTo(1);
+    assertThat(((Number) row.get("SHOULD_STAY")).intValue()).isEqualTo(1);
+    assertThat(((Number) row.get("HAS_EXTERNALID")).intValue()).isEqualTo(1);
+  }
+
   // ---- Hilfsmethoden ---
 
   private void assertIndexExists(final String tableName, final String indexName) {

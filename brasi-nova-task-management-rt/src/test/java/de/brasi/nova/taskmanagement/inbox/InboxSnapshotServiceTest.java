@@ -26,6 +26,8 @@ import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
+import de.brasi.nova.taskmanagement.repository.HandoverTargetRow;
+import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
@@ -68,6 +70,7 @@ class InboxSnapshotServiceTest {
   private TaskParticipantQueryRepository participantQueryRepository;
   private TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
   private TaskUserStateQueryRepository userStateQueryRepository;
+  private TaskHandoverQueryRepository handoverQueryRepository;
   private InboxEnrichmentAssembler enrichmentAssembler;
   private NotificationQueryService notificationQueryService;
   private TagCatalogService tagCatalogService;
@@ -83,6 +86,7 @@ class InboxSnapshotServiceTest {
     participantQueryRepository = mock(TaskParticipantQueryRepository.class);
     tagAssignmentQueryRepository = mock(TaskTagAssignmentQueryRepository.class);
     userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
+    handoverQueryRepository = mock(TaskHandoverQueryRepository.class);
     // Echter Assembler (reine Logik, keine DB) - in P2 isoliert getestet.
     enrichmentAssembler = new InboxEnrichmentAssembler();
     notificationQueryService = mock(NotificationQueryService.class);
@@ -98,6 +102,7 @@ class InboxSnapshotServiceTest {
             participantQueryRepository,
             tagAssignmentQueryRepository,
             userStateQueryRepository,
+            handoverQueryRepository,
             enrichmentAssembler,
             notificationQueryService,
             tagCatalogService,
@@ -118,6 +123,8 @@ class InboxSnapshotServiceTest {
     when(participantQueryRepository.findActiveByTaskIds(any())).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(any())).thenReturn(List.of());
     when(userStateQueryRepository.findByTaskIdsAndUserRef(any(), any())).thenReturn(List.of());
+    when(handoverQueryRepository.findVisibleHandoverTargets(any(), any(), any()))
+        .thenReturn(List.of());
     // Default: stabile Generation 0 (First-Page-Bracket stabil, keine Ablehnung).
     when(inboxGenerationService.currentGeneration(any())).thenReturn(0L);
   }
@@ -649,11 +656,19 @@ class InboxSnapshotServiceTest {
     exited.setExitAt(before);
     exited.setCreatedAt(before);
     when(participantQueryRepository.findActiveByTaskIds(any())).thenReturn(List.of(exited));
+    // BE-7: Uebergabeziele des sichtbaren Austritts-Handover-Ereignisses -> exit.handedOverToIds.
+    final UUID targetHi = UUID.fromString("ffffffff-0000-0000-0000-00000000aaaa");
+    final UUID targetLo = UUID.fromString("00000000-0000-0000-0000-00000000bbbb");
+    when(handoverQueryRepository.findVisibleHandoverTargets(any(), eq(USER_REF), any()))
+        .thenReturn(
+            List.of(new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
 
     final TaskSummaryModel s = service.loadArchivePage(USER_REF, "left", null, 10).items().get(0);
 
     assertThat(s.exit()).isNotNull();
     assertThat(s.exit().kind()).isEqualTo("handover");
+    // Ziele stabil sortiert (BY_STRING): Lo vor Hi.
+    assertThat(s.exit().handedOverToIds()).containsExactly(targetLo, targetHi);
   }
 
   @Test
@@ -668,6 +683,7 @@ class InboxSnapshotServiceTest {
     verify(participantQueryRepository, times(1)).findActiveByTaskIds(any());
     verify(tagAssignmentQueryRepository, times(1)).findActiveTagUuidsByTaskIds(any());
     verify(userStateQueryRepository, times(1)).findByTaskIdsAndUserRef(any(), eq(USER_REF));
+    verify(handoverQueryRepository, times(1)).findVisibleHandoverTargets(any(), eq(USER_REF), any());
   }
 
   @Test
@@ -682,6 +698,7 @@ class InboxSnapshotServiceTest {
     verify(participantQueryRepository, never()).findActiveByTaskIds(any());
     verify(tagAssignmentQueryRepository, never()).findActiveTagUuidsByTaskIds(any());
     verify(userStateQueryRepository, never()).findByTaskIdsAndUserRef(any(), any());
+    verify(handoverQueryRepository, never()).findVisibleHandoverTargets(any(), any(), any());
   }
 
   @Test
@@ -698,6 +715,7 @@ class InboxSnapshotServiceTest {
     verify(participantQueryRepository, times(2)).findActiveByTaskIds(any());
     verify(tagAssignmentQueryRepository, times(2)).findActiveTagUuidsByTaskIds(any());
     verify(userStateQueryRepository, times(2)).findByTaskIdsAndUserRef(any(), eq(USER_REF));
+    verify(handoverQueryRepository, times(2)).findVisibleHandoverTargets(any(), eq(USER_REF), any());
   }
 
   @Test

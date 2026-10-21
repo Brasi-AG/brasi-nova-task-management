@@ -4,8 +4,10 @@ import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
+import de.brasi.nova.taskmanagement.repository.HandoverTargetRow;
 import de.brasi.nova.taskmanagement.repository.TaskTagUuidRow;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,6 +53,10 @@ public class InboxEnrichmentAssembler {
    * @param participantRows  alle aktiven Teilnehmer-Rows der Seite (inkl. Austritts-Rows)
    * @param tagRows          {@code (taskId, tagUuid)}-Projektionen der Seite (inkl. inaktiver Tags)
    * @param actorStateRows   aktive {@link TaskUserState}-Rows des Anfragers (max. eine je Aufgabe)
+   * @param handoverRows     {@code (taskId, toRef)}-Zeilen des sichtbaren Austritts-Handover-
+   *     Ereignisses des Anfragers je Aufgabe (BE-7, aus {@code findVisibleHandoverTargets}; bereits
+   *     actor-/asOf-gescoped). {@code toRef} kann {@code null} sein (Handover ohne Ziele). KEIN
+   *     DB-Zugriff hier; der Service laedt sie vor.
    * @param userRef          UUID des Anfragers (Actor)
    * @param asOf             Wasserzeichen des Fensters (NICHT {@code now()})
    * @return Map taskId -&gt; Anreicherung (vollstaendig fuer alle {@code taskIds})
@@ -60,6 +66,7 @@ public class InboxEnrichmentAssembler {
       final List<TaskParticipant> participantRows,
       final List<TaskTagUuidRow> tagRows,
       final List<TaskUserState> actorStateRows,
+      final List<HandoverTargetRow> handoverRows,
       final UUID userRef,
       final LocalDateTime asOf) {
 
@@ -75,6 +82,17 @@ public class InboxEnrichmentAssembler {
     final Map<Long, TaskUserState> actorStateByTask =
         actorStateRows.stream()
             .collect(Collectors.toMap(TaskUserState::getTaskId, s -> s, (a, b) -> a));
+    // BE-7: Uebergabeziele je Aufgabe aus den vorgeladenen Handover-Rows (DB-frei). Null-toRef
+    // (Selbst-Handover ohne Ziele) traegt KEINE ID bei -> die Liste bleibt leer, ohne die Aufgabe
+    // aus der Map zu verlieren.
+    final Map<Long, List<UUID>> handoverTargetsByTask = new LinkedHashMap<>();
+    for (final HandoverTargetRow row : handoverRows) {
+      final List<UUID> targets =
+          handoverTargetsByTask.computeIfAbsent(row.taskId(), k -> new ArrayList<>());
+      if (row.toRef() != null) {
+        targets.add(row.toRef());
+      }
+    }
 
     final Map<Long, TaskEnrichment> result = new LinkedHashMap<>();
     for (final Long taskId : taskIds) {
@@ -125,10 +143,29 @@ public class InboxEnrichmentAssembler {
       final boolean muted = state != null && state.isMuted();
       final String exitKind = deriveExitKind(ps, state, userRef, asOf);
 
+      // BE-7: Uebergabeziele NUR bei sichtbarem Handover-Austritt. Die Rows sind vom Service bereits
+      // actor-/asOf-/SHOULD_STAY=false-gescoped; die Praezedenz (HANDOVER vor UNSUBSCRIBED) wird hier
+      // ueber exitKind durchgesetzt -> bei "unsubscribed"/null bleiben die Ziele leer (kein Leak).
+      final List<UUID> handedOverToIds;
+      if (EXIT_HANDOVER.equals(exitKind)) {
+        final List<UUID> targets = handoverTargetsByTask.getOrDefault(taskId, List.of());
+        handedOverToIds = targets.stream().distinct().sorted(BY_STRING).toList();
+      } else {
+        handedOverToIds = List.of();
+      }
+
       result.put(
           taskId,
           new TaskEnrichment(
-              createdById, assigneeIds, participantIds, tagIds, pinned, flagged, muted, exitKind));
+              createdById,
+              assigneeIds,
+              participantIds,
+              tagIds,
+              pinned,
+              flagged,
+              muted,
+              exitKind,
+              handedOverToIds));
     }
     return result;
   }

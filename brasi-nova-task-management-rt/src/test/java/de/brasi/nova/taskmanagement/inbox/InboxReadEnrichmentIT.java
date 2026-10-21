@@ -226,7 +226,9 @@ class InboxReadEnrichmentIT {
       @Autowired TaskKeysetQueryRepository taskQueryRepository,
       @Autowired TaskParticipantQueryRepository participantQueryRepository,
       @Autowired TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
-      @Autowired TaskUserStateQueryRepository userStateQueryRepository) {
+      @Autowired TaskUserStateQueryRepository userStateQueryRepository,
+      @Autowired de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository
+              handoverQueryRepository) {
     TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
 
     // Handgeschriebene Stub-Subklassen statt Mockito: der ByteBuddy-Inline-MockMaker kann auf
@@ -282,6 +284,7 @@ class InboxReadEnrichmentIT {
             participantQueryRepository,
             tagAssignmentQueryRepository,
             userStateQueryRepository,
+            handoverQueryRepository,
             new InboxEnrichmentAssembler(),
             null,
             null,

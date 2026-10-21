@@ -113,11 +113,14 @@ class InboxReadContractTest {
             ID, "T", "DONE", "NORMAL", null, Instant.parse("2026-10-18T08:00:00Z"), 0,
             null, Instant.parse("2026-10-01T06:30:00Z"), null,
             List.of(), List.of(), List.of(), false, false, false, true,
-            new ExitModel(InboxEnrichmentAssembler.EXIT_HANDOVER));
+            new ExitModel(InboxEnrichmentAssembler.EXIT_HANDOVER, List.of()));
 
     final JsonNode j = om.readTree(om.writeValueAsString(m));
     assertThat(j.get("exit").isObject()).isTrue();
     assertThat(j.get("exit").get("kind").asText()).isEqualTo("handover");
+    // BE-7: handedOverToIds ist Teil der Wire-Form (hier ohne Ziele -> leeres Array).
+    assertThat(j.get("exit").get("handedOverToIds").isArray()).isTrue();
+    assertThat(j.get("exit").get("handedOverToIds")).isEmpty();
     // isDone fuer DONE true (Wire-Form; Mapping aus statusCode im Service verankert)
     assertThat(j.get("isDone").asBoolean()).isTrue();
   }

@@ -22,6 +22,8 @@ public final class KsfMetamodelIndex {
     private static final List<Class<?>> ENTITIES = List.of(
         de.brasi.nova.taskmanagement.entity.Task.class,
         de.brasi.nova.taskmanagement.entity.TaskComment.class,
+        de.brasi.nova.taskmanagement.entity.TaskHandover.class,
+        de.brasi.nova.taskmanagement.entity.TaskHandoverTarget.class,
         de.brasi.nova.taskmanagement.entity.TaskHistoryEntry.class,
         de.brasi.nova.taskmanagement.entity.TaskInboxGeneration.class,
         de.brasi.nova.taskmanagement.entity.TaskNotification.class,

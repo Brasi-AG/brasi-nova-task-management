@@ -18,6 +18,9 @@ import java.util.UUID;
  * @param isMuted        Actor-Marker aus {@code TASK_USER_STATE}
  * @param exitKind       asOf-gebundener Austritt des Anfragers: {@code "handover"},
  *                       {@code "unsubscribed"} oder {@code null} (aktives Mitglied)
+ * @param handedOverToIds Uebergabeziele (BE-7) des sichtbaren Austritts-Handover-Ereignisses des
+ *                       Anfragers; nur bei {@code exitKind="handover"} gefuellt (ggf. leer bei
+ *                       Selbst-Handover ohne Ziele), sonst leer. Nie {@code null}.
  */
 public record TaskEnrichment(
     UUID createdById,
@@ -27,9 +30,11 @@ public record TaskEnrichment(
     boolean isPinned,
     boolean isFlagged,
     boolean isMuted,
-    String exitKind) {
+    String exitKind,
+    List<UUID> handedOverToIds) {
 
   /** Anreicherung einer Aufgabe ohne jegliche Rows (leere Listen, keine Marker, kein Austritt). */
   public static final TaskEnrichment EMPTY =
-      new TaskEnrichment(null, List.of(), List.of(), List.of(), false, false, false, null);
+      new TaskEnrichment(
+          null, List.of(), List.of(), List.of(), false, false, false, null, List.of());
 }

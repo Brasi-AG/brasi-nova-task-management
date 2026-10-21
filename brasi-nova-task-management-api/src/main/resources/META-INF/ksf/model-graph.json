@@ -235,6 +235,127 @@
       ]
     },
     {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskHandover",
+      "kind": "ENTITY",
+      "name": "TaskHandover",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_HANDOVER" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "fromRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "FROM_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "shouldStay",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "SHOULD_STAY",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskHandoverCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskHandoverUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskHandoverModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskHandoverInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskHandoverTarget",
+      "kind": "ENTITY",
+      "name": "TaskHandoverTarget",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_HANDOVER_TARGET" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "handoverId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "HANDOVER_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "toRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "TO_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskHandoverTargetCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskHandoverTargetUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskHandoverTargetModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskHandoverTargetInfoModel"
+        }
+      ]
+    },
+    {
       "id": "de.brasi.nova.taskmanagement.entity.TaskHistoryEntry",
       "kind": "ENTITY",
       "name": "TaskHistoryEntry",

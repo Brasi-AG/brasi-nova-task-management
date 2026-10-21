@@ -453,6 +453,63 @@ class EntityMappingTest {
     assertThat(TaskTagAssignment.class.getDeclaredField("taskId").getType()).isEqualTo(Long.class);
   }
 
+  // ---------------------------------------------------------------------------
+  // BE-7: TaskHandover + TaskHandoverTarget (V5)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void taskHandover_novaTableAndSelectedColumns() throws Exception {
+    NovaTable table = TaskHandover.class.getAnnotation(NovaTable.class);
+    assertThat(table).isNotNull();
+    assertThat(table.name()).isEqualTo("TASK_HANDOVER");
+    assertThat(NovaEntity.class.isAssignableFrom(TaskHandover.class)).isTrue();
+
+    assertColumnName(TaskHandover.class, "taskId", "TASK_ID");
+    assertColumnName(TaskHandover.class, "fromRef", "FROM_REF");
+    assertColumnName(TaskHandover.class, "shouldStay", "SHOULD_STAY");
+
+    assertThat(TaskHandover.class.getDeclaredField("taskId").getType()).isEqualTo(Long.class);
+    assertThat(TaskHandover.class.getDeclaredField("fromRef").getType()).isEqualTo(UUID.class);
+    assertThat(TaskHandover.class.getDeclaredField("shouldStay").getType())
+        .isEqualTo(boolean.class);
+
+    // Fachliche Spalten non-nullable (SHOULD_STAY bit NOT NULL -> boolean, kein nullable Boolean).
+    assertThat(TaskHandover.class.getDeclaredField("taskId").getAnnotation(NovaColumn.class).nullable())
+        .isFalse();
+    assertThat(TaskHandover.class.getDeclaredField("fromRef").getAnnotation(NovaColumn.class).nullable())
+        .isFalse();
+    assertThat(
+            TaskHandover.class.getDeclaredField("shouldStay").getAnnotation(NovaColumn.class).nullable())
+        .isFalse();
+  }
+
+  @Test
+  void taskHandoverTarget_novaTableAndSelectedColumns() throws Exception {
+    NovaTable table = TaskHandoverTarget.class.getAnnotation(NovaTable.class);
+    assertThat(table).isNotNull();
+    assertThat(table.name()).isEqualTo("TASK_HANDOVER_TARGET");
+    assertThat(NovaEntity.class.isAssignableFrom(TaskHandoverTarget.class)).isTrue();
+
+    assertColumnName(TaskHandoverTarget.class, "handoverId", "HANDOVER_ID");
+    assertColumnName(TaskHandoverTarget.class, "toRef", "TO_REF");
+
+    assertThat(TaskHandoverTarget.class.getDeclaredField("handoverId").getType())
+        .isEqualTo(Long.class);
+    assertThat(TaskHandoverTarget.class.getDeclaredField("toRef").getType()).isEqualTo(UUID.class);
+    assertThat(
+            TaskHandoverTarget.class
+                .getDeclaredField("handoverId")
+                .getAnnotation(NovaColumn.class)
+                .nullable())
+        .isFalse();
+    assertThat(
+            TaskHandoverTarget.class
+                .getDeclaredField("toRef")
+                .getAnnotation(NovaColumn.class)
+                .nullable())
+        .isFalse();
+  }
+
   @Test
   void taskReminderReceipt_novaTableAndSelectedColumns() throws Exception {
     NovaTable table = TaskReminderReceipt.class.getAnnotation(NovaTable.class);
