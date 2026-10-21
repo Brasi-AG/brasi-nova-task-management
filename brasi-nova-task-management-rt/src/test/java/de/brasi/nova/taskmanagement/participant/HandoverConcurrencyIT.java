@@ -294,23 +294,29 @@ class HandoverConcurrencyIT {
 
   @Test
   @DisplayName(
-      "it7_vs_handover_voller_rollback: nebenlaeufiger Handover (ACTOR2->TARGET_WIN) gewinnt die"
-          + " TASK-VERSION -> Verlierer-Handover 409 + voller Rollback; Gewinner committet (Event/"
-          + " Target/History/Notify+Push/Signal)")
-  void it7_vs_handover_voller_rollback() {
+      "it7_vs_stay_handover_voller_rollback: nebenlaeufiger STAY-Handover (ACTOR2->TARGET_WIN,"
+          + " shouldStay=true) gewinnt die TASK-VERSION -> Verlierer-Handover 409 + voller Rollback;"
+          + " Gewinner committet (Stay-Event/Target/History/Notify+Push/Signal, ACTOR2 bleibt aktiv)")
+  void it7_vs_stay_handover_voller_rollback() {
+    // SPEC PA4+ (i): die Konkurrenz ist ein paralleler STAY-Handover (shouldStay=true). Auch ein
+    // Stay-Handover bumpt die TASK-VERSION (A4) -> der Verlierer verliert den Versions-Race.
     armWinnerOnSeparateThread(
         () ->
             service.exit(
-                TASK_HANDOVER_UUID, new ExitInput(ExitKind.HANDOVER, List.of(TARGET_WIN), false)));
+                TASK_HANDOVER_UUID, new ExitInput(ExitKind.HANDOVER, List.of(TARGET_WIN), true)));
 
     final int participantVersionBefore = participantVersion(TASK_HANDOVER_ID, ACTOR_REF);
     runLoserAndAssertFullRollback(TASK_HANDOVER_ID, TASK_HANDOVER_UUID, participantVersionBefore);
 
-    // Gewinner-Handover committet (Positiv-Kontrast, pfadgerecht): Event/Target/Rolle/History/Push/Signal.
+    // Gewinner-Stay-Handover committet (pfadgerecht): Event(SHOULD_STAY=1)/Target/History/Push/Signal;
+    // ACTOR2 bleibt AKTIV (de-assignt, aber KEIN Austritt).
     assertThat(handoverEventCount(TASK_HANDOVER_ID, ACTOR2_REF)).as("Gewinner-Ereignis").isEqualTo(1);
+    assertThat(stayHandoverEventCount(TASK_HANDOVER_ID, ACTOR2_REF))
+        .as("Gewinner-Ereignis ist ein Stay-Handover (SHOULD_STAY=1)").isEqualTo(1);
     assertThat(handoverTargetCount(TASK_HANDOVER_ID, TARGET_WIN)).as("Gewinner-Target").isEqualTo(1);
     assertThat(activeAssigneeCount(TASK_HANDOVER_ID, TARGET_WIN)).as("TARGET_WIN Assignee").isEqualTo(1);
-    assertThat(actorExitedCount(TASK_HANDOVER_ID, ACTOR2_REF)).as("Gewinner ACTOR2 ausgetreten").isEqualTo(1);
+    assertThat(actorExitedCount(TASK_HANDOVER_ID, ACTOR2_REF))
+        .as("Gewinner ACTOR2 NICHT ausgetreten (stay)").isZero();
     assertThat(historyCount(TASK_HANDOVER_ID, ACTOR2_REF)).as("Gewinner-History").isEqualTo(1);
     assertThat(notificationPushPort.pushedTo(TARGET_WIN)).as("Push an TARGET_WIN").isTrue();
     assertThat(inboxSignalPort.signaled(TARGET_WIN)).as("Signal an TARGET_WIN").isTrue();
@@ -506,6 +512,13 @@ class HandoverConcurrencyIT {
   private int handoverEventCount(final long taskId, final UUID fromRef) {
     return count(
         "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID=? AND TENANT_ID=? AND FROM_REF=?",
+        taskId, TENANT_ID, fromRef);
+  }
+
+  private int stayHandoverEventCount(final long taskId, final UUID fromRef) {
+    return count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID=? AND TENANT_ID=? AND FROM_REF=?"
+            + " AND SHOULD_STAY=1",
         taskId, TENANT_ID, fromRef);
   }
 

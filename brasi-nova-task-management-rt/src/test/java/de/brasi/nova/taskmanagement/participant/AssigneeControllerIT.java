@@ -1209,11 +1209,16 @@ class AssigneeControllerIT {
         taskId.toString(), TENANT_A_ID);
     final Integer ticksBefore = lastActivityTicks(taskId);
 
+    // Enges App-Uhr-Fenster um den Handover-Aufruf: der Service setzt LAST_ACTIVITY_AT=now() in
+    // DERSELBEN JVM wie der Test -> der persistierte Wert muss im Intervall [vor, nach] des POST
+    // liegen (kein DB-Uhr-Versatz noetig; exakter now()-Nachweis statt grober 24h-Toleranz).
+    final long appBeforeMillis = System.currentTimeMillis();
     mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
             .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
             .content(om.writeValueAsString(
                 Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isNoContent());
+    final long appAfterMillis = System.currentTimeMillis();
 
     // Ziel ist aktiver Assignee.
     assertThat(count(
@@ -1249,13 +1254,12 @@ class AssigneeControllerIT {
     // UND nahe der aktuellen DB-Zeit (Toleranz fuer App/DB-Uhr-Versatz), nicht nur >=/Sekunde.
     assertThat(lastActivityTicks(taskId))
         .as("LAST_ACTIVITY_AT strikt ueber den Vergangenheitswert gebumpt").isGreaterThan(ticksBefore);
-    final Integer hoursFromDbNow = jdbcTemplate.queryForObject(
-        "SELECT ABS(DATEDIFF(HOUR, LAST_ACTIVITY_AT, GETDATE())) FROM [dbo].[TASK]"
-            + " WHERE EXTERNALID = ? AND TENANT_ID = ?",
-        Integer.class, taskId, TENANT_A_ID);
-    assertThat(hoursFromDbNow)
-        .as("LAST_ACTIVITY_AT auf ~now() gesetzt, nicht der erzwungene Vergangenheitswert")
-        .isLessThanOrEqualTo(24);
+    final java.sql.Timestamp storedLastActivity = jdbcTemplate.queryForObject(
+        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ? AND TENANT_ID = ?",
+        java.sql.Timestamp.class, taskId, TENANT_A_ID);
+    assertThat(storedLastActivity.getTime())
+        .as("LAST_ACTIVITY_AT liegt im engen App-Aufruf-Fenster (= now() des Handover), nicht 2000")
+        .isBetween(appBeforeMillis - 2000L, appAfterMillis + 2000L);
   }
 
   @Test
@@ -1518,7 +1522,25 @@ class AssigneeControllerIT {
                 Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(USER_A_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    // Der sichtbare Austritt (SHOULD_STAY=0) ist der ZWEITE -> handedOverToIds = [USER_A], nicht USER_B.
+    // Codex-Re-Gate-Auflage: ECHTEN ID-DESC-Tie-Break erzwingen. Beide Ereignisse des Akteurs auf
+    // SHOULD_STAY=0 UND IDENTISCHEN ANGELEGT_AM setzen -> die ANGELEGT_AM-Ordnung ist nicht mehr
+    // eindeutig, NUR die hoehere ID (= das finale Ereignis an USER_A) darf das sichtbare Ereignis
+    // bestimmen. So wird der Sekundaer-Tie-Break ID DESC end-to-end (bis in die Detail-Anreicherung)
+    // geprueft, nicht nur die ANGELEGT_AM-Reihenfolge.
+    jdbcTemplate.update(
+        "UPDATE h SET h.SHOULD_STAY = 0, h.ANGELEGT_AM = '2026-06-01T12:00:00'"
+            + " FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND h.FROM_REF = ?",
+        taskId.toString(), ASSIGNEE_REF);
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0"
+                + " AND h.ANGELEGT_AM='2026-06-01T12:00:00'",
+            taskId, ASSIGNEE_REF))
+        .as("zwei sichtbare Gleichstand-Ereignisse (ANGELEGT_AM identisch)").isEqualTo(2);
+
+    // Bei ANGELEGT_AM-Gleichstand entscheidet ID DESC -> das Ereignis mit der hoeheren ID (der finale
+    // Handover an USER_A) ist sichtbar -> handedOverToIds = [USER_A], nicht USER_B.
     final String detail =
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .get("/api/v1/tasks/" + taskId)
@@ -1528,7 +1550,8 @@ class AssigneeControllerIT {
     assertThat(exit.get("kind").asText()).isEqualTo("handover");
     assertThat(exit.get("handedOverToIds")).hasSize(1);
     assertThat(exit.get("handedOverToIds").get(0).asText())
-        .as("juengstes Austritts-Ereignis -> USER_A, nicht USER_B").isEqualTo(USER_A_REF.toString());
+        .as("Tie-Break ID DESC bei ANGELEGT_AM-Gleichstand -> USER_A, nicht USER_B")
+        .isEqualTo(USER_A_REF.toString());
   }
 
   // ---- Hilfsmethoden -------------------------------------------------------------------------

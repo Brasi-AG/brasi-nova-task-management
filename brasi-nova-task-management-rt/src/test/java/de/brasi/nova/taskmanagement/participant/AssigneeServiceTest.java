@@ -1046,8 +1046,8 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "U4: Reaktivierung nach Austritt -> erneuter Handover-Austritt -> NEUES Ereignis, EXIT erneut"
-          + " gesetzt")
+      "U4: Reaktivierung ueber den ECHTEN Pfad (updateAssignees) nach Austritt -> erneuter"
+          + " Handover-Austritt -> NEUES Ereignis, EXIT erneut gesetzt")
   void u4_reaktivierung_dann_erneuter_austritt() {
     final Long taskId = 304L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1081,12 +1081,15 @@ class AssigneeServiceTest {
     service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
     assertThat(actor.getExitKind()).as("nach erstem Austritt EXIT=HANDOVER").isEqualTo(ExitKind.HANDOVER);
 
-    // Reaktivierung (z.B. erneute Zuweisung): der Akteur ist wieder aktiv.
-    actor.setExitKind(null);
-    actor.setExitAt(null);
-    actor.setAssigneeFlag(true);
+    // 2. ECHTER Reaktivierungspfad: erneute Zuweisung via updateAssignees -> der reactivate-Zweig
+    //    (ASSIGNEE_FLAG=true, EXIT_KIND=null) laeuft auf DERSELBEN Participant-Zeile (kein manueller
+    //    Feld-Reset). Nach dem Austritt ist ACTOR kein aktiver Assignee mehr -> toAdd={ACTOR}.
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF)));
+    assertThat(actor.getExitKind()).as("Reaktivierung via updateAssignees -> wieder aktiv").isNull();
+    assertThat(actor.isAssigneeFlag()).as("Reaktivierung -> ASSIGNEE_FLAG=true").isTrue();
 
-    // 2. Erneuter Austritt per Handover -> NEUES Ereignis + EXIT erneut gesetzt.
+    // 3. Erneuter Austritt per Handover -> NEUES Ereignis + EXIT erneut gesetzt.
     service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t2), false));
 
     final ArgumentCaptor<TaskHandover> eventCaptor = ArgumentCaptor.forClass(TaskHandover.class);
