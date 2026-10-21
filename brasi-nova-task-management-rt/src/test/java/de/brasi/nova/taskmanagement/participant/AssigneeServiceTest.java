@@ -23,6 +23,7 @@ import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
 import de.brasi.nova.taskmanagement.entity.TaskHandover;
+import de.brasi.nova.taskmanagement.entity.TaskHandoverTarget;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository;
@@ -984,6 +985,119 @@ class AssigneeServiceTest {
     verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
     verify(inboxGenerationService, never()).bump(TENANT_ID, ACTOR_REF);
     verify(taskHistoryService).record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "U3: zwei Stay-Handover desselben Akteurs (versch. Ziele) -> ZWEI Ereignisse; Ziele NICHT"
+          + " vermischt (t1->Ereignis1, t2->Ereignis2)")
+  void u3_zwei_stay_handover_ziele_nicht_vermischt() {
+    final Long taskId = 303L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final UUID t2 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    // shouldStay=true -> der Akteur bleibt aktiv und kann ein zweites Mal uebergeben.
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2)).thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    // Distinkte Ereignis-IDs je save (statt konstant), um Vermischen zweifelsfrei auszuschliessen.
+    final java.util.concurrent.atomic.AtomicLong seq =
+        new java.util.concurrent.atomic.AtomicLong(9000L);
+    when(handoverRepository.save(any(TaskHandover.class)))
+        .thenAnswer(
+            inv -> {
+              final TaskHandover e = inv.getArgument(0);
+              e.setId(seq.incrementAndGet());
+              return e;
+            });
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), true));
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t2), true));
+
+    // ZWEI getrennte Ereignisse desselben Akteurs, beide shouldStay=true.
+    final ArgumentCaptor<TaskHandover> eventCaptor = ArgumentCaptor.forClass(TaskHandover.class);
+    verify(handoverRepository, times(2)).save(eventCaptor.capture());
+    final List<TaskHandover> events = eventCaptor.getAllValues();
+    assertThat(events).extracting(TaskHandover::getFromRef).containsExactly(ACTOR_REF, ACTOR_REF);
+    assertThat(events).allSatisfy(e -> assertThat(e.isShouldStay()).isTrue());
+    final Long event1Id = events.get(0).getId();
+    final Long event2Id = events.get(1).getId();
+    assertThat(event1Id).as("verschiedene Ereignis-IDs").isNotEqualTo(event2Id);
+
+    // Ziele NICHT vermischt: t1 haengt an Ereignis1, t2 an Ereignis2.
+    final ArgumentCaptor<TaskHandoverTarget> targetCaptor =
+        ArgumentCaptor.forClass(TaskHandoverTarget.class);
+    verify(handoverTargetRepository, times(2)).save(targetCaptor.capture());
+    final List<TaskHandoverTarget> targets = targetCaptor.getAllValues();
+    final TaskHandoverTarget target1 =
+        targets.stream().filter(t -> t1.equals(t.getToRef())).findFirst().orElseThrow();
+    final TaskHandoverTarget target2 =
+        targets.stream().filter(t -> t2.equals(t.getToRef())).findFirst().orElseThrow();
+    assertThat(target1.getHandoverId()).as("t1 gehoert zu Ereignis1").isEqualTo(event1Id);
+    assertThat(target2.getHandoverId()).as("t2 gehoert zu Ereignis2").isEqualTo(event2Id);
+  }
+
+  @Test
+  @DisplayName(
+      "U4: Reaktivierung nach Austritt -> erneuter Handover-Austritt -> NEUES Ereignis, EXIT erneut"
+          + " gesetzt")
+  void u4_reaktivierung_dann_erneuter_austritt() {
+    final Long taskId = 304L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final UUID t2 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2)).thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(userStateQueryRepository.save(any(TaskUserState.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    final java.util.concurrent.atomic.AtomicLong seq =
+        new java.util.concurrent.atomic.AtomicLong(9000L);
+    when(handoverRepository.save(any(TaskHandover.class)))
+        .thenAnswer(
+            inv -> {
+              final TaskHandover e = inv.getArgument(0);
+              e.setId(seq.incrementAndGet());
+              return e;
+            });
+
+    // 1. Austritt per Handover (!shouldStay) -> EXIT_KIND=HANDOVER.
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
+    assertThat(actor.getExitKind()).as("nach erstem Austritt EXIT=HANDOVER").isEqualTo(ExitKind.HANDOVER);
+
+    // Reaktivierung (z.B. erneute Zuweisung): der Akteur ist wieder aktiv.
+    actor.setExitKind(null);
+    actor.setExitAt(null);
+    actor.setAssigneeFlag(true);
+
+    // 2. Erneuter Austritt per Handover -> NEUES Ereignis + EXIT erneut gesetzt.
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t2), false));
+
+    final ArgumentCaptor<TaskHandover> eventCaptor = ArgumentCaptor.forClass(TaskHandover.class);
+    verify(handoverRepository, times(2)).save(eventCaptor.capture());
+    assertThat(eventCaptor.getAllValues())
+        .extracting(TaskHandover::getId)
+        .as("zwei verschiedene Ereignisse (Reaktivierung erzeugt KEIN Merge)")
+        .doesNotHaveDuplicates();
+    assertThat(actor.getExitKind())
+        .as("nach erneutem Austritt wieder EXIT=HANDOVER").isEqualTo(ExitKind.HANDOVER);
+    assertThat(actor.getExitAt()).isNotNull();
   }
 
   @Test
