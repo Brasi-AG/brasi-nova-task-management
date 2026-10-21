@@ -13,6 +13,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
+import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
@@ -23,6 +27,10 @@ import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagUuidRow;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.tag.TagCatalogService;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
@@ -57,6 +65,10 @@ class InboxSnapshotServiceTest {
   private static final UUID MAX_UUID = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
   private TaskKeysetQueryRepository taskQueryRepository;
+  private TaskParticipantQueryRepository participantQueryRepository;
+  private TaskTagAssignmentQueryRepository tagAssignmentQueryRepository;
+  private TaskUserStateQueryRepository userStateQueryRepository;
+  private InboxEnrichmentAssembler enrichmentAssembler;
   private NotificationQueryService notificationQueryService;
   private TagCatalogService tagCatalogService;
   private UserReadRepository userReadRepository;
@@ -68,6 +80,11 @@ class InboxSnapshotServiceTest {
   @BeforeEach
   void setUp() {
     taskQueryRepository = mock(TaskKeysetQueryRepository.class);
+    participantQueryRepository = mock(TaskParticipantQueryRepository.class);
+    tagAssignmentQueryRepository = mock(TaskTagAssignmentQueryRepository.class);
+    userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
+    // Echter Assembler (reine Logik, keine DB) - in P2 isoliert getestet.
+    enrichmentAssembler = new InboxEnrichmentAssembler();
     notificationQueryService = mock(NotificationQueryService.class);
     tagCatalogService = mock(TagCatalogService.class);
     userReadRepository = mock(UserReadRepository.class);
@@ -78,6 +95,10 @@ class InboxSnapshotServiceTest {
     service =
         new InboxSnapshotService(
             taskQueryRepository,
+            participantQueryRepository,
+            tagAssignmentQueryRepository,
+            userStateQueryRepository,
+            enrichmentAssembler,
             notificationQueryService,
             tagCatalogService,
             userReadRepository,
@@ -93,6 +114,10 @@ class InboxSnapshotServiceTest {
     when(notificationQueryService.listFor(any(), anyLong(), any(), any(), anyInt()))
         .thenReturn(new NotificationPage(List.of(), null, false));
     when(tagCatalogService.list()).thenReturn(List.of());
+    // Default: Anreicherungs-Batch-Querys liefern leer (pro Aufgabe EMPTY-Anreicherung).
+    when(participantQueryRepository.findActiveByTaskIds(any())).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(any())).thenReturn(List.of());
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(any(), any())).thenReturn(List.of());
     // Default: stabile Generation 0 (First-Page-Bracket stabil, keine Ablehnung).
     when(inboxGenerationService.currentGeneration(any())).thenReturn(0L);
   }
@@ -542,7 +567,201 @@ class InboxSnapshotServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- BE-1: currentUserId + Anreicherung + N+1-Sentinel + Enrichment-im-Bracket --------------
+
+  @Test
+  @DisplayName("loadSnapshot_setzt_currentUserId_auf_anfrager")
+  void loadSnapshot_setzt_currentUserId() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(buildTasks(1));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+    when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
+
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
+
+    assertThat(snapshot.currentUserId()).isEqualTo(USER_REF);
+  }
+
+  @Test
+  @DisplayName("loadActivePage_reichert_summary_felder_an (creator/assignees/participants/tags/marker)")
+  void loadActivePage_reichert_summary_an() {
+    final long taskId = 1000L; // buildTasks(1) -> id 1000
+    final UUID assignee = UUID.randomUUID();
+    final UUID participant = UUID.randomUUID();
+    final UUID tag = UUID.randomUUID();
+
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(buildTasks(1));
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participant(taskId, USER_REF, ParticipantKind.PERSON, true, false, false, null),
+                participant(taskId, assignee, ParticipantKind.PERSON, false, true, false, null),
+                participant(taskId, participant, ParticipantKind.PERSON, false, false, true, null)));
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(any()))
+        .thenReturn(List.of(new TaskTagUuidRow(taskId, tag)));
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(any(), eq(USER_REF)))
+        .thenReturn(List.of(userState(taskId, USER_REF, true, false, true, null)));
+
+    final TaskSummaryModel s = service.loadActivePage(USER_REF, null, 10).items().get(0);
+
+    assertThat(s.createdById()).isEqualTo(USER_REF);
+    assertThat(s.assigneeIds()).containsExactly(assignee);
+    assertThat(s.participantIds()).containsExactly(participant);
+    assertThat(s.tagIds()).containsExactly(tag);
+    assertThat(s.isPinned()).isTrue();
+    assertThat(s.isFlagged()).isFalse();
+    assertThat(s.isMuted()).isTrue();
+    assertThat(s.createdAt()).isNotNull();
+    assertThat(s.exit()).isNull();
+  }
+
+  @Test
+  @DisplayName("isDone=true fuer Status DONE UND CANCELLED, false fuer OPEN")
+  void isDone_fuer_done_und_cancelled() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(buildTasks(1));
+
+    when(resolver.resolveTaskStatusCode(any())).thenReturn("DONE");
+    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isTrue();
+
+    when(resolver.resolveTaskStatusCode(any())).thenReturn("CANCELLED");
+    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isTrue();
+
+    when(resolver.resolveTaskStatusCode(any())).thenReturn("OPEN");
+    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isFalse();
+  }
+
+  @Test
+  @DisplayName("exit=handover wird in archiv-left-Summary gemappt (asOf-gebunden)")
+  void exit_handover_in_summary() {
+    final long taskId = 1000L;
+    final LocalDateTime before = LocalDateTime.of(2020, 1, 1, 0, 0);
+    when(taskQueryRepository.findArchiveLeftPage(eq(USER_REF), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(buildTasks(1));
+    final TaskParticipant exited =
+        participant(taskId, USER_REF, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER);
+    exited.setExitAt(before);
+    exited.setCreatedAt(before);
+    when(participantQueryRepository.findActiveByTaskIds(any())).thenReturn(List.of(exited));
+
+    final TaskSummaryModel s = service.loadArchivePage(USER_REF, "left", null, 10).items().get(0);
+
+    assertThat(s.exit()).isNotNull();
+    assertThat(s.exit().kind()).isEqualTo("handover");
+  }
+
+  @Test
+  @DisplayName("N+1-Sentinel: je Batch-Repo GENAU 1 Aufruf pro Versuch (nicht-leere Seite)")
+  void nplus1_sentinel_genau_ein_aufruf_pro_versuch() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(buildTasks(3));
+
+    service.loadActivePage(USER_REF, null, 10);
+
+    verify(participantQueryRepository, times(1)).findActiveByTaskIds(any());
+    verify(tagAssignmentQueryRepository, times(1)).findActiveTagUuidsByTaskIds(any());
+    verify(userStateQueryRepository, times(1)).findByTaskIdsAndUserRef(any(), eq(USER_REF));
+  }
+
+  @Test
+  @DisplayName("N+1-Sentinel: leere Seite -> 0 Batch-Aufrufe (kein IN())")
+  void nplus1_sentinel_leere_seite_null_aufrufe() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(List.of());
+
+    service.loadActivePage(USER_REF, null, 10);
+
+    verify(participantQueryRepository, never()).findActiveByTaskIds(any());
+    verify(tagAssignmentQueryRepository, never()).findActiveTagUuidsByTaskIds(any());
+    verify(userStateQueryRepository, never()).findByTaskIdsAndUserRef(any(), any());
+  }
+
+  @Test
+  @DisplayName("N+1-Sentinel: Retry -> ein Satz Batch-Aufrufe JE VERSUCH (Enrichment im Bracket)")
+  void nplus1_sentinel_retry_ein_satz_je_versuch() {
+    // Versuch 1 instabil (0->1), Versuch 2 stabil (1->1): Enrichment laeuft je Versuch einmal.
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(0L, 1L, 1L, 1L);
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(buildTasks(1));
+
+    service.loadActivePage(USER_REF, null, 10);
+
+    verify(participantQueryRepository, times(2)).findActiveByTaskIds(any());
+    verify(tagAssignmentQueryRepository, times(2)).findActiveTagUuidsByTaskIds(any());
+    verify(userStateQueryRepository, times(2)).findByTaskIdsAndUserRef(any(), eq(USER_REF));
+  }
+
+  @Test
+  @DisplayName("Enrichment im Bracket: Folgeseite laeuft VOR dem Generation-Check (Batch-Reads trotz 410)")
+  void enrichment_im_bracket_folgeseite_vor_gen_check() {
+    final int limit = 5;
+    final LocalDateTime asOf = LocalDateTime.of(2026, 10, 17, 10, 0, 0);
+    final LocalDateTime lastActivity = LocalDateTime.of(2026, 10, 16, 9, 30, 0);
+    final UUID lastExternal = UUID.randomUUID();
+    final String cursor =
+        KeysetCursor.encode(
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "5"));
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(7L); // Mismatch -> 410
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
+        .thenReturn(buildTasks(1));
+
+    assertThatThrownBy(() -> service.loadActivePage(USER_REF, cursor, limit))
+        .isInstanceOf(SnapshotExpiredException.class);
+
+    // Anreicherung lief VOR dem Generation-Check (im Bracket), obwohl am Ende 410 geworfen wird.
+    verify(participantQueryRepository, times(1)).findActiveByTaskIds(any());
+    verify(userStateQueryRepository, times(1)).findByTaskIdsAndUserRef(any(), eq(USER_REF));
+  }
+
   // ---- Hilfsmethoden --------------------------------------------------------------------------
+
+  private static TaskParticipant participant(
+      final long taskId,
+      final UUID ref,
+      final ParticipantKind kind,
+      final boolean creator,
+      final boolean assignee,
+      final boolean participant,
+      final ExitKind exitKind) {
+    final TaskParticipant p = new TaskParticipant();
+    p.setTaskId(taskId);
+    p.setParticipantRef(ref);
+    p.setParticipantKind(kind);
+    p.setCreatorFlag(creator);
+    p.setAssigneeFlag(assignee);
+    p.setParticipantFlag(participant);
+    p.setExitKind(exitKind);
+    p.setCreatedAt(LocalDateTime.of(2020, 1, 1, 0, 0));
+    return p;
+  }
+
+  private static TaskUserState userState(
+      final long taskId,
+      final UUID userRef,
+      final boolean pinned,
+      final boolean flagged,
+      final boolean muted,
+      final LocalDateTime unsubscribedAt) {
+    final TaskUserState s = new TaskUserState();
+    s.setTaskId(taskId);
+    s.setUserRef(userRef);
+    s.setPinned(pinned);
+    s.setFlagged(flagged);
+    s.setMuted(muted);
+    s.setUnsubscribedAt(unsubscribedAt);
+    s.setCreatedAt(LocalDateTime.of(2020, 1, 1, 0, 0));
+    return s;
+  }
 
   private List<Task> buildTasks(final int count) {
     final List<Task> result = new ArrayList<>();
@@ -555,6 +774,7 @@ class InboxSnapshotServiceTest {
       t.setPriorityId(10L);
       t.setDueDate(LocalDate.of(2026, 10, 20));
       t.setLastActivityAt(LocalDateTime.of(2026, 10, 17, 12, 0, i));
+      t.setCreatedAt(LocalDateTime.of(2026, 10, 1, 6, 30, 0));
       t.setCommentCount(0);
       result.add(t);
     }
