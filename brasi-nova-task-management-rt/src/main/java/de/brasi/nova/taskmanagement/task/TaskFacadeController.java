@@ -69,7 +69,11 @@ public class TaskFacadeController {
   @Operation(
       summary = "Aufgabe anlegen",
       description = "Legt eine neue Aufgabe an. Direction wird serverseitig auf CUSTOMER_INTERNAL erzwungen."
-          + " Der angemeldete Benutzer wird automatisch als Creator und erster Assignee eingetragen.")
+          + " Der angemeldete Benutzer wird automatisch als Creator und erster Assignee eingetragen."
+          + " Optional koennen initiale assignees (UUIDs aktiver Benutzer des Mandanten), tagIds (UUIDs"
+          + " aktiver globaler Katalog-Tags) sowie die persoenlichen Marker isPinned/isFlagged des"
+          + " Erstellers mitgegeben werden. Die Anlage ist atomar (All-or-Nothing): ist ein assignee"
+          + " oder tag unbekannt/inaktiv, wird mit 400 abgelehnt und KEINE Aufgabe angelegt.")
   @ApiResponses({
       @ApiResponse(
           responseCode = "201",
@@ -78,7 +82,9 @@ public class TaskFacadeController {
               mediaType = "application/json",
               schema = @Schema(implementation = CreatedResourceResponse.class),
               examples = @ExampleObject(value = "{\"id\": \"550e8400-e29b-41d4-a716-446655440000\"}"))),
-      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter priorityCode)."),
+      @ApiResponse(responseCode = "400",
+          description = "Ungueltige Eingabe (z.B. unbekannter priorityCode, unbekannter/inaktiver"
+              + " Assignee oder Tag, mehr als 100 assignees/tagIds)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung.")
   })
