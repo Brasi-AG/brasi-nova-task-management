@@ -69,24 +69,39 @@ public class AssigneeController {
   /**
    * Aktueller Akteur verlaesst die Aufgabe (HANDOVER oder UNSUBSCRIBED).
    *
-   * <p>Bei HANDOVER wird eine HANDOVER-Notification emittiert.
+   * <p>Bei HANDOVER werden die {@code handedOverToIds} zu Assignees und erhalten eine
+   * HANDOVER-Notification; der Akteur wird de-assignt. Mit {@code shouldStay=true} bleibt der Akteur
+   * reiner Teilnehmer (kein Austritt). Ein Creator kann die Aufgabe nur per HANDOVER mit
+   * {@code shouldStay=true} abgeben (sonst 409).
    *
    * @param id    externe UUID der Aufgabe
-   * @param input Austritts-Art
+   * @param input Austritts-Eingabe (exitKind, handedOverToIds, shouldStay)
    * @return 204 No Content
    */
   @Operation(
-      summary = "Aufgabe verlassen",
-      description = "Der angemeldete Benutzer verlaesst die Aufgabe."
-          + " exitKind: HANDOVER (Aufgabe uebergeben) oder UNSUBSCRIBED (Aufgabe abgemeldet)."
-          + " Der Creator kann die Aufgabe nicht verlassen (409).")
+      summary = "Aufgabe verlassen / uebergeben",
+      description =
+          "Der angemeldete Benutzer verlaesst die Aufgabe oder uebergibt sie."
+              + " exitKind: HANDOVER (Aufgabe uebergeben) oder UNSUBSCRIBED (Aufgabe abgemeldet)."
+              + " Bei HANDOVER werden handedOverToIds zu Assignees; shouldStay=true laesst den"
+              + " Akteur als reinen Teilnehmer verbleiben (kein Austritt). Der Creator kann die"
+              + " Aufgabe nur per HANDOVER mit shouldStay=true abgeben (ansonsten 409).")
   @ApiResponses({
-      @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich verlassen."),
-      @ApiResponse(responseCode = "400", description = "Benutzer ist kein aktiver Teilnehmer der Aufgabe."),
+      @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich verlassen/uebergeben."),
+      @ApiResponse(
+          responseCode = "400",
+          description =
+              "Benutzer ist kein aktiver Teilnehmer der Aufgabe, oder ungueltige Eingabe:"
+                  + " UNSUBSCRIBED mit handedOverToIds/shouldStay; shouldStay=true ohne Ziele;"
+                  + " Selbstziel; unbekannte/fremde Ziel-UUID; mehr als 100 Ziele; null-Element."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert)."),
-      @ApiResponse(responseCode = "409", description = "Der Creator kann die Aufgabe nicht verlassen.")
+      @ApiResponse(
+          responseCode = "409",
+          description =
+              "Der Creator kann die Aufgabe nur per HANDOVER mit shouldStay=true abgeben; oder"
+                  + " nebenlaeufiger Versionskonflikt (Retry gegen frischen Stand).")
   })
   @PostMapping("/{id}/exit")
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)

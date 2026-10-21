@@ -137,6 +137,11 @@ class AssigneeControllerIT {
   private static final String ASSIGNEE_LOGIN = "assignee@brasi.de";
   private static final long ASSIGNEE_DB_ID = 512L;
 
+  /** BE-7: Uebergabeziel im SELBEN Mandanten A (muss aktiver Tenant-A-Benutzer sein). */
+  private static final UUID HANDOVER_TARGET_REF = UUID.randomUUID();
+  private static final String HANDOVER_TARGET_LOGIN = "handover-target@brasi.de";
+  private static final long HANDOVER_TARGET_DB_ID = 515L;
+
   /** Mandant B: fremder Tenant fuer 404-Test. */
   private static final long TENANT_B_ID = 513L;
 
@@ -224,6 +229,8 @@ class AssigneeControllerIT {
     seedBenutzerIfAbsent(jt, USER_A_DB_ID, USER_A_REF, USER_A_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, ASSIGNEE_DB_ID, ASSIGNEE_REF, ASSIGNEE_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_B_ID);
+    seedBenutzerIfAbsent(
+        jt, HANDOVER_TARGET_DB_ID, HANDOVER_TARGET_REF, HANDOVER_TARGET_LOGIN, TENANT_A_ID);
   }
 
   // ---- Positiv-IT: Assignee zuweisen -> ASSIGNEE_FLAG + TASK_USER_STATE -------------------------
@@ -1166,7 +1173,338 @@ class AssigneeControllerIT {
     assertThat(stillAssignee).as("darf nicht wieder aktiver Assignee sein").isZero();
   }
 
+  // ============================================================================================
+  // BE-7: Handover (handedOverToIds + shouldStay) - Facade-ITs IT1-IT5, IT8 (real-MSSQL)
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "be7_it1_handover_mit_zielen: POST /exit HANDOVER mit Zielen -> 204; Ziel-ASSIGNEE-Rows +"
+          + " Event + Targets + Notifications; Akteur exited + ASSIGNEE_FLAG=false;"
+          + " LAST_ACTIVITY_AT gebumpt")
+  void be7_it1_handover_mit_zielen() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT1-Handover");
+    // ASSIGNEE_REF ist Nicht-Creator-Assignee und uebergibt an USER_B (Ziel).
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer lastActivityBefore = lastActivityTicks(taskId);
+
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Ziel ist aktiver Assignee.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
+            taskId, HANDOVER_TARGET_REF))
+        .as("Ziel ist aktiver Assignee").isEqualTo(1);
+    // Akteur exited + ASSIGNEE_FLAG=false.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND='HANDOVER' AND p.ASSIGNEE_FLAG=0",
+            taskId, ASSIGNEE_REF))
+        .as("Akteur exited (HANDOVER) + de-assignt").isEqualTo(1);
+    // Event + Target persistiert.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0",
+            taskId, ASSIGNEE_REF))
+        .as("1 TASK_HANDOVER-Ereignis").isEqualTo(1);
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER_TARGET] tgt"
+                + " JOIN [dbo].[TASK_HANDOVER] h ON tgt.HANDOVER_ID=h.ID"
+                + " JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID WHERE t.EXTERNALID=? AND tgt.TO_REF=?",
+            taskId, HANDOVER_TARGET_REF))
+        .as("1 TASK_HANDOVER_TARGET fuer das Ziel").isEqualTo(1);
+    // Ziel-Notification (HANDOVER).
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND n.RECIPIENT_REF=?",
+            taskId, HANDOVER_TARGET_REF))
+        .as("Ziel-Notification").isGreaterThanOrEqualTo(1);
+    // LAST_ACTIVITY_AT wurde gebumpt.
+    assertThat(lastActivityTicks(taskId))
+        .as("LAST_ACTIVITY_AT gebumpt").isGreaterThanOrEqualTo(lastActivityBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "be7_it2_should_stay: HANDOVER shouldStay=true -> Akteur aktiv + ASSIGNEE_FLAG=false;"
+          + " Ziel Assignee; Event mit SHOULD_STAY=1")
+  void be7_it2_should_stay() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT2-Stay");
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of(
+                "exitKind", "HANDOVER", "shouldStay", true, "handedOverToIds",
+                List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Akteur bleibt aktiv (kein EXIT), aber ASSIGNEE_FLAG=false.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NULL"
+                + " AND p.ASSIGNEE_FLAG=0 AND p.PARTICIPANT_FLAG=1",
+            taskId, ASSIGNEE_REF))
+        .as("Akteur bleibt aktiver Teilnehmer, de-assignt").isEqualTo(1);
+    // UNSUBSCRIBED_AT NICHT gesetzt.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND s.USER_REF=? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+            taskId, ASSIGNEE_REF))
+        .as("kein UNSUBSCRIBED_AT bei shouldStay").isZero();
+    // Ziel Assignee + Event SHOULD_STAY=1.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
+            taskId, HANDOVER_TARGET_REF))
+        .as("Ziel ist Assignee").isEqualTo(1);
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=1",
+            taskId, ASSIGNEE_REF))
+        .as("Event mit SHOULD_STAY=1").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "be7_it3_creator_stay_204_sonst_409: Creator HANDOVER shouldStay=true -> 204 (de-assignt,"
+          + " bleibt aktiv); shouldStay=false -> 409")
+  void be7_it3_creator_stay_204_sonst_409() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Fall A: Creator shouldStay=false -> 409.
+    final UUID taskA = createTask(mvc, om, tokenA, "BE7-IT3-Creator-409");
+    mvc.perform(post("/api/v1/tasks/" + taskA + "/exit")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isConflict());
+
+    // Fall B: Creator shouldStay=true -> 204, de-assignt, bleibt aktiv.
+    final UUID taskB = createTask(mvc, om, tokenA, "BE7-IT3-Creator-204");
+    mvc.perform(post("/api/v1/tasks/" + taskB + "/exit")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of(
+                "exitKind", "HANDOVER", "shouldStay", true,
+                "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.CREATOR_FLAG=1"
+                + " AND p.ASSIGNEE_FLAG=0 AND p.EXIT_KIND IS NULL",
+            taskB, USER_A_REF))
+        .as("Creator de-assignt, bleibt aktiv (kein EXIT)").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "be7_it4_read_handedOverToIds: GET /tasks/{id} liefert exit.handedOverToIds fuer ausgetretenen"
+          + " Akteur; aktiver Assignee -> exit=null")
+  void be7_it4_read_handedOverToIds() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT4-Read");
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Vor Handover: aktiver Assignee -> exit=null.
+    final String activeDetail =
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    assertThat(om.readTree(activeDetail).get("exit").isNull())
+        .as("aktiver Assignee -> exit=null").isTrue();
+
+    // Handover an das Tenant-A-Ziel.
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final String exitedDetail =
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    final com.fasterxml.jackson.databind.JsonNode exit = om.readTree(exitedDetail).get("exit");
+    assertThat(exit.isNull()).as("ausgetretener Akteur -> exit gesetzt").isFalse();
+    assertThat(exit.get("kind").asText()).isEqualTo("handover");
+    assertThat(exit.get("handedOverToIds").isArray()).isTrue();
+    assertThat(exit.get("handedOverToIds").get(0).asText()).isEqualTo(HANDOVER_TARGET_REF.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "be7_it5_validierung_400: self / unknown / UNSUBSCRIBED-mit-Zielen / leer-stay -> 400")
+  void be7_it5_validierung_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT5-Validation");
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // self-Ziel -> 400
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isBadRequest());
+    // unknown-Ziel -> 400
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(UUID.randomUUID().toString())))))
+        .andExpect(status().isBadRequest());
+    // UNSUBSCRIBED mit Zielen -> 400
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "UNSUBSCRIBED", "handedOverToIds", List.of(USER_B_REF.toString())))))
+        .andExpect(status().isBadRequest());
+    // leer-stay -> 400
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER", "shouldStay", true))))
+        .andExpect(status().isBadRequest());
+
+    // Keine der 400-Antworten darf einen Austritt/Handover erzeugt haben.
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NOT NULL",
+            taskId, ASSIGNEE_REF))
+        .as("Akteur weiterhin ohne Austritt nach 400ern").isZero();
+    assertThat(count(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                + " WHERE t.EXTERNALID=?",
+            taskId))
+        .as("kein TASK_HANDOVER-Ereignis nach 400ern").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "be7_it8_asof_tiebreak: zweiter Handover (andere Ziele) ueberschreibt die sichtbaren"
+          + " handedOverToIds (juengstes Ereignis, Tie-Break)")
+  void be7_it8_asof_tiebreak() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT8-Tiebreak");
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // 1. Stay-Handover an das Tenant-A-Ziel (Akteur bleibt, kann erneut handovern).
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of(
+                "exitKind", "HANDOVER", "shouldStay", true, "handedOverToIds",
+                List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+    // 2. Finaler Handover (Austritt) an USER_A (Creator ist aktiv; USER_A als Ziel zulaessig).
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(
+                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(USER_A_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // Der sichtbare Austritt (SHOULD_STAY=0) ist der ZWEITE -> handedOverToIds = [USER_A], nicht USER_B.
+    final String detail =
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    final com.fasterxml.jackson.databind.JsonNode exit = om.readTree(detail).get("exit");
+    assertThat(exit.get("kind").asText()).isEqualTo("handover");
+    assertThat(exit.get("handedOverToIds")).hasSize(1);
+    assertThat(exit.get("handedOverToIds").get(0).asText())
+        .as("juengstes Austritts-Ereignis -> USER_A, nicht USER_B").isEqualTo(USER_A_REF.toString());
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  private Integer count(final String sql, final Object... args) {
+    return jdbcTemplate.queryForObject(sql, Integer.class, args);
+  }
+
+  /** Grobe LAST_ACTIVITY_AT-Ordnungssonde (Millisekunden seit Epoche als Integer-Vergleichswert). */
+  private Integer lastActivityTicks(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT DATEDIFF(SECOND, '2026-01-01', LAST_ACTIVITY_AT) FROM [dbo].[TASK]"
+            + " WHERE EXTERNALID = ? AND TENANT_ID = ?",
+        Integer.class, taskUuid, TENANT_A_ID);
+  }
 
   private UUID createTask(
       final MockMvc mvc, final ObjectMapper om, final String token, final String title)

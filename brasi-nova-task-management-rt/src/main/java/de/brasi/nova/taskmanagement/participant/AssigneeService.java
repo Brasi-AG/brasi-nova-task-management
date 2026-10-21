@@ -706,6 +706,9 @@ public class AssigneeService {
     // serialisiert bei JEDEM erfolgreichen Austritt/Handover gegen nebenlaeufiges PUT/exit; der
     // Verlierer bricht mit BusinessRuleException (409) ab und committet NICHTS.
     task.setLastActivityAt(now);
+    // Test-Seam: deterministische Synchronisation der Versions-Verlierer-ITs ZWISCHEN allen
+    // Mutationen und dem versionierten TASK-save (BE-7 IT7). Produktiv No-Op.
+    onBeforeTaskVersionSaveForTest(taskId);
     taskRepository.save(task);
 
     // (10) Selbstbestaetigungs-Notify an den Akteur.
@@ -814,6 +817,18 @@ public class AssigneeService {
    * @param targetRef UUID des Uebergabeziels
    */
   protected void onBeforeHandoverAssigneeSaveForTest(final Long taskId, final UUID targetRef) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op): Haken ZWISCHEN allen Handover-/Austritts-Mutationen und dem
+   * versionierten {@code taskRepository.save} in {@link #exit}. Ermoeglicht deterministische
+   * Versions-Verlierer-ITs (BE-7 IT7): zwei Threads werden VOR dem TASK-VERSION-Write synchronisiert,
+   * sodass genau einer gewinnt. Produktiv ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   */
+  protected void onBeforeTaskVersionSaveForTest(final Long taskId) {
     // No-Op im Produktivbetrieb.
   }
 
