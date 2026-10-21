@@ -1024,7 +1024,168 @@ class AssigneeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ============================================================================================
+  // BE-6: POST /{id}/participants (additiv, idempotent, nur Teilnehmer-Rolle) - real-MSSQL
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "post_participants_legt_teilnehmer_an: POST /participants -> 204, TASK_PARTICIPANT"
+          + " (PARTICIPANT_FLAG=1, ASSIGNEE_FLAG=0, CREATOR_FLAG=0, EXIT_KIND null) + TASK_USER_STATE")
+  void post_participants_legt_teilnehmer_an() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Participants-Add-IT-Task");
+
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer participantRow = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+            + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.CREATOR_FLAG = 0"
+            + " AND p.EXIT_KIND IS NULL",
+        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    assertThat(participantRow).as("reiner Teilnehmer-Row (nicht Assignee/Creator)").isEqualTo(1);
+
+    final Integer userState = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+        Integer.class, taskId, ASSIGNEE_REF);
+    assertThat(userState).as("TASK_USER_STATE fuer Teilnehmer angelegt").isGreaterThanOrEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "post_participants_idempotent: zweites POST desselben Ref -> 204, weiterhin genau 1 aktive Zeile")
+  void post_participants_idempotent() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Participants-Idempotent-IT-Task");
+    final String body =
+        om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())));
+
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isNoContent());
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isNoContent());
+
+    final Integer activeRows = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+            + " AND p.ENTITY_STATUS = 'ACTIVE' AND p.EXIT_KIND IS NULL",
+        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    assertThat(activeRows).as("genau 1 aktive Zeile trotz Doppel-Add (idempotent)").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("post_participants_unbekannt_400: unbekannter Ref -> 400, keine Zeile")
+  void post_participants_unbekannt_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Participants-Unknown-IT-Task");
+    final UUID unknown = UUID.randomUUID();
+
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("participantIds", List.of(unknown.toString())))))
+        .andExpect(status().isBadRequest());
+
+    final Integer count = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        Integer.class, taskId, unknown);
+    assertThat(count).as("keine Zeile fuer unbekannten Ref").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "post_participants_ex_assignee_clears_assignee_flag (D4-BLOCKER): abgewaehlter Ex-Assignee ->"
+          + " POST participants reaktiviert als REINER Teilnehmer (ASSIGNEE_FLAG=0)")
+  void post_participants_ex_assignee_clears_assignee_flag() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Participants-ExAssignee-IT-Task");
+
+    // ASSIGNEE_REF zuweisen (ASSIGNEE_FLAG=1) ...
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+    // ... dann abwaehlen (EXIT_KIND=UNSUBSCRIBED; ASSIGNEE_FLAG bleibt 1 auf der ausgetretenen Zeile).
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of()))))
+        .andExpect(status().isNoContent());
+
+    // POST participants [ASSIGNEE_REF] -> reaktiviert als reiner Teilnehmer, ASSIGNEE_FLAG=0.
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
+            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer pureParticipant = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+            + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.EXIT_KIND IS NULL",
+        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    assertThat(pureParticipant)
+        .as("Ex-Assignee als reiner Teilnehmer reaktiviert (ASSIGNEE_FLAG=0, nicht wieder Assignee)")
+        .isEqualTo(1);
+
+    // Gegenprobe: NICHT als aktiver Assignee gefuehrt.
+    final Integer stillAssignee = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+            + " AND p.ASSIGNEE_FLAG = 1 AND p.EXIT_KIND IS NULL",
+        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    assertThat(stillAssignee).as("darf nicht wieder aktiver Assignee sein").isZero();
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  private UUID createTask(
+      final MockMvc mvc, final ObjectMapper om, final String token, final String title)
+      throws Exception {
+    final String resp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", title))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(resp, com.fasterxml.jackson.databind.JsonNode.class)
+        .get("id")
+        .traverse(om)
+        .readValueAs(UUID.class);
+  }
 
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
