@@ -1201,7 +1201,13 @@ class AssigneeControllerIT {
             .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    final Integer lastActivityBefore = lastActivityTicks(taskId);
+    // Exakter Bump-Nachweis: LAST_ACTIVITY_AT auf einen festen Vergangenheitswert zwingen, damit der
+    // Handover-Bump auf now() UNZWEIDEUTIG (strikt groesser, nicht nur >=/Sekunde) belegbar ist.
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK] SET LAST_ACTIVITY_AT = '2000-01-01T00:00:00' WHERE EXTERNALID = ?"
+            + " AND TENANT_ID = ?",
+        taskId.toString(), TENANT_A_ID);
+    final Integer ticksBefore = lastActivityTicks(taskId);
 
     mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
             .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
@@ -1233,15 +1239,23 @@ class AssigneeControllerIT {
                 + " JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID WHERE t.EXTERNALID=? AND tgt.TO_REF=?",
             taskId, HANDOVER_TARGET_REF))
         .as("1 TASK_HANDOVER_TARGET fuer das Ziel").isEqualTo(1);
-    // Ziel-Notification (HANDOVER).
+    // Ziel-Notification (HANDOVER): GENAU EINE (exakte Zahl, nicht "mindestens eine").
     assertThat(count(
             "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID=t.ID"
                 + " WHERE t.EXTERNALID=? AND n.RECIPIENT_REF=?",
             taskId, HANDOVER_TARGET_REF))
-        .as("Ziel-Notification").isGreaterThanOrEqualTo(1);
-    // LAST_ACTIVITY_AT wurde gebumpt.
+        .as("genau eine Ziel-Notification").isEqualTo(1);
+    // LAST_ACTIVITY_AT wurde EXAKT auf now() gebumpt: strikt ueber dem erzwungenen Vergangenheitswert
+    // UND nahe der aktuellen DB-Zeit (Toleranz fuer App/DB-Uhr-Versatz), nicht nur >=/Sekunde.
     assertThat(lastActivityTicks(taskId))
-        .as("LAST_ACTIVITY_AT gebumpt").isGreaterThanOrEqualTo(lastActivityBefore);
+        .as("LAST_ACTIVITY_AT strikt ueber den Vergangenheitswert gebumpt").isGreaterThan(ticksBefore);
+    final Integer hoursFromDbNow = jdbcTemplate.queryForObject(
+        "SELECT ABS(DATEDIFF(HOUR, LAST_ACTIVITY_AT, GETDATE())) FROM [dbo].[TASK]"
+            + " WHERE EXTERNALID = ? AND TENANT_ID = ?",
+        Integer.class, taskId, TENANT_A_ID);
+    assertThat(hoursFromDbNow)
+        .as("LAST_ACTIVITY_AT auf ~now() gesetzt, nicht der erzwungene Vergangenheitswert")
+        .isLessThanOrEqualTo(24);
   }
 
   @Test
@@ -1383,6 +1397,31 @@ class AssigneeControllerIT {
     assertThat(exit.get("kind").asText()).isEqualTo("handover");
     assertThat(exit.get("handedOverToIds").isArray()).isTrue();
     assertThat(exit.get("handedOverToIds").get(0).asText()).isEqualTo(HANDOVER_TARGET_REF.toString());
+
+    // MAJOR (IT4-Archiv): auch die ARCHIV-Ausgabe (filter=left) des ausgetretenen Akteurs muss
+    // exit.handedOverToIds liefern - nicht nur das Detail (SPEC F6 / A6: Batch-Enrichment im
+    // InboxSnapshotService innerhalb des Generation-Brackets).
+    final String archiveJson =
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/v1/tasks/archive?filter=left")
+                .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    final com.fasterxml.jackson.databind.JsonNode items = om.readTree(archiveJson).get("items");
+    com.fasterxml.jackson.databind.JsonNode archivedTask = null;
+    for (final com.fasterxml.jackson.databind.JsonNode item : items) {
+      if (taskId.toString().equals(item.get("id").asText())) {
+        archivedTask = item;
+        break;
+      }
+    }
+    assertThat(archivedTask)
+        .as("ausgetretener Akteur sieht die uebergebene Aufgabe im left-Archiv").isNotNull();
+    final com.fasterxml.jackson.databind.JsonNode archiveExit = archivedTask.get("exit");
+    assertThat(archiveExit.isNull()).as("Archiv-Eintrag traegt exit").isFalse();
+    assertThat(archiveExit.get("kind").asText()).isEqualTo("handover");
+    assertThat(archiveExit.get("handedOverToIds").isArray()).isTrue();
+    assertThat(archiveExit.get("handedOverToIds").get(0).asText())
+        .as("Archiv-exit.handedOverToIds enthaelt das Ziel").isEqualTo(HANDOVER_TARGET_REF.toString());
   }
 
   @Test

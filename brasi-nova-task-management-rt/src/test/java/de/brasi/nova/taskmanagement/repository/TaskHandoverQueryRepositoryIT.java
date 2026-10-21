@@ -95,6 +95,7 @@ class TaskHandoverQueryRepositoryIT {
   private static final long TASK_UNIQUE = 560104L;
   private static final long TASK_SCOPE_FUTURE = 560105L;
   private static final long TASK_SCOPE_OTHER = 560106L;
+  private static final long TASK_TIE = 560107L;
 
   private static HikariDataSource master;
   private static String dbName;
@@ -182,6 +183,33 @@ class TaskHandoverQueryRepositoryIT {
 
     assertThat(rows).extracting(HandoverTargetRow::taskId).containsOnly(TASK_NEWEST);
     assertThat(rows).extracting(HandoverTargetRow::toRef).containsExactlyInAnyOrder(T2, T3);
+    assertThat(rows).extracting(HandoverTargetRow::toRef).doesNotContain(T1);
+  }
+
+  // ---- Gleichstand ANGELEGT_AM -> Tie-Break ID DESC ---
+
+  @Test
+  @DisplayName(
+      "gleichstand_angelegt_am_tiebreak_id_desc: zwei SHOULD_STAY=0-Ereignisse mit IDENTISCHEM"
+          + " ANGELEGT_AM -> Tie-Break ID DESC liefert die Ziele des Ereignisses mit der hoeheren ID")
+  void gleichstand_angelegt_am_tiebreak_id_desc() {
+    final long higherId = 560251L;
+    final long lowerId = 560250L;
+    // IDENTISCHER ANGELEGT_AM: die ANGELEGT_AM-Ordnung allein ist nicht eindeutig -> nur der
+    // Sekundaer-Tie-Break ID DESC darf entscheiden. Die hoehere ID wird BEWUSST ZUERST eingefuegt,
+    // damit die Insert-Reihenfolge das Ergebnis NICHT erklaeren kann (Insert-Last waere T1).
+    final LocalDateTime sameMoment = LocalDateTime.of(2026, 4, 1, 12, 0, 0);
+    insertHandover(higherId, TASK_TIE, ACTOR, false, sameMoment);
+    insertTarget(560351L, higherId, T2);
+    insertHandover(lowerId, TASK_TIE, ACTOR, false, sameMoment);
+    insertTarget(560350L, lowerId, T1);
+
+    final LocalDateTime asOf = LocalDateTime.of(2026, 5, 1, 0, 0);
+    final List<HandoverTargetRow> rows =
+        repository.findVisibleHandoverTargets(List.of(TASK_TIE), ACTOR, asOf);
+
+    // ID DESC -> das Ereignis mit der hoeheren ID gewinnt deterministisch -> nur T2, nie T1.
+    assertThat(rows).extracting(HandoverTargetRow::toRef).containsExactly(T2);
     assertThat(rows).extracting(HandoverTargetRow::toRef).doesNotContain(T1);
   }
 
