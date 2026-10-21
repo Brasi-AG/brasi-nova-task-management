@@ -571,6 +571,13 @@ public class AssigneeService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
+    // Test-Seam: deterministische Synchronisation der Versions-Verlierer-ITs (BE-7 IT7) GENAU NACH
+    // dem Lesen der Aufgabe (VERSION erfasst) und VOR jeder Mutation - zu diesem Zeitpunkt haelt der
+    // Verlierer noch KEINE Schreibsperren, sodass ein nebenlaeufiger Gewinner (Exit/PUT/Handover)
+    // blockierungsfrei committen kann; der Verlierer trifft dann beim versionierten TASK-save die
+    // stale VERSION -> 409 + voller Rollback. Produktiv ein No-Op.
+    onBeforeExitMutationForTest(taskId);
+
     final boolean handover = ExitKind.HANDOVER == input.exitKind();
     final boolean shouldStay = Boolean.TRUE.equals(input.shouldStay());
     final List<UUID> rawTargets = input.handedOverToIds();
@@ -706,9 +713,6 @@ public class AssigneeService {
     // serialisiert bei JEDEM erfolgreichen Austritt/Handover gegen nebenlaeufiges PUT/exit; der
     // Verlierer bricht mit BusinessRuleException (409) ab und committet NICHTS.
     task.setLastActivityAt(now);
-    // Test-Seam: deterministische Synchronisation der Versions-Verlierer-ITs ZWISCHEN allen
-    // Mutationen und dem versionierten TASK-save (BE-7 IT7). Produktiv No-Op.
-    onBeforeTaskVersionSaveForTest(taskId);
     taskRepository.save(task);
 
     // (10) Selbstbestaetigungs-Notify an den Akteur.
@@ -821,14 +825,17 @@ public class AssigneeService {
   }
 
   /**
-   * Test-Seam (Default No-Op): Haken ZWISCHEN allen Handover-/Austritts-Mutationen und dem
-   * versionierten {@code taskRepository.save} in {@link #exit}. Ermoeglicht deterministische
-   * Versions-Verlierer-ITs (BE-7 IT7): zwei Threads werden VOR dem TASK-VERSION-Write synchronisiert,
-   * sodass genau einer gewinnt. Produktiv ein No-Op.
+   * Test-Seam (Default No-Op): Haken am ANFANG von {@link #exit} - direkt nach dem Laden der Aufgabe
+   * (VERSION erfasst) und VOR jeder Mutation. Ermoeglicht deterministische Versions-Verlierer-ITs
+   * (BE-7 IT7): ein nebenlaeufiger Gewinner (Exit/PUT/Handover) committet, waehrend der Verlierer hier
+   * pausiert und noch KEINE Schreibsperren haelt (der {@code requireTask}-SELECT gibt seine
+   * Shared-Locks statement-weise frei) - so entsteht KEIN Wartezyklus/Deadlock. Nach der Fortsetzung
+   * trifft der Verlierer beim versionierten {@code taskRepository.save} die stale VERSION -> 409 +
+   * voller Rollback. Produktiv ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
    */
-  protected void onBeforeTaskVersionSaveForTest(final Long taskId) {
+  protected void onBeforeExitMutationForTest(final Long taskId) {
     // No-Op im Produktivbetrieb.
   }
 
