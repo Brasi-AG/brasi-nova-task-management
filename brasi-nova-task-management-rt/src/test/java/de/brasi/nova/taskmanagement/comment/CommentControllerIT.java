@@ -1,10 +1,12 @@
 package de.brasi.nova.taskmanagement.comment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
@@ -572,7 +574,196 @@ class CommentControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- BE-2 GET /tasks/{id}/comments ---------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "get_comments_flache_liste_chronologisch_parent_resolved:"
+          + " GET -> 200 flache Liste chronologisch; Reply traegt parentCommentId = Eltern-UUID")
+  void get_comments_flache_liste_chronologisch_parent_resolved() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-flat");
+    final UUID c1 = postComment(mvc, om, tokenA, taskUuid, "C1-top", null);
+    final UUID c2 = postComment(mvc, om, tokenA, taskUuid, "C2-reply", c1);
+
+    final String resp =
+        mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode arr = om.readTree(resp);
+    assertThat(arr.isArray()).isTrue();
+    assertThat(arr.size()).isEqualTo(2);
+    assertThat(arr.get(0).get("id").asText()).as("chronologisch: C1 zuerst").isEqualTo(c1.toString());
+    assertThat(arr.get(0).get("parentCommentId").isNull()).as("Top-Level -> null").isTrue();
+    assertThat(arr.get(1).get("id").asText()).isEqualTo(c2.toString());
+    assertThat(arr.get(1).get("parentCommentId").asText())
+        .as("Reply -> Eltern-UUID aufgeloest")
+        .isEqualTo(c1.toString());
+    assertThat(arr.get(0).get("taskId").asText()).isEqualTo(taskUuid.toString());
+    assertThat(arr.get(0).get("authorRef").asText()).isEqualTo(USER_A_REF.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "get_comments_deaktivierter_elternkommentar_parent_null:"
+          + " Eltern-Kommentar DEACTIVE -> Reply erscheint mit parentCommentId=null (R1)")
+  void get_comments_deaktivierter_elternkommentar_parent_null() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-dangling");
+    final UUID c1 = postComment(mvc, om, tokenA, taskUuid, "C1-parent", null);
+    final UUID c2 = postComment(mvc, om, tokenA, taskUuid, "C2-reply", c1);
+
+    // Eltern-Kommentar deaktivieren -> nicht mehr im aktiven Set
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_COMMENT] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", c1);
+
+    final String resp =
+        mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode arr = om.readTree(resp);
+    assertThat(arr.size()).as("nur der aktive Reply bleibt").isEqualTo(1);
+    assertThat(arr.get(0).get("id").asText()).isEqualTo(c2.toString());
+    assertThat(arr.get(0).get("parentCommentId").isNull())
+        .as("deaktivierter Eltern-Kommentar -> parentCommentId=null")
+        .isTrue();
+  }
+
+  @Test
+  @DisplayName("get_comments_leere_aufgabe_200_empty: Aufgabe ohne Kommentare -> 200 []")
+  void get_comments_leere_aufgabe_200_empty() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-empty");
+
+    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(0));
+  }
+
+  @Test
+  @DisplayName(
+      "get_comments_404_unbekannt_und_deaktivierte_task:"
+          + " unbekannte Task-UUID -> 404; DEACTIVE Task -> 404 (neutral maskiert)")
+  void get_comments_404_unbekannt_und_deaktivierte_task() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // unbekannte UUID -> 404
+    mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isNotFound());
+
+    // DEACTIVE Task -> 404
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-deactive-task");
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", taskUuid);
+    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isNotFound());
+
+    // EXISTIERENDE Aufgabe eines FREMDEN Mandanten (Tenant B) -> 404 (Tenant-Maske; Codex-IMPL-Gate).
+    final String tokenC = buildJwtWithAuthority(
+        TENANT_B_UUID, USER_C_REF, USER_C_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final UUID foreignTaskUuid = createTask(mvc, om, tokenC, "Comment-GET-foreign-tenant");
+    mvc.perform(get("/api/v1/tasks/" + foreignTaskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  @DisplayName(
+      "get_comments_d1_nicht_teilnehmer_gleicher_tenant_200:"
+          + " TASK_READ-Nutzer im gleichen Mandanten OHNE Teilnehmer-Rolle -> 200 (kein Membership-Gate, D1)")
+  void get_comments_d1_nicht_teilnehmer_gleicher_tenant_200() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // USER_B: gleicher Mandant, TASK_READ, aber NICHT Teilnehmer der Aufgabe von USER_A.
+    final String tokenB = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-d1");
+    postComment(mvc, om, tokenA, taskUuid, "nur-A-sichtbar?", null);
+
+    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenB))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1));
+  }
+
+  @Test
+  @DisplayName("get_comments_401_anon_403_ohne_task_read: anonym -> 401; ohne TASK_READ -> 403")
+  void get_comments_401_anon_403_ohne_task_read() throws Exception {
+    final MockMvc mvc = buildMvc();
+
+    // anonym -> 401
+    mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments"))
+        .andExpect(status().isUnauthorized());
+
+    // Token ohne TASK_READ (nur TASK_WRITE) -> GET erfordert TASK_READ -> 403
+    final String tokenWriteOnly = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
+            .header("Authorization", "Bearer " + tokenWriteOnly))
+        .andExpect(status().isForbidden());
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  /** Postet einen Kommentar via POST und liefert dessen externe UUID. */
+  private UUID postComment(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final String text,
+      final UUID parentCommentId)
+      throws Exception {
+    final Map<String, Object> body =
+        parentCommentId == null
+            ? Map.of("text", text)
+            : Map.of("text", text, "parentCommentId", parentCommentId);
+    final String resp =
+        mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(body)))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(resp, JsonNode.class).get("id").traverse(om).readValueAs(UUID.class);
+  }
 
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
