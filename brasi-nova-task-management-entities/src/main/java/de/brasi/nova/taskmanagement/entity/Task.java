@@ -46,11 +46,20 @@ public class Task extends NovaEntity<Task> {
   @NovaColumn(name = "DESCRIPTION", nullable = true, length = 4000)
   private String description;
 
-  /** FK auf {@code DIC_TASK_STATUS} (global). */
+  /**
+   * FK auf {@code DIC_TASK_STATUS} (global).
+   *
+   * <p>{@code updateable = true}: Der Status ist ein Workflow-State (OPEN -&gt; DONE/CANCELLED), der sich
+   * ueber {@code PATCH /tasks/{id}} (statusCode) aendern koennen MUSS. KSF filtert FK-Spalten per Default
+   * ({@code @NovaForeignKey.updateable=false}) aus dem UPDATE-SET ({@code MutationExecutor.performUpdate}),
+   * wodurch {@code setTaskStatusId(...)} beim {@code save()} still verworfen wurde (Insert ok / Update gedroppt).
+   * Mit {@code updateable=true} wird der Status-Wechsel korrekt persistiert. {@code @NovaFkScope(GLOBAL)}
+   * bleibt fuer die UUID-Aufloesung unveraendert.
+   */
   @NovaColumn(
       name = "TASK_STATUS_ID",
       nullable = false,
-      foreignKey = @NovaForeignKey(referencedEntity = TaskStatus.class))
+      foreignKey = @NovaForeignKey(referencedEntity = TaskStatus.class, updateable = true))
   @NovaFkScope(mode = NovaFkScope.Mode.GLOBAL)
   private Long taskStatusId;
 

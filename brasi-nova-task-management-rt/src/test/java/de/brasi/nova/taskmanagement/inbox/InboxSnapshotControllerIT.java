@@ -430,6 +430,104 @@ class InboxSnapshotControllerIT {
         .andExpect(status().isOk());
   }
 
+  // ---- IT: PATCH statusCode=DONE bumpt Generation -> alter aktiver Cursor 410 + wandert ins Archiv -
+
+  /**
+   * Codex-Auflage #5 (Cursor-Invalidierung durch statusCode-PATCH). Beweist end-to-end gegen echtes
+   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER
+   * {@code PATCH {id} {"statusCode":"DONE"}} ({@code TaskCommandService.patch}) bumpt die Generation
+   * JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion; der alte Cursor liefert daraufhin
+   * HTTP 410 (SnapshotExpired). Zusaetzlich wandert der Task aus der frischen aktiven Seite heraus
+   * und wird in {@code archiveTotals.done} gezaehlt (Status-Change OPEN -&gt; DONE).
+   *
+   * <p>TDD-Rigor: OHNE den Generation-Bump in {@code patch} ist der Folge-Read weiterhin 200 (stale
+   * pagination) - dieser Test faellt dann an {@code isGone()}. MIT dem Bump -> 410 (gruen).
+   */
+  @Test
+  @DisplayName("patch_statuscode_done_bumpt_generation_alter_cursor_410_und_wandert_ins_archiv")
+  void patch_statuscode_done_bumpt_generation_alter_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    // Dedizierter Benutzer, damit die Mutation keine anderen Tests beeinflusst.
+    final UUID patchUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000801");
+    final String patchLogin = "patch-410-user@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 800, patchUser, patchLogin, TENANT_A_ID);
+
+    // 2 aktive Tasks, patchUser als Creator-Assignee (darf patchen). limit=1 => hasMore => Cursor.
+    // Der erste Task (patchTaskUuid) wird spaeter auf DONE gepatcht.
+    final UUID patchTaskUuid = UUID.randomUUID();
+    for (int i = 0; i < 2; i++) {
+      final long taskId = ID_BASE + 810 + i;
+      final UUID uuid = (i == 0) ? patchTaskUuid : UUID.randomUUID();
+      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
+          LocalDateTime.now().minusMinutes(20 - i), "Patch410-Task-" + i);
+      seedParticipant(jdbcTemplate, ID_BASE + 820 + i, taskId, patchUser, TENANT_A_ID,
+          true, true, true, null);
+      seedUserState(jdbcTemplate, ID_BASE + 830 + i, taskId, patchUser, TENANT_A_ID, null);
+    }
+
+    final String token = jwt(TENANT_A_UUID, patchUser, patchLogin,
+        "task-management:TASK_READ", "task-management:TASK_WRITE");
+
+    // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // ECHTE Status-Mutation: PATCH statusCode=DONE -> TaskCommandService.patch bumpt die Generation
+    // JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion (0 -> 1).
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .patch("/api/v1/tasks/" + patchTaskUuid)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"statusCode\":\"DONE\"}"))
+        .andExpect(status().isNoContent());
+
+    // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isGone());
+
+    // Frischer Bootstrap ohne Cursor -> 200; der DONE-Task ist NICHT mehr in der aktiven Seite.
+    final JsonNode freshActive = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks?limit=50")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(freshActive))
+        .as("der auf DONE gepatchte Task darf nicht mehr in der aktiven Seite erscheinen")
+        .doesNotContain(patchTaskUuid.toString());
+
+    // archiveTotals.done zaehlt den gepatchten Task jetzt (OPEN -> DONE).
+    final JsonNode snapshot = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/snapshot")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(snapshot.get("archiveTotals").get("done").asLong())
+        .as("der DONE-Task muss in archiveTotals.done gezaehlt werden")
+        .isGreaterThanOrEqualTo(1L);
+    boolean doneInArchive = false;
+    final JsonNode donePage = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks/archive?filter=done")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    for (final String id : idsOf(donePage)) {
+      if (patchTaskUuid.toString().equals(id)) {
+        doneInArchive = true;
+      }
+    }
+    assertThat(doneInArchive).as("der DONE-Task muss im done-Archiv erscheinen").isTrue();
+  }
+
   // ---- IT 3: Archiv je Filter + Totals -------------------------------------------------------
 
   @Test

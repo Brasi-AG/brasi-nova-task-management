@@ -329,10 +329,35 @@ public class TaskCommandService {
   }
 
   /**
-   * Patcht eine bestehende Aufgabe (title, dueDate, statusCode).
+   * Patcht eine bestehende Aufgabe (title, dueDate, startDate, statusCode, tagIds).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion.
    * Nach Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
+   *
+   * <p><b>statusCode / Transition-Semantik:</b> Es gibt KEINE terminalen Status. Der Patch prueft
+   * ausschliesslich, ob der Ziel-Code im globalen Dictionary existiert (unbekannt/leer -&gt; 400) -
+   * es gibt KEINEN Transition-Guard. Damit ist ein <b>Reopen</b> ({@code DONE}/{@code CANCELLED}
+   * -&gt; {@code OPEN}) bewusst ERLAUBT (eine Aufgabe darf wieder geoeffnet werden); ebenso jeder
+   * andere Status-Wechsel in beide Richtungen.
+   *
+   * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
+   * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
+   * JEDES aktiven Teilnehmers der Aufgabe gebumpt - exakt die Menge, fuer die auch
+   * {@link InboxSignalService#invalidate} gesendet wird. Begruendung (jeder-{@code changed} statt
+   * nur-Status): Zwei asOf-gebundene, requester-gescopte Reads brechen bei einem Patch:
+   * <ul>
+   *   <li><b>Status-Change</b> ({@code OPEN} &harr; {@code DONE}/{@code CANCELLED}) verschiebt den
+   *       Task zwischen aktiver Seite ({@code findActivePage}, OPEN-gefiltert) und Archiv-Zaehlung
+   *       ({@code countArchive*}) - eine Membership-/Ergebnismengen-Aenderung fuer jeden aktiven
+   *       Teilnehmer.
+   *   <li><b>Jeder {@code changed}-Patch</b> setzt {@code LAST_ACTIVITY_AT = now()} (unten) neu.
+   *       Da der Keyset-Cursor genau auf {@code (asOf, LAST_ACTIVITY_AT, externalId)} ordnet,
+   *       verschiebt das die Position des Tasks im Scroll - ein alter aktiver Cursor koennte den
+   *       Task sonst ueberspringen oder doppelt liefern (stale pagination), ohne 410 zu erhalten.
+   * </ul>
+   * Der Bump laeuft atomar in dieser Transaktion (siehe {@link InboxGenerationService}); ein alter
+   * aktiver Cursor jedes betroffenen Teilnehmers wird beim naechsten Folge-Read mit 410
+   * ({@code SnapshotExpired}) abgelehnt und re-bootstrappt gegen den frischen Stand.
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param input          Patch-Eingabe
@@ -502,8 +527,13 @@ public class TaskCommandService {
           tenantId);
     }
 
-    // After-Commit: snapshot-invalidated Signal fuer ALLE aktiven Teilnehmer registrieren.
-    // Aktive Teilnehmer = TASK_USER_STATE mit UNSUBSCRIBED_AT IS NULL (innerhalb dieser Tx ermittelt).
+    // Finding 2 / Option B + After-Commit: fuer ALLE aktiven Teilnehmer der Aufgabe (= TASK_USER_STATE
+    // mit UNSUBSCRIBED_AT IS NULL, innerhalb dieser Tx ermittelt) bei JEDER tatsaechlichen Aenderung
+    // (a) die Inbox-Generation ATOMAR in dieser Tx bumpen (alte aktive Cursor -> 410 beim naechsten
+    // Folge-Read; Status-Change verschiebt aktive-Seite<->Archiv, jeder changed-Patch verschiebt via
+    // LAST_ACTIVITY_AT die Keyset-Position) und (b) das snapshot-invalidated Signal registrieren (nach
+    // Commit). Dieselbe Teilnehmer-Menge fuer Bump UND Invalidate - konsistent zum Muster der
+    // Membership-Mutationen (AssigneeService.updateAssignees/exit/addParticipants).
     if (changed) {
       final List<UUID> activeUserRefs = userStateQueryRepository
           .findActiveUserRefsByTaskId(taskId)
@@ -511,6 +541,9 @@ public class TaskCommandService {
           .map(TaskUserState::getUserRef)
           .collect(Collectors.toList());
       if (!activeUserRefs.isEmpty()) {
+        for (final UUID activeUserRef : activeUserRefs) {
+          inboxGenerationService.bump(tenantId, activeUserRef);
+        }
         inboxSignalService.invalidate(tenantId, activeUserRefs);
       }
     }

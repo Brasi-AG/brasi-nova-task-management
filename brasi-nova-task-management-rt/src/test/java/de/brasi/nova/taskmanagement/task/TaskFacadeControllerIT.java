@@ -13,6 +13,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
@@ -1080,6 +1081,160 @@ class TaskFacadeControllerIT {
         "SELECT COUNT(*) FROM [dbo].[TASK] WHERE EXTERNALID = ? AND START_DATE IS NULL",
         Integer.class, taskId);
     assertThat(startDateNull).as("DB START_DATE ist NULL nach Loeschen").isEqualTo(1);
+  }
+
+  // ---- Regression: PATCH statusCode persistiert (FK @NovaForeignKey.updateable=true) ----------
+
+  @Test
+  @DisplayName(
+      "patch_statuscode_done_cancelled_persistiert (FK-updateable-Regression): PATCH statusCode=DONE"
+          + " -> GET.statusCode=DONE + DB TASK_STATUS_ID=102; danach CANCELLED -> GET.statusCode="
+          + "CANCELLED + DB TASK_STATUS_ID=103. Deckt den Bug ab, dass der FK-Status still gedroppt"
+          + " wurde (204 ohne Persistenz).")
+  void patch_statuscode_done_cancelled_persistiert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "StatusCode-Regression");
+
+    // Ausgangslage: Create setzt Status OPEN (serverseitig).
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("statusCode").asText())
+        .as("frisch angelegte Aufgabe steht auf OPEN")
+        .isEqualTo(TaskStatusCodes.OPEN);
+
+    // 1. PATCH statusCode=DONE -> 204 (echter Wire-Pfad: JSON -> PatchValue<String>)
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.DONE))))
+        .andExpect(status().isNoContent());
+
+    // GET-Beweis: Status DONE ausgeliefert (vor dem Fix blieb hier OPEN stehen).
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("statusCode").asText())
+        .as("nach PATCH statusCode=DONE muss GET Detail DONE liefern")
+        .isEqualTo(TaskStatusCodes.DONE);
+
+    // DB-Beweis: TASK_STATUS_ID zeigt auf den DONE-Seed (Flyway V1: ID=102).
+    final Long statusIdAfterDone = jdbcTemplate.queryForObject(
+        "SELECT TASK_STATUS_ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+    assertThat(statusIdAfterDone)
+        .as("FK TASK_STATUS_ID muss nach PATCH DONE persistiert sein (Seed-ID 102)")
+        .isEqualTo(102L);
+
+    // 2. PATCH statusCode=CANCELLED -> 204 (zweiter Wechsel DONE -> CANCELLED)
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.CANCELLED))))
+        .andExpect(status().isNoContent());
+
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("statusCode").asText())
+        .as("nach PATCH statusCode=CANCELLED muss GET Detail CANCELLED liefern")
+        .isEqualTo(TaskStatusCodes.CANCELLED);
+
+    final Long statusIdAfterCancelled = jdbcTemplate.queryForObject(
+        "SELECT TASK_STATUS_ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+    assertThat(statusIdAfterCancelled)
+        .as("FK TASK_STATUS_ID muss nach PATCH CANCELLED persistiert sein (Seed-ID 103)")
+        .isEqualTo(103L);
+  }
+
+  // ---- Codex #3: Reopen (DONE -> OPEN) ist erlaubt (kein Transition-Guard) ----------------------
+
+  @Test
+  @DisplayName(
+      "patch_reopen_done_zu_open_erlaubt_und_persistiert (Codex #3 Transition-Semantik): PATCH"
+          + " statusCode=DONE -> dann statusCode=OPEN -> 204, GET.statusCode=OPEN + DB"
+          + " TASK_STATUS_ID=101; Creator-Generation wird durch den Reopen gebumpt (Delta +1).")
+  void patch_reopen_done_zu_open_erlaubt_und_persistiert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Reopen-Transition");
+
+    // 1. OPEN -> DONE (Vorbedingung fuer den Reopen).
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.DONE))))
+        .andExpect(status().isNoContent());
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("statusCode").asText())
+        .isEqualTo(TaskStatusCodes.DONE);
+
+    // 2. Reopen DONE -> OPEN: ERLAUBT (keine terminalen Status, kein Transition-Guard) -> 204.
+    final long creatorGenBeforeReopen = readGeneration(USER_A_REF);
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.OPEN))))
+        .andExpect(status().isNoContent());
+
+    // GET-Beweis: Status wieder OPEN.
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("statusCode").asText())
+        .as("Reopen DONE -> OPEN muss persistiert sein (GET liefert OPEN)")
+        .isEqualTo(TaskStatusCodes.OPEN);
+
+    // DB-Beweis: TASK_STATUS_ID zeigt auf den OPEN-Seed (Flyway V1: ID=101).
+    final Long statusIdAfterReopen = jdbcTemplate.queryForObject(
+        "SELECT TASK_STATUS_ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+    assertThat(statusIdAfterReopen)
+        .as("FK TASK_STATUS_ID muss nach Reopen auf OPEN (Seed-ID 101) stehen")
+        .isEqualTo(101L);
+
+    // Bump-Beweis: der Reopen ist eine changed-Mutation -> Creator-Generation exakt +1.
+    assertThat(readGeneration(USER_A_REF))
+        .as("Reopen (changed-Patch) muss die Creator-Generation um genau 1 bumpen")
+        .isEqualTo(creatorGenBeforeReopen + 1);
+  }
+
+  // ---- Codex #4: statusCode-PATCH bumpt die Inbox-Generation jedes aktiven Teilnehmers ----------
+
+  @Test
+  @DisplayName(
+      "patch_statuscode_bumpt_generation_aktiver_teilnehmer (Codex #4 Delta-Beweis): PATCH"
+          + " statusCode=DONE -> persistierte Generation von Creator UND Assignee exakt +1 (beide"
+          + " aktive Teilnehmer der Aufgabe).")
+  void patch_statuscode_bumpt_generation_aktiver_teilnehmer() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+
+    // Aufgabe mit zwei aktiven Teilnehmern: Creator USER_A + Assignee USER_A2.
+    final String createBody = om.writeValueAsString(Map.of(
+        "title", "Patch-Bump-Delta", "assignees", List.of(USER_A2_REF)));
+    final String postResp =
+        mvc.perform(post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createBody))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+    final UUID taskId =
+        om.readValue(postResp, com.fasterxml.jackson.databind.JsonNode.class)
+            .get("id").traverse(om).readValueAs(UUID.class);
+
+    // Generation NACH dem Create (Create bumpt bereits Creator+Assignee) als Baseline festhalten.
+    final long creatorGenBefore = readGeneration(USER_A_REF);
+    final long assigneeGenBefore = readGeneration(USER_A2_REF);
+
+    // PATCH statusCode=DONE (changed) -> Bump JEDES aktiven Teilnehmers in derselben Tx.
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.DONE))))
+        .andExpect(status().isNoContent());
+
+    assertThat(readGeneration(USER_A_REF))
+        .as("Creator-Generation exakt +1 durch den statusCode-PATCH")
+        .isEqualTo(creatorGenBefore + 1);
+    assertThat(readGeneration(USER_A2_REF))
+        .as("Assignee-Generation exakt +1 durch den statusCode-PATCH (jeder aktive Teilnehmer)")
+        .isEqualTo(assigneeGenBefore + 1);
   }
 
   private MockMvc buildMvc() {
