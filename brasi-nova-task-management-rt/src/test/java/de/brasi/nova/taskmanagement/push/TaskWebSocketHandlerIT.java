@@ -106,7 +106,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
  * </ul>
  *
  * <p>{@code /ws} ist im Security-Layer {@code permitAll} (ticket-gated ueber den Handshake-
- * Interceptor); {@code /api/v1/ws-tickets} bleibt JWT-/{@code TASK_READ}-geschuetzt.
+ * Interceptor); {@code /api/v1/ws-tickets} ist JWT-/authenticated-only (kein {@code TASK_READ}).
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */

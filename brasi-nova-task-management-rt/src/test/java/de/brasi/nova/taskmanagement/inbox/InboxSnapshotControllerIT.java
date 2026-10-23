@@ -85,7 +85,7 @@ import org.springframework.web.context.WebApplicationContext;
  *   <li>GET /tasks?cursor=&limit= -> Keyset-Fortsetzung Seite1+nextCursor->Seite2 kein Skip/Dupe.
  *   <li>GET /tasks/archive?filter=all|done|left -> user-spezifische Archiv-Semantik; Totals korrekt.
  *   <li>Creator-Invariante-Endpoint-IT (T8-IMPL-Auflage): POST /tasks -> GET /snapshot zeigt den Task.
- *   <li>Negativ: anonym 401, ohne TASK_READ 403; malformed Cursor 400.
+ *   <li>Zugang: anonym 401, authentifiziert-ohne-Grant 200 (self-scoped Reads authenticated-only); malformed Cursor 400.
  * </ul>
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
@@ -151,7 +151,7 @@ class InboxSnapshotControllerIT {
   private static final String USER_DEL_LOGIN = "user-del-inbox@brasi.de";
   private static final long USER_DEL_DB_ID = 568L;
 
-  /** Read-Only-User ohne TASK_READ. */
+  /** Nutzer ohne task-management-Grant (fuer den authenticated-only-Zugangsbeweis). */
   private static final UUID USER_RO_REF = UUID.randomUUID();
   private static final String USER_RO_LOGIN = "user-ro-inbox@brasi.de";
 
@@ -1105,25 +1105,26 @@ class InboxSnapshotControllerIT {
         .isTrue();
   }
 
-  // ---- IT 6: Negativ 401 / 403 + malformed Cursor 400 ---------------------------------------
+  // ---- IT 6: anonym 401 / authentifiziert-ohne-Grant 200 + malformed Cursor 400 --------------
 
   @Test
-  @DisplayName("negativ_anonym_401_ohne_task_read_403_malformed_cursor_400")
-  void negativ_anonym_401_ohne_task_read_403_malformed_cursor_400() throws Exception {
+  @DisplayName("negativ_anonym_401_authentifiziert_ohne_grant_200_malformed_cursor_400")
+  void negativ_anonym_401_authentifiziert_ohne_grant_200_malformed_cursor_400() throws Exception {
     final MockMvc mvc = buildMvc();
 
-    // 1. anonym -> 401
+    // 1. anonym -> 401 (KSF-Default-Filter-Chain anyRequest().authenticated()).
     mvc.perform(get("/api/v1/tasks/snapshot")).andExpect(status().isUnauthorized());
 
-    // 2. Token ohne TASK_READ (nur NOTIFICATION_READ) -> 403 auf allen drei Reads
-    final String noRead = jwt(TENANT_A_UUID, USER_RO_REF, USER_RO_LOGIN,
-        "task-management:NOTIFICATION_READ");
-    mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + noRead))
-        .andExpect(status().isForbidden());
-    mvc.perform(get("/api/v1/tasks").header("Authorization", "Bearer " + noRead))
-        .andExpect(status().isForbidden());
-    mvc.perform(get("/api/v1/tasks/archive").header("Authorization", "Bearer " + noRead))
-        .andExpect(status().isForbidden());
+    // 2. Authentifiziert OHNE jeden task-management-Grant (wie ein normaler Mandanten-Nutzer):
+    //    die self-scoped Reads sind AUTHENTICATED-ONLY -> 200 auf allen drei Reads. Die Sicht ist
+    //    aktor-scoped; ein grant-freier Nutzer sieht hoechstens die eigene (hier leere) Inbox.
+    final String noGrant = jwt(TENANT_A_UUID, USER_RO_REF, USER_RO_LOGIN);
+    mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + noGrant))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/v1/tasks").header("Authorization", "Bearer " + noGrant))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/v1/tasks/archive").header("Authorization", "Bearer " + noGrant))
+        .andExpect(status().isOk());
 
     // 3. malformed Cursor (2 Token statt 4) -> 400
     final String token = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");

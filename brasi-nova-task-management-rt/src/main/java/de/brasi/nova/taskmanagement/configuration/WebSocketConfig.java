@@ -13,7 +13,9 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
  *
  * <p>Der {@link WsTicketHandshakeInterceptor} authentifiziert den Handshake ueber ein opakes
  * Einmal-Ticket (kein JWT in der URL). {@code /ws} ist bewusst ticket-gated statt JWT-gated; die
- * REST-Schicht (inkl. {@code POST /api/v1/ws-tickets}) bleibt JWT-/Permission-geschuetzt.
+ * REST-Schicht bleibt JWT-geschuetzt - {@code POST /api/v1/ws-tickets} ist dabei authenticated-only
+ * (jeder angemeldete Nutzer, kein Permission-Grant; ein WS-Ticket fuer die eigene Inbox ist eine
+ * Basis-Faehigkeit), mutierende/Admin-Endpoints bleiben permission-gated.
  *
  * <p>Origin-Patterns sind konfigurierbar ({@code task.websocket.allowed-origin-patterns}); in 1a
  * liegt der Service hinter dem Gateway, das die Origin-Pruefung durchsetzt.

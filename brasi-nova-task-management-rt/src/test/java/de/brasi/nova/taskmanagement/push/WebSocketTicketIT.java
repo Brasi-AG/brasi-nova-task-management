@@ -91,15 +91,16 @@ import org.springframework.web.context.WebApplicationContext;
 /**
  * Integration-Test fuer die WebSocket-Einmal-Ticket-Schicht (arch-v2 §6, Codex-BLOCKER 7).
  *
- * <p>Verbindet die reale HTTP-Ausgabe ({@code POST /api/v1/ws-tickets}, JWT/{@code TASK_READ}) mit
+ * <p>Verbindet die reale HTTP-Ausgabe ({@code POST /api/v1/ws-tickets}, JWT, authenticated-only) mit
  * der realen Handshake-Einloesung ({@link WsTicketHandshakeInterceptor} + {@link
  * WebSocketTicketService} als Context-Beans). Beweist:
  *
  * <ul>
  *   <li>Zwei gleichzeitige {@code consume}s desselben per HTTP ausgegebenen Tickets -> genau ein
  *       Erfolg (atomare {@code ConcurrentHashMap.remove}-Einmaligkeit).
- *   <li>Ticket-Ausgabe anonym -> 401, ohne {@code TASK_READ} -> 403; verbrauchtes (Replay) und
- *       abgelaufenes Ticket -> Handshake-Abbruch mit 401 (kein JWT in der URL).
+ *   <li>Ticket-Ausgabe anonym -> 401, authentifiziert-ohne-Grant -> 200 (authenticated-only);
+ *       verbrauchtes (Replay) und abgelaufenes Ticket -> Handshake-Abbruch mit 401 (kein JWT in
+ *       der URL).
  * </ul>
  *
  * <p>Die injizierte {@link Clock} ({@link MutableClock}) macht den Ablauftest deterministisch ohne
@@ -291,20 +292,21 @@ class WebSocketTicketIT {
 
   @Test
   @DisplayName(
-      "replay_expiry_401_403:"
-          + " Ausgabe anonym 401 / ohne TASK_READ 403; verbrauchtes (Replay) und abgelaufenes"
-          + " Ticket -> Handshake 401")
-  void replay_expiry_401_403() throws Exception {
+      "ausgabe_anonym_401_ohne_grant_200_replay_expiry_401:"
+          + " Ausgabe anonym 401 / authentifiziert-ohne-Grant 200 (authenticated-only);"
+          + " verbrauchtes (Replay) und abgelaufenes Ticket -> Handshake 401")
+  void ausgabe_anonym_401_ohne_grant_200_replay_expiry_401() throws Exception {
     final MockMvc mvc = buildMvc();
 
     // (401) Ticket-Ausgabe anonym -> 401
     mvc.perform(post("/api/v1/ws-tickets")).andExpect(status().isUnauthorized());
 
-    // (403) Ticket-Ausgabe ohne TASK_READ (nur TASK_WRITE) -> 403
-    final String writeOnly =
-        jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
-    mvc.perform(post("/api/v1/ws-tickets").header("Authorization", "Bearer " + writeOnly))
-        .andExpect(status().isForbidden());
+    // (200) Ticket-Ausgabe authentifiziert OHNE task-management-Grant -> authenticated-only -> 200.
+    //       Ein WS-Ticket fuer die eigene Inbox ist eine Basis-Faehigkeit jedes angemeldeten Nutzers.
+    final String noGrant = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN);
+    mvc.perform(post("/api/v1/ws-tickets").header("Authorization", "Bearer " + noGrant))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.ticket").isNotEmpty());
 
     // (Replay-401) gueltiges Ticket einmal einloesen -> true; zweites Mal -> 401 + false
     final String replayToken = issueTicketViaHttp(mvc);

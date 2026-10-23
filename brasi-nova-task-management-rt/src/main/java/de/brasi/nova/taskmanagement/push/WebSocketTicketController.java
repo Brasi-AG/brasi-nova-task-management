@@ -4,7 +4,6 @@ import de.brasi.nova.taskmanagement.push.model.WsTicketResponse;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.PermissionEvaluator;
-import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -20,10 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Handgeschriebener Controller fuer die Ausgabe von WebSocket-Einmal-Tickets (arch-v2 §6).
  *
- * <p>{@code POST /api/v1/ws-tickets} ({@link RequiresPermission}{@code (TASK_READ)}): erzeugt ein
- * kurzlebiges Ticket ausschliesslich aus dem aktuellen Principal/Tenant
- * ({@link CurrentActor#require(UserAccessor)}), NIE aus Client-Eingabedaten. Der WS-Handshake
- * loest es ein; so landet kein JWT in der WS-URL.
+ * <p>{@code POST /api/v1/ws-tickets} ist AUTHENTICATED-ONLY (kein {@code @RequiresPermission}): ein
+ * WS-Ticket fuer die eigene Inbox ist eine Basis-Faehigkeit jedes angemeldeten Nutzers. Es wird
+ * ausschliesslich aus dem aktuellen Principal/Tenant erzeugt
+ * ({@link CurrentActor#require(UserAccessor)}), NIE aus Client-Eingabedaten. Der WS-Handshake loest
+ * es ein; so landet kein JWT in der WS-URL. Anonyme Requests weist die KSF-Default-Filter-Chain
+ * ({@code anyRequest().authenticated()}) mit 401 ab. NOTIFICATION_READ bleibt eine echte Permission
+ * und wird am Ticket festgeschrieben (Gate fuers Notification-Push-Routing).
  */
 @RestController
 @RequestMapping("/api/v1/ws-tickets")
@@ -54,7 +56,7 @@ public class WebSocketTicketController {
           + " Das Ticket wird bei WS /ws?ticket=... eingeloest und danach verworfen (einmalig, TTL ca. 30s)."
           + " Die NOTIFICATION_READ-Capability wird zum Ausgabezeitpunkt am Ticket festgeschrieben:"
           + " nur Sessions aus einem Ticket MIT NOTIFICATION_READ erhalten Notification-Pushes"
-          + " (snapshot-invalidated-Signale gehen task-level an alle TASK_READ-Sessions)."
+          + " (snapshot-invalidated-Signale gehen task-level an alle angemeldeten Sessions)."
           + " Hinweis: ein spaeterer Rechteentzug wirkt erst beim naechsten Ticket/Reconnect -"
           + " eine bereits offene WS-Session behaelt ihre Capability bis zum Verbindungsende.")
   @ApiResponses({
@@ -68,16 +70,14 @@ public class WebSocketTicketController {
                   + "\"ticket\": \"abc123XYZ_opakes-token-hier\","
                   + "\"expiresAt\": \"2026-10-18T08:00:30Z\""
                   + "}"))),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @PostMapping
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<WsTicketResponse> issueTicket() {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
     // @RequiresPermission) und am Ticket festschreiben; das Push-Routing gatet darueber
-    // Notification-Pushes (snapshot-invalidated bleibt task-level fuer alle TASK_READ-Sessions).
+    // Notification-Pushes (snapshot-invalidated bleibt task-level fuer alle angemeldeten Sessions).
     final boolean notificationRead =
         permissionEvaluator.hasExactAuthority(TaskManagementPermissions.NOTIFICATION_READ);
     return ResponseEntity.ok(

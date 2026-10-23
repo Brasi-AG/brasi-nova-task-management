@@ -6,7 +6,6 @@ import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.PermissionEvaluator;
-import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -24,9 +23,14 @@ import org.springframework.web.bind.annotation.RestController;
  * Handgeschriebener Facade-Controller fuer Inbox-Snapshot und aktive/Archiv-Reads (arch-v2 §7,
  * plan-v3 Task 14).
  *
- * <p>Jeder Handler traegt {@link RequiresPermission}{@code (TASK_READ)} (Pflicht gemaess arch-v2
- * §8). Actor-UUID + Mandant kommen ausschliesslich aus dem Security-Context
- * ({@link CurrentActor#require(UserAccessor)}), NIEMALS aus Client-Eingabedaten.
+ * <p>Diese Reads sind AUTHENTICATED-ONLY (kein {@code @RequiresPermission}): das Lesen der EIGENEN
+ * Inbox ist eine Basis-Faehigkeit jedes angemeldeten Nutzers (wie das eigene Profil), keine
+ * granted Permission. Actor-UUID + Mandant kommen ausschliesslich aus dem Security-Context
+ * ({@link CurrentActor#require(UserAccessor)}), NIEMALS aus Client-Eingabedaten - die Sicht ist
+ * damit strikt aktor-scoped (ein Nutzer sieht nur die eigene Inbox). Anonyme Requests weist die
+ * KSF-Default-Filter-Chain ({@code anyRequest().authenticated()}) bereits mit 401 ab.
+ * NOTIFICATION_READ bleibt eine echte Permission und steuert nur die Notification-Sichtbarkeit im
+ * Snapshot.
  *
  * <p>Route-Praezedenz: die literalen Pfade {@code /snapshot} und {@code /archive} werden vor dem
  * variablen {@code /{id}} des {@code TaskFacadeController} gematcht (gleiches Muster wie
@@ -74,14 +78,12 @@ public class InboxSnapshotController {
               mediaType = "application/json",
               schema = @Schema(implementation = InboxSnapshotModel.class))),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
       @ApiResponse(
           responseCode = "410",
           description = "Snapshot konnte unter anhaltender Membership-Aenderung nicht konsistent"
               + " erzeugt werden (seltene Degradation); Client wiederholt die Anfrage.")
   })
   @GetMapping("/snapshot")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<InboxSnapshotModel> snapshot() {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
@@ -112,7 +114,6 @@ public class InboxSnapshotController {
       @ApiResponse(responseCode = "200", description = "Seite aktiver Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
       @ApiResponse(
           responseCode = "410",
           description = "Snapshot abgelaufen; Client muss neu bootstrappen. Folgeseite (cursor):"
@@ -121,7 +122,6 @@ public class InboxSnapshotController {
               + " Degradation).")
   })
   @GetMapping
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<KeysetPage<TaskSummaryModel>> activeTasks(
       @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
       @RequestParam(required = false) final String cursor,
@@ -149,7 +149,6 @@ public class InboxSnapshotController {
       @ApiResponse(responseCode = "200", description = "Seite archivierter Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
       @ApiResponse(
           responseCode = "410",
           description = "Snapshot abgelaufen; Client muss neu bootstrappen. Folgeseite (cursor):"
@@ -158,7 +157,6 @@ public class InboxSnapshotController {
               + " Degradation).")
   })
   @GetMapping("/archive")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<KeysetPage<TaskSummaryModel>> archiveTasks(
       @Parameter(description = "Filter: 'all' (Standard), 'done' (erledigt) oder 'left' (verlassen).")
       @RequestParam(required = false) final String filter,
