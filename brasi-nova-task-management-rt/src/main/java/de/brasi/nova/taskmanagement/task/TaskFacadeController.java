@@ -31,8 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Handgeschriebener Facade-Controller fuer Aufgaben (arch-v2 §7).
  *
- * <p>Jeder Handler traegt eine {@link RequiresPermission}-Annotation mit der vollen Authority
- * (Pflicht gemaess arch-v2 §8 + Handler-Sentinel-IT).
+ * <p>{@code create} traegt die grobe {@link RequiresPermission}-Authority (TASK_WRITE). Die
+ * member-scoped Handler {@code detail} (GET) und {@code patch} (PATCH) sind
+ * Standard-Selfservice (authenticated-only via KSF-Filter-Chain); ihre Autorisierung erfolgt
+ * objekt-level ueber den {@code TaskMembershipGuard} im jeweiligen Service (Non-/Ex-Member ->
+ * neutrale 404), nicht mehr ueber ein grobes {@code @RequiresPermission}-Gate.
  *
  * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}),
  * NIEMALS aus Client-Eingabedaten.
@@ -113,11 +116,9 @@ public class TaskFacadeController {
       @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
       @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PatchMapping("/{id}")
-  @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> patch(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final TaskPatchInput input) {
@@ -156,11 +157,9 @@ public class TaskFacadeController {
                   + "\"history\": []"
                   + "}"))),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @GetMapping("/{id}")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<TaskDetailModel> detail(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id) {
     final CurrentActor actor = CurrentActor.require(userAccessor);

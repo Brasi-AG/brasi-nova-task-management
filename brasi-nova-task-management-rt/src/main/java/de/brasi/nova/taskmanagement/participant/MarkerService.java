@@ -6,6 +6,7 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
 import java.util.List;
@@ -39,6 +40,7 @@ public class MarkerService {
   private final InboxSignalService inboxSignalService;
   private final InboxGenerationService inboxGenerationService;
   private final UserAccessor userAccessor;
+  private final TaskMembershipGuard membershipGuard;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public MarkerService(
@@ -47,13 +49,15 @@ public class MarkerService {
       final UserStateService userStateService,
       final InboxSignalService inboxSignalService,
       final InboxGenerationService inboxGenerationService,
-      final UserAccessor userAccessor) {
+      final UserAccessor userAccessor,
+      final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.userStateQueryRepository = userStateQueryRepository;
     this.userStateService = userStateService;
     this.inboxSignalService = inboxSignalService;
     this.inboxGenerationService = inboxGenerationService;
     this.userAccessor = userAccessor;
+    this.membershipGuard = membershipGuard;
   }
 
   /**
@@ -126,6 +130,12 @@ public class MarkerService {
 
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
+
+    // Standard-Selfservice (Slice 2, Henne-Ei): WRITE-Member-Guard VOR dem ensure-Pfad. Heute legt
+    // ensure eine TASK_USER_STATE-Zeile an -> ein pin/flag/mute auf eine Fremd-Task erzeugte bisher
+    // Inbox-Sichtbarkeit ohne Membership (Orphan-State). Mit Guard-vor-ensure wird fuer einen
+    // Non-/Ex-Member KEINE neue state-Zeile mehr angelegt; er erhaelt neutrale 404.
+    membershipGuard.requireWriteMember(taskId, userRef, tenantId);
 
     // UserState sicherstellen: ensure legt an (falls nicht vorhanden),
     // aendert UNSUBSCRIBED_AT NICHT (Inbox-Invariante). created=true bedeutet, dass durch

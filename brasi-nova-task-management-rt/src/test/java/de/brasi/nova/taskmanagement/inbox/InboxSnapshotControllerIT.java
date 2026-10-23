@@ -744,10 +744,16 @@ class InboxSnapshotControllerIT {
     // Dritter aktiver OPEN-Task OHNE TASK_USER_STATE fuer markerUser -> NICHT in seiner aktiven
     // Liste, bis der Pin erstmals einen aktiven State anlegt. LAST_ACTIVITY_AT frischer als die
     // bestehenden, damit der neu sichtbare Task im frischen Bootstrap vorn erscheint.
+    // Slice 4 (Guard-vor-ensure): markerUser MUSS aktiver WRITE-Member des pinTask sein, damit der
+    // pin ueberhaupt den State anlegen darf (ein Non-Member-pin wuerde jetzt 404 liefern und keinen
+    // Orphan-State erzeugen). Es wird bewusst nur die Participant-Zeile, aber KEIN UserState geseedet
+    // -> der pin ist die erste State-Neuanlage (Generationsbump), die Membership besteht schon.
     final long pinTaskId = ID_BASE + 847;
     final UUID pinTaskUuid = UUID.randomUUID();
     seedTask(jdbcTemplate, pinTaskId, pinTaskUuid, TENANT_A_ID, openId, normalId, directionId,
         LocalDateTime.now().minusMinutes(5), "Marker410-Pin-Target");
+    seedParticipant(jdbcTemplate, ID_BASE + 858, pinTaskId, markerUser, TENANT_A_ID,
+        true, true, true, null);
 
     final String token = jwt(TENANT_A_UUID, markerUser, markerLogin, "task-management:TASK_READ");
 
@@ -760,14 +766,15 @@ class InboxSnapshotControllerIT {
         .andReturn().getResponse().getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
-    // Der pinTask darf vor dem Pin NICHT in der aktiven Liste erscheinen (keine Membership).
+    // Der pinTask darf vor dem Pin NICHT in der aktiven Liste erscheinen (Membership besteht, aber
+    // noch KEINE TASK_USER_STATE-Zeile -> die aktive Liste verlangt beides).
     final JsonNode preActive = new ObjectMapper().readTree(
         mvc.perform(get("/api/v1/tasks?limit=50")
                 .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString());
     assertThat(idsOf(preActive))
-        .as("der pinTask darf VOR dem Pin nicht in der aktiven Liste erscheinen (keine Membership)")
+        .as("der pinTask darf VOR dem Pin nicht in der aktiven Liste erscheinen (noch kein State)")
         .doesNotContain(pinTaskUuid.toString());
 
     // ECHTE Marker-Mutation: markerUser pinnt ERSTMALS pinTask -> ensure legt aktiven UserState an
@@ -1363,6 +1370,9 @@ class InboxSnapshotControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

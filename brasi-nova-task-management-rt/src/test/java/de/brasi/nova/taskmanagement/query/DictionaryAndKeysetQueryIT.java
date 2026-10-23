@@ -153,6 +153,21 @@ class DictionaryAndKeysetQueryIT {
         TASK_ID_ACTIVE, USER_REF,   // IF NOT EXISTS-Pruefung
         TENANT_ID, TASK_ID_ACTIVE, USER_REF, TENANT_ID);  // VALUES: TENANT_ID, TASK_ID, USER_REF, USER_TENANT_ID
 
+    // Slice 6 (Membership-Konjunkt): fuer die aktive Inbox verlangt findActivePage jetzt zusaetzlich
+    // einen aktiven PERSON-Participant (WRITE-Member) - State und Participant koexistieren fuer
+    // legitime Mitglieder stets. Ohne diese Zeile waere die State-Zeile ein Orphan-State und die
+    // Task (korrekt) unsichtbar.
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?)"
+            + " INSERT INTO [dbo].[TASK_PARTICIPANT]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
+            + "  CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT)"
+            + " VALUES (10001002, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  ?, ?, 'PERSON', ?, 0, 1, 1, NULL, NULL)",
+        TASK_ID_ACTIVE, USER_REF,
+        TENANT_ID, TASK_ID_ACTIVE, USER_REF, TENANT_ID);
+
     // --- Archiv-left-Szenario 1: Benutzer via TASK_PARTICIPANT.EXIT_KIND='HANDOVER' ausgetreten ---
     // (KEIN TASK_USER_STATE.UNSUBSCRIBED_AT fuer diesen Task -> deckt die EXIT_KIND-Alternative ab)
     jt.update(
@@ -192,6 +207,22 @@ class DictionaryAndKeysetQueryIT {
             + "  TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT)"
             + " VALUES (10003001, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
             + "  ?, ?, ?, 0, 0, 0, GETDATE())",
+        TASK_ID_LEFT_UNSUB, USER_REF,
+        TENANT_ID, TASK_ID_LEFT_UNSUB, USER_REF, TENANT_ID);
+
+    // Slice 6 (Membership-Konjunkt): die Archiv-Queries verlangen jetzt zusaetzlich einen
+    // PERSON-Participant (READ-Member, EXIT_KIND egal). Der Benutzer hat sich hier nur via
+    // TASK_USER_STATE.UNSUBSCRIBED_AT abgemeldet, bleibt aber Participant der Task -> aktive
+    // PERSON-Zeile (EXIT_KIND NULL). Ohne diese Zeile waere die State-Zeile ein Orphan-State und
+    // die Task (korrekt) nicht in archive-left.
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?)"
+            + " INSERT INTO [dbo].[TASK_PARTICIPANT]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + "  TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
+            + "  CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT)"
+            + " VALUES (10003002, 'ACTIVE', 'dict-query-it', GETDATE(), NEWID(), 1, ?,"
+            + "  ?, ?, 'PERSON', ?, 0, 1, 1, NULL, NULL)",
         TASK_ID_LEFT_UNSUB, USER_REF,
         TENANT_ID, TASK_ID_LEFT_UNSUB, USER_REF, TENANT_ID);
   }

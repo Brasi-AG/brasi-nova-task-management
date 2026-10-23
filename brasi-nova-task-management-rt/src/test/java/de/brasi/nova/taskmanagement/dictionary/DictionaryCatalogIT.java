@@ -399,7 +399,9 @@ class DictionaryCatalogIT {
   // ---- Negativ-Tests: 401 / 403 -------------------------------------------------------
 
   @Test
-  @DisplayName("negativ_anonym_401_kein_task_read_403")
+  @DisplayName(
+      "negativ_anonym_401_grantfrei_200 (Slice 4): GET /dictionaries ist authenticated-only"
+          + " (kein @RequiresPermission mehr) -> anonym 401; angemeldeter Nutzer OHNE TASK_READ 200")
   void negativ_anonym_401_kein_task_read_403() throws Exception {
     final MockMvc mvc = buildMvc();
 
@@ -407,14 +409,14 @@ class DictionaryCatalogIT {
     mvc.perform(get("/api/v1/dictionaries"))
         .andExpect(status().isUnauthorized());
 
-    // 2. Kein TASK_READ (kein Permission) -> 403
+    // 2. Slice 4: Katalog ist grant-frei. Angemeldeter Nutzer OHNE jede Authority -> 200.
     final String tokenNoPerm = buildJwtWithAuthority(
         TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
         // keine Authorities
     );
     mvc.perform(get("/api/v1/dictionaries")
             .header("Authorization", "Bearer " + tokenNoPerm))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isOk());
   }
 
   // ---- Hilfsmethoden ------------------------------------------------------------------
@@ -547,6 +549,9 @@ class DictionaryCatalogIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

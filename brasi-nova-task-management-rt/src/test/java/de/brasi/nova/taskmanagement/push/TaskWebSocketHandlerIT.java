@@ -250,6 +250,14 @@ class TaskWebSocketHandlerIT {
 
     final UUID taskId = createTask(tokenA, "Push-nach-Commit-Task");
 
+    // Slice 4 (Auflage 4): Mention-Empfaenger sind auf die aktiven WRITE-Member begrenzt. Damit die
+    // MENTION-Notification (und damit der Push) B erreicht, muss B aktiver WRITE-Member der Aufgabe
+    // sein. B wird direkt als PERSON-Teilnehmer geseedet (ohne das gate-behaftete PUT /assignees).
+    final long taskRowId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+    seedParticipant(jdbcTemplate, ID_BASE + 100, taskRowId, USER_B_REF, TENANT_A_ID);
+
     final WsClientSession b = connect(issueTicket(tokenB));
     try {
       awaitRegistered(USER_B_REF);
@@ -776,6 +784,9 @@ class TaskWebSocketHandlerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
   })
   static class ItConfig {
 

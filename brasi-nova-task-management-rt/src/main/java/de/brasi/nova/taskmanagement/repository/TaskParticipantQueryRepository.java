@@ -16,9 +16,19 @@ import org.springframework.data.repository.query.Param;
 public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepository {
 
   /**
-   * Sucht den {@link TaskParticipant} fuer eine Aufgabe und einen bestimmten Teilnehmer.
+   * Sucht den aktiven PERSON-{@link TaskParticipant} fuer eine Aufgabe und einen bestimmten
+   * Teilnehmer im aktuellen (Task-)Mandanten.
    *
    * <p>Gibt maximal einen Eintrag zurueck.
+   *
+   * <p><b>Tenant-Scope-Sweep (Auflage 8/B2):</b> zusaetzlich zur Nova-Basisspalte {@code TENANT_ID}
+   * wird die fachliche Teilnehmer-Mandantenspalte {@code PARTICIPANT_TENANT_ID = :tenantId} und
+   * {@code PARTICIPANT_KIND = 'PERSON'} als Konjunkt geprueft. Der V3-Unique-Index
+   * {@code (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)} erlaubt zwei Zeilen pro (Task, Ref)
+   * mit unterschiedlichem {@code PARTICIPANT_TENANT_ID}; mit diesem Konjunkt faellt die
+   * Anomalie-Zeile mit fremdem Teilnehmer-Mandanten heraus und es verbleibt genau die eine
+   * task-mandanten-/PERSON-Zeile. {@code :tenantId} wird automatisch vom
+   * KSF-{@code NovaQueryTenantValidator} aus dem {@code TenantContextHolder} gebunden.
    *
    * @param taskId           interne Aufgaben-ID
    * @param participantRef   UUID des Teilnehmers (PROD_BENUTZER.EXTERNALID)
@@ -29,6 +39,8 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_PARTICIPANT "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID = :taskId "
               + "AND PARTICIPANT_REF = :participantRef "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -36,10 +48,130 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_PARTICIPANT] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID = :taskId "
               + "AND PARTICIPANT_REF = :participantRef "
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskParticipant> findByTaskIdAndParticipantRef(
+      @Param("taskId") Long taskId, @Param("participantRef") UUID participantRef);
+
+  /**
+   * WRITE-Member-Existenzpruefung (Membership-Guard): gibt genau dann {@code true} zurueck, wenn
+   * eine aktive, nicht ausgetretene PERSON-Teilnehmerzeile fuer {@code participantRef} an der
+   * Aufgabe im Task-Mandanten existiert.
+   *
+   * <p>Volles WRITE-Member-Praedikat (SPEC, Membership-Praedikate): {@code PARTICIPANT_KIND='PERSON'
+   * AND ENTITY_STATUS='ACTIVE' AND EXIT_KIND IS NULL AND TENANT_ID=:tenantId AND
+   * PARTICIPANT_TENANT_ID=:tenantId AND TASK_ID=:taskId AND PARTICIPANT_REF=:participantRef}. Nutzt
+   * den TASK_ID-praefixierten V3-Unique-Index (ein {@code EXISTS} pro Request, kein N+1).
+   * {@code :tenantId} wird automatisch vom Framework gebunden.
+   *
+   * @param taskId         interne Aufgaben-ID
+   * @param participantRef UUID des Teilnehmers (PROD_BENUTZER.EXTERNALID)
+   * @return {@code true}, wenn der Teilnehmer aktiver WRITE-Member der Aufgabe ist
+   */
+  @NovaQuery(
+      value =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM TASK_PARTICIPANT "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef "
+              + "AND ENTITY_STATUS = 'ACTIVE' "
+              + "AND EXIT_KIND IS NULL"
+              + ") THEN 1 ELSE 0 END",
+      mssql =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM [dbo].[TASK_PARTICIPANT] "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef "
+              + "AND ENTITY_STATUS = 'ACTIVE' "
+              + "AND EXIT_KIND IS NULL"
+              + ") THEN 1 ELSE 0 END")
+  boolean existsWriteMember(
+      @Param("taskId") Long taskId, @Param("participantRef") UUID participantRef);
+
+  /**
+   * READ-Member-Existenzpruefung (Membership-Guard): wie {@link #existsWriteMember}, aber
+   * <b>ohne</b> {@code EXIT_KIND IS NULL}. Ein ausgetretener Nutzer (Zeile bleibt
+   * {@code ENTITY_STATUS='ACTIVE'}, nur {@code EXIT_KIND} gesetzt) ist weiterhin READ-Member und
+   * darf sein Archiv-Detail lesen.
+   *
+   * <p>Volles READ-Member-Praedikat: {@code PARTICIPANT_KIND='PERSON' AND ENTITY_STATUS='ACTIVE' AND
+   * TENANT_ID=:tenantId AND PARTICIPANT_TENANT_ID=:tenantId AND TASK_ID=:taskId AND
+   * PARTICIPANT_REF=:participantRef}. {@code :tenantId} wird automatisch gebunden.
+   *
+   * @param taskId         interne Aufgaben-ID
+   * @param participantRef UUID des Teilnehmers (PROD_BENUTZER.EXTERNALID)
+   * @return {@code true}, wenn der Teilnehmer READ-Member der Aufgabe ist (inkl. ausgetreten)
+   */
+  @NovaQuery(
+      value =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM TASK_PARTICIPANT "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef "
+              + "AND ENTITY_STATUS = 'ACTIVE'"
+              + ") THEN 1 ELSE 0 END",
+      mssql =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM [dbo].[TASK_PARTICIPANT] "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef "
+              + "AND ENTITY_STATUS = 'ACTIVE'"
+              + ") THEN 1 ELSE 0 END")
+  boolean existsReadMember(
+      @Param("taskId") Long taskId, @Param("participantRef") UUID participantRef);
+
+  /**
+   * Unique-Key-exakter Lookup der einen Teilnehmerzeile einer Aufgabe, OHNE
+   * Status-/{@code EXIT_KIND}-/{@code PARTICIPANT_KIND}-Filter (ensureAssignee-Auswahlvertrag,
+   * SPEC/Auflage 8). Gefiltert wird GENAU auf den V3-Unique-Key
+   * {@code (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)}; die Nova-Basisspalte
+   * {@code TENANT_ID} ist bewusst NICHT Teil des Praedikats.
+   *
+   * <p><b>Warum kein {@code TENANT_ID}-Konjunkt (BLOCKER-Fix):</b> der V3-Unique-Key ist
+   * {@code (TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)} - die Basis-{@code TENANT_ID} gehoert
+   * NICHT dazu. Mit {@code PARTICIPANT_TENANT_ID = :tenantId} (= Task-Mandant) liefert die Query
+   * bereits genau {@code <=1} Zeile. Ein zusaetzlicher {@code TENANT_ID = :tenantId}-Konjunkt wuerde
+   * eine Zeile mit passendem {@code PARTICIPANT_TENANT_ID}, aber abweichendem Basis-{@code TENANT_ID}
+   * faelschlich "nicht gefunden" machen; dann koennte der Aufrufer (ensureAssignee, Slice 4) den
+   * Fall "fremdes Basis-{@code TENANT_ID}" nicht als fail-closed 409 klassifizieren. Der Lookup
+   * liefert die Unique-Key-Zeile daher UNABHAENGIG vom Basis-{@code TENANT_ID}; die Klassifikation
+   * (PERSON reaktivieren vs. TEAM/fremdes Basis-{@code TENANT_ID} -> 409) erfolgt im Aufrufer.
+   *
+   * <p>{@code :tenantId} (an {@code PARTICIPANT_TENANT_ID} gebunden) wird automatisch vom
+   * KSF-{@code NovaQueryTenantValidator} aus dem {@code TenantContextHolder} gebunden; der
+   * Platzhalter erfuellt zugleich die Pflicht-Tenant-Filterung der Startup-Validierung.
+   *
+   * @param taskId         interne Aufgaben-ID
+   * @param participantRef UUID des Teilnehmers (PROD_BENUTZER.EXTERNALID)
+   * @return Liste mit 0 oder 1 Eintraegen (Unique-Key)
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM TASK_PARTICIPANT "
+              + "WHERE PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef",
+      mssql =
+          "SELECT * FROM [dbo].[TASK_PARTICIPANT] "
+              + "WHERE PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND PARTICIPANT_REF = :participantRef")
+  List<TaskParticipant> findRowByUniqueKey(
       @Param("taskId") Long taskId, @Param("participantRef") UUID participantRef);
 
   /**
@@ -56,6 +188,8 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_PARTICIPANT "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID = :taskId "
               + "AND ASSIGNEE_FLAG = 1 "
               + "AND EXIT_KIND IS NULL "
@@ -64,6 +198,8 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_PARTICIPANT] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID = :taskId "
               + "AND ASSIGNEE_FLAG = 1 "
               + "AND EXIT_KIND IS NULL "
@@ -92,12 +228,16 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_PARTICIPANT "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID IN (:taskIds) "
               + "AND ENTITY_STATUS = 'ACTIVE'",
       mssql =
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_PARTICIPANT] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND PARTICIPANT_KIND = 'PERSON' "
               + "AND TASK_ID IN (:taskIds) "
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskParticipant> findActiveByTaskIds(@Param("taskIds") Collection<Long> taskIds);

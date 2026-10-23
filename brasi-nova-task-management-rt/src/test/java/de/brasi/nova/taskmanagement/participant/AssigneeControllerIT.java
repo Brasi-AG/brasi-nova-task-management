@@ -154,6 +154,16 @@ class AssigneeControllerIT {
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
   private static final String USER_READ_ONLY_LOGIN = "read-only-assignee@brasi.de";
 
+  /** Slice 4: grant-freier aktiver Mandanten-Nutzer (KEINE task-management:*-Authority). */
+  private static final UUID GRANTFREE_REF = UUID.randomUUID();
+  private static final String GRANTFREE_LOGIN = "grantfree-member@brasi.de";
+  private static final long GRANTFREE_DB_ID = 516L;
+
+  /** Slice 4: zweiter grant-freier aktiver Mandanten-Nutzer (Handover-Ziel-WRITE-Member). */
+  private static final UUID GRANTFREE2_REF = UUID.randomUUID();
+  private static final String GRANTFREE2_LOGIN = "grantfree-member-2@brasi.de";
+  private static final long GRANTFREE2_DB_ID = 517L;
+
   private static final KeyPair RSA_KEY_PAIR;
 
   static {
@@ -231,6 +241,9 @@ class AssigneeControllerIT {
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_B_ID);
     seedBenutzerIfAbsent(
         jt, HANDOVER_TARGET_DB_ID, HANDOVER_TARGET_REF, HANDOVER_TARGET_LOGIN, TENANT_A_ID);
+    // Slice 4: grant-freie Mandant-A-Nutzer.
+    seedBenutzerIfAbsent(jt, GRANTFREE_DB_ID, GRANTFREE_REF, GRANTFREE_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, GRANTFREE2_DB_ID, GRANTFREE2_REF, GRANTFREE2_LOGIN, TENANT_A_ID);
   }
 
   // ---- Positiv-IT: Assignee zuweisen -> ASSIGNEE_FLAG + TASK_USER_STATE -------------------------
@@ -820,7 +833,8 @@ class AssigneeControllerIT {
 
   @Test
   @DisplayName(
-      "doppel_exit_wird_abgelehnt_400: Nicht-Creator exitet (204) und erneut (400) ->"
+      "doppel_exit_wird_abgelehnt_404: Nicht-Creator exitet (204) und erneut (404, Slice 4:"
+          + " ausgetretener = kein WRITE-Member -> Membership-Guard 404 statt 400) ->"
           + " genau ein EXIT_AT, keine zweite HANDOVER-Notification")
   void doppel_exit_wird_abgelehnt_400() throws Exception {
     final MockMvc mvc = buildMvc();
@@ -875,13 +889,15 @@ class AssigneeControllerIT {
             taskId,
             ASSIGNEE_REF);
 
-    // Zweiter Exit durch denselben (bereits ausgetretenen) Assignee -> 400
+    // Zweiter Exit durch denselben (bereits ausgetretenen) Assignee -> 404 (Slice 4: der
+    // Membership-Guard greift GANZ VORNE; ein ausgetretener Teilnehmer ist kein WRITE-Member mehr
+    // und wird neutral 404-maskiert statt mit 400 ueber die interne Teilnehmerpruefung).
     mvc.perform(
             post("/api/v1/tasks/" + taskId + "/exit")
                 .header("Authorization", "Bearer " + tokenAssignee)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER"))))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNotFound());
 
     // Beweis 1: genau ein Participant mit EXIT_KIND='HANDOVER' (kein zweites EXIT)
     final Integer exitRowCount =
@@ -1593,6 +1609,69 @@ class AssigneeControllerIT {
         .build();
   }
 
+  /** JWT OHNE jede task-management-Authority (authenticated-only, grant-frei). */
+  private static String buildGrantFreeJwt(
+      final UUID tenantUuid, final UUID userUuid, final String loginName) {
+    return buildJwtWithAuthority(tenantUuid, userUuid, loginName);
+  }
+
+  /** Interne TASK.ID zur externen UUID (fuer die direkten TASK_PARTICIPANT-Inserts). */
+  private long taskDbId(final UUID taskExternalId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskExternalId);
+  }
+
+  /**
+   * Fuegt dem Akteur eine aktive WRITE-Member-Teilnehmerzeile (PERSON, EXIT_KIND null) direkt per
+   * JDBC hinzu - ohne das Gate-behaftete {@code PUT /assignees}. So kann ein grant-freier Member
+   * seine Membership erhalten, ohne dass der Test TASK_WRITE braucht.
+   */
+  private void insertActiveMember(
+      final long partId, final long taskId, final UUID ref, final long participantTenantId) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1,"
+            + " NULL, NULL)",
+        partId, TENANT_A_ID, taskId, ref, participantTenantId);
+  }
+
+  /**
+   * Fuegt eine TASK_PARTICIPANT-Zeile mit explizitem Kind/Tenant/Status/Exit direkt per JDBC hinzu
+   * (Anomalie-/Reaktivierungs-/409-Szenarien). {@code baseTenantId} = Nova-Basisspalte TENANT_ID,
+   * {@code participantTenantId} = fachliche Spalte PARTICIPANT_TENANT_ID.
+   */
+  private void insertParticipantRow(
+      final long partId,
+      final long taskId,
+      final UUID ref,
+      final String kind,
+      final long baseTenantId,
+      final long participantTenantId,
+      final String entityStatus,
+      final boolean assignee,
+      final String exitKind) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, ?, 'it', GETDATE(), NEWID(), 1, ?, ?, ?, ?, ?, 0, ?, 1, ?,"
+            + " CASE WHEN ? IS NULL THEN NULL ELSE GETDATE() END)",
+        partId,
+        entityStatus,
+        baseTenantId,
+        taskId,
+        ref,
+        kind,
+        participantTenantId,
+        assignee ? 1 : 0,
+        exitKind,
+        exitKind);
+  }
+
   private static String buildJwtWithAuthority(
       final UUID tenantUuid,
       final UUID userUuid,
@@ -1645,6 +1724,426 @@ class AssigneeControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
         id, id, externalId, tenantId, loginName);
+  }
+
+  // ============================================================================================
+  // Slice 4 (Standard-Selfservice): exit authenticated-only + Membership-Guard-404 + Handover-Grenze
+  // + ensureAssignee-Auswahlvertrag (real-MSSQL)
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "s4_exit_grantfrei_unsubscribed_204: grant-freier aktiver WRITE-Member verlaesst die Aufgabe"
+          + " (UNSUBSCRIBED) -> 204 (kein TASK_WRITE noetig), EXIT_KIND='UNSUBSCRIBED' persistiert")
+  void s4_exit_grantfrei_unsubscribed_204() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-grantfrei-unsub");
+    final long dbId = taskDbId(taskId);
+    // Grant-freier Member erhaelt seine aktive WRITE-Member-Zeile direkt (ohne TASK_WRITE-Gate).
+    insertActiveMember(520001L, dbId, GRANTFREE_REF, TENANT_A_ID);
+
+    final String tokenGrantFree = buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE_REF, GRANTFREE_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenGrantFree)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "UNSUBSCRIBED"))))
+        .andExpect(status().isNoContent());
+
+    final Integer exited =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
+                + " AND EXIT_KIND = 'UNSUBSCRIBED'",
+            Integer.class, dbId, GRANTFREE_REF);
+    assertThat(exited).as("grant-frei UNSUBSCRIBED persistiert EXIT_KIND").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "s4_exit_non_member_404: grant-freier Nicht-Member exit -> 404 (nicht 400); gueltige +"
+          + " ungueltige Ziele -> kein Ziel-Leak, keine Mutation")
+  void s4_exit_non_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-non-member-404");
+
+    // GRANTFREE2 ist KEIN Member dieser Aufgabe -> 404 (neutral), VOR jeder Zielvalidierung.
+    final String tokenNonMember =
+        buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE2_REF, GRANTFREE2_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(UUID.randomUUID().toString())))))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_exit_non_member_malformter_body_400: grant-freier Nicht-Member exit mit malformtem Body"
+          + " (handedOverToIds mit null-Element) -> 400 (Jackson/Record-Binding), NICHT 404; keine"
+          + " Mutation")
+  void exit_non_member_malformter_body_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-non-member-malformed-400");
+    final long dbId = taskDbId(taskId);
+
+    // GRANTFREE2 ist KEIN Member der Aufgabe. Der Request-Body ist malformt: handedOverToIds traegt
+    // ein null-Element. Der kompakte ExitInput-Konstruktor lehnt das null-Element ab
+    // (EntityValidationException) -> Jackson wickelt das als ValueInstantiation/
+    // HttpMessageNotReadableException -> GlobalApiExceptionHandler mappt beide Pfade auf 400. Der
+    // Binding-400 entsteht VOR dem AssigneeService/TaskMembershipGuard; der Membership-404-Vertrag
+    // greift nur fuer BINDBARE Requests (Codex-Final-Gate-Abgrenzung). Rohes JSON noetig, da weder
+    // Map.of noch List.of null-Elemente zulassen.
+    final String malformedBody =
+        "{\"exitKind\":\"HANDOVER\",\"handedOverToIds\":[\"" + USER_B_REF + "\",null]}";
+    final String tokenNonMember =
+        buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE2_REF, GRANTFREE2_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(malformedBody))
+        .andExpect(status().isBadRequest());
+
+    // KEINE Mutation: der Akteur (Nicht-Member) hat keine Zeile erhalten und keinen Austritt
+    // ausgeloest; kein Handover-Ereignis.
+    final Integer actorRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class, dbId, GRANTFREE2_REF);
+    assertThat(actorRows).as("Nicht-Member-Akteur hat keine Teilnehmerzeile (keine Mutation)")
+        .isZero();
+    final Integer handoverEvents =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?",
+            Integer.class, dbId);
+    assertThat(handoverEvents).as("kein Handover-Ereignis beim Binding-400").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "s4_exit_anonym_401: exit ohne JWT -> 401 (authenticated-only via KSF-Filter-Chain, Gate"
+          + " entfernt)")
+  void s4_exit_anonym_401() throws Exception {
+    final MockMvc mvc = buildMvc();
+    mvc.perform(
+            post("/api/v1/tasks/" + UUID.randomUUID() + "/exit")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        .andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_an_write_member_grantfrei_204: grant-frei HANDOVER an ein bereits aktives"
+          + " WRITE-Member-Ziel -> 204 (kein TASK_WRITE), Ziel bleibt aktiver Assignee")
+  void s4_handover_an_write_member_grantfrei_204() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-handover-writemember");
+    final long dbId = taskDbId(taskId);
+    // Akteur (grant-frei) + Ziel sind BEIDE bereits aktive WRITE-Member.
+    insertActiveMember(520101L, dbId, GRANTFREE_REF, TENANT_A_ID);
+    insertActiveMember(520102L, dbId, GRANTFREE2_REF, TENANT_A_ID);
+
+    final String tokenGrantFree = buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE_REF, GRANTFREE_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenGrantFree)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(GRANTFREE2_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer targetAssignee =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
+                + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND ENTITY_STATUS = 'ACTIVE'",
+            Integer.class, dbId, GRANTFREE2_REF);
+    assertThat(targetAssignee).as("WRITE-Member-Ziel bleibt aktiver Assignee").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_an_nicht_member_grantfrei_403_keine_mutation: grant-frei HANDOVER an ein"
+          + " Nicht-WRITE-Member-Ziel -> 403, KEINE Mutation (kein Handover-Ereignis, kein Austritt)")
+  void s4_handover_an_nicht_member_grantfrei_403_keine_mutation() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-handover-nonmember-403");
+    final long dbId = taskDbId(taskId);
+    insertActiveMember(520201L, dbId, GRANTFREE_REF, TENANT_A_ID);
+
+    // HANDOVER_TARGET_REF ist ein gueltiger aktiver Mandant-A-Nutzer, aber KEIN Member der Aufgabe.
+    final String tokenGrantFree = buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE_REF, GRANTFREE_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenGrantFree)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isForbidden());
+
+    // KEINE Mutation: kein Handover-Ereignis, Akteur weiterhin aktiv (nicht ausgetreten), Ziel nicht angelegt.
+    final Integer handoverEvents =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ? AND FROM_REF = ?",
+            Integer.class, dbId, GRANTFREE_REF);
+    assertThat(handoverEvents).as("kein Handover-Ereignis (keine Mutation)").isZero();
+    final Integer actorStillActive =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
+                + " AND EXIT_KIND IS NULL",
+            Integer.class, dbId, GRANTFREE_REF);
+    assertThat(actorStillActive).as("Akteur bleibt aktiv (kein Austritt)").isEqualTo(1);
+    final Integer targetRow =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class, dbId, HANDOVER_TARGET_REF);
+    assertThat(targetRow).as("Nicht-Member-Ziel wurde NICHT angelegt").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_an_nicht_member_mit_task_write_204: HANDOVER an Nicht-WRITE-Member MIT TASK_WRITE"
+          + " -> 204, Ziel wird neuer aktiver Assignee")
+  void s4_handover_an_nicht_member_mit_task_write_204() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // Akteur ist Creator (TASK_WRITE) + Nicht-Creator-Austritt verboten -> stattdessen separaten
+    // Nicht-Creator-Member mit TASK_WRITE nutzen: USER_A legt an, weist ASSIGNEE_REF zu, ASSIGNEE_REF
+    // hat TASK_WRITE und uebergibt an HANDOVER_TARGET_REF (Nicht-Member).
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-handover-grant-204");
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenCreator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+    final long dbId = taskDbId(taskId);
+
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer targetAssignee =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
+                + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND PARTICIPANT_KIND = 'PERSON'",
+            Integer.class, dbId, HANDOVER_TARGET_REF);
+    assertThat(targetAssignee).as("neues Ziel ist aktiver Assignee (mit TASK_WRITE)").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_reaktiviert_inaktive_exited_person_active: HANDOVER an eine inaktive +"
+          + " ausgetretene PERSON-Zeile (gleicher Unique-Key) -> 204, Zeile VOLL auf ACTIVE/Assignee")
+  void s4_ensureAssignee_reaktiviert_inaktive_exited_person_active() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-reactivate-exited");
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenCreator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+    final long dbId = taskDbId(taskId);
+
+    // HANDOVER_TARGET_REF: inaktive (DEACTIVE) + ausgetretene (EXIT_KIND) PERSON-Zeile, task-tenant.
+    insertParticipantRow(
+        520301L, dbId, HANDOVER_TARGET_REF, "PERSON", TENANT_A_ID, TENANT_A_ID, "DEACTIVE",
+        false, "UNSUBSCRIBED");
+
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    final Integer reactivated =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND ENTITY_STATUS = 'ACTIVE'"
+                + " AND ASSIGNEE_FLAG = 1 AND PARTICIPANT_FLAG = 1 AND EXIT_KIND IS NULL",
+            Integer.class, 520301L);
+    assertThat(reactivated)
+        .as("inaktive/exited PERSON-Zeile voll auf ACTIVE reaktiviert (gleicher Unique-Key)")
+        .isEqualTo(1);
+    // Genau EIN aktiver PERSON-Assignee fuer das Ziel (keine Dublette per Insert).
+    final Integer activeAssignees =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
+                + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND ENTITY_STATUS = 'ACTIVE'",
+            Integer.class, dbId, HANDOVER_TARGET_REF);
+    assertThat(activeAssignees).as("genau EIN aktiver Assignee").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_team_zeile_409_keine_mutation: HANDOVER-Ziel hat TEAM-Zeile (gleicher"
+          + " Unique-Key) -> mit TASK_WRITE 409, KEINE Mutation (voller Rollback)")
+  void s4_ensureAssignee_team_zeile_409_keine_mutation() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-team-409");
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenCreator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+    final long dbId = taskDbId(taskId);
+
+    // HANDOVER_TARGET_REF: TEAM-Zeile (task-tenant). Grant-frei waere 403 (Nicht-WRITE-Member); erst
+    // MIT TASK_WRITE erreicht ensureAssignee die TEAM-Zeile -> 409, keine Mutation.
+    insertParticipantRow(
+        520401L, dbId, HANDOVER_TARGET_REF, "TEAM", TENANT_A_ID, TENANT_A_ID, "ACTIVE", false, null);
+
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isConflict());
+
+    // Keine Mutation: TEAM bleibt TEAM, kein Assignee-Flip, kein Handover-Ereignis (voller Rollback).
+    final Integer teamUnchanged =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND PARTICIPANT_KIND = 'TEAM'"
+                + " AND ASSIGNEE_FLAG = 0",
+            Integer.class, 520401L);
+    assertThat(teamUnchanged).as("TEAM-Zeile unveraendert (fail-closed 409)").isEqualTo(1);
+    final Integer handoverEvents =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ? AND FROM_REF = ?",
+            Integer.class, dbId, ASSIGNEE_REF);
+    assertThat(handoverEvents).as("kein Handover-Ereignis (voller Rollback)").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "s4_exit_akteur_zwei_zeilen_nur_task_tenant_zeile_mutiert: Akteur hat task-tenant-Zeile +"
+          + " fremd-PARTICIPANT_TENANT_ID-Zeile -> grant-frei UNSUBSCRIBED 204; nur task-tenant-Zeile"
+          + " traegt EXIT_KIND, fremde Zeile unveraendert")
+  void s4_exit_akteur_zwei_zeilen_nur_task_tenant_zeile_mutiert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-zwei-zeilen-akteur");
+    final long dbId = taskDbId(taskId);
+
+    // Zeile 1: gueltige task-tenant WRITE-Member-Zeile (PARTICIPANT_TENANT_ID = TENANT_A).
+    insertActiveMember(520501L, dbId, GRANTFREE_REF, TENANT_A_ID);
+    // Zeile 2: zweite Zeile desselben Akteurs mit fremdem PARTICIPANT_TENANT_ID (eigener Unique-Key).
+    insertParticipantRow(
+        520502L, dbId, GRANTFREE_REF, "PERSON", TENANT_A_ID, TENANT_B_ID, "ACTIVE", true, null);
+
+    final String tokenGrantFree = buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE_REF, GRANTFREE_LOGIN);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenGrantFree)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "UNSUBSCRIBED"))))
+        .andExpect(status().isNoContent());
+
+    // Nur die task-tenant-Zeile (520501) traegt EXIT_KIND.
+    final String taskTenantExit =
+        jdbcTemplate.queryForObject(
+            "SELECT EXIT_KIND FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?", String.class, 520501L);
+    assertThat(taskTenantExit).as("task-tenant-Zeile ausgetreten").isEqualTo("UNSUBSCRIBED");
+    // Die fremd-tenant-Zeile (520502) bleibt UNVERAENDERT (EXIT_KIND NULL).
+    final Integer foreignUnchanged =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND EXIT_KIND IS NULL"
+                + " AND PARTICIPANT_TENANT_ID = ?",
+            Integer.class, 520502L, TENANT_B_ID);
+    assertThat(foreignUnchanged).as("fremd-tenant-Zeile unveraendert (deterministische Row-Wahl)")
+        .isEqualTo(1);
   }
 
   private static String toPem(final byte[] der) {
@@ -1712,6 +2211,9 @@ class AssigneeControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4: AssigneeService braucht den TaskMembershipGuard (member-scoped exit-Guard). Der
+    // PermissionEvaluator (programmatischer TASK_WRITE-Check) kommt aus KsfSecurityAutoConfiguration.
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

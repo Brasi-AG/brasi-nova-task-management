@@ -960,9 +960,9 @@ class TaskFacadeControllerIT {
 
   @Test
   @DisplayName(
-      "detail_be3_nicht_teilnehmer_actor_200:"
-          + " TASK_READ-Nutzer im gleichen Mandanten OHNE Teilnehmer-Rolle -> 200,"
-          + " createdById gesetzt, Marker false, exit null (kein Membership-Gate, D1)")
+      "detail_be3_nicht_teilnehmer_actor_404 (Slice 4, Auflage 6):"
+          + " TASK_READ-Grant-Holder im gleichen Mandanten OHNE Teilnehmer-Rolle -> 404 (neutral,"
+          + " objekt-level Membership-Guard entzieht den member-scoped Read; bewusste Policy)")
   void detail_be3_nicht_teilnehmer_actor_200() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -972,18 +972,22 @@ class TaskFacadeControllerIT {
     // Aufgabe von USER_A; USER_A2 ist WEDER Ersteller NOCH Teilnehmer dieser Aufgabe.
     final UUID taskUuid = createTask(mvc, om, tokenA, "BE3-Detail-NonMember");
 
+    // Slice 4: Ein reiner TASK_READ-Grant-Holder OHNE Participant-Row ist kein READ-Member mehr ->
+    // der Detail-Read wird neutral mit 404 maskiert (kein Existenz-Leak), KEIN READ_AT-Write.
     final String tokenA2 = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN, "task-management:TASK_READ");
-    final com.fasterxml.jackson.databind.JsonNode detail = getDetail(mvc, om, tokenA2, taskUuid);
+    mvc.perform(get("/api/v1/tasks/" + taskUuid).header("Authorization", "Bearer " + tokenA2))
+        .andExpect(status().isNotFound());
 
-    assertThat(detail.get("createdById").asText())
-        .as("Ersteller sichtbar auch fuer Nicht-Teilnehmer")
-        .isEqualTo(USER_A_REF.toString());
-    assertThat(readStringArray(detail.get("participantIds"))).isEmpty();
-    assertThat(detail.get("isPinned").asBoolean()).isFalse();
-    assertThat(detail.get("isFlagged").asBoolean()).isFalse();
-    assertThat(detail.get("isMuted").asBoolean()).isFalse();
-    assertThat(detail.get("exit").isNull()).isTrue();
+    // Kein Seiteneffekt: der Guard greift VOR markRead -> keine TASK_USER_STATE-Zeile fuer USER_A2
+    // AUF DIESER Aufgabe (task-scoped, da USER_A2 in anderen Tests dieser Klasse States haben kann).
+    final Integer readState =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+            Integer.class, taskUuid, USER_A2_REF);
+    assertThat(readState).as("Non-Member -> kein READ_AT/State-Write auf dieser Aufgabe").isZero();
   }
 
   @Test
@@ -1440,6 +1444,9 @@ class TaskFacadeControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services (Detail/Command) haengen jetzt am
+    // objekt-level TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
   })
   static class ItConfig {

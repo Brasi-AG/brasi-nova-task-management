@@ -504,6 +504,9 @@ class ParticipantSearchIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

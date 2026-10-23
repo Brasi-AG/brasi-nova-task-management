@@ -27,6 +27,19 @@ import java.util.UUID;
  * Snapshot-Reads logisch geloeschte (deaktivierte) Aufgaben bzw. Mitgliedschaften (modulweite
  * Konvention, konsistent mit den Notification-Queries).
  *
+ * <p><b>Membership-Konjunkt (Pflicht, Slice 6 / SPEC Auflage 5):</b> Jede requester-scoped Sicht
+ * und jeder Zaehler setzt als REQUIRED-Konjunkt die Existenz einer passenden
+ * {@code TASK_PARTICIPANT}-Zeile ({@code PARTICIPANT_KIND = 'PERSON'}, {@code ENTITY_STATUS =
+ * 'ACTIVE'}, beide Tenant-Spalten = Request-Mandant) voraus. Ohne diese harte Vorbedingung wuerde
+ * eine verwaiste {@code TASK_USER_STATE}-Zeile (Orphan-State ohne passende Participant-Row) ueber
+ * die reinen State-Zweige faelschlich gelistet/gezaehlt (Residual-Leak, der dem Detail-Guard
+ * widerspricht). Die aktive Seite verlangt WRITE-Member ({@code EXIT_KIND IS NULL}), die sechs
+ * Archiv-Queries verlangen READ-Member ({@code EXIT_KIND} egal -> ausgetretener Nutzer liest sein
+ * Archiv). Der Konjunkt UMSCHLIESST die bestehenden Status-/State-OR-Zweige: diese bestimmen die
+ * Sicht-Kategorie (done/left/all), die Membership-{@code EXISTS} wird zur harten Vorbedingung jedes
+ * Treffers/jeder gezaehlten Zeile. {@code EXISTS} nutzt den TASK_ID-praefixierten Unique-Index aus
+ * {@code V3__participant_unique_and_audit_indexes.sql}.
+ *
  * <p>Status-Filter laufen ueber aufgeloeste {@code Long}-IDs ({@code :openStatusId},
  * {@code :doneId}, {@code :cancelledId}), die der aufrufende Service einmalig via
  * {@link de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver} aufloest.
@@ -67,6 +80,13 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
               + "   AND s.ENTITY_STATUS = 'ACTIVE'"
               + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.EXIT_KIND IS NULL"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
               + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC",
@@ -81,6 +101,13 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
               + "   AND s.ENTITY_STATUS = 'ACTIVE'"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.EXIT_KIND IS NULL"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -154,6 +181,12 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
               + "   AND s.ENTITY_STATUS = 'ACTIVE'"
               + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
               + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC",
@@ -168,6 +201,12 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
               + "   AND s.ENTITY_STATUS = 'ACTIVE'"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -214,9 +253,16 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM TASK_PARTICIPANT p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE'"
               + "   )"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -236,9 +282,16 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE'"
               + "   )"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -292,8 +345,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM TASK_PARTICIPANT p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -318,8 +378,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )"
               + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
@@ -367,8 +434,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM TASK_PARTICIPANT p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )",
       mssql =
           "SELECT COUNT(*) FROM [dbo].[TASK] t"
@@ -390,8 +464,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )")
   long countArchiveAll(UUID userRef, Long doneId, Long cancelledId, LocalDateTime asOf);
 
@@ -416,7 +497,13 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   SELECT 1 FROM TASK_USER_STATE s"
               + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
-              + "   AND s.ENTITY_STATUS = 'ACTIVE')",
+              + "   AND s.ENTITY_STATUS = 'ACTIVE')"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )",
       mssql =
           "SELECT COUNT(*) FROM [dbo].[TASK] t"
               + " WHERE t.TENANT_ID = :tenantId"
@@ -427,7 +514,13 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
               + "   WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
               + "   AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
-              + "   AND s.ENTITY_STATUS = 'ACTIVE')")
+              + "   AND s.ENTITY_STATUS = 'ACTIVE')"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "   WHERE p.TASK_ID = t.ID AND p.PARTICIPANT_REF = :userRef"
+              + "   AND p.PARTICIPANT_KIND = 'PERSON' AND p.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND p.TENANT_ID = :tenantId AND p.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )")
   long countArchiveDone(UUID userRef, Long doneId, Long cancelledId, LocalDateTime asOf);
 
   /**
@@ -453,8 +546,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM TASK_PARTICIPANT p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )",
       mssql =
           "SELECT COUNT(*) FROM [dbo].[TASK] t"
@@ -470,8 +570,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR EXISTS ("
               + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
               + "     WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "     AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + "     AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
               + "     AND p.ENTITY_STATUS = 'ACTIVE')"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )")
   long countArchiveLeft(UUID userRef, LocalDateTime asOf);
 }

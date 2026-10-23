@@ -2,8 +2,6 @@ package de.brasi.nova.taskmanagement.comment;
 
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
-import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
-import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -26,9 +24,12 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Handgeschriebener Facade-Controller fuer Kommentar-Operationen (arch-v2 §7).
  *
- * <p>Jeder Handler traegt eine {@link RequiresPermission}-Annotation (Pflicht gemaess arch-v2 §8).
- * Actor-UUID kommt ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten.
- * Der Controller enthaelt keine Fachlogik — er delegiert an {@link CommentService} (Schreiben) und
+ * <p>Beide Handler sind Standard-Selfservice (authenticated-only via KSF-Filter-Chain); die
+ * Autorisierung erfolgt objekt-level ueber den {@code TaskMembershipGuard} in den delegierten
+ * Services: {@code getComments} (GET) verlangt READ-Member, {@code createComment} (POST)
+ * WRITE-Member (Non-/Ex-Member -> neutrale 404 bzw. kein Comment-Write). Actor-UUID kommt
+ * ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten. Der Controller enthaelt
+ * keine Fachlogik — er delegiert an {@link CommentService} (Schreiben) und
  * {@link CommentQueryService} (Lesen).
  */
 @RestController
@@ -48,9 +49,9 @@ public class CommentController {
   /**
    * Liefert alle aktiven Kommentare einer Aufgabe als flache, chronologische Liste.
    *
-   * <p>Der Client baut den Antwort-Baum ueber {@code parentCommentId}. Task-scoped autorisiert
-   * ({@code TASK_READ} + Mandant); nicht gefundene/fremde/deaktivierte Aufgabe wird neutral als
-   * 404 maskiert (keine separate Mitgliedschaftspruefung, konsistent mit {@code GET /tasks/{id}}).
+   * <p>Der Client baut den Antwort-Baum ueber {@code parentCommentId}. Standard-Selfservice:
+   * READ-Member-Guard im Service (konsistent mit {@code GET /tasks/{id}}); nicht gefundene/fremde/
+   * deaktivierte Aufgabe ODER kein Mitglied wird neutral als 404 maskiert.
    *
    * @param id externe UUID der Aufgabe
    * @return 200 OK mit chronologischer Liste von {@link CommentModel}
@@ -67,11 +68,9 @@ public class CommentController {
               mediaType = "application/json",
               array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)))),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @GetMapping("/{id}/comments")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<List<CommentModel>> getComments(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true)
           @PathVariable final UUID id) {
@@ -112,11 +111,9 @@ public class CommentController {
                   + "}"))),
       @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Text, ungueltiger Eltern-Kommentar)."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PostMapping("/{id}/comments")
-  @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<CommentModel> createComment(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final CommentCreateInput input) {

@@ -19,10 +19,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Handgeschriebener Facade-Controller fuer Assignee-Verwaltung und Austritt (arch-v2 §7).
+ * Handgeschriebener Facade-Controller fuer Assignee-Verwaltung und Austritt (arch-v2 Abschnitt 7).
  *
- * <p>Jeder Handler traegt eine {@link RequiresPermission}-Annotation (Pflicht gemaess arch-v2 §8).
- * Actor-UUID kommt ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten.
+ * <p>Die Admin-/Voll-Endpunkte ({@code updateAssignees}, {@code addParticipants}) tragen eine
+ * {@link RequiresPermission}-Annotation (arch-v2 Abschnitt 8). {@code exit} ist seit dem
+ * Standard-Selfservice (Slice 4) nur noch authenticated-only (anonym -&gt; 401 ueber die
+ * KSF-Filter-Chain); der objekt-level Membership-Guard im {@link AssigneeService} ersetzt das
+ * grobe Permission-Gate (grant-freier WRITE-Member darf austreten/uebergeben, die Handover-Grenze
+ * bleibt TASK_WRITE-geschuetzt). Actor-UUID kommt ausschliesslich aus dem Security-Context,
+ * NIEMALS aus Client-Eingabedaten.
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -91,20 +96,26 @@ public class AssigneeController {
       @ApiResponse(
           responseCode = "400",
           description =
-              "Benutzer ist kein aktiver Teilnehmer der Aufgabe, oder ungueltige Eingabe:"
-                  + " UNSUBSCRIBED mit handedOverToIds/shouldStay; shouldStay=true ohne Ziele;"
-                  + " Selbstziel; unbekannte/fremde Ziel-UUID; mehr als 100 Ziele; null-Element."),
+              "Ungueltige Eingabe: UNSUBSCRIBED mit handedOverToIds/shouldStay; shouldStay=true ohne"
+                  + " Ziele; Selbstziel; unbekannte/fremde Ziel-UUID; mehr als 100 Ziele;"
+                  + " null-Element."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert)."),
+      @ApiResponse(
+          responseCode = "403",
+          description =
+              "Standard-Selfservice (Slice 4): der Akteur ist bestaetigtes Mitglied, aber ein"
+                  + " HANDOVER-Ziel ist noch kein WRITE-Member (neu/ausgetreten/inaktiv/TEAM/fremder"
+                  + " Mandant) -> die Ziel-Einfuehrung erfordert TASK_WRITE."),
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein aktives Mitglied (neutral maskiert)."),
       @ApiResponse(
           responseCode = "409",
           description =
-              "Der Creator kann die Aufgabe nur per HANDOVER mit shouldStay=true abgeben; oder"
-                  + " nebenlaeufiger Versionskonflikt (Retry gegen frischen Stand).")
+              "Der Creator kann die Aufgabe nur per HANDOVER mit shouldStay=true abgeben;"
+                  + " ensureAssignee-Auswahlvertrag fail-closed (Ziel-Zeile TEAM oder fremdes"
+                  + " Basis-TENANT_ID); oder nebenlaeufiger Versionskonflikt (Retry gegen frischen"
+                  + " Stand).")
   })
   @PostMapping("/{id}/exit")
-  @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> exit(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final ExitInput input) {

@@ -26,6 +26,7 @@ import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
@@ -87,6 +88,7 @@ class CommentServiceTest {
   @Mock private InboxGenerationService inboxGenerationService;
   @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
+  @Mock private TaskMembershipGuard membershipGuard;
 
   private CommentService service;
 
@@ -101,12 +103,20 @@ class CommentServiceTest {
         inboxGenerationService,
         userReadRepository,
         userAccessor,
-        new AuditTimeConverter("Europe/Berlin"));
+        new AuditTimeConverter("Europe/Berlin"),
+        membershipGuard);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
     when(userAccessor.requireCurrentUser()).thenReturn(user);
     TenantContextHolder.setTenant(tenant);
+
+    // Slice 3/Auflage 4: Mention/Reply-Empfaenger werden auf WRITE-Member gefiltert. Default: jeder
+    // in diesen Tests adressierte Empfaenger (alice/bob/parent-author) IST WRITE-Member -> die
+    // bestehenden Notification-Erwartungen bleiben gueltig. Tests fuer Nicht-/Ex-Member-Empfaenger
+    // stuben isWriteMember gezielt auf false. Der WRITE-Member-Guard des Akteurs (requireWriteMember)
+    // wirft im Default-Mock nicht -> Happy Path.
+    when(membershipGuard.isWriteMember(anyLong(), any(), anyLong())).thenReturn(true);
 
     when(notificationService.emit(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(UUID.randomUUID());
@@ -553,6 +563,144 @@ class CommentServiceTest {
             taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null, List.of()));
 
     assertThat(model.createdAt()).isEqualTo(expectedInstant);
+  }
+
+  // ---- Slice 3: Akteur-WRITE-Member-Guard -----------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "non_member_actor_404_kein_write: Guard wirft 404 fuer Non-/Ex-Member-Akteur VOR der Mutation"
+          + " -> kein Kommentar, kein Count-Bump, kein Notify")
+  void non_member_actor_404_kein_write() {
+    final Long taskId = 60L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(taskId, ACTOR_REF, TENANT_ID);
+
+    assertThatThrownBy(
+            () -> service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of())))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Keine Mutation, kein Fan-out.
+    verify(commentRepository, never()).save(any(TaskComment.class));
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  // ---- Slice 3/Auflage 4: Mention/Reply-Empfaenger = WRITE-Member-Menge -----------------------
+
+  @Test
+  @DisplayName(
+      "mention_nur_an_write_member: alice ist WRITE-Member (Notify), bob ist Ausgetretener/Nicht-"
+          + "Teilnehmer (isWriteMember=false) -> KEINE MENTION an bob")
+  void mention_nur_an_write_member() {
+    final Long taskId = 61L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(LocalDateTime.now());
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    // Beide loesen als aktive Mandanten-Nutzer auf (findActiveByUuids).
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ALICE_UUID), userWith(BOB_UUID)));
+    // Aber nur alice ist WRITE-Member; bob ist ausgetreten/Nicht-Teilnehmer.
+    when(membershipGuard.isWriteMember(eq(taskId), eq(ALICE_UUID), eq(TENANT_ID))).thenReturn(true);
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+
+    // MENTION nur an alice, NICHT an bob.
+    verify(notificationService, times(1)).emit(
+        eq(ALICE_UUID), eq(taskId), eq(NotificationTypeCodes.MENTION),
+        eq(NotificationSeverityCodes.INFO), any(), any(), eq(ACTOR_REF));
+    verify(notificationService, never()).emit(
+        eq(BOB_UUID), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "reply_an_ausgetretenen_parent_kein_notify: Eltern-Autor ist ausgetreten (isWriteMember=false)"
+          + " -> KEINE REPLY-Notification; Kommentar trotzdem angelegt")
+  void reply_an_ausgetretenen_parent_kein_notify() {
+    final Long taskId = 62L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 1);
+
+    final UUID parentUuid = UUID.randomUUID();
+    final UUID parentAuthorRef = ALICE_UUID; // ausgetreten
+    final TaskComment parent = commentWithId(70L, taskId, parentAuthorRef, parentUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(parent));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(LocalDateTime.now());
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    // Eltern-Autor ist KEIN WRITE-Member (ausgetreten) -> kein REPLY-Ping.
+    when(membershipGuard.isWriteMember(eq(taskId), eq(parentAuthorRef), eq(TENANT_ID)))
+        .thenReturn(false);
+
+    final CommentModel model =
+        service.createComment(
+            taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of()));
+
+    assertThat(model).isNotNull();
+    verify(commentRepository).save(any(TaskComment.class));
+    verify(notificationService, never()).emit(
+        any(), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "reply_an_aktiven_write_member_notify: Eltern-Autor ist aktiver WRITE-Member -> 1 REPLY")
+  void reply_an_aktiven_write_member_notify() {
+    final Long taskId = 63L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 1);
+
+    final UUID parentUuid = UUID.randomUUID();
+    final UUID parentAuthorRef = ALICE_UUID;
+    final TaskComment parent = commentWithId(71L, taskId, parentAuthorRef, parentUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(parent));
+    when(commentRepository.save(any(TaskComment.class))).thenAnswer(inv -> {
+      final TaskComment c = inv.getArgument(0);
+      c.setUuid(UUID.randomUUID());
+      c.setCreatedAt(LocalDateTime.now());
+      return c;
+    });
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    when(membershipGuard.isWriteMember(eq(taskId), eq(parentAuthorRef), eq(TENANT_ID)))
+        .thenReturn(true);
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("danke!", parentUuid, List.of()));
+
+    verify(notificationService, times(1)).emit(
+        eq(parentAuthorRef), eq(taskId), eq(NotificationTypeCodes.REPLY),
+        eq(NotificationSeverityCodes.INFO), any(), any(), eq(ACTOR_REF));
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------

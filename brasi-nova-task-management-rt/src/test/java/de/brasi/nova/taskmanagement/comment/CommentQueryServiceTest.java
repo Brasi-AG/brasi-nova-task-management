@@ -12,6 +12,7 @@ import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskCommentQueryRepository;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.model.EntityState;
@@ -48,6 +49,7 @@ class CommentQueryServiceTest {
   private TaskCommentQueryRepository commentQueryRepository;
   private UserAccessor userAccessor;
   private AuditTimeConverter auditTimeConverter;
+  private TaskMembershipGuard membershipGuard;
   private CommentQueryService service;
 
   @BeforeEach
@@ -56,9 +58,14 @@ class CommentQueryServiceTest {
     commentQueryRepository = mock(TaskCommentQueryRepository.class);
     userAccessor = mock(UserAccessor.class);
     auditTimeConverter = new AuditTimeConverter("Europe/Berlin");
+    membershipGuard = mock(TaskMembershipGuard.class);
     service =
         new CommentQueryService(
-            taskRepository, commentQueryRepository, userAccessor, auditTimeConverter);
+            taskRepository,
+            commentQueryRepository,
+            userAccessor,
+            auditTimeConverter,
+            membershipGuard);
 
     TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
     when(userAccessor.requireCurrentUser()).thenReturn(new AuthUser(AUTHOR, "it-user"));
@@ -137,6 +144,38 @@ class CommentQueryServiceTest {
     taskFound(EntityState.DEACTIVE, TENANT_ID);
     assertThatThrownBy(() -> service.getComments(TASK_UUID))
         .isInstanceOf(EntityNotFoundException.class);
+  }
+
+  // ---- Slice 2/Auflage 3: READ-Member-Guard ---------------------------------------------------
+
+  @Test
+  @DisplayName("non_member_404: Guard wirft 404 fuer Non-Member -> kein Kommentar-Read")
+  void non_member_404() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireReadMember(590601L, AUTHOR, TENANT_ID);
+
+    assertThatThrownBy(() -> service.getComments(TASK_UUID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Kein Kommentar-Read bei fehlgeschlagenem Guard.
+    org.mockito.Mockito.verify(commentQueryRepository, org.mockito.Mockito.never())
+        .findActiveByTaskIdOrdered(org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  @DisplayName("read_member_200: Guard passt (auch Ex-Member/Archiv) -> Kommentare werden gelesen")
+  void read_member_200() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    // membershipGuard.requireReadMember wirft nicht (Default-Mock) -> READ-Member (inkl. Ex-Member).
+    when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
+        .thenReturn(List.of(comment(1L, C1_UUID, null, "top", T1)));
+
+    final List<CommentModel> result = service.getComments(TASK_UUID);
+
+    assertThat(result).extracting(CommentModel::id).containsExactly(C1_UUID);
   }
 
   // ---- Hilfen --------------------------------------------------------------------------------

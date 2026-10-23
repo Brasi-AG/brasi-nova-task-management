@@ -113,7 +113,10 @@ public interface UserReadRepository extends NovaRepository<User> {
    * {@code TASK_PARTICIPANT.PARTICIPANT_REF = PROD_BENUTZER.EXTERNALID}; gefiltert auf aktive,
    * nicht ausgetretene Teilnehmer ({@code EXIT_KIND IS NULL}, {@code ENTITY_STATUS='ACTIVE'}).
    * {@code :tenantId} wird automatisch gebunden (beide Tabellen tenant-scoped; 1a: PERSON im
-   * selben Mandanten).
+   * selben Mandanten). <b>Tenant-Scope-Sweep (Auflage 8/B2):</b> zusaetzlich
+   * {@code p.PARTICIPANT_TENANT_ID = :tenantId} und {@code p.PARTICIPANT_KIND = 'PERSON'}, damit
+   * Anomalie-Teilnehmerzeilen mit fremdem Teilnehmer-Mandanten nicht in die
+   * Snapshot-participantSummaries gelangen.
    *
    * <p><b>Pflicht des Aufrufers:</b> {@code taskIds} nie leer uebergeben - MSSQL {@code IN ()} ist
    * ein Syntaxfehler. Der Service ueberspringt leere Mengen und liefert eine leere Liste.
@@ -127,6 +130,7 @@ public interface UserReadRepository extends NovaRepository<User> {
           "SELECT DISTINCT b.* FROM PROD_BENUTZER b"
               + " JOIN TASK_PARTICIPANT p ON p.PARTICIPANT_REF = b.EXTERNALID"
               + " WHERE p.TENANT_ID = :tenantId AND b.TENANT_ID = :tenantId"
+              + " AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + " AND p.TASK_ID IN (:taskIds)"
               + " AND p.EXIT_KIND IS NULL AND p.ENTITY_STATUS = 'ACTIVE'"
               + " AND b.ENTITY_STATUS = 'ACTIVE'"
@@ -135,6 +139,7 @@ public interface UserReadRepository extends NovaRepository<User> {
           "SELECT DISTINCT b.* FROM [dbo].[PROD_BENUTZER] b"
               + " JOIN [dbo].[TASK_PARTICIPANT] p ON p.PARTICIPANT_REF = b.EXTERNALID"
               + " WHERE p.TENANT_ID = :tenantId AND b.TENANT_ID = :tenantId"
+              + " AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
               + " AND p.TASK_ID IN (:taskIds)"
               + " AND p.EXIT_KIND IS NULL AND p.ENTITY_STATUS = 'ACTIVE'"
               + " AND b.ENTITY_STATUS = 'ACTIVE'"

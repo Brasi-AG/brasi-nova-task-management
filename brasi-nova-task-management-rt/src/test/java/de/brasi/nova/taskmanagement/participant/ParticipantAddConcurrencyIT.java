@@ -446,6 +446,8 @@ class ParticipantAddConcurrencyIT {
         final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
                 handoverTargetRepository,
         final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
+        final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
+        final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator,
         final JdbcTemplate probeJdbc) {
       super(
           taskRepository,
@@ -459,7 +461,9 @@ class ParticipantAddConcurrencyIT {
           inboxGenerationService,
           handoverRepository,
           handoverTargetRepository,
-          taskHistoryService);
+          taskHistoryService,
+          membershipGuard,
+          permissionEvaluator);
       this.probeJdbc = probeJdbc;
     }
 
@@ -614,6 +618,48 @@ class ParticipantAddConcurrencyIT {
     }
 
     @Bean
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard(
+        final TaskParticipantQueryRepository participantQueryRepository) {
+      return new de.brasi.nova.taskmanagement.security.TaskMembershipGuard(
+          participantQueryRepository);
+    }
+
+    /**
+     * Stub-{@link io.keel.framework.api.security.PermissionEvaluator} (Slice 4): dieser IT prueft
+     * {@code addParticipants}-Nebenlaeufigkeit, nicht die Handover-Autz-Grenze; der Evaluator wird
+     * nie konsultiert. Er erfuellt nur den Konstruktor-Vertrag (fail-closed Defaults).
+     */
+    @Bean
+    io.keel.framework.api.security.PermissionEvaluator permissionEvaluator() {
+      return new io.keel.framework.api.security.PermissionEvaluator() {
+        @Override
+        public boolean hasAnyRole(final String... expectedRoles) {
+          return false;
+        }
+
+        @Override
+        public boolean hasRole(final String expectedRole) {
+          return false;
+        }
+
+        @Override
+        public java.util.List<String> getUserRoles() {
+          return java.util.List.of();
+        }
+
+        @Override
+        public boolean isOwner(final io.keel.framework.api.model.NovaEntity<?> entity) {
+          return false;
+        }
+
+        @Override
+        public boolean hasExactAuthority(final String authority) {
+          return false;
+        }
+      };
+    }
+
+    @Bean
     TestAssigneeService testAssigneeService(
         final BaseTaskRepository taskRepository,
         final TaskParticipantQueryRepository participantQueryRepository,
@@ -628,6 +674,8 @@ class ParticipantAddConcurrencyIT {
         final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
                 handoverTargetRepository,
         final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
+        final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
+        final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator,
         final JdbcTemplate jdbcTemplate) {
       return new TestAssigneeService(
           taskRepository,
@@ -642,6 +690,8 @@ class ParticipantAddConcurrencyIT {
           handoverRepository,
           handoverTargetRepository,
           taskHistoryService,
+          membershipGuard,
+          permissionEvaluator,
           jdbcTemplate);
     }
   }

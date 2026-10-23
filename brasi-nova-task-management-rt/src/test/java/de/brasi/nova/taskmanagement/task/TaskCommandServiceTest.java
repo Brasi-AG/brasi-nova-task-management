@@ -30,6 +30,7 @@ import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -91,6 +92,7 @@ class TaskCommandServiceTest {
   @Mock private UserReadRepository userReadRepository;
   @Mock private NotificationService notificationService;
   @Mock private InboxGenerationService inboxGenerationService;
+  @Mock private TaskMembershipGuard membershipGuard;
 
   private TaskCommandService service;
 
@@ -110,7 +112,8 @@ class TaskCommandServiceTest {
             tagAssignmentQueryRepository,
             userReadRepository,
             notificationService,
-            inboxGenerationService);
+            inboxGenerationService,
+            membershipGuard);
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -452,6 +455,40 @@ class TaskCommandServiceTest {
             () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
+  }
+
+  // ---- Slice 2: patch WRITE-Member-Guard -------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_non_member_404_keine_mutation: Guard wirft 404 fuer Non-/Ex-Member VOR der Mutation"
+          + " -> keine History, kein Save, kein Bump/Invalidate")
+  void patch_non_member_404_keine_mutation() {
+    final Long taskId = 56L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(taskId, USER_REF, TENANT_ID);
+
+    assertThatThrownBy(
+            () -> service.patch(
+                task.getUuid(),
+                new TaskPatchInput(
+                    PatchValue.of("Neuer Titel"),
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.absent(),
+                    PatchValue.absent())))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Keine Mutation / kein Fan-out.
+    verify(historyService, never()).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
   // ---- MAJOR 2: patch invalidiert alle aktiven Teilnehmer ----------------------------------------

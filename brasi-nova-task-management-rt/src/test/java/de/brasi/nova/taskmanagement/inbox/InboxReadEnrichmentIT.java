@@ -188,9 +188,12 @@ class InboxReadEnrichmentIT {
     userStateUnsub(jt, 591012L, AE_FUTURE_UNSUB, TENANT_ID, USER_A, FUTURE);
 
     // --- Archiv-left (USER_A) ---
-    // AL_UNSUB: A per UserState abgemeldet (Vergangenheit).
+    // AL_UNSUB: A per UserState abgemeldet (Vergangenheit). Slice 6 (Membership-Konjunkt): die
+    // Archiv-Sicht verlangt zusaetzlich einen PERSON-Participant (READ-Member). A hat sich nur via
+    // TASK_USER_STATE.UNSUBSCRIBED_AT abgemeldet, bleibt aber Participant -> aktive PERSON-Zeile.
     insertTask(jt, AL_UNSUB, AL_UNSUB_UUID, TENANT_ID, STATUS_OPEN, "AL-Unsub", null);
     userStateUnsub(jt, 591101L, AL_UNSUB, TENANT_ID, USER_A, PAST);
+    participant(jt, 591102L, AL_UNSUB, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
     // AL_HANDOVER: A per Participant-HANDOVER ausgetreten (Vergangenheit), keine aktive UserState.
     insertTask(jt, AL_HANDOVER, AL_HANDOVER_UUID, TENANT_ID, STATUS_OPEN, "AL-Handover", null);
     participant(jt, 591111L, AL_HANDOVER, TENANT_ID, USER_A, "PERSON", false, false, true, "HANDOVER", PAST);
@@ -200,10 +203,14 @@ class InboxReadEnrichmentIT {
     userStateUnsub(jt, 591122L, AL_BOTH, TENANT_ID, USER_A, PAST);
 
     // --- Archiv-done (USER_A, aktive UserState) ---
+    // Slice 6 (Membership-Konjunkt): die Archiv-done-Sicht verlangt zusaetzlich einen aktiven
+    // PERSON-Participant (READ-Member); State und Participant koexistieren fuer legitime Mitglieder.
     insertTask(jt, AD_DONE, AD_DONE_UUID, TENANT_ID, STATUS_DONE, "AD-Done", null);
     userState(jt, 591201L, AD_DONE, TENANT_ID, USER_A, false, false, false, null);
+    participant(jt, 591203L, AD_DONE, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
     insertTask(jt, AD_CANCELLED, AD_CANCELLED_UUID, TENANT_ID, STATUS_CANCELLED, "AD-Cancelled", null);
     userState(jt, 591202L, AD_CANCELLED, TENANT_ID, USER_A, false, false, false, null);
+    participant(jt, 591204L, AD_CANCELLED, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
 
     // --- Fremder Mandant (591) ---
     insertTask(jt, AF_FOREIGN, AF_FOREIGN_UUID, FOREIGN_TENANT_ID, STATUS_OPEN, "AF-Foreign", null);

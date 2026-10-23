@@ -20,6 +20,7 @@ import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
@@ -78,6 +79,7 @@ public class TaskCommandService {
   private final UserReadRepository userReadRepository;
   private final NotificationService notificationService;
   private final InboxGenerationService inboxGenerationService;
+  private final TaskMembershipGuard membershipGuard;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -93,7 +95,8 @@ public class TaskCommandService {
       final TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
       final UserReadRepository userReadRepository,
       final NotificationService notificationService,
-      final InboxGenerationService inboxGenerationService) {
+      final InboxGenerationService inboxGenerationService,
+      final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -107,6 +110,7 @@ public class TaskCommandService {
     this.userReadRepository = userReadRepository;
     this.notificationService = notificationService;
     this.inboxGenerationService = inboxGenerationService;
+    this.membershipGuard = membershipGuard;
   }
 
   /**
@@ -384,6 +388,12 @@ public class TaskCommandService {
 
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
+
+    // Standard-Selfservice (Slice 2): WRITE-Member-Guard NACH Tenant-/ACTIVE-Check und VOR jeder
+    // Mutation. Nur aktive, nicht ausgetretene PERSON-Mitglieder duerfen patchen; Non-/Ex-Member ->
+    // neutrale 404 (keine History, kein Save, kein Bump/Invalidate).
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
     boolean changed = false;
 
     // title

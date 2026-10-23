@@ -33,7 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>Berechtigungen (R-TAGLIST-PERM):
  * <ul>
- *   <li>GET / = {@link TaskManagementPermissions#TASK_READ} — jeder Task-Nutzer darf Tags lesen.
+ *   <li>GET / = authenticated-only (Standard-Selfservice, Slice 5) — jeder angemeldete Nutzer darf
+ *       den globalen Tag-Katalog lesen; kein {@code @RequiresPermission}-Gate mehr.
  *   <li>POST / + PUT /{id} = {@link TaskManagementPermissions#TAG_ADMIN} — nur Admins verwalten Tags.
  * </ul>
  */
@@ -66,11 +67,9 @@ public class TagController {
                   + "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\","
                   + "\"name\": \"Dringend\","
                   + "\"severityCode\": \"DANGER\"}]"))),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @GetMapping
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<List<TagModel>> listTags() {
     return ResponseEntity.ok(catalogService.list());
   }

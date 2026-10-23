@@ -20,6 +20,7 @@ import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import java.time.LocalDateTime;
@@ -51,6 +52,7 @@ class TaskDetailServiceTest {
   private TaskUserStateQueryRepository userStateQueryRepository;
   private TaskHandoverQueryRepository handoverQueryRepository;
   private DictionaryCodeResolver resolver;
+  private TaskMembershipGuard membershipGuard;
   private TaskDetailService service;
 
   @BeforeEach
@@ -62,6 +64,7 @@ class TaskDetailServiceTest {
     userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
     handoverQueryRepository = mock(TaskHandoverQueryRepository.class);
     resolver = mock(DictionaryCodeResolver.class);
+    membershipGuard = mock(TaskMembershipGuard.class);
 
     service =
         new TaskDetailService(
@@ -73,7 +76,8 @@ class TaskDetailServiceTest {
             handoverQueryRepository,
             new InboxEnrichmentAssembler(),
             resolver,
-            new AuditTimeConverter("Europe/Berlin"));
+            new AuditTimeConverter("Europe/Berlin"),
+            membershipGuard);
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("OPEN");
     when(resolver.resolveTaskPriorityCode(any())).thenReturn("NORMAL");
@@ -258,6 +262,77 @@ class TaskDetailServiceTest {
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () -> service.loadDetail(deactive, TENANT_ID, USER_REF))
         .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class);
+  }
+
+  // ---- Slice 2: READ-Member-Guard -------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "loadDetail_non_member_404: Guard wirft 404 fuer Non-Member VOR der Anreicherung"
+          + " (kein History-/Assignee-Read)")
+  void loadDetail_non_member_404() {
+    final long taskId = 3000L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+
+    org.mockito.Mockito.doThrow(
+            new io.keel.framework.api.exception.EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireReadMember(taskId, USER_REF, TENANT_ID);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.loadDetail(taskUuid, TENANT_ID, USER_REF))
+        .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Guard greift VOR der Anreicherung: kein History-Read.
+    org.mockito.Mockito.verify(historyRepository, org.mockito.Mockito.never())
+        .findByTaskIdOrderByCreatedAtDesc(anyLong());
+  }
+
+  @Test
+  @DisplayName(
+      "markReadForUser_non_member_kein_read_at: Guard wirft 404 (best-effort) -> userStateService"
+          + " .markRead NICHT aufgerufen")
+  void markReadForUser_non_member_kein_read_at() {
+    final long taskId = 3001L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+
+    final de.brasi.nova.taskmanagement.participant.UserStateService userStateService =
+        mock(de.brasi.nova.taskmanagement.participant.UserStateService.class);
+
+    org.mockito.Mockito.doThrow(
+            new io.keel.framework.api.exception.EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireReadMember(taskId, USER_REF, TENANT_ID);
+
+    // Best-effort: kein Fehler nach aussen, aber auch kein READ_AT-Write fuer Non-Member.
+    service.markReadForUser(taskUuid, TENANT_ID, USER_REF, userStateService);
+
+    org.mockito.Mockito.verify(userStateService, org.mockito.Mockito.never())
+        .markRead(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "markReadForUser_member_setzt_read_at: Guard passt (READ-Member) -> userStateService.markRead"
+          + " aufgerufen")
+  void markReadForUser_member_setzt_read_at() {
+    final long taskId = 3002L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+
+    final de.brasi.nova.taskmanagement.participant.UserStateService userStateService =
+        mock(de.brasi.nova.taskmanagement.participant.UserStateService.class);
+    // requireReadMember wirft nicht (Default-Mock) -> READ-Member.
+
+    service.markReadForUser(taskUuid, TENANT_ID, USER_REF, userStateService);
+
+    org.mockito.Mockito.verify(userStateService).markRead(taskId, USER_REF);
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------

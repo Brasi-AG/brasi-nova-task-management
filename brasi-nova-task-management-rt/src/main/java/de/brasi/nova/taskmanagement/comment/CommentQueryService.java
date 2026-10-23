@@ -6,6 +6,7 @@ import de.brasi.nova.taskmanagement.entity.TaskComment;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskCommentQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.model.EntityState;
@@ -22,10 +23,12 @@ import org.springframework.stereotype.Service;
  * Lese-Service fuer die Kommentare einer Aufgabe (BE-2): liefert die flache, chronologische
  * Kommentarliste, aus der das Frontend den Antwort-Baum ueber {@code parentCommentId} rekonstruiert.
  *
- * <p>Autorisierung task-scoped wie {@code TaskDetailService.loadDetail}: der Controller erzwingt
- * {@code TASK_READ}; hier wird nur die Mandantenzugehoerigkeit geprueft (404-Maskierung bei fremder/
- * fehlender/deaktivierter Aufgabe). KEINE separate Mitgliedschaftspruefung (konsistent mit dem
- * begleitenden {@code GET /tasks/{id}}; BE-2-SPEC D1).
+ * <p>Autorisierung task-scoped wie {@code TaskDetailService.loadDetail}: Standard-Selfservice
+ * (Slice 2/Auflage 3) ersetzt das grobe {@code TASK_READ}-Gate durch den objekt-level
+ * {@link TaskMembershipGuard}. Nach der Mandanten-/ACTIVE-Pruefung (404-Maskierung bei fremder/
+ * fehlender/deaktivierter Aufgabe) wird {@code requireReadMember} erzwungen - konsistent mit dem
+ * begleitenden {@code GET /tasks/{id}}: nur READ-Member (aktive PERSON-Zeile im Task-Mandanten,
+ * ausgetretene eingeschlossen) sehen die Kommentare; Non-Member -> neutrale 404.
  */
 @Service
 public class CommentQueryService {
@@ -34,17 +37,20 @@ public class CommentQueryService {
   private final TaskCommentQueryRepository commentQueryRepository;
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
+  private final TaskMembershipGuard membershipGuard;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentQueryService(
       final BaseTaskRepository taskRepository,
       final TaskCommentQueryRepository commentQueryRepository,
       final UserAccessor userAccessor,
-      final AuditTimeConverter auditTimeConverter) {
+      final AuditTimeConverter auditTimeConverter,
+      final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.commentQueryRepository = commentQueryRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
+    this.membershipGuard = membershipGuard;
   }
 
   /**
@@ -59,8 +65,14 @@ public class CommentQueryService {
   public List<CommentModel> getComments(final UUID taskExternalId) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
+    final UUID actorRef = actor.user().id();
 
     final Task task = requireTask(taskExternalId, tenantId);
+
+    // Standard-Selfservice (Slice 2/Auflage 3): READ-Member-Guard NACH Tenant-/ACTIVE-Check und VOR
+    // dem Kommentar-Read. Non-Member -> neutrale 404 (konsistent zu GET /tasks/{id}).
+    membershipGuard.requireReadMember(task.getId(), actorRef, tenantId);
+
     final List<TaskComment> comments =
         commentQueryRepository.findActiveByTaskIdOrdered(task.getId());
 

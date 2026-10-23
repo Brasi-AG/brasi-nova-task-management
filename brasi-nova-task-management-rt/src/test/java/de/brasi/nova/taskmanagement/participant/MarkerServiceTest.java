@@ -13,6 +13,7 @@ import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
@@ -62,6 +63,7 @@ class MarkerServiceTest {
   @Mock private InboxSignalService inboxSignalService;
   @Mock private InboxGenerationService inboxGenerationService;
   @Mock private UserAccessor userAccessor;
+  @Mock private TaskMembershipGuard membershipGuard;
 
   private MarkerService markerService;
 
@@ -74,7 +76,8 @@ class MarkerServiceTest {
             userStateService,
             inboxSignalService,
             inboxGenerationService,
-            userAccessor);
+            userAccessor,
+            membershipGuard);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     TenantContextHolder.setTenant(tenant);
@@ -325,6 +328,55 @@ class MarkerServiceTest {
     // Reines State-UPDATE -> kein Keyset-/Membership-Effekt: weder Generation-Bump noch Invalidate.
     verify(inboxGenerationService, never()).bump(any(Long.class), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  // ---- Slice 2: Membership-Guard VOR ensure (Henne-Ei) ----------------------------------------
+
+  @Test
+  @DisplayName(
+      "non_member_pin_404_kein_ensure: Guard wirft 404 fuer Non-Member VOR ensure -> keine"
+          + " state-Zeile angelegt (kein ensure/save/bump/invalidate)")
+  void non_member_pin_404_kein_ensure() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+
+    // Guard: Non-Member -> 404 (Henne-Ei: muss VOR ensure greifen).
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(TASK_DB_ID, USER_A_REF, TENANT_ID);
+
+    assertThatThrownBy(() -> markerService.setPinned(TASK_EXTERNAL_ID, true))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Kein Seiteneffekt: kein ensure (keine Orphan-state-Zeile), kein save, kein Bump/Invalidate.
+    verify(userStateService, never()).ensure(any(Long.class), any(), any(Long.class));
+    verify(userStateQueryRepository, never()).save(any());
+    verify(inboxGenerationService, never()).bump(any(Long.class), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "member_pin_ok_guard_vor_ensure: aktiver WRITE-Member -> Guard passt, ensure + save laufen"
+          + " (Reihenfolge Guard vor ensure)")
+  void member_pin_ok_guard_vor_ensure() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+
+    final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+        .thenReturn(List.of(stateA));
+    // Guard (WRITE-Member) wirft nicht -> Happy Path.
+
+    markerService.setPinned(TASK_EXTERNAL_ID, true);
+
+    // Guard wurde angefragt UND ensure lief (Guard-vor-ensure-Ordnung).
+    final org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(membershipGuard, userStateService);
+    order.verify(membershipGuard).requireWriteMember(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    order.verify(userStateService).ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID));
+    verify(userStateQueryRepository).save(any());
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------------------

@@ -172,16 +172,23 @@ class TaskKeysetSnapshotIT {
 
     // T1 (IT 1): OPEN-Task, Benutzer bei T_BEFORE beigetreten, bei T_AFTER abgemeldet.
     //            Bei asOf=T0 war er aktiv -> muss in findActivePage erscheinen.
+    //            Slice 6 (Membership-Konjunkt): findActivePage verlangt zusaetzlich einen aktiven
+    //            PERSON-Participant (WRITE-Member) -> State + Participant koexistieren (ANGELEGT_AM
+    //            = T_BEFORE, EXIT_KIND NULL).
     insertTask(jt, TASK_ACTIVE_ID, TASK_ACTIVE_UUID, TENANT_ID, STATUS_OPEN, T0, "IT-P1-Aktiv");
     insertUserState(jt, 590010L, TASK_ACTIVE_ID, TENANT_ID, USER_A_REF, T_AFTER, T_BEFORE);
+    insertActiveParticipant(jt, 590011L, TASK_ACTIVE_ID, TENANT_ID, USER_A_REF, T_BEFORE);
 
     // T2 (IT 2): DONE-Task, Benutzer bei T_BEFORE beigetreten, bei T_AFTER abgemeldet.
     //            UNSUBSCRIBED_AT > asOf -> war bei asOf noch NICHT abgemeldet
     //            -> darf NICHT in findArchiveLeftPage erscheinen.
+    //            Slice 6: Archiv-Queries verlangen READ-Member -> aktiver PERSON-Participant
+    //            (ANGELEGT_AM = T_BEFORE), damit die DONE-Task in archive-all bleibt.
     insertTask(
         jt, TASK_LEFT_UNSUB_ID, TASK_LEFT_UNSUB_UUID, TENANT_ID, STATUS_DONE, T0,
         "IT-P1-LeftUnsub");
     insertUserState(jt, 590020L, TASK_LEFT_UNSUB_ID, TENANT_ID, USER_A_REF, T_AFTER, T_BEFORE);
+    insertActiveParticipant(jt, 590021L, TASK_LEFT_UNSUB_ID, TENANT_ID, USER_A_REF, T_BEFORE);
 
     // T3 (IT 3): OPEN-Task, Participant bei T_BEFORE hinzugefuegt, EXIT_AT = T_AFTER.
     //            EXIT_AT > asOf -> war bei asOf noch NICHT ausgetreten
@@ -492,6 +499,30 @@ class TaskKeysetSnapshotIT {
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, 0, 0, 0, ?, 'it-seed', ?)",
         id, id, tenantId, taskId, userRef, tenantId, unsubscribedAt, angelegtAm);
+  }
+
+  /**
+   * Aktiver PERSON-Participant (EXIT_KIND NULL) = WRITE-/READ-Member. Slice 6 verlangt diese Zeile
+   * als Membership-Beleg koexistierend zur TASK_USER_STATE-Zeile.
+   *
+   * @param angelegtAm Beitrittszeitpunkt des Participants (ANGELEGT_AM)
+   */
+  private static void insertActiveParticipant(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final long tenantId,
+      final UUID participantRef,
+      final LocalDateTime angelegtAm) {
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, TASK_ID, PARTICIPANT_REF, "
+            + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
+            + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
+            + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1, NULL, NULL, "
+            + " 'it-seed', ?)",
+        id, id, tenantId, taskId, participantRef, tenantId, angelegtAm);
   }
 
   /**

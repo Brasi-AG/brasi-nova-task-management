@@ -1,8 +1,6 @@
 package de.brasi.nova.taskmanagement.participant;
 
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
-import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
-import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -18,9 +16,12 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Handgeschriebener Facade-Controller fuer persoenliche Marker (pin/flag/mute) (arch-v2 §7).
  *
- * <p>Jeder Handler traegt eine {@link RequiresPermission}-Annotation (Pflicht gemaess arch-v2 §8).
- * Die fachliche Logik (Actor-Aufloesung, 404-Masking, Inbox-Invariante, Persistenz) liegt
- * ausschliesslich im {@link MarkerService}.
+ * <p>Alle drei Handler sind Standard-Selfservice (authenticated-only via KSF-Filter-Chain); die
+ * Autorisierung erfolgt objekt-level ueber den {@code TaskMembershipGuard} im {@link MarkerService}
+ * (WRITE-Member VOR dem {@code UserStateService.ensure}, Henne-Ei: ein pin/flag/mute auf eine
+ * Fremd-Task legt keine Orphan-state-Zeile mehr an; Non-/Ex-Member -> neutrale 404). Die fachliche
+ * Logik (Actor-Aufloesung, 404-Masking, Inbox-Invariante, Persistenz) liegt ausschliesslich im
+ * {@link MarkerService}.
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -47,11 +48,9 @@ public class UserStateController {
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/pin")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> pin(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {
@@ -73,11 +72,9 @@ public class UserStateController {
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/flag")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> flag(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {
@@ -99,11 +96,9 @@ public class UserStateController {
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/mute")
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<Void> mute(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {

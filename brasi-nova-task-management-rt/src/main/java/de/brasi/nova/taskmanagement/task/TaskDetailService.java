@@ -16,6 +16,7 @@ import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
@@ -46,6 +47,7 @@ public class TaskDetailService {
   private final InboxEnrichmentAssembler enrichmentAssembler;
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
+  private final TaskMembershipGuard membershipGuard;
 
   /** Konstruktor-Injektion. */
   public TaskDetailService(
@@ -57,7 +59,8 @@ public class TaskDetailService {
       final TaskHandoverQueryRepository handoverQueryRepository,
       final InboxEnrichmentAssembler enrichmentAssembler,
       final DictionaryCodeResolver resolver,
-      final AuditTimeConverter auditTimeConverter) {
+      final AuditTimeConverter auditTimeConverter,
+      final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -67,6 +70,7 @@ public class TaskDetailService {
     this.enrichmentAssembler = enrichmentAssembler;
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
+    this.membershipGuard = membershipGuard;
   }
 
   /**
@@ -97,6 +101,12 @@ public class TaskDetailService {
     if (task.getEntityState() != io.keel.framework.api.model.EntityState.ACTIVE) {
       throw new EntityNotFoundException("Aufgabe nicht gefunden.");
     }
+
+    // Standard-Selfservice (Slice 2): objekt-level Membership-Guard VOR jeder Anreicherung. READ-
+    // Member (aktive PERSON-Zeile im Task-Mandanten; ausgetretene eingeschlossen) darf das Detail
+    // (inkl. Archiv) lesen; Non-Member -> neutrale 404 (identisch zu fremd/nicht-gefunden). Der
+    // Guard laeuft NACH Tenant-/ACTIVE-Check und VOR dem History-/Anreicherungs-Read.
+    membershipGuard.requireReadMember(task.getId(), userRef, tenantId);
 
     // Dictionary-IDs auf CODEs aufloesen
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
@@ -190,6 +200,12 @@ public class TaskDetailService {
    *
    * <p>Wenn die Aufgabe nicht gefunden wird, wird der Aufruf ignoriert.
    *
+   * <p>Standard-Selfservice (Slice 2): READ_AT wird nur fuer READ-Member gesetzt. Fuer einen
+   * Non-Member wird KEIN READ_AT geschrieben (best-effort, kein Fehler): der Guard ist reiner
+   * EXISTS-Read; schlaegt er fehl, wird der Aufruf still ignoriert (konsistent zum Not-Found-/
+   * Fremd-Tenant-Pfad). Im reaelen Request-Fluss hat {@code loadDetail} fuer einen Non-Member bereits
+   * 404 geworfen, sodass diese Methode dann gar nicht mehr erreicht wird (Defense-in-Depth).
+   *
    * @param taskExternalId externe UUID der Aufgabe
    * @param tenantId       aktueller Mandant
    * @param userRef        UUID des Benutzers
@@ -206,6 +222,14 @@ public class TaskDetailService {
     }
     final Task task = opt.get();
     if (!Objects.equals(tenantId, task.getTenantId())) {
+      return;
+    }
+    // Kein READ_AT fuer Non-Member (best-effort): nur READ-Member erhalten einen READ_AT-Write. Der
+    // Guard wirft bei Nicht-Member EntityNotFoundException (404); hier wird der Aufruf still
+    // ignoriert (wie der Not-Found-/Fremd-Tenant-Pfad oben), nicht als Fehler propagiert.
+    try {
+      membershipGuard.requireReadMember(task.getId(), userRef, tenantId);
+    } catch (final EntityNotFoundException ignored) {
       return;
     }
     userStateService.markRead(task.getId(), userRef);

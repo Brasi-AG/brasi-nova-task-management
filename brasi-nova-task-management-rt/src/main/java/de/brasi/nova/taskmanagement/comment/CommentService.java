@@ -16,6 +16,7 @@ import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
@@ -63,6 +64,7 @@ public class CommentService {
   private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
+  private final TaskMembershipGuard membershipGuard;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -74,7 +76,8 @@ public class CommentService {
       final InboxGenerationService inboxGenerationService,
       final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
-      final AuditTimeConverter auditTimeConverter) {
+      final AuditTimeConverter auditTimeConverter,
+      final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -84,6 +87,7 @@ public class CommentService {
     this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
+    this.membershipGuard = membershipGuard;
   }
 
   /**
@@ -119,6 +123,11 @@ public class CommentService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
+    // Standard-Selfservice (Slice 3): WRITE-Member-Guard NACH Tenant-/ACTIVE-Check und VOR jeder
+    // Mutation. Nur aktive, nicht ausgetretene PERSON-Mitglieder duerfen kommentieren; Non-/Ex-Member
+    // -> neutrale 404 (kein Kommentar, kein Count/Activity-Bump, kein Notify).
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
     // Eltern-Kommentar aufloesen (falls angegeben)
     TaskComment parentComment = null;
     if (input.parentCommentId() != null) {
@@ -152,11 +161,20 @@ public class CommentService {
     task.setLastActivityAt(LocalDateTime.now());
     taskRepository.save(task);
 
-    // Benachrichtigungs-Fan-out (Deduplizierung + kein Selbst-Notify)
+    // Benachrichtigungs-Fan-out (Deduplizierung + kein Selbst-Notify).
+    //
+    // Standard-Selfservice (Slice 3/Auflage 4): Empfaenger-Filter fuer BEIDE Typen (REPLY UND
+    // MENTION) ausschliesslich auf die WRITE-Member-Menge der Aufgabe = aktive PERSON-Teilnehmer mit
+    // EXIT_KIND IS NULL. Ein ausgetretener Nutzer (READ-Member, EXIT_KIND gesetzt) bzw. ein
+    // Nicht-Teilnehmer ist KEIN Empfaenger und wird still verworfen (best-effort: ein verworfener
+    // Mention/Reply laesst den Kommentar NICHT scheitern). Die WRITE-Member-Pruefung ist ein reiner
+    // EXISTS-Read (membershipGuard.isWriteMember) pro Empfaenger - konsistent zum Guard-Praedikat.
     UUID replyRecipient = null;
     if (parentComment != null) {
       final UUID parentAuthor = parentComment.getAuthorRef();
-      if (!actorRef.equals(parentAuthor)) {
+      // REPLY-Empfaenger muss WRITE-Member sein (sonst kein Ping an eine verlassene/fremde Task).
+      if (!actorRef.equals(parentAuthor)
+          && membershipGuard.isWriteMember(taskId, parentAuthor, tenantId)) {
         replyRecipient = parentAuthor;
         notificationService.emit(
             replyRecipient,
@@ -192,6 +210,12 @@ public class CommentService {
         continue;
       }
       if (mentionRef.equals(finalReplyRecipient)) {
+        continue;
+      }
+      // Standard-Selfservice (Slice 3/Auflage 4): nur WRITE-Member werden erwaehnt. Ein
+      // ausgetretener (READ-Member) oder Nicht-Teilnehmer wird still verworfen (kein Ping an eine
+      // verlassene Task), obwohl findActiveByUuids ihn als aktiven Mandanten-Nutzer aufgeloest hat.
+      if (!membershipGuard.isWriteMember(taskId, mentionRef, tenantId)) {
         continue;
       }
       notificationService.emit(

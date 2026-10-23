@@ -444,6 +444,14 @@ class TagCatalogIT {
     mvc.perform(
             get("/api/v1/tags").header("Authorization", "Bearer " + tokenReadOnly))
         .andExpect(status().isOk());
+
+    // 4. Slice 4: GET /tags ist authenticated-only. Ein angemeldeter Nutzer OHNE jede Authority
+    // (grant-frei) darf den Katalog lesen -> 200. POST /tags bleibt davon unberuehrt TAG_ADMIN-gated.
+    final String tokenGrantFree =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN);
+    mvc.perform(
+            get("/api/v1/tags").header("Authorization", "Bearer " + tokenGrantFree))
+        .andExpect(status().isOk());
   }
 
   // ---- Hilfsmethoden -------------------------------------------------------------------------
@@ -575,6 +583,9 @@ class TagCatalogIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

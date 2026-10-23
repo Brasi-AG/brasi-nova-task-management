@@ -31,10 +31,14 @@ import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.TaskHistoryService;
 import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.model.EntityState;
+import io.keel.framework.api.security.PermissionEvaluator;
+import io.keel.framework.api.security.permission.PermissionDeniedException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
@@ -90,6 +94,8 @@ class AssigneeServiceTest {
   @Mock private TaskHandoverQueryRepository handoverRepository;
   @Mock private BaseTaskHandoverTargetRepository handoverTargetRepository;
   @Mock private TaskHistoryService taskHistoryService;
+  @Mock private TaskMembershipGuard membershipGuard;
+  @Mock private PermissionEvaluator permissionEvaluator;
 
   private AssigneeService service;
 
@@ -108,7 +114,25 @@ class AssigneeServiceTest {
             inboxGenerationService,
             handoverRepository,
             handoverTargetRepository,
-            taskHistoryService);
+            taskHistoryService,
+            membershipGuard,
+            permissionEvaluator);
+
+    // Slice-4-Baseline: bestehende BE-7-HANDOVER-Unit-Tests liefen implizit hinter dem
+    // controller-seitigen @RequiresPermission(TASK_WRITE)-Gate (ihre HANDOVER-Ziele sind neu, also
+    // Nicht-WRITE-Member). Mit dem programmatischen Grant-Check im Service wird dieselbe
+    // TASK_WRITE-Realitaet durch den Default-Stub abgebildet; Slice-4-Tests zur Handover-Grenze
+    // ueberschreiben diese Stubs gezielt. requireWriteMember (Akteur-Guard) ist per Mockito-Default
+    // ein No-Op (void) -> wirft nicht; die 404-Faelle stubben es explizit auf throw.
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(true);
+
+    // ensureAssignee waehlt die Ziel-Zeile seit Slice 4 Unique-Key-exakt via findRowByUniqueKey
+    // (NICHT mehr findByTaskIdAndParticipantRef). Default: Unique-Key frei -> INSERT-Pfad (neue
+    // PERSON-Assignee-Zeile), passend zu den bestehenden BE-7-HANDOVER-Tests mit neuen Zielen.
+    // Tests, die eine vorhandene Ziel-Zeile (reaktivieren / TEAM-409 / fremd-Tenant-409) pruefen,
+    // ueberschreiben diesen Default gezielt.
+    when(participantQueryRepository.findRowByUniqueKey(anyLong(), any())).thenReturn(List.of());
 
     // Handover-Ereignis-Save gibt das Ereignis mit gesetzter ID zurueck (fuer die TARGET-FK).
     when(handoverRepository.save(any(TaskHandover.class)))
@@ -1290,9 +1314,11 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    // t1 ist bereits aktiver Assignee.
+    // t1 ist bereits aktiver Assignee. ensureAssignee waehlt die Ziel-Zeile seit Slice 4
+    // Unique-Key-exakt via findRowByUniqueKey (task-tenant/PERSON -> reaktivieren, bleibt Assignee).
     final TaskParticipant existingTarget = activeAssignee(taskId, t1, false);
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+    existingTarget.setEntityState(EntityState.ACTIVE);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1))
         .thenReturn(List.of(existingTarget));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
@@ -1661,6 +1687,369 @@ class AssigneeServiceTest {
 
     verify(participantQueryRepository).save(any(TaskParticipant.class)); // genau 1x
     verify(inboxGenerationService).bump(TENANT_ID, ref); // genau 1x
+  }
+
+  // ============================================================================================
+  // Slice 4 (Standard-Selfservice): exit-Guard-404 + Handover-Autz-Grenze + ensureAssignee-Vertrag
+  // ============================================================================================
+
+  // ---- exit-Guard ganz vorne: Non-/Ex-Member -> 404 VOR jeder Eingabe-/Zielvalidierung ---------
+
+  @Test
+  @DisplayName(
+      "s4_exit_guard_404_vor_zielvalidierung: requireWriteMember wirft 404 -> keine"
+          + " Ziel-/Akteur-Validierung, keine Mutation (kein 400, kein Ziel-Leak)")
+  void s4_exit_guard_404_vor_zielvalidierung() {
+    final Long taskId = 400L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // Guard: Non-/Ex-Member -> 404 (GANZ VORNE, vor findActiveByUuids-Zielvalidierung).
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(taskId, ACTOR_REF, TENANT_ID);
+
+    // HANDOVER mit (hier egal gueltigen) Zielen -> der Guard muss VOR der Zielvalidierung greifen.
+    assertThatThrownBy(
+            () ->
+                service.exit(
+                    taskUuid,
+                    new ExitInput(ExitKind.HANDOVER, List.of(UUID.randomUUID()), false)))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    // Keine Zielvalidierung, kein Akteur-Load, keine Mutation, keine Notification/Invalidate.
+    verify(userReadRepository, never()).findActiveByUuids(any());
+    verify(participantQueryRepository, never())
+        .findByTaskIdAndParticipantRef(any(Long.class), any());
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(handoverRepository, never()).save(any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  // ---- Handover-Entscheidungstabelle ----------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "s4_handover_alle_ziele_write_member_grantfrei_204: alle Ziele WRITE-Member -> kein"
+          + " TASK_WRITE noetig, Mutation laeuft (grant-frei)")
+  void s4_handover_alle_ziele_write_member_grantfrei_204() {
+    final Long taskId = 410L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final UUID t2 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    // BEIDE Ziele sind bereits WRITE-Member -> grant-frei.
+    when(membershipGuard.isWriteMember(taskId, t1, TENANT_ID)).thenReturn(true);
+    when(membershipGuard.isWriteMember(taskId, t2, TENANT_ID)).thenReturn(true);
+    // Grant NICHT vorhanden -> beweist, dass grant-frei ausreicht.
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(false);
+    // Ziele sind bereits aktive PERSON-Mitglieder (task-tenant) -> reaktivieren (bleiben Assignee).
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1))
+        .thenReturn(List.of(activeAssignee(taskId, t1, false)));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t2))
+        .thenReturn(List.of(activeAssignee(taskId, t2, false)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1, t2), false));
+
+    // Grant-frei: KEIN Grant-Check-Deny, Handover-Ereignis + 2 Targets persistiert.
+    verify(handoverRepository).save(any(TaskHandover.class));
+    verify(handoverTargetRepository, times(2)).save(any());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_ziel_nicht_write_member_ohne_grant_403: ein Ziel kein WRITE-Member + kein"
+          + " TASK_WRITE -> 403, KEINE Mutation")
+  void s4_handover_ziel_nicht_write_member_ohne_grant_403() {
+    final Long taskId = 411L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    // t1 ist NICHT WRITE-Member (neu/ausgetreten/inaktiv/TEAM/fremd) -> isWriteMember=false (Default).
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(false);
+
+    assertThatThrownBy(
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false)))
+        .isInstanceOf(PermissionDeniedException.class);
+
+    // KEINE Mutation (All-or-Nothing, Grant-Check VOR jeder Mutation).
+    verify(handoverRepository, never()).save(any());
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_ziel_nicht_write_member_mit_grant_204: ein Ziel kein WRITE-Member, aber Akteur"
+          + " hat TASK_WRITE -> erlaubt (Mutation laeuft)")
+  void s4_handover_ziel_nicht_write_member_mit_grant_204() {
+    final Long taskId = 412L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    // t1 kein WRITE-Member (isWriteMember=false Default), aber TASK_WRITE vorhanden (setUp-Default).
+    // t1 hat keine Unique-Key-Zeile -> INSERT (findRowByUniqueKey=List.of() Default).
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
+
+    verify(handoverRepository).save(any(TaskHandover.class));
+    verify(handoverTargetRepository, times(1)).save(any());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_handover_gemischte_ziele_ohne_grant_403_keine_teilmutation: ein WRITE-Member + ein"
+          + " Nicht-WRITE-Member, kein Grant -> 403, KEINE (Teil-)Mutation (All-or-Nothing)")
+  void s4_handover_gemischte_ziele_ohne_grant_403_keine_teilmutation() {
+    final Long taskId = 413L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID writeMember = UUID.randomUUID();
+    final UUID nonMember = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    when(membershipGuard.isWriteMember(taskId, writeMember, TENANT_ID)).thenReturn(true);
+    when(membershipGuard.isWriteMember(taskId, nonMember, TENANT_ID)).thenReturn(false);
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(false);
+
+    assertThatThrownBy(
+            () ->
+                service.exit(
+                    taskUuid,
+                    new ExitInput(ExitKind.HANDOVER, List.of(writeMember, nonMember), false)))
+        .isInstanceOf(PermissionDeniedException.class);
+
+    // Keine Teilmutation: weder Handover-Ereignis noch irgendein Participant-save (auch nicht fuer
+    // das gueltige WRITE-Member-Ziel).
+    verify(handoverRepository, never()).save(any());
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName(
+      "s4_exit_unsubscribed_grantfrei_kein_grant_check: UNSUBSCRIBED hat keine Ziele -> grant-frei"
+          + " (isWriteMember/hasExactAuthority nie konsultiert), 204")
+  void s4_exit_unsubscribed_grantfrei_kein_grant_check() {
+    final Long taskId = 414L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF)).thenReturn(List.of());
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    // UNSUBSCRIBED: kein Grant-Check-Pfad (keine Ziele).
+    verify(membershipGuard, never()).isWriteMember(any(Long.class), any(), any(Long.class));
+    verify(permissionEvaluator, never()).hasExactAuthority(any());
+    verify(taskRepository).save(task);
+  }
+
+  // ---- ensureAssignee-Auswahlvertrag (Unique-Key-exakt, Klassifikation) -----------------------
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_reaktiviert_inaktive_exited_person_auf_active: vorhandene PERSON-Zeile"
+          + " (task-tenant, inaktiv+exited) -> ASSIGNEE/PARTICIPANT=1, EXIT=null, ENTITY_STATUS=ACTIVE")
+  void s4_ensureAssignee_reaktiviert_inaktive_exited_person_auf_active() {
+    final Long taskId = 420L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+
+    // Ziel-Zeile: PERSON, task-tenant, aber INAKTIV (ENTITY_STATUS != ACTIVE) + ausgetreten.
+    final TaskParticipant inactiveExited = new TaskParticipant();
+    inactiveExited.setId(99L);
+    inactiveExited.setTenantId(TENANT_ID);
+    inactiveExited.setParticipantTenantId(TENANT_ID);
+    inactiveExited.setTaskId(taskId);
+    inactiveExited.setParticipantRef(t1);
+    inactiveExited.setParticipantKind(ParticipantKind.PERSON);
+    inactiveExited.setAssigneeFlag(false);
+    inactiveExited.setParticipantFlag(false);
+    inactiveExited.setExitKind(ExitKind.UNSUBSCRIBED);
+    inactiveExited.setExitAt(java.time.LocalDateTime.now().minusDays(3));
+    inactiveExited.setEntityState(EntityState.DEACTIVE);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1))
+        .thenReturn(List.of(inactiveExited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
+
+    // VOLLE Reaktivierung der exakt dieser Unique-Key-Zeile.
+    assertThat(inactiveExited.isAssigneeFlag()).as("ASSIGNEE_FLAG=1").isTrue();
+    assertThat(inactiveExited.isParticipantFlag()).as("PARTICIPANT_FLAG=1").isTrue();
+    assertThat(inactiveExited.getExitKind()).as("EXIT_KIND=null").isNull();
+    assertThat(inactiveExited.getExitAt()).as("EXIT_AT=null").isNull();
+    assertThat(inactiveExited.getEntityState())
+        .as("ENTITY_STATUS=ACTIVE (voll reaktiviert)")
+        .isEqualTo(EntityState.ACTIVE);
+    // Die gefundene Zeile wird gespeichert (keine neue INSERT-Zeile).
+    final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce()).save(pCaptor.capture());
+    assertThat(pCaptor.getAllValues())
+        .as("reaktivierte Ziel-Zeile ist unter den gespeicherten Objekten")
+        .contains(inactiveExited);
+  }
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_team_zeile_409_keine_mutation: Unique-Key-Zeile ist TEAM -> 409"
+          + " (BusinessRuleException), KEINE Mutation der Zeile, voller Rollback")
+  void s4_ensureAssignee_team_zeile_409_keine_mutation() {
+    final Long taskId = 421L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+
+    // Ziel-Zeile ist TEAM (task-tenant) -> fail-closed 409.
+    final TaskParticipant teamRow = new TaskParticipant();
+    teamRow.setId(88L);
+    teamRow.setTenantId(TENANT_ID);
+    teamRow.setParticipantTenantId(TENANT_ID);
+    teamRow.setTaskId(taskId);
+    teamRow.setParticipantRef(t1);
+    teamRow.setParticipantKind(ParticipantKind.TEAM);
+    teamRow.setEntityState(EntityState.ACTIVE);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1)).thenReturn(List.of(teamRow));
+
+    assertThatThrownBy(
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false)))
+        .isInstanceOf(BusinessRuleException.class);
+
+    // KEINE Mutation der TEAM-Zeile (kein PERSON-Flip), kein save.
+    assertThat(teamRow.getParticipantKind()).as("TEAM bleibt TEAM").isEqualTo(ParticipantKind.TEAM);
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+  }
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_fremdes_basis_tenant_409_keine_mutation: Unique-Key-Zeile ist PERSON, aber"
+          + " Basis-TENANT_ID != task-tenant -> 409, KEINE Mutation")
+  void s4_ensureAssignee_fremdes_basis_tenant_409_keine_mutation() {
+    final Long taskId = 422L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+
+    // Ziel-Zeile: PERSON, PARTICIPANT_TENANT_ID=task-tenant (vom Unique-Key-Lookup getroffen),
+    // aber fremdes Basis-TENANT_ID (Anomalie) -> fail-closed 409.
+    final TaskParticipant foreignBase = new TaskParticipant();
+    foreignBase.setId(77L);
+    foreignBase.setTenantId(999L); // fremdes Basis-TENANT_ID
+    foreignBase.setParticipantTenantId(TENANT_ID);
+    foreignBase.setTaskId(taskId);
+    foreignBase.setParticipantRef(t1);
+    foreignBase.setParticipantKind(ParticipantKind.PERSON);
+    foreignBase.setEntityState(EntityState.ACTIVE);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1)).thenReturn(List.of(foreignBase));
+
+    assertThatThrownBy(
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false)))
+        .isInstanceOf(BusinessRuleException.class);
+
+    assertThat(foreignBase.getTenantId()).as("fremdes Basis-TENANT_ID unveraendert").isEqualTo(999L);
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+  }
+
+  @Test
+  @DisplayName(
+      "s4_ensureAssignee_absent_insert_neue_person_zeile: kein Unique-Key-Treffer -> NEUE"
+          + " PERSON-Assignee-Zeile (TENANT_ID=PARTICIPANT_TENANT_ID=task-tenant, ACTIVE-Insert)")
+  void s4_ensureAssignee_absent_insert_neue_person_zeile() {
+    final Long taskId = 423L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID t1 = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    // findRowByUniqueKey(t1) -> List.of() (Default: Unique-Key frei) -> INSERT.
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
+
+    final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce()).save(pCaptor.capture());
+    final TaskParticipant insertedTarget =
+        pCaptor.getAllValues().stream()
+            .filter(p -> t1.equals(p.getParticipantRef()))
+            .reduce((a, b) -> b)
+            .orElseThrow();
+    assertThat(insertedTarget.getId()).as("neue Zeile (keine Id)").isNull();
+    assertThat(insertedTarget.getParticipantKind()).isEqualTo(ParticipantKind.PERSON);
+    assertThat(insertedTarget.getTenantId()).as("Basis-TENANT_ID=task-tenant").isEqualTo(TENANT_ID);
+    assertThat(insertedTarget.getParticipantTenantId())
+        .as("PARTICIPANT_TENANT_ID=task-tenant")
+        .isEqualTo(TENANT_ID);
+    assertThat(insertedTarget.isAssigneeFlag()).as("ASSIGNEE_FLAG=1").isTrue();
+    assertThat(insertedTarget.isParticipantFlag()).as("PARTICIPANT_FLAG=1").isTrue();
+    assertThat(insertedTarget.isCreatorFlag()).as("CREATOR_FLAG=0").isFalse();
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------

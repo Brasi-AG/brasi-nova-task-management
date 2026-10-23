@@ -22,9 +22,14 @@ import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
+import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.TaskHistoryService;
 import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
+import io.keel.framework.api.model.EntityState;
+import io.keel.framework.api.security.PermissionEvaluator;
+import io.keel.framework.api.security.permission.PermissionDeniedException;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
@@ -72,6 +77,8 @@ public class AssigneeService {
   private final TaskHandoverQueryRepository handoverRepository;
   private final BaseTaskHandoverTargetRepository handoverTargetRepository;
   private final TaskHistoryService taskHistoryService;
+  private final TaskMembershipGuard membershipGuard;
+  private final PermissionEvaluator permissionEvaluator;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public AssigneeService(
@@ -86,7 +93,9 @@ public class AssigneeService {
       final InboxGenerationService inboxGenerationService,
       final TaskHandoverQueryRepository handoverRepository,
       final BaseTaskHandoverTargetRepository handoverTargetRepository,
-      final TaskHistoryService taskHistoryService) {
+      final TaskHistoryService taskHistoryService,
+      final TaskMembershipGuard membershipGuard,
+      final PermissionEvaluator permissionEvaluator) {
     this.taskRepository = taskRepository;
     this.participantQueryRepository = participantQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -99,6 +108,8 @@ public class AssigneeService {
     this.handoverRepository = handoverRepository;
     this.handoverTargetRepository = handoverTargetRepository;
     this.taskHistoryService = taskHistoryService;
+    this.membershipGuard = membershipGuard;
+    this.permissionEvaluator = permissionEvaluator;
   }
 
   /**
@@ -597,6 +608,14 @@ public class AssigneeService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
+    // Standard-Selfservice (Slice 4, Auflage 2): WRITE-Member-Guard GANZ VORNE - direkt nach dem
+    // Task-Laden + Tenant/ENTITY_STATUS=ACTIVE-Check (requireTask), VOR jeder Eingabe-/Zielvalidierung.
+    // Fehlende/ausgetretene Membership -> einheitlich neutrale 404 (nicht 400, kein Ziel-Leak ueber die
+    // nachgelagerte findActiveByUuids-Zielvalidierung). Der bestehende Service-interne Akteur-Check
+    // (unten, Z. ~670) bleibt als Defense-in-Depth erhalten, wird aber vom Guard vorweggenommen. Das
+    // Gate am Controller ist entfernt (authenticated-only); anonym bleibt 401 ueber die KSF-Filter-Chain.
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
     // Test-Seam: deterministische Synchronisation der Versions-Verlierer-ITs (BE-7 IT7) GENAU NACH
     // dem Lesen der Aufgabe (VERSION erfasst) und VOR jeder Mutation - zu diesem Zeitpunkt haelt der
     // Verlierer noch KEINE Schreibsperren, sodass ein nebenlaeufiger Gewinner (Exit/PUT/Handover)
@@ -643,6 +662,30 @@ public class AssigneeService {
       if (!unknown.isEmpty()) {
         throw new EntityValidationException(
             "Unbekannte oder nicht zugelassene Uebergabeziele: " + unknown);
+      }
+    }
+
+    // (2b) Handover-Autz-Grenze (Standard-Selfservice, Slice 4, Auflage 2 - Eskalationsschutz):
+    // HANDOVER fuehrt via ensureAssignee neue Assignees ein bzw. reaktiviert sie (= effektiv
+    // "add participant"). Da addParticipants/updateAssignees TASK_WRITE-gated BLEIBEN, ist ein
+    // grant-freier HANDOVER NUR dann zulaessig, wenn JEDES deduplizierte Ziel bereits VOLLER
+    // WRITE-Member der Aufgabe ist (reiner Rollenwechsel innerhalb bestehender aktiver Mitglieder).
+    // Fuehrt ODER reaktiviert der HANDOVER mindestens EIN Ziel, das KEIN WRITE-Member ist (neu,
+    // ausgetreten, inaktiv, TEAM, fremder PARTICIPANT_TENANT_ID), erfordert er exakte TASK_WRITE-
+    // Authority; fehlt sie dem (bestaetigten) Akteur -> 403, KEINE Mutation (All-or-Nothing ueber die
+    // GESAMTE deduplizierte Zielmenge). Dieser bedingte Grant-Check laeuft NACH dem Akteur-WRITE-Guard
+    // (oben, requireWriteMember) und VOR jeder Mutation (403 statt 404 ist korrekt: der Akteur ist
+    // bestaetigtes Mitglied, kein Existenz-Leak). UNSUBSCRIBED hat keine Ziele -> immer grant-frei.
+    if (handover && !dedupedTargets.isEmpty()) {
+      final boolean allTargetsAreWriteMembers =
+          dedupedTargets.stream()
+              .allMatch(targetRef -> membershipGuard.isWriteMember(taskId, targetRef, tenantId));
+      if (!allTargetsAreWriteMembers
+          && !permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)) {
+        throw new PermissionDeniedException(
+            TaskManagementPermissions.TASK_WRITE,
+            "Die Uebergabe an ein noch nicht als WRITE-Mitglied gefuehrtes Ziel erfordert"
+                + " TASK_WRITE.");
       }
     }
 
@@ -799,24 +842,68 @@ public class AssigneeService {
   }
 
   /**
-   * Stellt sicher, dass {@code targetRef} aktiver Assignee der Aufgabe ist (BE-7, SPEC F3). Eigener
-   * Pfad (NICHT {@code addSingleParticipant}, dessen SKIP ASSIGNEE_FLAG=false akzeptiert): bestehende
-   * Zeile -> ASSIGNEE_FLAG+PARTICIPANT_FLAG=true, EXIT_KIND/EXIT_AT=null; keine Zeile -> neue
-   * ASSIGNEE+PARTICIPANT-Zeile (PERSON). Gleich-Ref-Race via Re-Read-Translate mit
-   * Assignee-Gewinnerpraedikat: SKIP nur, wenn der Re-Read {@code ASSIGNEE_FLAG=true AND EXIT_KIND
-   * IS NULL} bestaetigt; sonst Konflikt weiterwerfen -> voller Rollback (kein 204 ohne Assignee).
+   * Stellt sicher, dass {@code targetRef} aktiver Assignee der Aufgabe ist (BE-7, SPEC F3 +
+   * Standard-Selfservice Slice 4 ensureAssignee-Auswahlvertrag, Auflage 2/8).
+   *
+   * <p><b>Unique-Key-exakte Auswahl (NICHT lose {@code findByTaskIdAndParticipantRef}+{@code
+   * get(0)}):</b> der Lookup laeuft ueber {@link TaskParticipantQueryRepository#findRowByUniqueKey}
+   * auf den V3-Unique-Key {@code (TASK_ID, PARTICIPANT_TENANT_ID=task-tenant, PARTICIPANT_REF)} -
+   * per Index genau {@code <=1} Zeile - OHNE {@code ENTITY_STATUS}-/{@code EXIT_KIND}-/{@code
+   * PARTICIPANT_KIND}-Filter (sonst wuerde eine zu reaktivierende inaktive/ausgetretene Zeile
+   * verfehlt). Die {@code <=1} Zeile wird dann klassifiziert:
+   *
+   * <ul>
+   *   <li><b>vorhanden, {@code PARTICIPANT_KIND='PERSON'} UND Basis-{@code TENANT_ID}=task-tenant</b>
+   *       (Status/Exit egal: aktiv/exited/inaktiv) -> VOLL reaktivieren: {@code ASSIGNEE_FLAG=
+   *       PARTICIPANT_FLAG=1}, {@code EXIT_KIND/EXIT_AT=null}, {@code ENTITY_STATUS='ACTIVE'} (auch
+   *       eine inaktive/exited PERSON wird voll auf aktiv gehoben - kein 204 ohne aktiven Assignee).
+   *   <li><b>vorhanden, aber {@code PARTICIPANT_KIND='TEAM'} ODER Basis-{@code TENANT_ID} !=
+   *       task-tenant</b> -> <b>409, KEINE Mutation</b> ({@link BusinessRuleException}, fail-closed;
+   *       ein PERSON-Insert waere per Unique-Key unmoeglich, stilles Flippen wuerde ungueltige
+   *       Membership hinterlassen).
+   *   <li><b>keine Zeile</b> (Unique-Key frei) -> NEUE PERSON-Zeile mit {@code TENANT_ID =
+   *       PARTICIPANT_TENANT_ID = task-tenant}, {@code ENTITY_STATUS='ACTIVE'}, Assignee INSERT.
+   * </ul>
+   *
+   * <p><b>Konflikt-Recheck (volle Invariante):</b> bei gleich-Ref-Race ({@link
+   * BusinessRuleException} aus {@code save}) ist ein idempotenter SKIP nur dann zulaessig, wenn der
+   * Re-Read die VOLLE Membership-Invariante bestaetigt ({@code PARTICIPANT_KIND='PERSON' AND
+   * TENANT_ID=task-tenant AND PARTICIPANT_TENANT_ID=task-tenant AND ASSIGNEE_FLAG=1 AND EXIT_KIND IS
+   * NULL AND ENTITY_STATUS='ACTIVE'}); sonst Konflikt weiterwerfen -> voller Rollback (kein 204 ohne
+   * gueltigen aktiven Assignee).
+   *
+   * @param taskId    interne Aufgaben-ID
+   * @param targetRef UUID des Uebergabeziels
+   * @param tenantId  Task-Mandant (= PARTICIPANT_TENANT_ID der zu haltenden/neu anzulegenden Zeile)
+   * @throws BusinessRuleException 409 fail-closed, wenn die Unique-Key-Zeile TEAM ist oder ein
+   *     fremdes Basis-{@code TENANT_ID} traegt (Laufzeit-Vertrag, keine Mutation); ODER bei einem
+   *     nebenlaeufigen Konflikt, dessen Re-Read die volle Invariante NICHT bestaetigt
    */
   private void ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
-    final List<TaskParticipant> existing =
-        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, targetRef);
+    // Unique-Key-exakter Lookup (ohne Status/EXIT/KIND-Filter) -> <=1 Zeile unabhaengig vom Basis-
+    // TENANT_ID; die Klassifikation (reaktivieren vs. 409 vs. INSERT) erfolgt hier.
+    final List<TaskParticipant> rows = participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
     final TaskParticipant p;
-    if (!existing.isEmpty()) {
-      p = existing.get(0);
+    if (!rows.isEmpty()) {
+      final TaskParticipant row = rows.get(0);
+      // fail-closed 409: TEAM-Zeile ODER fremdes Basis-TENANT_ID -> KEINE Mutation (ensureAssignee-
+      // Auswahlvertrag). Ein PERSON-Insert waere per Unique-Key unmoeglich; stilles Flippen wuerde
+      // ungueltige Membership hinterlassen.
+      if (row.getParticipantKind() != ParticipantKind.PERSON
+          || !Objects.equals(tenantId, row.getTenantId())) {
+        throw new BusinessRuleException(
+            "Das Uebergabeziel kann nicht als Assignee gefuehrt werden: die vorhandene"
+                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
+      }
+      // PERSON + Basis-TENANT_ID=task-tenant (aktiv/exited/inaktiv egal): VOLL reaktivieren.
+      p = row;
       p.setAssigneeFlag(true);
       p.setParticipantFlag(true);
       p.setExitKind(null);
       p.setExitAt(null);
+      p.setEntityState(EntityState.ACTIVE);
     } else {
+      // Unique-Key frei -> neue PERSON-Assignee-Zeile (TENANT_ID = PARTICIPANT_TENANT_ID = task-tenant).
       p = new TaskParticipant();
       p.setTenantId(tenantId);
       p.setTaskId(taskId);
@@ -833,22 +920,30 @@ public class AssigneeService {
       participantQueryRepository.save(p);
     } catch (final BusinessRuleException conflict) {
       final List<TaskParticipant> recheck =
-          participantQueryRepository.findByTaskIdAndParticipantRef(taskId, targetRef);
+          participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
       if (recheck.isEmpty()) {
         throw conflict;
       }
       final TaskParticipant winner = recheck.get(0);
-      // Assignee-Gewinnerpraedikat: nur ein aktiver Assignee ist ein akzeptabler SKIP.
-      if (winner.isAssigneeFlag() && winner.getExitKind() == null) {
+      // Volle Membership-Invariante als akzeptabler SKIP (nicht nur Flag/EXIT_KIND): PERSON,
+      // task-tenant (Basis + PARTICIPANT_TENANT_ID), ASSIGNEE_FLAG=1, EXIT_KIND null, ENTITY_STATUS
+      // ACTIVE. Ein nebenlaeufiger Gewinner, der nur Flag/EXIT_KIND erfuellt, aber falschen
+      // PARTICIPANT_TENANT_ID/KIND/Basis-Tenant hat, ist KEIN akzeptabler SKIP.
+      if (winner.getParticipantKind() == ParticipantKind.PERSON
+          && Objects.equals(tenantId, winner.getTenantId())
+          && Objects.equals(tenantId, winner.getParticipantTenantId())
+          && winner.isAssigneeFlag()
+          && winner.getExitKind() == null
+          && winner.getEntityState() == EntityState.ACTIVE) {
         log.debug(
             "AssigneeService.ensureAssignee: nebenlaeufiger Ziel-Konflikt fuer Task {} Ref {} -"
-                + " idempotenter SKIP (Gewinner ist aktiver Assignee).",
+                + " idempotenter SKIP (Gewinner erfuellt volle Assignee-Invariante).",
             taskId,
             targetRef);
         return;
       }
-      // z.B. paralleles reines-Teilnehmer-Add (ASSIGNEE_FLAG=false) -> KEIN akzeptabler Zustand fuer
-      // ein Handover-Ziel: Konflikt weiterwerfen -> voller Rollback (kein 204 ohne Assignee).
+      // z.B. paralleles reines-Teilnehmer-Add (ASSIGNEE_FLAG=false) oder Anomalie-Zeile -> KEIN
+      // akzeptabler Zustand fuer ein Handover-Ziel: Konflikt weiterwerfen -> voller Rollback.
       throw conflict;
     }
   }

@@ -1,8 +1,6 @@
 package de.brasi.nova.taskmanagement.dictionary;
 
 import de.brasi.nova.taskmanagement.dictionary.model.DictionaryCatalogModel;
-import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
-import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -17,7 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
  * Handgeschriebener Facade-Controller fuer den Dictionary-Katalog (arch-v2 §7).
  *
  * <p>Liefert alle 6 System-Dictionaries als einen kompakten Gesamtkatalog.
- * Jeder Handler traegt eine {@link RequiresPermission}-Annotation (Pflicht gemaess arch-v2 §8).
+ * Der Katalog-GET ist Standard-Selfservice (Slice 5): authenticated-only via KSF-Filter-Chain, kein
+ * {@code @RequiresPermission}-Gate mehr (globale, mandanten-unabhaengige Referenzdaten).
  */
 @RestController
 @RequestMapping("/api/v1/dictionaries")
@@ -33,7 +32,7 @@ public class DictionaryCatalogController {
   /**
    * Liefert den vollstaendigen Dictionary-Katalog (alle 6 System-Dictionaries).
    *
-   * <p>Sichtbar fuer alle authentifizierten Benutzer mit TASK_READ-Berechtigung.
+   * <p>Sichtbar fuer alle authentifizierten Benutzer (authenticated-only, Standard-Selfservice).
    * Die Dictionaries sind global (TENANT_ID=0) und fuer alle Mandanten identisch.
    *
    * @return 200 OK mit {@link DictionaryCatalogModel}
@@ -50,11 +49,9 @@ public class DictionaryCatalogController {
           content = @Content(
               mediaType = "application/json",
               schema = @Schema(implementation = DictionaryCatalogModel.class))),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "403", description = "Fehlende TASK_READ-Berechtigung.")
+      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @GetMapping
-  @RequiresPermission(TaskManagementPermissions.TASK_READ)
   public ResponseEntity<DictionaryCatalogModel> listDictionaries() {
     return ResponseEntity.ok(catalogService.list());
   }

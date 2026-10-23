@@ -410,7 +410,8 @@ class UserStateControllerIT {
         .as("User B muss nach Abmeldung UNSUBSCRIBED_AT gesetzt haben")
         .isEqualTo(1);
 
-    // User B pinnt (hat noch TASK_READ via Token mit TASK_WRITE+TASK_READ)
+    // Slice 4 (Auflage/Henne-Ei): User B ist jetzt AUSGETRETEN (EXIT_KIND=UNSUBSCRIBED) und damit
+    // KEIN WRITE-Member mehr. Der Guard laeuft VOR ensure -> pin durch den Ausgetretenen -> 404.
     final String tokenB = buildJwtWithAuthority(
         TENANT_A_UUID, USER_B_REF, USER_B_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
@@ -419,10 +420,10 @@ class UserStateControllerIT {
                 .header("Authorization", "Bearer " + tokenB)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isNotFound());
 
     // Beweis Inbox-Invariante: UNSUBSCRIBED_AT fuer User B ist NOCH IMMER gesetzt
-    // (ensure aendert UNSUBSCRIBED_AT NICHT -> abgemeldeter bleibt abgemeldet)
+    // (Guard-vor-ensure -> keine State-Mutation durch den verweigerten pin).
     final Integer unsubForBAfterPin =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
@@ -432,11 +433,10 @@ class UserStateControllerIT {
             UUID.fromString(taskId),
             USER_B_REF);
     assertThat(unsubForBAfterPin)
-        .as("UNSUBSCRIBED_AT fuer abgemeldeten Benutzer darf durch pin() NICHT geloescht werden"
-            + " (Inbox-Invariante: ensure veraendert UNSUBSCRIBED_AT NICHT)")
+        .as("UNSUBSCRIBED_AT fuer ausgetretenen Benutzer bleibt gesetzt (pin 404, kein ensure)")
         .isEqualTo(1);
 
-    // Und IS_PINNED ist trotzdem gesetzt worden
+    // Und IS_PINNED wurde NICHT gesetzt (Guard-vor-ensure -> kein Marker-Write fuer Ex-Member).
     final Integer pinnedForB =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
@@ -446,14 +446,17 @@ class UserStateControllerIT {
             UUID.fromString(taskId),
             USER_B_REF);
     assertThat(pinnedForB)
-        .as("IS_PINNED=1 muss trotz UNSUBSCRIBED_AT fuer User B gesetzt sein")
-        .isEqualTo(1);
+        .as("IS_PINNED darf fuer den ausgetretenen Benutzer durch den 404-pin NICHT gesetzt werden")
+        .isZero();
   }
 
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test
-  @DisplayName("anonym_401_falsche_permission_403_fremder_tenant_404")
+  @DisplayName(
+      "anonym_401_nicht_member_404_fremder_tenant_404 (Slice 4): pin ist member-scoped (kein"
+          + " @RequiresPermission mehr) -> anonym 401; grant-freier Nicht-Member bzw. fremder"
+          + " Tenant -> neutral 404")
   void anonym_401_falsche_permission_403_fremder_tenant_404() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -465,24 +468,24 @@ class UserStateControllerIT {
                 .content("{\"value\":true}"))
         .andExpect(status().isUnauthorized());
 
-    // 2. Fehlende TASK_READ-Permission (kein task-management:TASK_READ) -> 403
-    final String tokenNoPerm = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
-        /* keine Authorities */);
-    mvc.perform(
-            put("/api/v1/tasks/" + UUID.randomUUID() + "/pin")
-                .header("Authorization", "Bearer " + tokenNoPerm)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"value\":true}"))
-        .andExpect(status().isForbidden());
-
-    // 3. Fremder Tenant -> 404
     final String tokenA = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
     final String taskId = createTask(mvc, om, tokenA, "Fremd-Tenant-Pin-Test");
 
-    // User C (Mandant B) versucht pin -> 404 (Task gehoert Mandant A)
+    // 2. Slice 4: pin ist nicht mehr permission-gated. Ein authentifizierter Nutzer OHNE Membership
+    // (hier ganz ohne Authorities) auf eine real existierende Fremd-Task -> neutral 404 (kein 403).
+    final String tokenNoPerm = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
+        /* keine Authorities */);
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/pin")
+                .header("Authorization", "Bearer " + tokenNoPerm)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
+        .andExpect(status().isNotFound());
+
+    // 3. Fremder Tenant -> 404 (Task gehoert Mandant A)
     final String tokenC = buildJwtWithAuthority(
         TENANT_B_UUID, USER_C_REF, USER_C_LOGIN,
         "task-management:TASK_READ");
@@ -641,6 +644,9 @@ class UserStateControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): MarkerService haengt jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

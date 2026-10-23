@@ -249,6 +249,10 @@ class CommentControllerIT {
             .readValueAs(UUID.class);
     assertThat(taskUuid).isNotNull();
 
+    // Slice 4 (Auflage 4): Mention-Empfaenger sind auf die WRITE-Member-Menge begrenzt. Damit die
+    // MENTION-Notification fuer USER_B tatsaechlich entsteht, muss USER_B aktiver WRITE-Member sein.
+    insertActiveMember(560101L, taskDbId(taskUuid), USER_B_REF);
+
     // COMMENT_COUNT vor dem Kommentar
     final Integer countBefore =
         jdbcTemplate.queryForObject(
@@ -357,6 +361,11 @@ class CommentControllerIT {
             .get("id")
             .traverse(om)
             .readValueAs(UUID.class);
+
+    // Slice 4: USER_B muss aktiver WRITE-Member sein, um einen Kommentar/Reply posten zu duerfen
+    // (member-scoped POST). Der Eltern-Autor USER_A ist als Creator ohnehin WRITE-Member und bleibt
+    // damit zulaessiger REPLY-Empfaenger (Auflage 4).
+    insertActiveMember(560201L, taskDbId(taskUuid), USER_B_REF);
 
     // Eltern-Kommentar von USER_A
     final String parentBody = om.writeValueAsString(Map.of("text", "Ausgangsfrage"));
@@ -539,7 +548,10 @@ class CommentControllerIT {
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
 
   @Test
-  @DisplayName("anonym_401_falsche_permission_403_unbekannte_task_404")
+  @DisplayName(
+      "post_comment_anonym_401_nicht_member_404_unbekannte_task_404 (Slice 4): POST /comments ist"
+          + " jetzt member-scoped (kein @RequiresPermission mehr) -> anonym 401; Grant-Holder ohne"
+          + " Membership bzw. unbekannte Task -> neutral 404")
   void anonym_401_falsche_permission_403_unbekannte_task_404() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -551,21 +563,23 @@ class CommentControllerIT {
                 .content(om.writeValueAsString(Map.of("text", "Test"))))
         .andExpect(status().isUnauthorized());
 
-    // 2. Falsche Permission (nur TASK_READ, kein TASK_WRITE) -> 403
+    // 2. Slice 4: POST /comments ist nicht mehr permission-gated. Ein TASK_READ-Grant-Holder OHNE
+    // Membership erreicht eine real existierende Fremd-Task nicht -> neutral 404 (statt frueher 403).
+    final String tokenA = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-POST-authz");
     final String tokenReadOnly = buildJwtWithAuthority(
         TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
         "task-management:TASK_READ");
     mvc.perform(
-            post("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
+            post("/api/v1/tasks/" + taskUuid + "/comments")
                 .header("Authorization", "Bearer " + tokenReadOnly)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("text", "Test"))))
-        .andExpect(status().isForbidden());
+                .content(om.writeValueAsString(Map.of("text", "Test Non-Member"))))
+        .andExpect(status().isNotFound());
 
-    // 3. TASK_WRITE-Token aber unbekannte Task-UUID -> 404
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // 3. Member-Token (USER_A), aber unbekannte Task-UUID -> 404
     mvc.perform(
             post("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
                 .header("Authorization", "Bearer " + tokenA)
@@ -700,29 +714,40 @@ class CommentControllerIT {
 
   @Test
   @DisplayName(
-      "get_comments_d1_nicht_teilnehmer_gleicher_tenant_200:"
-          + " TASK_READ-Nutzer im gleichen Mandanten OHNE Teilnehmer-Rolle -> 200 (kein Membership-Gate, D1)")
+      "get_comments_member_200_non_member_404 (Slice 4, Auflage 3/6):"
+          + " grant-freier aktiver WRITE-Member liest Kommentare (200); ein TASK_READ-Grant-Holder"
+          + " im gleichen Mandanten OHNE Teilnehmer-Rolle -> 404 (objekt-level Membership-Guard)")
   void get_comments_d1_nicht_teilnehmer_gleicher_tenant_200() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
     final String tokenA = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
-    // USER_B: gleicher Mandant, TASK_READ, aber NICHT Teilnehmer der Aufgabe von USER_A.
-    final String tokenB = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-d1");
-    postComment(mvc, om, tokenA, taskUuid, "nur-A-sichtbar?", null);
+    postComment(mvc, om, tokenA, taskUuid, "nur-Mitglieder-sichtbar", null);
 
+    // (a) USER_B: gleicher Mandant, GRANT-FREI, aber aktiver WRITE-Member -> 200 (Happy Path).
+    insertActiveMember(560301L, taskDbId(taskUuid), USER_B_REF);
+    final String tokenMember = buildGrantFreeJwt(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
     mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenB))
+            .header("Authorization", "Bearer " + tokenMember))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.length()").value(1));
+
+    // (b) USER_READ_ONLY: gleicher Mandant, TASK_READ-Grant, aber KEIN Teilnehmer -> neutral 404.
+    final String tokenNonMember = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + tokenNonMember))
+        .andExpect(status().isNotFound());
   }
 
   @Test
-  @DisplayName("get_comments_401_anon_403_ohne_task_read: anonym -> 401; ohne TASK_READ -> 403")
+  @DisplayName(
+      "get_comments_401_anon_404_non_member (Slice 4): GET /comments ist member-scoped (kein"
+          + " @RequiresPermission mehr) -> anonym 401; ein Grant-Holder ohne Membership auf eine"
+          + " unbekannte/fremde Task -> neutral 404 (kein 403)")
   void get_comments_401_anon_403_ohne_task_read() throws Exception {
     final MockMvc mvc = buildMvc();
 
@@ -730,12 +755,13 @@ class CommentControllerIT {
     mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments"))
         .andExpect(status().isUnauthorized());
 
-    // Token ohne TASK_READ (nur TASK_WRITE) -> GET erfordert TASK_READ -> 403
+    // Slice 4: GET /comments ist nicht mehr TASK_READ-gated. Ein beliebig berechtigter Nutzer auf
+    // eine unbekannte Task -> neutral 404 (statt frueher 403 mangels TASK_READ).
     final String tokenWriteOnly = buildJwtWithAuthority(
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
             .header("Authorization", "Bearer " + tokenWriteOnly))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isNotFound());
   }
 
   // ---- Hilfsmethoden -------------------------------------------------------------------------
@@ -788,6 +814,35 @@ class CommentControllerIT {
         .get("id")
         .traverse(om)
         .readValueAs(UUID.class);
+  }
+
+  /** JWT OHNE jede task-management-Authority (authenticated-only, grant-frei). */
+  private static String buildGrantFreeJwt(
+      final UUID tenantUuid, final UUID userUuid, final String loginName) {
+    return buildJwtWithAuthority(tenantUuid, userUuid, loginName);
+  }
+
+  /** Interne TASK.ID zur externen UUID (fuer die direkten TASK_PARTICIPANT-Inserts). */
+  private long taskDbId(final UUID taskExternalId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskExternalId);
+  }
+
+  /**
+   * Fuegt dem Akteur eine aktive WRITE-Member-Teilnehmerzeile (PERSON, EXIT_KIND null) direkt per
+   * JDBC hinzu - ohne das (ehemalige) Gate. So kann ein grant-freier/anderer Mandanten-Nutzer
+   * Membership erhalten, damit der objekt-level Guard (Slice 4) greift. {@code partId} = eindeutige
+   * TASK_PARTICIPANT.ID, {@code taskId} = interne TASK.ID.
+   */
+  private void insertActiveMember(final long partId, final long taskId, final UUID ref) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1,"
+            + " NULL, NULL)",
+        partId, TENANT_A_ID, taskId, ref, TENANT_A_ID);
   }
 
   private static String buildJwtWithAuthority(
@@ -910,6 +965,9 @@ class CommentControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
+    // Slice 4 (Standard-Selfservice): CommentService/CommentQueryService haengen jetzt am objekt-level
+    // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
   })

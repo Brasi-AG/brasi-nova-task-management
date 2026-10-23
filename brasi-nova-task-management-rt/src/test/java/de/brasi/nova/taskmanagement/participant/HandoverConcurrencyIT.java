@@ -734,7 +734,9 @@ class HandoverConcurrencyIT {
         final InboxGenerationService inboxGenerationService,
         final TaskHandoverQueryRepository handoverRepository,
         final BaseTaskHandoverTargetRepository handoverTargetRepository,
-        final TaskHistoryService taskHistoryService) {
+        final TaskHistoryService taskHistoryService,
+        final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
+        final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator) {
       super(
           taskRepository,
           participantQueryRepository,
@@ -747,7 +749,9 @@ class HandoverConcurrencyIT {
           inboxGenerationService,
           handoverRepository,
           handoverTargetRepository,
-          taskHistoryService);
+          taskHistoryService,
+          membershipGuard,
+          permissionEvaluator);
     }
 
     void armTargetInjector(final Runnable injector, final UUID targetRef) {
@@ -879,6 +883,51 @@ class HandoverConcurrencyIT {
     }
 
     @Bean
+    de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard(
+        final TaskParticipantQueryRepository participantQueryRepository) {
+      return new de.brasi.nova.taskmanagement.security.TaskMembershipGuard(
+          participantQueryRepository);
+    }
+
+    /**
+     * Stub-{@link io.keel.framework.api.security.PermissionEvaluator}: gewaehrt TASK_WRITE (Slice
+     * 4). Diese Nebenlaeufigkeits-ITs pruefen Race-Verhalten, nicht die neue Handover-Autz-Grenze;
+     * ihre HANDOVER-Ziele sind neue Nicht-WRITE-Member, sodass der Grant-Check greift - mit
+     * TASK_WRITE bleibt das Verhalten identisch zum frueheren controller-seitigen
+     * {@code @RequiresPermission(TASK_WRITE)}-Gate.
+     */
+    @Bean
+    io.keel.framework.api.security.PermissionEvaluator permissionEvaluator() {
+      return new io.keel.framework.api.security.PermissionEvaluator() {
+        @Override
+        public boolean hasAnyRole(final String... expectedRoles) {
+          return false;
+        }
+
+        @Override
+        public boolean hasRole(final String expectedRole) {
+          return false;
+        }
+
+        @Override
+        public java.util.List<String> getUserRoles() {
+          return java.util.List.of();
+        }
+
+        @Override
+        public boolean isOwner(final io.keel.framework.api.model.NovaEntity<?> entity) {
+          return false;
+        }
+
+        @Override
+        public boolean hasExactAuthority(final String authority) {
+          return de.brasi.nova.taskmanagement.security.TaskManagementPermissions.TASK_WRITE.equals(
+              authority);
+        }
+      };
+    }
+
+    @Bean
     TestAssigneeService testAssigneeService(
         final BaseTaskRepository taskRepository,
         final TaskParticipantQueryRepository participantQueryRepository,
@@ -891,7 +940,9 @@ class HandoverConcurrencyIT {
         final InboxGenerationService inboxGenerationService,
         final TaskHandoverQueryRepository handoverRepository,
         final BaseTaskHandoverTargetRepository handoverTargetRepository,
-        final TaskHistoryService taskHistoryService) {
+        final TaskHistoryService taskHistoryService,
+        final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
+        final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator) {
       return new TestAssigneeService(
           taskRepository,
           participantQueryRepository,
@@ -904,7 +955,9 @@ class HandoverConcurrencyIT {
           inboxGenerationService,
           handoverRepository,
           handoverTargetRepository,
-          taskHistoryService);
+          taskHistoryService,
+          membershipGuard,
+          permissionEvaluator);
     }
   }
 }
