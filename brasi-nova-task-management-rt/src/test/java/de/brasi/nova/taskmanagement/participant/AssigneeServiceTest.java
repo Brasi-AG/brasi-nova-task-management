@@ -146,6 +146,21 @@ class AssigneeServiceTest {
     // Notification-Service: Stub fuer emit (gibt UUID zurueck)
     when(notificationService.emit(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(UUID.randomUUID());
+
+    // Codex #6: Multi-Ref-Bumps laufen jetzt ueber den zentralen Helfer bumpSorted (delegiert produktiv
+    // je Ref sortiert an bump). Der gemockte Helfer an denselben Mock delegieren, damit die bestehenden
+    // je-Ref bump(..)-Verifikationen (WELCHE Refs, times/never) unveraendert gueltig bleiben.
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              final long t = inv.getArgument(0);
+              final Collection<UUID> c = inv.getArgument(1);
+              if (c != null) {
+                c.stream().sorted().forEach(r -> inboxGenerationService.bump(t, r));
+              }
+              return null;
+            })
+        .when(inboxGenerationService)
+        .bumpSorted(anyLong(), any());
   }
 
   @AfterEach

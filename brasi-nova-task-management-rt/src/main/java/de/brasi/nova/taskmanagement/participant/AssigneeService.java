@@ -233,9 +233,10 @@ public class AssigneeService {
 
       affectedRefs.add(assigneeRef);
       // Finding 2 / Option B: Zuweisung reaktiviert destruktiv die Membership-Felder dieses Refs
-      // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation atomar in dieser Tx bumpen, damit alte
-      // Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410).
-      inboxGenerationService.bump(tenantId, assigneeRef);
+      // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation muss atomar in dieser Tx gebumpt werden,
+      // damit alte Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410). Ref in
+      // affectedRefs gesammelt; der eigentliche (sortierte) Bump erfolgt gebuendelt NACH dem TASK-save
+      // (einheitliche Save-dann-Bump- + Lock-Ordnung, Codex #6).
       log.info(
           "AssigneeService.updateAssignees: Assignee {} der Aufgabe {} (id={}) zugewiesen"
               + " von Akteur {} in Mandant {}.",
@@ -295,8 +296,9 @@ public class AssigneeService {
 
       affectedRefs.add(removedRef);
       // Finding 2 / Option B: die Abwahl ueberschreibt destruktiv Membership-Felder dieses Refs
-      // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation atomar bumpen.
-      inboxGenerationService.bump(tenantId, removedRef);
+      // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation muss atomar gebumpt
+      // werden. Ref in affectedRefs gesammelt; der (sortierte) Bump erfolgt gebuendelt NACH dem
+      // TASK-save (Codex #6).
     }
 
     // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).
@@ -315,6 +317,13 @@ public class AssigneeService {
       // versionierten UPDATE) und der Client wiederholt den PUT gegen frischen Stand. Nur bei
       // tatsaechlicher Aenderung (affectedRefs nicht leer) - ein No-Op-PUT bumpt die Version nicht.
       taskRepository.save(task);
+
+      // Codex #6: Generation-Bump der geaenderten Refs (toAdd + toRemove) ERST NACH dem TASK-save -
+      // einheitliche Save-dann-Bump-Ordnung ueber alle Pfade (vorher lag der Bump in den Loops VOR
+      // dem save -> invertierte TASK-vs-Generation-Lock-Ordnung). Ueber den zentralen Helfer in
+      // SORTIERTER Reihenfolge (keine ueberkreuzte Generation-Lock-Order). Der Bump-Scope bleibt
+      // UNVERAENDERT genau affectedRefs (NICHT die weitere Invalidate-Menge toInvalidate).
+      inboxGenerationService.bumpSorted(tenantId, affectedRefs);
 
       final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
       userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
@@ -384,6 +393,14 @@ public class AssigneeService {
       }
     }
 
+    // Codex #6: Generation-Bump der tatsaechlich hinzugefuegten/reaktivierten Refs gebuendelt ueber
+    // den zentralen Helfer in SORTIERTER Reihenfolge (konsistente Generation-Lock-Ordnung mit allen
+    // anderen Pfaden). addParticipants mutiert die TASK-Zeile NICHT (additive Union, kommutativ, kein
+    // LAST_ACTIVITY_AT/VERSION-Bump) -> eine TASK-vs-Generation-Inversion ist hier strukturell
+    // ausgeschlossen; der Helfer sichert nur die Generation-untereinander-Ordnung. Scope unveraendert
+    // (nur tatsaechlich geaenderte Refs, wie bisher je-Ref im Loop).
+    inboxGenerationService.bumpSorted(tenantId, affectedRefs);
+
     // D7 changed-Guard: invalidate NUR bei tatsaechlicher Aenderung (>=1 add/reactivate). Ein reiner
     // No-Op (alle schon aktiv) laedt die aktiven Teilnehmer nicht und sendet kein Signal (analog
     // updateAssignees / TaskCommandService.patch).
@@ -423,7 +440,9 @@ public class AssigneeService {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }
       userStateService.reactivate(taskId, ref, tenantId);
-      inboxGenerationService.bump(tenantId, ref);
+      // Codex #6: Generation-Bump NICHT hier (sofort/ungeordnet), sondern gebuendelt + SORTIERT im
+      // Aufrufer (addParticipants) ueber affectedRefs - konsistente Generation-Lock-Ordnung. Der
+      // true-Return meldet "Bump faellig"; der Ref wird dort gesammelt. Scope unveraendert.
       log.debug(
           "AssigneeService.addParticipants: Teilnehmer {} fuer Task {} reaktiviert.", ref, taskId);
       return true;
@@ -443,7 +462,7 @@ public class AssigneeService {
       return false;
     }
     userStateService.ensure(taskId, ref, tenantId);
-    inboxGenerationService.bump(tenantId, ref);
+    // Codex #6: Generation-Bump gebuendelt + SORTIERT im Aufrufer (addParticipants), nicht hier.
     log.debug(
         "AssigneeService.addParticipants: Neuer Teilnehmer {} fuer Task {} angelegt.", ref, taskId);
     return true;
@@ -553,6 +572,13 @@ public class AssigneeService {
    * (Push/Invalidate) strikt after-commit. Der VERSION-Guard macht die Aufgabe zum gemeinsamen
    * Serialisierungspunkt gegen nebenlaeufige Membership-Mutationen (PUT/exit); der Verlierer bricht
    * mit {@link BusinessRuleException} (409) ab und committet NICHTS.
+   *
+   * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Codex #6):</b> Die Generation wird fuer die
+   * VOLLSTAENDIGE betroffene Menge ATOMAR in dieser Tx gebumpt: Akteur (nur bei tatsaechlichem
+   * Austritt), alle Handover-Ziele UND ALLE nach dem Exit/Handover verbleibenden aktiven Teilnehmer
+   * der Aufgabe - nicht nur Akteur + Ziele. Der LAST_ACTIVITY_AT-Bump verschiebt die aktive
+   * Keyset-Position ({@code (asOf, LAST_ACTIVITY_AT, externalId)}) jedes verbleibenden Teilnehmers;
+   * ohne Bump lieferte dessen alter aktiver Cursor stale 200 (Skip/Dupe) statt 410.
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param input          Austritts-Eingabe (exitKind, handedOverToIds, shouldStay)
@@ -669,7 +695,6 @@ public class AssigneeService {
             "Dir wurde die Aufgabe uebergeben.",
             task.getTitle(),
             actorRef);
-        inboxGenerationService.bump(tenantId, targetRef);
         notifyTargets.add(targetRef);
       }
     }
@@ -727,23 +752,38 @@ public class AssigneeService {
           actorRef);
     }
 
-    // Finding 2 / Option B: Akteur-Generation nur bei tatsaechlichem Austritt bumpen (destruktive
-    // Membership-Mutation). Bei shouldStay/Creator-Verbleib bleibt die Akteur-Inbox valide.
+    // (11) Betroffene Menge bestimmen: Akteur (bei Austritt) + alle Handover-Ziele + ALLE nach dem
+    // Exit/Handover verbleibenden aktiven Teilnehmer der Aufgabe. Diese Menge dient GEMEINSAM dem
+    // Generation-Bump (atomar in dieser Tx) UND dem after-commit Invalidate - dieselbe Menge, ein
+    // einziger Bump je Benutzer (HashSet dedupliziert Ziele/Akteur, die sonst mehrfach gebumpt
+    // wuerden).
+    final Set<UUID> affected = new HashSet<>();
     if (actorExits) {
-      inboxGenerationService.bump(tenantId, actorRef);
+      affected.add(actorRef);
     }
-
-    // (11) After-Commit: Invalidate fuer Akteur (bei Austritt) + alle Ziele + verbleibende aktive
-    // Teilnehmer. Signale strikt after-commit (ueber den InboxSignalService-Hook).
-    final Set<UUID> toInvalidate = new HashSet<>();
-    if (actorExits) {
-      toInvalidate.add(actorRef);
-    }
-    toInvalidate.addAll(notifyTargets);
+    affected.addAll(notifyTargets);
     userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
         .map(TaskUserState::getUserRef)
-        .forEach(toInvalidate::add);
-    inboxSignalService.invalidate(tenantId, toInvalidate);
+        .forEach(affected::add);
+
+    // Finding 2 / Option B / Codex #6: Generation JEDES betroffenen aktiven Teilnehmers ATOMAR in
+    // dieser Tx bumpen - nicht nur Akteur + Ziele. Der TASK-LAST_ACTIVITY_AT-Bump (oben, now())
+    // verschiebt die aktive Keyset-Position (asOf, LAST_ACTIVITY_AT, externalId) fuer JEDEN
+    // verbleibenden aktiven Teilnehmer; zusaetzlich aendert der Rollenwechsel die
+    // participantSummaries. Ein alter aktiver Cursor eines verbleibenden Teilnehmers lieferte sonst
+    // stale 200 (Skip/Dupe) statt 410. Der Akteur wird nur bei tatsaechlichem Austritt (actorExits)
+    // gebumpt - bei shouldStay/Creator-Verbleib bleibt er aktiver Teilnehmer und ist bereits ueber
+    // die findActiveUserRefsByTaskId-Menge erfasst.
+    // Deadlock-Robustheit (Codex #6): die (ungeordnete HashSet-)Menge ueber den zentralen Helfer in
+    // DETERMINISTISCH SORTIERTER Ref-Reihenfolge bumpen - NACH dem TASK-save (oben, taskRepository.
+    // save), sodass ueberall zuerst die TASK-Zeile und dann die TASK_INBOX_GENERATION-Zeilen gesperrt
+    // werden und parallele Membership-Mutationen mit ueberlappenden Teilnehmern die Generation-Zeilen
+    // in gleicher Reihenfolge sperren (keine ueberkreuzte Lock-Order).
+    inboxGenerationService.bumpSorted(tenantId, affected);
+
+    // After-Commit: snapshot-invalidated Signal fuer dieselbe Menge. Signale strikt after-commit
+    // (ueber den InboxSignalService-Hook).
+    inboxSignalService.invalidate(tenantId, affected);
 
     log.info(
         "AssigneeService.exit: Akteur {} hat Aufgabe {} (id={}) {} (EXIT_KIND={}, shouldStay={},"

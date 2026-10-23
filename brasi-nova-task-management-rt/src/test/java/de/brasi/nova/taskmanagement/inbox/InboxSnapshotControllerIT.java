@@ -430,6 +430,174 @@ class InboxSnapshotControllerIT {
         .andExpect(status().isOk());
   }
 
+  // ---- IT: createComment bumpt Generation ALLER aktiven Teilnehmer -> alter Cursor 410 (Codex #6) -
+
+  /**
+   * Codex #6 (Cursor-Invalidierung durch {@code createComment}). Beweist end-to-end gegen echtes
+   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER
+   * {@code POST /tasks/{id}/comments} ({@code CommentService.createComment}) setzt
+   * {@code LAST_ACTIVITY_AT = now()} und bumpt die Generation JEDES aktiven Teilnehmers ATOMAR in
+   * derselben Transaktion (0 -&gt; 1); der alte Cursor liefert daraufhin HTTP 410 (SnapshotExpired),
+   * ein frischer Bootstrap wieder 200.
+   *
+   * <p>TDD-Rigor: OHNE den Generation-Bump in {@code createComment} bleibt der Folge-Read 200 (stale
+   * pagination trotz LAST_ACTIVITY_AT-Verschiebung) - dieser Test faellt dann an {@code isGone()}.
+   * MIT dem Bump -&gt; 410 (gruen).
+   */
+  @Test
+  @DisplayName("comment_mutation_bumpt_generation_dann_alter_cursor_410_und_frischer_bootstrap_200")
+  void comment_mutation_bumpt_generation_dann_alter_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    // Dedizierter Benutzer, damit die Mutation keine anderen Tests beeinflusst.
+    final UUID commentUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000741");
+    final String commentLogin = "comment-410-user@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 740, commentUser, commentLogin, TENANT_A_ID);
+
+    // 2 aktive Tasks, commentUser als Creator-Assignee (darf kommentieren). limit=1 => hasMore.
+    // Auf den ersten (commentTaskUuid) wird spaeter kommentiert.
+    final UUID commentTaskUuid = UUID.randomUUID();
+    for (int i = 0; i < 2; i++) {
+      final long taskId = ID_BASE + 745 + i;
+      final UUID uuid = (i == 0) ? commentTaskUuid : UUID.randomUUID();
+      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
+          LocalDateTime.now().minusMinutes(20 - i), "Comment410-Task-" + i);
+      seedParticipant(jdbcTemplate, ID_BASE + 750 + i, taskId, commentUser, TENANT_A_ID,
+          true, true, true, null);
+      seedUserState(jdbcTemplate, ID_BASE + 755 + i, taskId, commentUser, TENANT_A_ID, null);
+    }
+
+    final String token = jwt(TENANT_A_UUID, commentUser, commentLogin,
+        "task-management:TASK_READ", "task-management:TASK_WRITE");
+
+    // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // ECHTE Aktivitaets-Mutation: Kommentar -> CommentService.createComment setzt LAST_ACTIVITY_AT
+    // und bumpt die Generation JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion (0 -> 1).
+    mvc.perform(post("/api/v1/tasks/" + commentTaskUuid + "/comments")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"text\":\"Ein neuer Kommentar.\"}"))
+        .andExpect(status().isCreated());
+
+    // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isGone());
+
+    // Frischer Bootstrap ohne Cursor -> 200 (neuer Snapshot mit aktueller Generation).
+    mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk());
+  }
+
+  // ---- IT: exit bumpt Generation VERBLEIBENDER aktiver Teilnehmer (nicht nur Akteur) (Codex #6) ---
+
+  /**
+   * Codex #6 (die eigentliche Luecke): {@code AssigneeService.exit} bumpte frueher nur den Akteur
+   * (bei Austritt) + Handover-Ziele, NICHT die VERBLEIBENDEN aktiven Teilnehmer. Deren aktiver
+   * Keyset-Cursor lieferte nach dem {@code LAST_ACTIVITY_AT = now()}-Bump des Exits stale 200
+   * (Skip/Dupe) statt 410.
+   *
+   * <p>Aufbau: EXITING_USER und REMAINING_USER sind beide NICHT-Creator-Assignees desselben
+   * Exit-Tasks; ein separater CREATOR haelt den Creator-Platz (kein Creator-Austritt-409). Beide
+   * haben je einen zweiten eigenen Task -&gt; {@code limit=1 => hasMore => Cursor}. REMAINING_USER
+   * holt seine First-Page (Generation 0). Dann tritt EXITING_USER aus (UNSUBSCRIBED). Der Exit
+   * verschiebt {@code LAST_ACTIVITY_AT} des Exit-Tasks (an dem REMAINING_USER aktiv BLEIBT) und
+   * bumpt mit diesem Fix die Generation ALLER verbleibenden aktiven Teilnehmer -&gt; REMAINING_USERs
+   * alter Cursor wird mit 410 abgelehnt.
+   *
+   * <p>TDD-Rigor: OHNE den erweiterten Bump (nur Akteur/Ziele) bleibt REMAINING_USERs Folge-Read
+   * 200 - der Test faellt dann an {@code isGone()}. MIT dem Fix -&gt; 410 (gruen).
+   */
+  @Test
+  @DisplayName("exit_bumpt_verbleibende_teilnehmer_dann_deren_alter_cursor_410")
+  void exit_bumpt_verbleibende_teilnehmer_alter_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    final UUID creatorUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000760");
+    final UUID exitingUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000761");
+    final UUID remainingUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000762");
+    final String exitingLogin = "exit-rem-exiting@brasi.de";
+    final String remainingLogin = "exit-rem-remaining@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 760, creatorUser, "exit-rem-creator@brasi.de",
+        TENANT_A_ID);
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 761, exitingUser, exitingLogin, TENANT_A_ID);
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 762, remainingUser, remainingLogin, TENANT_A_ID);
+
+    // Gemeinsamer Exit-Task: CREATOR (Platzhalter), EXITING_USER + REMAINING_USER je NICHT-Creator-
+    // Assignee. REMAINING_USER bleibt nach dem Exit aktiver Teilnehmer dieses Tasks.
+    final long sharedTaskId = ID_BASE + 765;
+    final UUID sharedTaskUuid = UUID.randomUUID();
+    seedTask(jdbcTemplate, sharedTaskId, sharedTaskUuid, TENANT_A_ID, openId, normalId, directionId,
+        LocalDateTime.now().minusMinutes(20), "ExitRem-Shared-Task");
+    seedParticipant(jdbcTemplate, ID_BASE + 766, sharedTaskId, creatorUser, TENANT_A_ID,
+        true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 767, sharedTaskId, creatorUser, TENANT_A_ID, null);
+    seedParticipant(jdbcTemplate, ID_BASE + 768, sharedTaskId, exitingUser, TENANT_A_ID,
+        false, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 769, sharedTaskId, exitingUser, TENANT_A_ID, null);
+    seedParticipant(jdbcTemplate, ID_BASE + 770, sharedTaskId, remainingUser, TENANT_A_ID,
+        false, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 771, sharedTaskId, remainingUser, TENANT_A_ID, null);
+
+    // Je ein zweiter eigener Task fuer exiting + remaining -> limit=1 => hasMore => Cursor.
+    final long remSecondTaskId = ID_BASE + 772;
+    seedTask(jdbcTemplate, remSecondTaskId, UUID.randomUUID(), TENANT_A_ID, openId, normalId,
+        directionId, LocalDateTime.now().minusMinutes(10), "ExitRem-Remaining-Second");
+    seedParticipant(jdbcTemplate, ID_BASE + 773, remSecondTaskId, remainingUser, TENANT_A_ID,
+        true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 774, remSecondTaskId, remainingUser, TENANT_A_ID, null);
+
+    final String exitingToken = jwt(TENANT_A_UUID, exitingUser, exitingLogin,
+        "task-management:TASK_READ", "task-management:TASK_WRITE");
+    final String remainingToken = jwt(TENANT_A_UUID, remainingUser, remainingLogin,
+        "task-management:TASK_READ");
+
+    // REMAINING_USER holt seine First-Page: Generation 0 im Cursor.
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + remainingToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String remainingCursor =
+        new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // EXITING_USER tritt aus dem gemeinsamen Task aus (UNSUBSCRIBED). Der Exit verschiebt
+    // LAST_ACTIVITY_AT des Tasks (REMAINING_USER bleibt aktiv) und bumpt mit diesem Fix die
+    // Generation ALLER verbleibenden aktiven Teilnehmer (inkl. REMAINING_USER) 0 -> 1.
+    mvc.perform(post("/api/v1/tasks/" + sharedTaskUuid + "/exit")
+            .header("Authorization", "Bearer " + exitingToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        .andExpect(status().isNoContent());
+
+    // REMAINING_USER war NICHT der Akteur, bleibt aber aktiver Teilnehmer: sein alter Cursor
+    // (Generation 0) muss jetzt mit 410 abgelehnt werden (Beweis des Bumps verbleibender Teilnehmer).
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + remainingCursor)
+            .header("Authorization", "Bearer " + remainingToken))
+        .andExpect(status().isGone());
+
+    // Frischer Bootstrap ohne Cursor -> 200.
+    mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + remainingToken))
+        .andExpect(status().isOk());
+  }
+
   // ---- IT: PATCH statusCode=DONE bumpt Generation -> alter aktiver Cursor 410 + wandert ins Archiv -
 
   /**
@@ -526,6 +694,164 @@ class InboxSnapshotControllerIT {
       }
     }
     assertThat(doneInArchive).as("der DONE-Task muss im done-Archiv erscheinen").isTrue();
+  }
+
+  // ---- IT: Marker-Neuanlage (pin) etabliert Membership -> alter aktiver Cursor 410 (Codex #6) ----
+
+  /**
+   * Codex #6 (dritter Membership-Fall): {@code MarkerService.setPinned} ruft
+   * {@code UserStateService.ensure}, das erstmals einen aktiven {@code TASK_USER_STATE} ANLEGEN
+   * kann. Genau dieser State begruendet die Membership in der aktiven Keyset-Query
+   * ({@code TaskKeysetQueryRepository.findActivePage}, EXISTS TASK_USER_STATE). Bei NEUANLAGE sendete
+   * der MarkerService frueher nur ein Invalidate, KEINEN Generation-Bump - ein aktiver Cursor, dessen
+   * First-Page VOR der (uncommitteten) Anlage entstand, lieferte nach Commit weiter stale 200 (der
+   * neu sichtbare Task fehlt) statt 410.
+   *
+   * <p>Aufbau: {@code markerUser} ist bereits aktiver Teilnehmer zweier OPEN-Tasks ({@code limit=1
+   * => hasMore => Cursor}); ein dritter OPEN-Task ({@code pinTaskUuid}) hat fuer ihn NOCH KEINEN
+   * {@code TASK_USER_STATE} (nicht in seiner aktiven Liste). Er holt seine First-Page (Generation 0)
+   * und setzt dann ERSTMALS einen Pin auf {@code pinTaskUuid} -> {@code ensure} legt einen aktiven
+   * State an (created) -> mit dem Fix wird seine Generation ATOMAR 0 -> 1 gebumpt -> sein alter
+   * Cursor wird mit 410 abgelehnt; der neu sichtbare Task erscheint im frischen Bootstrap.
+   *
+   * <p>TDD-Rigor: OHNE den Bump in {@code MarkerService} (nur Invalidate) bleibt der Folge-Read 200
+   * (stale pagination, der neu sichtbare Task fehlt) - der Test faellt dann an {@code isGone()}. MIT
+   * dem Bump -&gt; 410 (gruen).
+   */
+  @Test
+  @DisplayName("pin_neuanlage_etabliert_membership_dann_alter_cursor_410_und_bootstrap_zeigt_task")
+  void pin_neuanlage_bumpt_generation_alter_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    final UUID markerUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000841");
+    final String markerLogin = "marker-410-user@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 840, markerUser, markerLogin, TENANT_A_ID);
+
+    // 2 aktive Tasks, markerUser als Creator-Assignee (bestehender aktiver UserState).
+    // limit=1 => hasMore => Cursor.
+    for (int i = 0; i < 2; i++) {
+      final long taskId = ID_BASE + 845 + i;
+      seedTask(jdbcTemplate, taskId, UUID.randomUUID(), TENANT_A_ID, openId, normalId, directionId,
+          LocalDateTime.now().minusMinutes(20 - i), "Marker410-Existing-" + i);
+      seedParticipant(jdbcTemplate, ID_BASE + 850 + i, taskId, markerUser, TENANT_A_ID,
+          true, true, true, null);
+      seedUserState(jdbcTemplate, ID_BASE + 855 + i, taskId, markerUser, TENANT_A_ID, null);
+    }
+
+    // Dritter aktiver OPEN-Task OHNE TASK_USER_STATE fuer markerUser -> NICHT in seiner aktiven
+    // Liste, bis der Pin erstmals einen aktiven State anlegt. LAST_ACTIVITY_AT frischer als die
+    // bestehenden, damit der neu sichtbare Task im frischen Bootstrap vorn erscheint.
+    final long pinTaskId = ID_BASE + 847;
+    final UUID pinTaskUuid = UUID.randomUUID();
+    seedTask(jdbcTemplate, pinTaskId, pinTaskUuid, TENANT_A_ID, openId, normalId, directionId,
+        LocalDateTime.now().minusMinutes(5), "Marker410-Pin-Target");
+
+    final String token = jwt(TENANT_A_UUID, markerUser, markerLogin, "task-management:TASK_READ");
+
+    // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // Der pinTask darf vor dem Pin NICHT in der aktiven Liste erscheinen (keine Membership).
+    final JsonNode preActive = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks?limit=50")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(preActive))
+        .as("der pinTask darf VOR dem Pin nicht in der aktiven Liste erscheinen (keine Membership)")
+        .doesNotContain(pinTaskUuid.toString());
+
+    // ECHTE Marker-Mutation: markerUser pinnt ERSTMALS pinTask -> ensure legt aktiven UserState an
+    // (created) -> MarkerService bumpt mit dem Fix seine Generation ATOMAR in derselben Tx (0 -> 1).
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .put("/api/v1/tasks/" + pinTaskUuid + "/pin")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+
+    // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isGone());
+
+    // Frischer Bootstrap ohne Cursor -> 200; der neu gepinnte Task ist jetzt in der aktiven Liste.
+    final JsonNode freshActive = new ObjectMapper().readTree(
+        mvc.perform(get("/api/v1/tasks?limit=50")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(freshActive))
+        .as("der neu gepinnte Task muss nach der Membership-Etablierung in der aktiven Liste sein")
+        .contains(pinTaskUuid.toString());
+  }
+
+  // ---- IT: Marker-UPDATE (pin auf bestehendem State) bumpt NICHT -> alter Cursor bleibt 200 ------
+
+  /**
+   * Codex #6 (Negativ-Gegenprobe): Ein reines State-UPDATE (pin auf einem BEREITS bestehenden
+   * aktiven {@code TASK_USER_STATE}) hat KEINEN Keyset-/Membership-Effekt (keine Neuanlage, keine
+   * {@code LAST_ACTIVITY_AT}-Mutation) und darf deshalb die Generation NICHT bumpen - der alte
+   * aktive Cursor bleibt gueltig (200). So ist belegt, dass der Bump GENAU an die Neuanlage
+   * (created) gebunden ist und nicht jede Marker-Operation unnoetig invalidiert.
+   */
+  @Test
+  @DisplayName("pin_update_auf_bestehendem_state_bumpt_nicht_alter_cursor_bleibt_200")
+  void pin_update_auf_bestehendem_state_kein_bump_cursor_200() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+
+    final UUID markerUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000861");
+    final String markerLogin = "marker-200-user@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 860, markerUser, markerLogin, TENANT_A_ID);
+
+    // 2 aktive Tasks mit bestehendem aktivem UserState (limit=1 => hasMore => Cursor). Auf dem
+    // ersten (pinTaskUuid) wird gepinnt - der State existiert bereits (reines UPDATE).
+    final UUID pinTaskUuid = UUID.randomUUID();
+    for (int i = 0; i < 2; i++) {
+      final long taskId = ID_BASE + 865 + i;
+      final UUID uuid = (i == 0) ? pinTaskUuid : UUID.randomUUID();
+      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
+          LocalDateTime.now().minusMinutes(20 - i), "Marker200-Existing-" + i);
+      seedParticipant(jdbcTemplate, ID_BASE + 870 + i, taskId, markerUser, TENANT_A_ID,
+          true, true, true, null);
+      seedUserState(jdbcTemplate, ID_BASE + 875 + i, taskId, markerUser, TENANT_A_ID, null);
+    }
+
+    final String token = jwt(TENANT_A_UUID, markerUser, markerLogin, "task-management:TASK_READ");
+
+    // First-Page: Generation 0 im Cursor.
+    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasMore").value(true))
+        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+        .andReturn().getResponse().getContentAsString();
+    final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
+
+    // Pin auf einem BESTEHENDEN aktiven State -> reines UPDATE, created=false -> KEIN Bump.
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .put("/api/v1/tasks/" + pinTaskUuid + "/pin")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+
+    // Folge-Read mit altem Cursor (Generation 0) -> Generation unveraendert (0) -> weiterhin 200.
+    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk());
   }
 
   // ---- IT 3: Archiv je Filter + Totals -------------------------------------------------------

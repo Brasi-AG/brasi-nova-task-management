@@ -4,20 +4,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.TaskInboxGeneration;
 import de.brasi.nova.taskmanagement.repository.TaskInboxGenerationQueryRepository;
 import io.keel.framework.api.exception.BusinessRuleException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 /**
  * Unit-Tests fuer {@link InboxGenerationService} (Repository gemockt, kein DB).
@@ -150,5 +154,46 @@ class InboxGenerationServiceTest {
 
     assertThatThrownBy(() -> service.bump(TENANT_ID, USER_REF))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  // ---- bumpSorted: deterministische Lock-Ordnung (Codex #6) -----------------------------------
+
+  @Test
+  @DisplayName(
+      "bumpSorted_bumpt_in_deterministisch_sortierter_reihenfolge: unabhaengig von der"
+          + " Eingabe-Reihenfolge wird je Ref GENAU EINMAL und in UUID.compareTo-Ordnung gebumpt")
+  void bumpSorted_bumpt_in_deterministisch_sortierter_reihenfolge() {
+    // Drei feste UUIDs mit bekannter Sortier-Ordnung (compareTo). Jede Zeile vorhanden -> nur
+    // Increment (kein Insert), incrementGeneration liefert je 1.
+    final UUID u1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID u2 = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    final UUID u3 = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    when(repository.findByUserRef(any())).thenReturn(List.of(row(0L)));
+    when(repository.incrementGeneration(any())).thenReturn(1);
+
+    // Eingabe absichtlich UNSORTIERT (u3, u1, u2) -> erwartete Bump-Reihenfolge u1, u2, u3.
+    service.bumpSorted(TENANT_ID, Arrays.asList(u3, u1, u2));
+
+    final InOrder inOrder = inOrder(repository);
+    inOrder.verify(repository).incrementGeneration(u1);
+    inOrder.verify(repository).incrementGeneration(u2);
+    inOrder.verify(repository).incrementGeneration(u3);
+    // Keine Doppel-Bumps.
+    verify(repository, org.mockito.Mockito.times(3)).incrementGeneration(any());
+  }
+
+  @Test
+  @DisplayName("bumpSorted_leere_menge_ist_noop")
+  void bumpSorted_leere_menge_ist_noop() {
+    service.bumpSorted(TENANT_ID, List.of());
+    verify(repository, never()).incrementGeneration(any());
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  @DisplayName("bumpSorted_null_ist_noop")
+  void bumpSorted_null_ist_noop() {
+    service.bumpSorted(TENANT_ID, null);
+    verifyNoInteractions(repository);
   }
 }

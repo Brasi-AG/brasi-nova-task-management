@@ -60,6 +60,7 @@ class MarkerServiceTest {
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private UserStateService userStateService;
   @Mock private InboxSignalService inboxSignalService;
+  @Mock private InboxGenerationService inboxGenerationService;
   @Mock private UserAccessor userAccessor;
 
   private MarkerService markerService;
@@ -72,6 +73,7 @@ class MarkerServiceTest {
             userStateQueryRepository,
             userStateService,
             inboxSignalService,
+            inboxGenerationService,
             userAccessor);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -274,13 +276,13 @@ class MarkerServiceTest {
     // nicht noetig hier, da ensure der einzige zu pruefende Aufruf ist
   }
 
-  // ---- Test 9: P2-3 - Neuanlage eines aktiven UserState invalidiert den Inbox-Snapshot --------
+  // ---- Test 9: P2-3 / Codex #6 - Neuanlage etabliert Membership -> Bump + Invalidate ----------
 
   @Test
   @DisplayName(
-      "marker_neuanlage_invalidiert: ensure legt neuen aktiven UserState an (created=true) ->"
-          + " InboxSignalService.invalidate fuer den Actor")
-  void marker_neuanlage_invalidiert() {
+      "marker_neuanlage_bumpt_und_invalidiert: ensure legt neuen aktiven UserState an (created=true)"
+          + " -> InboxGenerationService.bump + InboxSignalService.invalidate fuer den Actor")
+  void marker_neuanlage_bumpt_und_invalidiert() {
     final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
     when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
 
@@ -294,17 +296,20 @@ class MarkerServiceTest {
 
     markerService.setPinned(TASK_EXTERNAL_ID, true);
 
-    // Invalidate fuer den Actor (Task frisch inbox-faehig)
+    // Codex #6: Membership-Etablierung -> Generation-Bump des Actors ATOMAR in der Tx (Keyset-Effekt:
+    // der neu sichtbare Task begruendet einen alten aktiven Cursor als stale -> 410).
+    verify(inboxGenerationService).bump(eq(TENANT_ID), eq(USER_A_REF));
+    // und after-commit snapshot-invalidated fuer den Actor.
     verify(inboxSignalService).invalidate(eq(TENANT_ID), eq(List.of(USER_A_REF)));
   }
 
-  // ---- Test 10: P2-3 - bestehender UserState -> kein Invalidate -------------------------------
+  // ---- Test 10: P2-3 / Codex #6 - bestehender UserState -> KEIN Bump, KEIN Invalidate ----------
 
   @Test
   @DisplayName(
-      "marker_bestehender_state_invalidiert_nicht: ensure meldet keinen Neuzugang (created=false) ->"
-          + " kein InboxSignalService.invalidate")
-  void marker_bestehender_state_invalidiert_nicht() {
+      "marker_bestehender_state_bumpt_und_invalidiert_nicht: ensure meldet keinen Neuzugang"
+          + " (created=false) -> kein Generation-Bump, kein InboxSignalService.invalidate")
+  void marker_bestehender_state_bumpt_und_invalidiert_nicht() {
     final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
     when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
 
@@ -317,7 +322,8 @@ class MarkerServiceTest {
 
     markerService.setFlagged(TASK_EXTERNAL_ID, true);
 
-    // Persoenlicher Marker auf bestehendem State -> kein Snapshot-Invalidate
+    // Reines State-UPDATE -> kein Keyset-/Membership-Effekt: weder Generation-Bump noch Invalidate.
+    verify(inboxGenerationService, never()).bump(any(Long.class), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
 

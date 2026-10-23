@@ -37,6 +37,7 @@ public class MarkerService {
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final UserStateService userStateService;
   private final InboxSignalService inboxSignalService;
+  private final InboxGenerationService inboxGenerationService;
   private final UserAccessor userAccessor;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
@@ -45,11 +46,13 @@ public class MarkerService {
       final TaskUserStateQueryRepository userStateQueryRepository,
       final UserStateService userStateService,
       final InboxSignalService inboxSignalService,
+      final InboxGenerationService inboxGenerationService,
       final UserAccessor userAccessor) {
     this.taskRepository = taskRepository;
     this.userStateQueryRepository = userStateQueryRepository;
     this.userStateService = userStateService;
     this.inboxSignalService = inboxSignalService;
+    this.inboxGenerationService = inboxGenerationService;
     this.userAccessor = userAccessor;
   }
 
@@ -106,6 +109,9 @@ public class MarkerService {
    *   <li>{@link TaskUserState} sicherstellen via {@link UserStateService#ensure}
    *       (legt an falls nicht vorhanden; aendert UNSUBSCRIBED_AT NICHT - Inbox-Invariante).
    *   <li>Marker-Setter ausfuehren und speichern.
+   *   <li>Nur bei Neuanlage eines aktiven {@link TaskUserState} (Membership-Etablierung):
+   *       Inbox-Generation des Benutzers ATOMAR in dieser Tx bumpen + after-commit invalidieren
+   *       (Snapshot-Rejection / Codex #6). Ein reines State-UPDATE bumpt/invalidiert NICHT.
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
@@ -134,12 +140,19 @@ public class MarkerService {
     markerSetter.accept(state);
     userStateQueryRepository.save(state);
 
-    // Final-Review P2-3: Entstand durch diesen Marker erstmals ein aktiver UserState, erscheint
-    // der Task ab jetzt im Inbox-Snapshot des Benutzers. Damit der Client den neuen Stand nicht
-    // erst beim naechsten vollen Reload sieht, ein snapshot-invalidated-Signal (after-commit)
-    // senden. Das reine Setzen eines Markers auf einem bereits vorhandenen State bleibt rein
-    // persoenlich und invalidiert NICHT.
+    // Finding 2 / Option B / Codex #6 (dritter Membership-Fall): Entstand durch diesen Marker
+    // erstmals ein aktiver UserState (created), ETABLIERT das die Inbox-Membership des Benutzers -
+    // der Task erscheint ab jetzt in dessen aktiver Keyset-Query (TaskKeysetQueryRepository EXISTS
+    // TASK_USER_STATE). Ein alter aktiver Cursor, dessen First-Page VOR dieser (uncommitteten)
+    // Anlage entstand, lieferte sonst nach dem Commit weiter stale 200 (der neu sichtbare Task
+    // fehlt), statt 410. Deshalb bei Neuanlage die Inbox-Generation des Benutzers ATOMAR in dieser
+    // Tx bumpen (alte Cursor -> 410 beim naechsten Folge-Read) UND after-commit invalidieren.
+    // Scope: der Benutzer selbst - nur seine aktive Liste aendert sich durch die reine
+    // Membership-Etablierung (keine LAST_ACTIVITY_AT-Mutation, keine Teilnehmer-Summary-Aenderung
+    // fuer Dritte). Ein reines State-UPDATE (pin/flag/mute auf bestehendem State) bumpt/invalidiert
+    // NICHT - es hat keinen Keyset-/Membership-Effekt.
     if (created) {
+      inboxGenerationService.bump(tenantId, userRef);
       inboxSignalService.invalidate(tenantId, List.of(userRef));
     }
   }

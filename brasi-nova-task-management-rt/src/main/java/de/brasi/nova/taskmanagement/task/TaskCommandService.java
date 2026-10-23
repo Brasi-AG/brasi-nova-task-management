@@ -241,6 +241,13 @@ public class TaskCommandService {
       }
     }
 
+    // Codex #6: Alle in dieser Tx zu bumpenden Refs sammeln und EINMAL NACH dem TASK-save (oben, Z.
+    // taskRepository.save) ueber den zentralen Helfer in SORTIERTER Reihenfolge bumpen. Der TASK-save
+    // liegt am Anfang der Mutation -> TASK-Zeile wird vor den Generation-Zeilen gesperrt (einheitliche
+    // Save-dann-Bump-Ordnung). Menge = Nicht-Creator-Assignees + Creator (disjunkt per Dedupe oben);
+    // Reihenfolge/Platzierung geaendert, NICHT welche Refs gebumpt werden.
+    final Set<UUID> refsToBump = new LinkedHashSet<>();
+
     // D3: Nicht-Creator-Assignees initial zuweisen (volle Semantik wie AssigneeService):
     // neuer Participant (ASSIGNEE+PARTICIPANT_FLAG) + UserState + ASSIGN-Notification + Generation-Bump.
     for (final UUID assigneeRef : initialAssignees) {
@@ -267,8 +274,9 @@ public class TaskCommandService {
           creatorRef);
 
       // Finding 2 / Option B: die Zuweisung legt eine neue Inbox-Membership dieses Benutzers an ->
-      // Generation atomar in dieser Tx bumpen (alte Inbox-Cursor -> 410 beim naechsten Read).
-      inboxGenerationService.bump(tenantId, assigneeRef);
+      // Generation atomar in dieser Tx bumpen (alte Inbox-Cursor -> 410 beim naechsten Read). Ref
+      // sammeln; der eigentliche (sortierte) Bump erfolgt gebuendelt nach dem Loop.
+      refsToBump.add(assigneeRef);
     }
 
     // D4: Initial-Tags zuordnen (frischer Task -> immer Neuanlage, keine Reaktivierung noetig).
@@ -283,8 +291,12 @@ public class TaskCommandService {
     // D3b (Codex-Gate-1 MAJOR): Auch der Ersteller erhaelt beim Create eine NEUE Inbox-Membership
     // (Participant+UserState) -> seine Generation EINMAL in derselben Tx bumpen, sonst koennte ein
     // paralleler Read mit altem Cursor den neuen Task auf einer Folgeseite sehen
-    // (LAST_ACTIVITY_AT < asOf < commit).
-    inboxGenerationService.bump(tenantId, creatorRef);
+    // (LAST_ACTIVITY_AT < asOf < commit). Ref sammeln; der (sortierte) Bump erfolgt gebuendelt unten.
+    refsToBump.add(creatorRef);
+
+    // Codex #6: gesamte betroffene Menge (Assignees + Creator) EINMAL in SORTIERTER Reihenfolge NACH
+    // dem TASK-save bumpen (einheitliche Save-dann-Bump- + Lock-Ordnung ueber den zentralen Helfer).
+    inboxGenerationService.bumpSorted(tenantId, refsToBump);
 
     // D8 Schritt 8 / After-Commit: snapshot-invalidated Signal fuer Ersteller + alle initialen
     // Assignees registrieren.
@@ -541,9 +553,12 @@ public class TaskCommandService {
           .map(TaskUserState::getUserRef)
           .collect(Collectors.toList());
       if (!activeUserRefs.isEmpty()) {
-        for (final UUID activeUserRef : activeUserRefs) {
-          inboxGenerationService.bump(tenantId, activeUserRef);
-        }
+        // Deadlock-Robustheit (Codex #6): Bump NACH dem TASK-save (oben) ueber den zentralen Helfer
+        // in DETERMINISTISCH SORTIERTER Ref-Reihenfolge - so wird ueberall zuerst die TASK-Zeile und
+        // dann die TASK_INBOX_GENERATION-Zeilen gesperrt, und parallele Mutationen mit ueberlappenden
+        // Teilnehmern sperren die Generation-Zeilen in gleicher Reihenfolge (keine ueberkreuzte
+        // Lock-Order).
+        inboxGenerationService.bumpSorted(tenantId, activeUserRefs);
         inboxSignalService.invalidate(tenantId, activeUserRefs);
       }
     }

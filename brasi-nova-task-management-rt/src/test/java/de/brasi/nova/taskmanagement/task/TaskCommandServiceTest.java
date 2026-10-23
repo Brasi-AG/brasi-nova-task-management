@@ -125,6 +125,22 @@ class TaskCommandServiceTest {
         .thenReturn(DIRECTION_ID_CUSTOMER_INTERNAL);
     when(resolver.resolveTaskStatus(TaskStatusCodes.OPEN)).thenReturn(STATUS_ID_OPEN);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL)).thenReturn(PRIORITY_ID_NORMAL);
+
+    // Codex #6: Der Service bumpt Multi-Ref-Mengen jetzt ueber den zentralen Helfer bumpSorted; dieser
+    // delegiert produktiv je Ref (sortiert) an bump. Der gemockte Helfer an denselben Mock delegieren,
+    // damit die bestehenden je-Ref bump(..)-Verifikationen (WELCHE Refs, times/never) unveraendert
+    // gueltig bleiben - sie pruefen die fachliche Ref-Menge, nicht die Aufruf-Form.
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              final long t = inv.getArgument(0);
+              final java.util.Collection<UUID> c = inv.getArgument(1);
+              if (c != null) {
+                c.stream().sorted().forEach(r -> inboxGenerationService.bump(t, r));
+              }
+              return null;
+            })
+        .when(inboxGenerationService)
+        .bumpSorted(anyLong(), any());
   }
 
   @org.junit.jupiter.api.AfterEach

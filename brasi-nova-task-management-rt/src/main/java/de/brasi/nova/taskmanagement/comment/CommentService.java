@@ -9,6 +9,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityC
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
@@ -58,6 +59,7 @@ public class CommentService {
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
+  private final InboxGenerationService inboxGenerationService;
   private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
@@ -69,6 +71,7 @@ public class CommentService {
       final TaskUserStateQueryRepository userStateQueryRepository,
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
+      final InboxGenerationService inboxGenerationService,
       final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter) {
@@ -77,6 +80,7 @@ public class CommentService {
     this.userStateQueryRepository = userStateQueryRepository;
     this.notificationService = notificationService;
     this.inboxSignalService = inboxSignalService;
+    this.inboxGenerationService = inboxGenerationService;
     this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
@@ -93,7 +97,9 @@ public class CommentService {
    *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false).
    *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT aktualisieren.
    *   <li>Mentions aufloesen und REPLY/MENTION-Benachrichtigungen emittieren (Deduplizierung).
-   *   <li>Invalidate fuer alle aktiven Teilnehmer der Aufgabe.
+   *   <li>Inbox-Generation-Bump + Invalidate fuer alle aktiven Teilnehmer der Aufgabe (der
+   *       LAST_ACTIVITY_AT-Bump verschiebt die aktive Keyset-Position jedes Teilnehmers -&gt; alte
+   *       aktive Cursor werden beim naechsten Folge-Read mit 410 abgelehnt statt stale 200).
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
@@ -200,14 +206,30 @@ public class CommentService {
           "CommentService.createComment: MENTION-Benachrichtigung an {} emittiert.", mentionRef);
     }
 
-    // Invalidate fuer alle aktiven Teilnehmer
+    // Finding 2 / Option B + After-Commit: fuer ALLE aktiven Teilnehmer der Aufgabe (= TASK_USER_STATE
+    // mit UNSUBSCRIBED_AT IS NULL, innerhalb dieser Tx ermittelt) (a) die Inbox-Generation ATOMAR in
+    // dieser Tx bumpen und (b) das snapshot-invalidated Signal registrieren (nach Commit). Begruendung
+    // Bump: createComment setzt LAST_ACTIVITY_AT = now() (oben). Da der aktive Keyset-Cursor genau auf
+    // (asOf, LAST_ACTIVITY_AT, externalId) ordnet, verschiebt das die Keyset-Position des Tasks im
+    // Scroll jedes aktiven Teilnehmers - ein alter aktiver Cursor koennte den Task sonst ueberspringen
+    // oder doppelt liefern (stale pagination), ohne 410 zu erhalten. Dieselbe Teilnehmer-Menge fuer
+    // Bump UND Invalidate - konsistent zum Muster der uebrigen Aktivitaets-/Membership-Mutationen
+    // (TaskCommandService.patch, AssigneeService.updateAssignees/exit/addParticipants).
     final List<TaskUserState> activeStates =
         userStateQueryRepository.findActiveUserRefsByTaskId(taskId);
     final List<UUID> activeUserRefs =
         activeStates.stream()
             .map(TaskUserState::getUserRef)
             .collect(Collectors.toList());
-    inboxSignalService.invalidate(tenantId, activeUserRefs);
+    if (!activeUserRefs.isEmpty()) {
+      // Deadlock-Robustheit (Codex #6): Bump NACH dem TASK-save (oben, taskRepository.save) ueber den
+      // zentralen Helfer in DETERMINISTISCH SORTIERTER Ref-Reihenfolge - so wird ueberall zuerst die
+      // TASK-Zeile und dann die TASK_INBOX_GENERATION-Zeilen gesperrt, und parallele Mutationen mit
+      // ueberlappenden Teilnehmern sperren die Generation-Zeilen in gleicher Reihenfolge (keine
+      // ueberkreuzte Lock-Order).
+      inboxGenerationService.bumpSorted(tenantId, activeUserRefs);
+      inboxSignalService.invalidate(tenantId, activeUserRefs);
+    }
 
     // Antwort-DTO zusammenstellen
     final Instant createdAt = auditTimeConverter.toInstant(saved.getCreatedAt());

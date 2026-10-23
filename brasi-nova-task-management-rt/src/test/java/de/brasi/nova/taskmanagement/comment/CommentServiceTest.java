@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.comment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -19,6 +20,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityC
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
@@ -82,6 +84,7 @@ class CommentServiceTest {
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private NotificationService notificationService;
   @Mock private InboxSignalService inboxSignalService;
+  @Mock private InboxGenerationService inboxGenerationService;
   @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
 
@@ -95,6 +98,7 @@ class CommentServiceTest {
         userStateQueryRepository,
         notificationService,
         inboxSignalService,
+        inboxGenerationService,
         userReadRepository,
         userAccessor,
         new AuditTimeConverter("Europe/Berlin"));
@@ -106,6 +110,21 @@ class CommentServiceTest {
 
     when(notificationService.emit(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(UUID.randomUUID());
+
+    // Codex #6: createComment bumpt die aktiven Teilnehmer jetzt ueber den zentralen Helfer bumpSorted
+    // (delegiert produktiv je Ref sortiert an bump). Der gemockte Helfer an denselben Mock delegieren,
+    // damit die bestehenden je-Ref bump(..)-Verifikationen unveraendert gueltig bleiben.
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              final long t = inv.getArgument(0);
+              final Collection<UUID> c = inv.getArgument(1);
+              if (c != null) {
+                c.stream().sorted().forEach(r -> inboxGenerationService.bump(t, r));
+              }
+              return null;
+            })
+        .when(inboxGenerationService)
+        .bumpSorted(anyLong(), any());
   }
 
   @AfterEach
@@ -175,6 +194,10 @@ class CommentServiceTest {
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
     assertThat(refsCaptor.getValue()).contains(ALICE_UUID);
 
+    // Codex #6: Inbox-Generation JEDES aktiven Teilnehmers gebumpt (hier genau ALICE) - sonst
+    // lieferte ein alter aktiver Cursor nach dem LAST_ACTIVITY_AT-Bump stale 200 statt 410.
+    verify(inboxGenerationService).bump(TENANT_ID, ALICE_UUID);
+
     // Antwort-Modell korrekt
     assertThat(model).isNotNull();
     assertThat(model.taskId()).isEqualTo(taskUuid);
@@ -226,6 +249,10 @@ class CommentServiceTest {
     // Keine REPLY-Notification
     verify(notificationService, never()).emit(
         any(), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
+
+    // Codex #6: keine aktiven Teilnehmer -> weder Bump noch Invalidate (empty-Guard).
+    verifyNoInteractions(inboxGenerationService);
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
   // ---- Test 2b: unaufloesbare/fremd-tenant GUID -> verworfen, Kommentar trotzdem angelegt -------
