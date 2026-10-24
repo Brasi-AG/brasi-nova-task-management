@@ -1775,6 +1775,15 @@ class AssigneeControllerIT {
         buildJwtWithAuthority(
             TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     final UUID taskId = createTask(mvc, om, tokenCreator, "S4-non-member-404");
+    final long dbId = taskDbId(taskId);
+    final Integer participantRowsBefore = count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
+    final Integer handoverRowsBefore = count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", dbId);
+    final Integer historyRowsBefore = count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?", dbId);
+    final Object activityBefore = jdbcTemplate.queryForObject(
+        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId);
 
     // GRANTFREE2 ist KEIN Member dieser Aufgabe -> 404 (neutral), VOR jeder Zielvalidierung.
     final String tokenNonMember =
@@ -1791,6 +1800,23 @@ class AssigneeControllerIT {
                             "handedOverToIds",
                             List.of(UUID.randomUUID().toString())))))
         .andExpect(status().isNotFound());
+
+    // Derselbe member-scoped Exit-Pfad muss auch einen Akteur aus einem anderen Tenant maskieren.
+    final String foreign = buildGrantFreeJwt(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN);
+    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
+            .header("Authorization", "Bearer " + foreign)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        .andExpect(status().isNotFound());
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId))
+        .isEqualTo(participantRowsBefore);
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", dbId))
+        .isEqualTo(handoverRowsBefore);
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?", dbId))
+        .isEqualTo(historyRowsBefore);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId))
+        .isEqualTo(activityBefore);
   }
 
   @Test

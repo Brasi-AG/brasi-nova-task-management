@@ -470,6 +470,96 @@ class TaskFacadeControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  @Test
+  @DisplayName("PATCH ist fuer grantfreie aktive Member erlaubt und fuer Nicht- oder Ex-Member ohne Task-Write verboten")
+  void patch_membership_guard_wire_und_keine_verweigerten_writes() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String creator = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+    final String member = buildJwtWithAuthority(TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN);
+    final String nonMember = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN);
+    final UUID taskId = createTask(mvc, om, creator, "Membership-PATCH-Original");
+
+    final String originalActivity = jdbcTemplate.queryForObject(
+        "SELECT CONVERT(varchar(33), LAST_ACTIVITY_AT, 126) FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+        String.class, taskId);
+    final Integer originalHistory = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId);
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + nonMember)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"verboten\"}"))
+        .andExpect(status().isNotFound());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT TITLE FROM [dbo].[TASK] WHERE EXTERNALID = ?", String.class, taskId))
+        .isEqualTo("Membership-PATCH-Original");
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT CONVERT(varchar(33), LAST_ACTIVITY_AT, 126) FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+        String.class, taskId)).isEqualTo(originalActivity);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId)).isEqualTo(originalHistory);
+
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + creator)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(USER_A2_REF)))))
+        .andExpect(status().isNoContent());
+    assertThat(getDetail(mvc, om, member, taskId).get("title").asText())
+        .isEqualTo("Membership-PATCH-Original");
+    final Integer historyBeforeMemberPatch = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId);
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + member)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"Membership-PATCH-Erlaubt\"}"))
+        .andExpect(status().isNoContent());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT TITLE FROM [dbo].[TASK] WHERE EXTERNALID = ?", String.class, taskId))
+        .isEqualTo("Membership-PATCH-Erlaubt");
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId))
+        .isGreaterThan(historyBeforeMemberPatch);
+
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + creator)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"assignees\":[]}"))
+        .andExpect(status().isNoContent());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?"
+            + " AND p.EXIT_KIND = 'UNSUBSCRIBED' AND p.EXIT_AT IS NOT NULL",
+        Integer.class, taskId, USER_A2_REF)).isEqualTo(1);
+    assertThat(getDetail(mvc, om, member, taskId).get("exit").get("kind").asText())
+        .isEqualTo("unsubscribed");
+    final String activityAfterExit = jdbcTemplate.queryForObject(
+        "SELECT CONVERT(varchar(33), LAST_ACTIVITY_AT, 126) FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+        String.class, taskId);
+    final Integer historyAfterExit = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId);
+    mvc.perform(patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + member)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"Ex-Member-Verboten\"}"))
+        .andExpect(status().isNotFound());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT TITLE FROM [dbo].[TASK] WHERE EXTERNALID = ?", String.class, taskId))
+        .isEqualTo("Membership-PATCH-Erlaubt");
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT CONVERT(varchar(33), LAST_ACTIVITY_AT, 126) FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+        String.class, taskId)).isEqualTo(activityAfterExit);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskId)).isEqualTo(historyAfterExit);
+  }
+
   // ---- MAJOR (Re-Gate): GET Detail nicht-existent + fremd -> 404, identische neutrale Meldung ----
 
   @Test

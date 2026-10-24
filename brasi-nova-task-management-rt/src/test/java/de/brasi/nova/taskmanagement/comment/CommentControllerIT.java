@@ -569,6 +569,17 @@ class CommentControllerIT {
         TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
         "task-management:TASK_WRITE", "task-management:TASK_READ");
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-POST-authz");
+    final Integer commentsBefore = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer notificationsBefore = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer historyBefore = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer commentCountBefore = jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
     final String tokenReadOnly = buildJwtWithAuthority(
         TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
         "task-management:TASK_READ");
@@ -578,6 +589,18 @@ class CommentControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("text", "Test Non-Member"))))
         .andExpect(status().isNotFound());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(commentsBefore);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(notificationsBefore);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(historyBefore);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+        .isEqualTo(commentCountBefore);
 
     // 3. Member-Token (USER_A), aber unbekannte Task-UUID -> 404
     mvc.perform(
@@ -586,6 +609,76 @@ class CommentControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("text", "Test fuer unbekannte Task"))))
         .andExpect(status().isNotFound());
+  }
+
+  @Test
+  @DisplayName("Grantfreier Member schreibt Kommentar; Ex-Member und fremder Tenant lesen oder schreiben nicht")
+  void comment_membership_guard_wire_und_keine_verweigerten_writes() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String creator = buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskUuid = createTask(mvc, om, creator, "Comment-Membership-Wire");
+    insertActiveMember(560401L, taskDbId(taskUuid), USER_B_REF);
+    final String member = buildGrantFreeJwt(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
+
+    final Integer commentsBefore = jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+    final UUID commentUuid = postComment(mvc, om, member, taskUuid, "Grantfreier Kommentar", null);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND c.EXTERNALID = ? AND c.AUTHOR_REF = ?",
+        Integer.class, taskUuid, commentUuid, USER_B_REF)).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+        .isEqualTo(commentsBefore + 1);
+
+    final Integer commentRows = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer notificationRows = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer historyRows = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer count = jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+
+    final String foreign = buildGrantFreeJwt(TENANT_B_UUID, USER_C_REF, USER_C_LOGIN);
+    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + foreign))
+        .andExpect(status().isNotFound());
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + foreign)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("text", "Fremder Kommentar",
+                "mentions", List.of(USER_A_REF)))))
+        .andExpect(status().isNotFound());
+
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_PARTICIPANT] SET EXIT_KIND = 'UNSUBSCRIBED', EXIT_AT = GETDATE()"
+            + " WHERE TASK_ID = ? AND TENANT_ID = ? AND PARTICIPANT_REF = ?",
+        taskDbId(taskUuid), TENANT_A_ID, USER_B_REF);
+    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
+            .header("Authorization", "Bearer " + member)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("text", "Ex-Member Kommentar",
+                "mentions", List.of(USER_A_REF)))))
+        .andExpect(status().isNotFound());
+
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(commentRows);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(notificationRows);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(historyRows);
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+        .isEqualTo(count);
   }
 
   // ---- BE-2 GET /tasks/{id}/comments ---------------------------------------------------------

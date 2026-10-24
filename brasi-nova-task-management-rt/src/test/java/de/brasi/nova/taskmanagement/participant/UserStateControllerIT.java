@@ -276,6 +276,18 @@ class UserStateControllerIT {
     assertThat(pinnedForB)
         .as("IS_PINNED fuer User B muss unveraendert 0 sein (pro-Benutzer-Isolation)")
         .isEqualTo(1);
+
+    // Vorher ist B nach DB-Beweis oben IS_PINNED=0; grantfreier PUT muss auf 1 wechseln.
+    final String grantFreeB = buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/pin")
+            .header("Authorization", "Bearer " + grantFreeB)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.IS_PINNED = 1",
+        Integer.class, UUID.fromString(taskId), USER_B_REF)).isEqualTo(1);
   }
 
   // ---- Positiv-IT: flag und mute setzbar -------------------------------------------------------
@@ -291,10 +303,17 @@ class UserStateControllerIT {
         "task-management:TASK_WRITE", "task-management:TASK_READ");
     final String taskId = createTask(mvc, om, tokenA, "Flag-Mute-IT-Task");
 
+    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + tokenA)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
+        .andExpect(status().isNoContent());
+    final String grantFreeB = buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
+
     // flag
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/flag")
-                .header("Authorization", "Bearer " + tokenA)
+                .header("Authorization", "Bearer " + grantFreeB)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
@@ -306,13 +325,13 @@ class UserStateControllerIT {
                 + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.IS_FLAGGED = 1",
             Integer.class,
             UUID.fromString(taskId),
-            USER_A_REF);
+            USER_B_REF);
     assertThat(flagged).as("IS_FLAGGED=1 muss gesetzt sein").isEqualTo(1);
 
     // mute
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/mute")
-                .header("Authorization", "Bearer " + tokenA)
+                .header("Authorization", "Bearer " + grantFreeB)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
@@ -324,7 +343,7 @@ class UserStateControllerIT {
                 + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.IS_MUTED = 1",
             Integer.class,
             UUID.fromString(taskId),
-            USER_A_REF);
+            USER_B_REF);
     assertThat(muted).as("IS_MUTED=1 muss gesetzt sein").isEqualTo(1);
   }
 
@@ -448,6 +467,13 @@ class UserStateControllerIT {
     assertThat(pinnedForB)
         .as("IS_PINNED darf fuer den ausgetretenen Benutzer durch den 404-pin NICHT gesetzt werden")
         .isZero();
+    for (String marker : List.of("flag", "mute")) {
+      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
+              .header("Authorization", "Bearer " + tokenB)
+              .contentType(MediaType.APPLICATION_JSON)
+              .content("{\"value\":true}"))
+          .andExpect(status().isNotFound());
+    }
   }
 
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
@@ -484,6 +510,12 @@ class UserStateControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
         .andExpect(status().isNotFound());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+        Integer.class, UUID.fromString(taskId), USER_NO_PERM_REF))
+        .as("Non-Member pin darf vor dem Guard keinen UserState anlegen")
+        .isZero();
 
     // 3. Fremder Tenant -> 404 (Task gehoert Mandant A)
     final String tokenC = buildJwtWithAuthority(
@@ -495,6 +527,19 @@ class UserStateControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
         .andExpect(status().isNotFound());
+
+    for (String marker : List.of("flag", "mute")) {
+      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
+              .header("Authorization", "Bearer " + tokenNoPerm)
+              .contentType(MediaType.APPLICATION_JSON)
+              .content("{\"value\":true}"))
+          .andExpect(status().isNotFound());
+      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
+              .header("Authorization", "Bearer " + tokenC)
+              .contentType(MediaType.APPLICATION_JSON)
+              .content("{\"value\":true}"))
+          .andExpect(status().isNotFound());
+    }
   }
 
   // ---- Hilfsmethoden -------------------------------------------------------------------------
