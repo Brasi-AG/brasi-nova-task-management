@@ -19,6 +19,7 @@ import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfigurati
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import io.keel.framework.security.KsfSecurityAutoConfiguration;
 import io.keel.framework.security.web.KsfWebSecurityAutoConfiguration;
+import io.keel.framework.web.openapi.KsfOpenApiConfig;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -368,6 +369,7 @@ class SpringDocApiDocsIT {
     AopAutoConfiguration.class,
     io.keel.framework.web.autoconfigure.NovaJacksonInfrastructureAutoConfiguration.class,
     io.keel.framework.web.autoconfigure.NovaExceptionHandlingAutoConfiguration.class,
+    KsfOpenApiConfig.class,
     // springdoc (2.8.12): Kern + WebMvc + Gruppen-Support fuer /v3/api-docs/{group}
     org.springdoc.core.properties.SpringDocConfigProperties.class,
     org.springdoc.core.configuration.SpringDocConfiguration.class,
