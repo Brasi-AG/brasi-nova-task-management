@@ -34,20 +34,10 @@ import org.springframework.stereotype.Service;
  * TASK-save ({@code addParticipants}, {@code MarkerService}) koennen diese Inversion nicht ausloesen;
  * sie nutzen {@code bumpSorted}/{@code bump} dennoch fuer eine konsistente Generation-Lock-Ordnung.
  *
- * <p><b>Bekannte Luecke / Folge-Slice (Codex #6, bewusst NICHT in diesem Slice gefixt):</b> Der
- * Bump deckt nur die AKTIVEN Teilnehmer ({@code findActiveUserRefsByTaskId}, UNSUBSCRIBED_AT IS
- * NULL). Aendert eine Aktivitaets-Mutation (patch/createComment) das {@code LAST_ACTIVITY_AT} einer
- * Aufgabe, die ein bereits AUSGETRETENER Benutzer in seinem ARCHIV sieht
- * ({@code findArchiveLeftPage}/{@code findArchiveAllPage} via {@code UNSUBSCRIBED_AT}/{@code
- * EXIT_KIND}), wird dessen Archiv-Cursor NICHT invalidiert (ausgetretene Refs fehlen in der
- * aktiven Ref-Query) - sein alter Archiv-Cursor kann stale 200 (Skip/Dupe) statt 410 liefern. Ein
- * sauberer Fix muesste zusaetzlich die je-Teilnehmer-Union (ausgetretene UserStates + Participants
- * mit {@code EXIT_KIND}) fuer den Archiv-Bump beruecksichtigen; das vergroessert jedoch die
- * Lock-Flaeche jeder Aktivitaets-Mutation (gegenlaeufig zur Deadlock-Robustheit oben) und fuehrt
- * einen neuen Membership-Invariantentyp an drei Hot-Paths ein. Schadenswirkung begrenzt (nur
- * historische Archiv-Ansicht ausgetretener Nutzer, kein Daten-/Tenant-/aktiver-Inbox-Effekt; der
- * Client re-bootstrapt beim naechsten vollen Reload). Daher als eigener, gegateter Folge-Slice mit
- * eigenem IT zu fuehren, nicht erzwungen in diesen Slice.
+ * <p>Aktivitaets-Mutationen materialisieren aktive und historische Archiv-Leser vor dem TASK-save.
+ * Danach bumpen sie die deduplizierte Ref-Menge in globaler UUID-Reihenfolge, damit auch alte
+ * Archiv-Cursor ausgetretener Leser mit 410 abgelehnt werden. Die zusaetzlichen Reader vergroessern
+ * die Generation-Lock-Flaeche dieser drei Schreibpfade.
  */
 @Service
 public class InboxGenerationService {

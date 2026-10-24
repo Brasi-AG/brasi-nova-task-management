@@ -4,6 +4,7 @@ import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
@@ -14,6 +15,7 @@ import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
@@ -30,7 +32,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -58,6 +59,7 @@ public class CommentService {
   private final BaseTaskRepository taskRepository;
   private final BaseTaskCommentRepository commentRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final TaskParticipantQueryRepository participantQueryRepository;
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
   private final InboxGenerationService inboxGenerationService;
@@ -71,6 +73,7 @@ public class CommentService {
       final BaseTaskRepository taskRepository,
       final BaseTaskCommentRepository commentRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
+      final TaskParticipantQueryRepository participantQueryRepository,
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
       final InboxGenerationService inboxGenerationService,
@@ -81,6 +84,7 @@ public class CommentService {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
+    this.participantQueryRepository = participantQueryRepository;
     this.notificationService = notificationService;
     this.inboxSignalService = inboxSignalService;
     this.inboxGenerationService = inboxGenerationService;
@@ -133,6 +137,16 @@ public class CommentService {
     if (input.parentCommentId() != null) {
       parentComment = resolveParentComment(input.parentCommentId(), taskId, tenantId);
     }
+
+    // Reader-Refs vor dem TASK-save materialisieren, damit kein Membership-SELECT unter dessen
+    // X-Lock gegen einen Exit mit umgekehrter Lock-Reihenfolge laeuft.
+    final Set<UUID> readerRefs = new LinkedHashSet<>();
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(readerRefs::add);
+    participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+        .map(TaskParticipant::getParticipantRef)
+        .forEach(readerRefs::add);
 
     // Kommentar anlegen
     final TaskComment comment = new TaskComment();
@@ -230,29 +244,10 @@ public class CommentService {
           "CommentService.createComment: MENTION-Benachrichtigung an {} emittiert.", mentionRef);
     }
 
-    // Finding 2 / Option B + After-Commit: fuer ALLE aktiven Teilnehmer der Aufgabe (= TASK_USER_STATE
-    // mit UNSUBSCRIBED_AT IS NULL, innerhalb dieser Tx ermittelt) (a) die Inbox-Generation ATOMAR in
-    // dieser Tx bumpen und (b) das snapshot-invalidated Signal registrieren (nach Commit). Begruendung
-    // Bump: createComment setzt LAST_ACTIVITY_AT = now() (oben). Da der aktive Keyset-Cursor genau auf
-    // (asOf, LAST_ACTIVITY_AT, externalId) ordnet, verschiebt das die Keyset-Position des Tasks im
-    // Scroll jedes aktiven Teilnehmers - ein alter aktiver Cursor koennte den Task sonst ueberspringen
-    // oder doppelt liefern (stale pagination), ohne 410 zu erhalten. Dieselbe Teilnehmer-Menge fuer
-    // Bump UND Invalidate - konsistent zum Muster der uebrigen Aktivitaets-/Membership-Mutationen
-    // (TaskCommandService.patch, AssigneeService.updateAssignees/exit/addParticipants).
-    final List<TaskUserState> activeStates =
-        userStateQueryRepository.findActiveUserRefsByTaskId(taskId);
-    final List<UUID> activeUserRefs =
-        activeStates.stream()
-            .map(TaskUserState::getUserRef)
-            .collect(Collectors.toList());
-    if (!activeUserRefs.isEmpty()) {
-      // Deadlock-Robustheit (Codex #6): Bump NACH dem TASK-save (oben, taskRepository.save) ueber den
-      // zentralen Helfer in DETERMINISTISCH SORTIERTER Ref-Reihenfolge - so wird ueberall zuerst die
-      // TASK-Zeile und dann die TASK_INBOX_GENERATION-Zeilen gesperrt, und parallele Mutationen mit
-      // ueberlappenden Teilnehmern sperren die Generation-Zeilen in gleicher Reihenfolge (keine
-      // ueberkreuzte Lock-Order).
-      inboxGenerationService.bumpSorted(tenantId, activeUserRefs);
-      inboxSignalService.invalidate(tenantId, activeUserRefs);
+    // TASK-save vor global UUID-sortiertem Bump; Signal fuer exakt dieselbe deduplizierte Menge.
+    if (!readerRefs.isEmpty()) {
+      inboxGenerationService.bumpSorted(tenantId, readerRefs);
+      inboxSignalService.invalidate(tenantId, readerRefs);
     }
 
     // Antwort-DTO zusammenstellen

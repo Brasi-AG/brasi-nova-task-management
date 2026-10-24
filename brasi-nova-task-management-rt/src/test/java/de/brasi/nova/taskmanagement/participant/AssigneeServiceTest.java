@@ -916,6 +916,11 @@ class AssigneeServiceTest {
     stateB.setUserRef(remainingRefB);
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(List.of(stateB));
+    final UUID archivedRef = UUID.randomUUID();
+    final TaskParticipant archivedReader = new TaskParticipant();
+    archivedReader.setParticipantRef(archivedRef);
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(archivedReader));
 
     // Act
     service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
@@ -925,8 +930,15 @@ class AssigneeServiceTest {
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
     assertThat(refsCaptor.getValue())
-        .as("invalidate muss den austretenden Akteur UND den verbleibenden aktiven B enthalten")
-        .contains(ACTOR_REF, remainingRefB);
+        .as("Akteur, verbleibenden aktiven und historischen Leser invalidieren")
+        .containsExactlyInAnyOrder(ACTOR_REF, remainingRefB, archivedRef);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumpCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumpCaptor.capture());
+    assertThat(bumpCaptor.getValue()).containsExactlyInAnyOrderElementsOf(refsCaptor.getValue());
+    verify(inboxGenerationService).bump(TENANT_ID, ACTOR_REF);
+    verify(inboxGenerationService).bump(TENANT_ID, remainingRefB);
+    verify(inboxGenerationService).bump(TENANT_ID, archivedRef);
   }
 
   // ============================================================================================

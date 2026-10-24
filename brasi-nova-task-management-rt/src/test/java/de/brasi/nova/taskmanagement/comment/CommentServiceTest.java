@@ -15,6 +15,7 @@ import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
@@ -26,6 +27,7 @@ import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -83,6 +85,7 @@ class CommentServiceTest {
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskCommentRepository commentRepository;
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
+  @Mock private TaskParticipantQueryRepository participantQueryRepository;
   @Mock private NotificationService notificationService;
   @Mock private InboxSignalService inboxSignalService;
   @Mock private InboxGenerationService inboxGenerationService;
@@ -98,6 +101,7 @@ class CommentServiceTest {
         taskRepository,
         commentRepository,
         userStateQueryRepository,
+        participantQueryRepository,
         notificationService,
         inboxSignalService,
         inboxGenerationService,
@@ -166,6 +170,10 @@ class CommentServiceTest {
     final TaskUserState state1 = stateWithUserRef(ALICE_UUID, taskId);
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(List.of(state1));
+    final TaskParticipant archivedReader = new TaskParticipant();
+    archivedReader.setParticipantRef(BOB_UUID);
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(archivedReader));
 
     final CommentCreateInput input = new CommentCreateInput("Einfacher Kommentar.", null, List.of());
     final CommentModel model = service.createComment(taskUuid, input);
@@ -202,11 +210,16 @@ class CommentServiceTest {
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
-    assertThat(refsCaptor.getValue()).contains(ALICE_UUID);
+    assertThat(refsCaptor.getValue()).containsExactlyInAnyOrder(ALICE_UUID, BOB_UUID);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumpCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumpCaptor.capture());
+    assertThat(bumpCaptor.getValue()).containsExactlyInAnyOrderElementsOf(refsCaptor.getValue());
 
     // Codex #6: Inbox-Generation JEDES aktiven Teilnehmers gebumpt (hier genau ALICE) - sonst
     // lieferte ein alter aktiver Cursor nach dem LAST_ACTIVITY_AT-Bump stale 200 statt 410.
     verify(inboxGenerationService).bump(TENANT_ID, ALICE_UUID);
+    verify(inboxGenerationService).bump(TENANT_ID, BOB_UUID);
 
     // Antwort-Modell korrekt
     assertThat(model).isNotNull();

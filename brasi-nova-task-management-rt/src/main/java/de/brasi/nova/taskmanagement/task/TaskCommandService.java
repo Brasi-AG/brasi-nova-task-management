@@ -12,6 +12,7 @@ import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
@@ -68,6 +69,7 @@ public class TaskCommandService {
 
   private final BaseTaskRepository taskRepository;
   private final BaseTaskParticipantRepository participantRepository;
+  private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final DictionaryCodeResolver resolver;
   private final UserAccessor userAccessor;
@@ -85,6 +87,7 @@ public class TaskCommandService {
   public TaskCommandService(
       final BaseTaskRepository taskRepository,
       final BaseTaskParticipantRepository participantRepository,
+      final TaskParticipantQueryRepository participantQueryRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
       final DictionaryCodeResolver resolver,
       final UserAccessor userAccessor,
@@ -99,6 +102,7 @@ public class TaskCommandService {
       final TaskMembershipGuard membershipGuard) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
+    this.participantQueryRepository = participantQueryRepository;
     this.userStateQueryRepository = userStateQueryRepository;
     this.resolver = resolver;
     this.userAccessor = userAccessor;
@@ -540,6 +544,15 @@ public class TaskCommandService {
     }
 
     if (changed) {
+      // Vor dem TASK-save lesen: Exit sperrt Membership-Zeilen vor TASK. Ein nachgelagerter
+      // Participant-SELECT unter TASK-X-Lock koennte diese Lock-Reihenfolge umkehren.
+      final Set<UUID> readerRefs = new HashSet<>();
+      userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+          .map(TaskUserState::getUserRef)
+          .forEach(readerRefs::add);
+      participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+          .map(TaskParticipant::getParticipantRef)
+          .forEach(readerRefs::add);
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
       log.info(
@@ -547,29 +560,10 @@ public class TaskCommandService {
           taskExternalId,
           actorRef,
           tenantId);
-    }
-
-    // Finding 2 / Option B + After-Commit: fuer ALLE aktiven Teilnehmer der Aufgabe (= TASK_USER_STATE
-    // mit UNSUBSCRIBED_AT IS NULL, innerhalb dieser Tx ermittelt) bei JEDER tatsaechlichen Aenderung
-    // (a) die Inbox-Generation ATOMAR in dieser Tx bumpen (alte aktive Cursor -> 410 beim naechsten
-    // Folge-Read; Status-Change verschiebt aktive-Seite<->Archiv, jeder changed-Patch verschiebt via
-    // LAST_ACTIVITY_AT die Keyset-Position) und (b) das snapshot-invalidated Signal registrieren (nach
-    // Commit). Dieselbe Teilnehmer-Menge fuer Bump UND Invalidate - konsistent zum Muster der
-    // Membership-Mutationen (AssigneeService.updateAssignees/exit/addParticipants).
-    if (changed) {
-      final List<UUID> activeUserRefs = userStateQueryRepository
-          .findActiveUserRefsByTaskId(taskId)
-          .stream()
-          .map(TaskUserState::getUserRef)
-          .collect(Collectors.toList());
-      if (!activeUserRefs.isEmpty()) {
-        // Deadlock-Robustheit (Codex #6): Bump NACH dem TASK-save (oben) ueber den zentralen Helfer
-        // in DETERMINISTISCH SORTIERTER Ref-Reihenfolge - so wird ueberall zuerst die TASK-Zeile und
-        // dann die TASK_INBOX_GENERATION-Zeilen gesperrt, und parallele Mutationen mit ueberlappenden
-        // Teilnehmern sperren die Generation-Zeilen in gleicher Reihenfolge (keine ueberkreuzte
-        // Lock-Order).
-        inboxGenerationService.bumpSorted(tenantId, activeUserRefs);
-        inboxSignalService.invalidate(tenantId, activeUserRefs);
+      // Gleiche deduplizierte Menge fuer atomaren Generation-Bump und Signal nach Commit.
+      if (!readerRefs.isEmpty()) {
+        inboxGenerationService.bumpSorted(tenantId, readerRefs);
+        inboxSignalService.invalidate(tenantId, readerRefs);
       }
     }
   }

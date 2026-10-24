@@ -27,6 +27,7 @@ import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
@@ -81,6 +82,7 @@ class TaskCommandServiceTest {
 
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskParticipantRepository participantRepository;
+  @Mock private TaskParticipantQueryRepository participantQueryRepository;
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private DictionaryCodeResolver resolver;
   @Mock private UserAccessor userAccessor;
@@ -102,6 +104,7 @@ class TaskCommandServiceTest {
         new TaskCommandService(
             taskRepository,
             participantRepository,
+            participantQueryRepository,
             userStateQueryRepository,
             resolver,
             userAccessor,
@@ -516,6 +519,13 @@ class TaskCommandServiceTest {
 
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(List.of(stateCreator, statePatcher));
+    final UUID archivedRef = UUID.randomUUID();
+    final TaskParticipant archivedReader = new TaskParticipant();
+    archivedReader.setParticipantRef(archivedRef);
+    final TaskParticipant overlappingReader = new TaskParticipant();
+    overlappingReader.setParticipantRef(creatorRef);
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(archivedReader, overlappingReader));
 
     when(resolver.resolveTaskStatus(TaskStatusCodes.OPEN)).thenReturn(STATUS_ID_OPEN);
 
@@ -530,8 +540,15 @@ class TaskCommandServiceTest {
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
 
     assertThat(refsCaptor.getValue())
-        .as("invalidate muss sowohl Creator als auch Patcher enthalten")
-        .containsExactlyInAnyOrder(creatorRef, patcherRef);
+        .as("aktive und historische Leser einmalig invalidieren")
+        .containsExactlyInAnyOrder(creatorRef, patcherRef, archivedRef);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumpCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumpCaptor.capture());
+    assertThat(bumpCaptor.getValue()).containsExactlyInAnyOrderElementsOf(refsCaptor.getValue());
+    verify(inboxGenerationService).bump(TENANT_ID, creatorRef);
+    verify(inboxGenerationService).bump(TENANT_ID, patcherRef);
+    verify(inboxGenerationService).bump(TENANT_ID, archivedRef);
   }
 
   // ---- MAJOR 3: unbekannte Client-Codes -> 400 -------------------------------------------------

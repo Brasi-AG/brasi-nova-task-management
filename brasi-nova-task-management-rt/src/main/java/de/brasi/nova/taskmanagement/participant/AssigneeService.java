@@ -782,6 +782,16 @@ public class AssigneeService {
     // (7) History (Namen-Snapshot): "<AkteurName> -> <Ziel-Namen>".
     recordHandoverHistory(taskId, tenantId, actorRef, dedupedTargets, handover, shouldStay);
 
+    // Nach den eigenen Membership-Writes, aber vor dem TASK-save lesen: so bleiben historische
+    // Archiv-Leser eingeschlossen, ohne die TASK-/Membership-Lock-Reihenfolge zu invertieren.
+    final Set<UUID> readerRefs = new HashSet<>();
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(readerRefs::add);
+    participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+        .map(TaskParticipant::getParticipantRef)
+        .forEach(readerRefs::add);
+
     // (8)+(9) LAST_ACTIVITY_AT-Bump VOR dem versionierten TASK-save. Der TASK-VERSION-Bump
     // serialisiert bei JEDEM erfolgreichen Austritt/Handover gegen nebenlaeufiges PUT/exit; der
     // Verlierer bricht mit BusinessRuleException (409) ab und committet NICHTS.
@@ -810,9 +820,7 @@ public class AssigneeService {
       affected.add(actorRef);
     }
     affected.addAll(notifyTargets);
-    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
-        .map(TaskUserState::getUserRef)
-        .forEach(affected::add);
+    affected.addAll(readerRefs);
 
     // Finding 2 / Option B / Codex #6: Generation JEDES betroffenen aktiven Teilnehmers ATOMAR in
     // dieser Tx bumpen - nicht nur Akteur + Ziele. Der TASK-LAST_ACTIVITY_AT-Bump (oben, now())

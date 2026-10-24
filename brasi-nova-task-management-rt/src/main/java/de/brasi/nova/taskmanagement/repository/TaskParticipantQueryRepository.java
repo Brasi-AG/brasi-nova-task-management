@@ -241,4 +241,38 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
               + "AND TASK_ID IN (:taskIds) "
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskParticipant> findActiveByTaskIds(@Param("taskIds") Collection<Long> taskIds);
+
+  /**
+   * Historische Archiv-Leser einer Aufgabe. Die aktive, tenantgleiche PERSON-Teilnehmerzeile ist
+   * der READ-Membership-Anker; ein verwaister UserState darf keinen Generation-Bump ausloesen.
+   * Deckt beide left-Wege ab: Participant-Austritt und persoenliches Abmelden im UserState.
+   */
+  @NovaQuery(
+      value =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT p.* FROM TASK_PARTICIPANT p "
+              + "WHERE p.TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_KIND = 'PERSON' "
+              + "AND p.TASK_ID = :taskId "
+              + "AND p.ENTITY_STATUS = 'ACTIVE' "
+              + "AND (p.EXIT_KIND IS NOT NULL OR EXISTS ("
+              + "SELECT 1 FROM TASK_USER_STATE s "
+              + "WHERE s.TENANT_ID = :tenantId AND s.TASK_ID = p.TASK_ID "
+              + "AND s.USER_REF = p.PARTICIPANT_REF "
+              + "AND s.ENTITY_STATUS = 'ACTIVE' AND s.UNSUBSCRIBED_AT IS NOT NULL))",
+      mssql =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT p.* FROM [dbo].[TASK_PARTICIPANT] p "
+              + "WHERE p.TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_KIND = 'PERSON' "
+              + "AND p.TASK_ID = :taskId "
+              + "AND p.ENTITY_STATUS = 'ACTIVE' "
+              + "AND (p.EXIT_KIND IS NOT NULL OR EXISTS ("
+              + "SELECT 1 FROM [dbo].[TASK_USER_STATE] s "
+              + "WHERE s.TENANT_ID = :tenantId AND s.TASK_ID = p.TASK_ID "
+              + "AND s.USER_REF = p.PARTICIPANT_REF "
+              + "AND s.ENTITY_STATUS = 'ACTIVE' AND s.UNSUBSCRIBED_AT IS NOT NULL))")
+  List<TaskParticipant> findArchiveReadersByTaskId(@Param("taskId") Long taskId);
 }

@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.inbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -10,6 +11,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.push.NoOpNotificationPushConfig;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
@@ -19,6 +22,8 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
 import io.jsonwebtoken.Jwts;
 import io.keel.framework.api.security.AuditorProvider;
+import io.keel.framework.api.security.tenant.TenantContextHolder;
+import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfiguration;
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
@@ -228,6 +233,7 @@ class InboxSnapshotControllerIT {
 
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private TaskParticipantQueryRepository participantQueryRepository;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -927,6 +933,205 @@ class InboxSnapshotControllerIT {
     assertThat(snapshot.get("archiveTotals").get("done").asLong()).isEqualTo(1L);
     assertThat(snapshot.get("archiveTotals").get("left").asLong()).isEqualTo(1L);
     assertThat(snapshot.get("archiveTotals").get("all").asLong()).isEqualTo(2L);
+  }
+
+  @Test
+  @DisplayName("PATCH invalidiert left/all-Cursor von Archivlesern ueber State- und Exit-Kind-Weg")
+  void archive_cursor_ausgetretener_leser_nach_patch_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+    final String writer = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE");
+    final Map<String, Integer> oldCursorStatuses = new java.util.LinkedHashMap<>();
+
+    // Pro Sichtbarkeitsweg ein eigener Leser und zwei alte LEFT-Tasks: limit=1 muss einen
+    // Folge-Cursor erzeugen. Die zuerst nicht gelieferte Task wird danach via PATCH bewegt.
+    for (int modeIndex = 0; modeIndex < 2; modeIndex++) {
+      final String mode = modeIndex == 0 ? "STATE" : "EXIT";
+      final UUID readerRef = UUID.randomUUID();
+      final String readerLogin = "archive-cursor-" + mode.toLowerCase() + "@brasi.de";
+      seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 1090 + modeIndex * 100,
+          readerRef, readerLogin, TENANT_A_ID);
+      final String reader = jwt(TENANT_A_UUID, readerRef, readerLogin);
+      final UUID targetUuid = UUID.randomUUID();
+      final LocalDateTime oldActivity = LocalDateTime.of(2020, 1, 1, 12, 0);
+
+      for (int i = 0; i < 2; i++) {
+        final long taskId = ID_BASE + 1000 + modeIndex * 100 + i;
+        seedTask(jdbcTemplate, taskId, i == 0 ? targetUuid : UUID.randomUUID(), TENANT_A_ID,
+            openId, normalId, directionId, oldActivity.plusMinutes(i),
+            "Archiv-Cursor-" + mode + "-" + i);
+        seedParticipant(jdbcTemplate, ID_BASE + 1010 + modeIndex * 100 + i,
+            taskId, readerRef, TENANT_A_ID, false, true, true,
+            modeIndex == 0 ? null : "HANDOVER");
+        if (modeIndex == 0) {
+          final long stateId = ID_BASE + 1030 + modeIndex * 100 + i;
+          seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
+          // Der Austritt folgt auf die State-Anlage; die Task-Aktivitaet bleibt bewusst alt.
+          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              + " WHERE ID = ? AND TENANT_ID = ?", stateId, TENANT_A_ID);
+        }
+        seedParticipant(jdbcTemplate, ID_BASE + 1020 + modeIndex * 100 + i,
+            taskId, USER_A_REF, TENANT_A_ID, true, true, true, null);
+        seedUserState(jdbcTemplate, ID_BASE + 1040 + modeIndex * 100 + i,
+            taskId, USER_A_REF, TENANT_A_ID, null);
+        if (i == 0) {
+          // Aktiver State ohne READ-PERSON ist kein Archiv-Leser und darf nicht gebumpt werden.
+          final long orphanStateId = ID_BASE + 1050 + modeIndex * 100;
+          seedUserState(jdbcTemplate, orphanStateId, taskId, USER_B_REF, TENANT_A_ID, null);
+          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              + " WHERE ID = ? AND TENANT_ID = ?", orphanStateId, TENANT_A_ID);
+          final List<UUID> archiveRefs = TenantContextHolder.runWithTenant(
+              new TenantInfo(TENANT_A_UUID, TENANT_A_ID),
+              () -> participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+                  .map(TaskParticipant::getParticipantRef).toList());
+          assertThat(archiveRefs).containsExactly(readerRef);
+        }
+      }
+
+      final Map<String, String> cursors = new java.util.LinkedHashMap<>();
+      for (String filter : List.of("left", "all")) {
+        final JsonNode first = om.readTree(
+            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
+                    .header("Authorization", "Bearer " + reader))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasMore").value(true))
+                .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(idsOf(first)).doesNotContain(targetUuid.toString());
+        final String cursor = first.get("nextCursor").asText();
+        assertThat(KeysetCursor.decode(cursor, 4).get(3)).isEqualTo("0");
+        cursors.put(filter, cursor);
+      }
+
+      mvc.perform(patch("/api/v1/tasks/" + targetUuid)
+              .header("Authorization", "Bearer " + writer)
+              .contentType(MediaType.APPLICATION_JSON)
+              .content(om.writeValueAsString(Map.of("title", "Archiv-Cursor-geaendert-" + mode))))
+          .andExpect(status().isNoContent());
+      final LocalDateTime movedActivity = jdbcTemplate.queryForObject(
+          "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+          Timestamp.class, targetUuid).toLocalDateTime();
+      for (String cursor : cursors.values()) {
+        assertThat(movedActivity)
+            .as("PATCH muss die Seite-2-Task hinter das alte asOf verschieben")
+            .isAfter(LocalDateTime.parse(KeysetCursor.decode(cursor, 4).get(0)));
+      }
+
+      for (String filter : List.of("left", "all")) {
+        oldCursorStatuses.put(mode + "/" + filter,
+            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter
+                    + "&limit=1&cursor=" + cursors.get(filter))
+                    .header("Authorization", "Bearer " + reader))
+                .andReturn().getResponse().getStatus());
+        final JsonNode fresh = om.readTree(
+            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
+                    .header("Authorization", "Bearer " + reader))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(idsOf(fresh)).contains(targetUuid.toString());
+      }
+    }
+
+    assertThat(oldCursorStatuses).isEqualTo(Map.of(
+        "STATE/left", 410, "STATE/all", 410, "EXIT/left", 410, "EXIT/all", 410));
+  }
+
+  @Test
+  @DisplayName("Kommentar und Exit invalidieren left/all-Cursor historischer Archivleser")
+  void archive_cursor_historischer_leser_nach_comment_und_exit_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final long openId = statusId("OPEN");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+    final String writer = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN);
+
+    for (int operation = 0; operation < 2; operation++) {
+      final boolean comment = operation == 0;
+      final UUID readerRef = UUID.randomUUID();
+      final String readerLogin = "archive-activity-" + operation + "@brasi.de";
+      seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 1490 + operation * 100,
+          readerRef, readerLogin, TENANT_A_ID);
+      final String reader = jwt(TENANT_A_UUID, readerRef, readerLogin);
+      final UUID targetUuid = UUID.randomUUID();
+      final LocalDateTime oldActivity = LocalDateTime.of(2020, 2, 1, 12, 0);
+
+      for (int i = 0; i < 2; i++) {
+        final long taskId = ID_BASE + 1400 + operation * 100 + i;
+        seedTask(jdbcTemplate, taskId, i == 0 ? targetUuid : UUID.randomUUID(), TENANT_A_ID,
+            openId, normalId, directionId, oldActivity.plusMinutes(i),
+            "Archiv-Aktivitaet-" + operation + "-" + i);
+        seedParticipant(jdbcTemplate, ID_BASE + 1410 + operation * 100 + i,
+            taskId, readerRef, TENANT_A_ID, false, true, true,
+            comment ? null : "HANDOVER");
+        if (comment) {
+          final long stateId = ID_BASE + 1420 + operation * 100 + i;
+          seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
+          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              + " WHERE ID = ? AND TENANT_ID = ?", stateId, TENANT_A_ID);
+        }
+        seedParticipant(jdbcTemplate, ID_BASE + 1430 + operation * 100 + i,
+            taskId, USER_A_REF, TENANT_A_ID, comment, true, true, null);
+        seedUserState(jdbcTemplate, ID_BASE + 1440 + operation * 100 + i,
+            taskId, USER_A_REF, TENANT_A_ID, null);
+        if (!comment) {
+          seedParticipant(jdbcTemplate, ID_BASE + 1450 + operation * 100 + i,
+              taskId, USER_B_REF, TENANT_A_ID, true, true, true, null);
+          seedUserState(jdbcTemplate, ID_BASE + 1460 + operation * 100 + i,
+              taskId, USER_B_REF, TENANT_A_ID, null);
+        }
+      }
+
+      final Map<String, String> cursors = new java.util.LinkedHashMap<>();
+      for (String filter : List.of("left", "all")) {
+        final JsonNode first = om.readTree(
+            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
+                    .header("Authorization", "Bearer " + reader))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasMore").value(true))
+                .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(idsOf(first)).doesNotContain(targetUuid.toString());
+        cursors.put(filter, first.get("nextCursor").asText());
+      }
+
+      if (comment) {
+        mvc.perform(post("/api/v1/tasks/" + targetUuid + "/comments")
+                .header("Authorization", "Bearer " + writer)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"Archiv-Aktivitaet\"}"))
+            .andExpect(status().isCreated());
+      } else {
+        mvc.perform(post("/api/v1/tasks/" + targetUuid + "/exit")
+                .header("Authorization", "Bearer " + writer)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+            .andExpect(status().isNoContent());
+      }
+
+      final LocalDateTime movedActivity = jdbcTemplate.queryForObject(
+          "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+          Timestamp.class, targetUuid).toLocalDateTime();
+      for (String filter : List.of("left", "all")) {
+        final String cursor = cursors.get(filter);
+        assertThat(movedActivity).isAfter(
+            LocalDateTime.parse(KeysetCursor.decode(cursor, 4).get(0)));
+        mvc.perform(get("/api/v1/tasks/archive?filter=" + filter
+                + "&limit=1&cursor=" + cursor)
+                .header("Authorization", "Bearer " + reader))
+            .andExpect(status().isGone());
+        final JsonNode fresh = om.readTree(
+            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
+                    .header("Authorization", "Bearer " + reader))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(idsOf(fresh)).contains(targetUuid.toString());
+      }
+    }
   }
 
   // ---- IT 4: Creator-Invariante (T8-Auflage): POST -> snapshot zeigt Task --------------------
