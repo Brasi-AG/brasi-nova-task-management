@@ -166,7 +166,7 @@ public class TaskFacadeController {
     final long tenantId = actor.tenant().id();
     final UUID userRef = actor.user().id();
 
-    final TaskDetailModel model = detailService.loadDetail(id, tenantId, userRef);
+    final TaskDetailModel model = detailService.loadDetail(id, tenantId, actor.tenant().uuid(), userRef);
 
     // READ_AT fuer den aktuellen Benutzer setzen (Best-Effort, kein Fehler bei fehlendem State)
     detailService.markReadForUser(id, tenantId, userRef, userStateService);

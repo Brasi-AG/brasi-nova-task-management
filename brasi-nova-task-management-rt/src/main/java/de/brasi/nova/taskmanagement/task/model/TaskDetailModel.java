@@ -85,4 +85,6 @@ public record TaskDetailModel(
     @Schema(description = "Persoenlicher Marker des Anfragers: stummgeschaltet.", example = "false")
     boolean isMuted,
     @Schema(description = "Aktueller Austritt des Anfragers (handover/unsubscribed) oder null.")
-    ExitModel exit) {}
+    ExitModel exit,
+    @Schema(description = "Quellkontext, sofern vorhanden; href nur bei registriertem Typ.")
+    TaskSourceModel source) {}

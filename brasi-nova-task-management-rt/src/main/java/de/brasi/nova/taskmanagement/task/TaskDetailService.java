@@ -19,6 +19,7 @@ import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
+import de.brasi.nova.taskmanagement.task.model.TaskSourceModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import java.time.LocalDateTime;
@@ -48,6 +49,7 @@ public class TaskDetailService {
   private final DictionaryCodeResolver resolver;
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
+  private final TaskSourceRegistry sourceRegistry;
 
   /** Konstruktor-Injektion. */
   public TaskDetailService(
@@ -60,7 +62,8 @@ public class TaskDetailService {
       final InboxEnrichmentAssembler enrichmentAssembler,
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter,
-      final TaskMembershipGuard membershipGuard) {
+      final TaskMembershipGuard membershipGuard,
+      final TaskSourceRegistry sourceRegistry) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -71,6 +74,7 @@ public class TaskDetailService {
     this.resolver = resolver;
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
+    this.sourceRegistry = sourceRegistry;
   }
 
   /**
@@ -88,7 +92,7 @@ public class TaskDetailService {
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Mandanten zugehoerig (HTTP 404)
    */
   public TaskDetailModel loadDetail(
-      final UUID taskExternalId, final long tenantId, final UUID userRef) {
+      final UUID taskExternalId, final long tenantId, final UUID tenantUuid, final UUID userRef) {
     final Optional<Task> opt = taskRepository.findByUuid(taskExternalId.toString());
     if (opt.isEmpty()) {
       throw new EntityNotFoundException("Aufgabe nicht gefunden.");
@@ -173,6 +177,16 @@ public class TaskDetailService {
             ? null
             : new ExitModel(enrichment.exitKind(), enrichment.handedOverToIds());
 
+    final TaskSourceModel source;
+    if (task.getSourceModule() != null && task.getSourceEntityType() != null
+        && task.getSourceEntityRef() != null) {
+      source = new TaskSourceModel(task.getSourceModule(), task.getSourceEntityType(),
+          task.getSourceEntityRef(), sourceRegistry.href(task.getSourceModule(),
+              task.getSourceEntityType(), task.getSourceEntityRef(), tenantUuid));
+    } else {
+      source = null;
+    }
+
     return new TaskDetailModel(
         task.getUuid(),
         task.getTitle(),
@@ -192,7 +206,8 @@ public class TaskDetailService {
         enrichment.isPinned(),
         enrichment.isFlagged(),
         enrichment.isMuted(),
-        exit);
+        exit,
+        source);
   }
 
   /**

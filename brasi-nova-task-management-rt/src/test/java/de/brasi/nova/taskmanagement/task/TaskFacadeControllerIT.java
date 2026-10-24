@@ -18,12 +18,14 @@ import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
+import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
 import io.jsonwebtoken.Jwts;
 import io.keel.framework.api.security.AuditorProvider;
+import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfiguration;
@@ -132,6 +134,7 @@ class TaskFacadeControllerIT {
 
   private static final UUID TENANT_A_UUID = UUID.randomUUID();
   private static final UUID USER_A_REF = UUID.randomUUID();
+  private static final UUID FIXTURE_SOURCE_REF = UUID.randomUUID();
   private static final String USER_A_LOGIN = "user-a@brasi.de";
   private static final long USER_A_DB_ID = 501L;
 
@@ -230,6 +233,86 @@ class TaskFacadeControllerIT {
   }
 
   // ---- Positiv-IT: POST -> PATCH -> GET Detail -----------------------------------------------
+
+  @Test
+  void sourceCreatePersistsTupleAndReturnsItWithoutUnprovenLink() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String title = "Fixture source " + UUID.randomUUID();
+    final String body = om.writeValueAsString(Map.of("title", title, "source",
+        Map.of("module", "fixture", "entityType", "item", "entityRef", FIXTURE_SOURCE_REF)));
+
+    final String response = mvc.perform(post("/api/v1/tasks")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+    final UUID taskUuid = UUID.fromString(om.readTree(response).get("id").asText());
+
+    final Map<String, Object> row = jdbcTemplate.queryForMap(
+        "SELECT SOURCE_MODULE, SOURCE_ENTITY_TYPE, SOURCE_ENTITY_REF, ORIGIN_TENANT_ID"
+            + " FROM [dbo].[TASK] WHERE EXTERNALID = ?", taskUuid);
+    assertThat(row.get("SOURCE_MODULE")).isEqualTo("fixture");
+    assertThat(row.get("SOURCE_ENTITY_TYPE")).isEqualTo("item");
+    assertThat(row.get("SOURCE_ENTITY_REF").toString())
+        .isEqualToIgnoringCase(FIXTURE_SOURCE_REF.toString());
+    assertThat(((Number) row.get("ORIGIN_TENANT_ID")).longValue()).isEqualTo(TENANT_A_ID);
+    final String detail = mvc.perform(get("/api/v1/tasks/" + taskUuid)
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    assertThat(om.readTree(detail).path("source").path("entityRef").asText())
+        .isEqualTo(FIXTURE_SOURCE_REF.toString());
+    assertThat(om.readTree(detail).path("source").path("href").isNull()).isTrue();
+
+    mvc.perform(patch("/api/v1/tasks/" + taskUuid)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("source",
+                Map.of("module", "fixture", "entityType", "item", "entityRef", UUID.randomUUID())))))
+        .andExpect(status().isBadRequest());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT SOURCE_ENTITY_REF FROM [dbo].[TASK] WHERE EXTERNALID = ?", UUID.class, taskUuid))
+        .isEqualTo(FIXTURE_SOURCE_REF);
+  }
+
+  @Test
+  void unregisteredOrUnreadableSourceLeavesNoTaskRows() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token = buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String unknownTitle = "Unknown source " + UUID.randomUUID();
+    mvc.perform(post("/api/v1/tasks").header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", unknownTitle, "source",
+                Map.of("module", "application", "entityType", "customer",
+                    "entityRef", UUID.randomUUID())))))
+        .andExpect(status().isBadRequest());
+    final String deniedTitle = "Denied source " + UUID.randomUUID();
+    mvc.perform(post("/api/v1/tasks").header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", deniedTitle, "source",
+                Map.of("module", "fixture", "entityType", "item",
+                    "entityRef", UUID.randomUUID())))))
+        .andExpect(status().isNotFound());
+    final String injectedTitle = "Injected source " + UUID.randomUUID();
+    mvc.perform(post("/api/v1/tasks").header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", injectedTitle, "source",
+                Map.of("module", "fixture", "entityType", "item",
+                    "entityRef", FIXTURE_SOURCE_REF, "href", "https://evil.invalid")))))
+        .andExpect(status().isBadRequest());
+    final String rootAliasTitle = "Root source alias " + UUID.randomUUID();
+    mvc.perform(post("/api/v1/tasks").header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(om.writeValueAsString(Map.of("title", rootAliasTitle,
+                "source_url", "https://evil.invalid"))))
+        .andExpect(status().isBadRequest());
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK] WHERE TITLE IN (?, ?, ?, ?)", Integer.class,
+        unknownTitle, deniedTitle, injectedTitle, rootAliasTitle)).isZero();
+  }
 
   @Test
   @DisplayName(
@@ -1540,6 +1623,25 @@ class TaskFacadeControllerIT {
     NoOpInboxSignalConfig.class,
   })
   static class ItConfig {
+
+    // Test-only source adapter. No Customer adapter is registered in production.
+    @Bean
+    TaskSourceAdapter fixtureSourceAdapter() {
+      return new TaskSourceAdapter() {
+        @Override public String module() { return "fixture"; }
+        @Override public String entityType() { return "item"; }
+        @Override public void requireReadable(final CurrentActor actor, final UUID entityRef) {
+          if (!TENANT_A_UUID.equals(actor.tenant().uuid())
+              || !USER_A_REF.equals(actor.user().id())
+              || !FIXTURE_SOURCE_REF.equals(entityRef)) {
+            throw new EntityNotFoundException("fixture hidden");
+          }
+        }
+        @Override public String href(final UUID tenantUuid, final UUID entityRef) {
+          throw new IllegalStateException("fixture navigation unavailable");
+        }
+      };
+    }
 
     @Bean
     AuditorProvider testAuditorProvider() {

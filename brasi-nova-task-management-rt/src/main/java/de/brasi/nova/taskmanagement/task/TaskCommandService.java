@@ -82,6 +82,7 @@ public class TaskCommandService {
   private final NotificationService notificationService;
   private final InboxGenerationService inboxGenerationService;
   private final TaskMembershipGuard membershipGuard;
+  private final TaskSourceRegistry sourceRegistry;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -99,7 +100,8 @@ public class TaskCommandService {
       final UserReadRepository userReadRepository,
       final NotificationService notificationService,
       final InboxGenerationService inboxGenerationService,
-      final TaskMembershipGuard membershipGuard) {
+      final TaskMembershipGuard membershipGuard,
+      final TaskSourceRegistry sourceRegistry) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -115,6 +117,7 @@ public class TaskCommandService {
     this.notificationService = notificationService;
     this.inboxGenerationService = inboxGenerationService;
     this.membershipGuard = membershipGuard;
+    this.sourceRegistry = sourceRegistry;
   }
 
   /**
@@ -142,6 +145,12 @@ public class TaskCommandService {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
     final UUID creatorRef = actor.user().id();
+
+    // A context task is never persisted from a client assertion alone. The adapter checks the
+    // current actor, current tenant and source existence before any Task-side mutation.
+    if (input.source() != null) {
+      sourceRegistry.requireReadable(input.source(), actor);
+    }
 
     // Direction serverseitig erzwingen
     final Long directionId = resolver.resolveTaskDirection(TaskDirectionCodes.CUSTOMER_INTERNAL);
@@ -205,6 +214,11 @@ public class TaskCommandService {
     task.setDueDate(input.dueDate());
     task.setLastActivityAt(LocalDateTime.now());
     task.setCommentCount(0);
+    if (input.source() != null) {
+      task.setSourceModule(input.source().module());
+      task.setSourceEntityType(input.source().entityType());
+      task.setSourceEntityRef(input.source().entityRef());
+    }
 
     final Task saved = taskRepository.save(task);
     final Long taskId = saved.getId();

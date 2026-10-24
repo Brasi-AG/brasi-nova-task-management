@@ -33,6 +33,7 @@ import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
+import de.brasi.nova.taskmanagement.task.model.TaskSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantInfo;
@@ -57,6 +58,8 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Unit-Tests fuer {@link TaskCommandService} (gemockt, kein DB-Zugriff).
@@ -95,6 +98,7 @@ class TaskCommandServiceTest {
   @Mock private NotificationService notificationService;
   @Mock private InboxGenerationService inboxGenerationService;
   @Mock private TaskMembershipGuard membershipGuard;
+  @Mock private TaskSourceRegistry sourceRegistry;
 
   private TaskCommandService service;
 
@@ -116,7 +120,8 @@ class TaskCommandServiceTest {
             userReadRepository,
             notificationService,
             inboxGenerationService,
-            membershipGuard);
+            membershipGuard,
+            sourceRegistry);
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -159,6 +164,59 @@ class TaskCommandServiceTest {
   }
 
   // ---- Test 1: Direction=CUSTOMER_INTERNAL erzwingen -------------------------------------------
+
+  @Test
+  void sourceIsVerifiedBeforeAnyMutationAndPersistedWithTask() {
+    final UUID sourceRef = UUID.randomUUID();
+    final TaskSourceInput source = new TaskSourceInput("application", "customer", sourceRef);
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> {
+      final Task task = inv.getArgument(0);
+      task.setId(42L);
+      task.setUuid(UUID.randomUUID());
+      return task;
+    });
+
+    service.create(new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source));
+
+    final org.mockito.InOrder order = org.mockito.Mockito.inOrder(sourceRegistry, taskRepository);
+    order.verify(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
+    order.verify(taskRepository).save(any(Task.class));
+    final ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
+    verify(taskRepository).save(captor.capture());
+    assertThat(captor.getValue().getSourceModule()).isEqualTo("application");
+    assertThat(captor.getValue().getSourceEntityType()).isEqualTo("customer");
+    assertThat(captor.getValue().getSourceEntityRef()).isEqualTo(sourceRef);
+  }
+
+  @Test
+  void deniedSourceNeverCreatesTaskParticipantOrState() {
+    final TaskSourceInput source = new TaskSourceInput("application", "customer", UUID.randomUUID());
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Quelle nicht gefunden."))
+        .when(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
+
+    assertThatThrownBy(() -> service.create(
+            new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source)))
+        .isInstanceOf(EntityNotFoundException.class);
+
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(participantRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateService, never()).ensure(anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void unavailableSourceNeverCreatesTaskParticipantOrState() {
+    final TaskSourceInput source = new TaskSourceInput("fixture", "item", UUID.randomUUID());
+    org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE))
+        .when(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
+
+    assertThatThrownBy(() -> service.create(
+            new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source)))
+        .isInstanceOf(ResponseStatusException.class);
+
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(participantRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateService, never()).ensure(anyLong(), any(), anyLong());
+  }
 
   @Test
   @DisplayName("anlage_erzwingt_customer_internal: Direction-ID wird auf CUSTOMER_INTERNAL gesetzt")

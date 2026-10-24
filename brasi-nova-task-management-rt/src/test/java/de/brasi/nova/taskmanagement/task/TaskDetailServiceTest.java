@@ -42,6 +42,7 @@ import org.junit.jupiter.api.Test;
 class TaskDetailServiceTest {
 
   private static final long TENANT_ID = 500L;
+  private static final UUID TENANT_UUID = UUID.randomUUID();
   private static final UUID USER_REF = UUID.fromString("00000000-0000-0000-0000-0000000000a0");
   private static final LocalDateTime PAST = LocalDateTime.of(2020, 1, 1, 0, 0);
 
@@ -53,6 +54,7 @@ class TaskDetailServiceTest {
   private TaskHandoverQueryRepository handoverQueryRepository;
   private DictionaryCodeResolver resolver;
   private TaskMembershipGuard membershipGuard;
+  private TaskSourceRegistry sourceRegistry;
   private TaskDetailService service;
 
   @BeforeEach
@@ -65,6 +67,7 @@ class TaskDetailServiceTest {
     handoverQueryRepository = mock(TaskHandoverQueryRepository.class);
     resolver = mock(DictionaryCodeResolver.class);
     membershipGuard = mock(TaskMembershipGuard.class);
+    sourceRegistry = mock(TaskSourceRegistry.class);
 
     service =
         new TaskDetailService(
@@ -77,7 +80,8 @@ class TaskDetailServiceTest {
             new InboxEnrichmentAssembler(),
             resolver,
             new AuditTimeConverter("Europe/Berlin"),
-            membershipGuard);
+            membershipGuard,
+            sourceRegistry);
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("OPEN");
     when(resolver.resolveTaskPriorityCode(any())).thenReturn("NORMAL");
@@ -89,6 +93,51 @@ class TaskDetailServiceTest {
     // BE-7: Default kein sichtbares Handover-Ereignis.
     when(handoverQueryRepository.findVisibleHandoverTargets(any(), any(), any()))
         .thenReturn(List.of());
+  }
+
+  @Test
+  void detailReturnsStoredSourceAndOnlyRegistryBuiltHref() {
+    final long taskId = 1009L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID sourceRef = UUID.randomUUID();
+    final Task task = task(taskId, taskUuid);
+    task.setSourceModule("application");
+    task.setSourceEntityType("customer");
+    task.setSourceEntityRef(sourceRef);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+    when(sourceRegistry.href("application", "customer", sourceRef, TENANT_UUID)).thenReturn(null);
+
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
+
+    assertThat(detail.source().module()).isEqualTo("application");
+    assertThat(detail.source().entityType()).isEqualTo("customer");
+    assertThat(detail.source().entityRef()).isEqualTo(sourceRef);
+    assertThat(detail.source().href()).isNull();
+    org.mockito.Mockito.verify(sourceRegistry)
+        .href("application", "customer", sourceRef, TENANT_UUID);
+  }
+
+  @Test
+  void legacySourceOutsideCreateInputGrammarDoesNotBlockAuthorizedDetail() {
+    final long taskId = 1010L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID sourceRef = UUID.randomUUID();
+    final Task task = task(taskId, taskUuid);
+    task.setSourceModule("Application");
+    task.setSourceEntityType("legacy_customer");
+    task.setSourceEntityRef(sourceRef);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
+
+    assertThat(detail.source().module()).isEqualTo("Application");
+    assertThat(detail.source().entityType()).isEqualTo("legacy_customer");
+    assertThat(detail.source().entityRef()).isEqualTo(sourceRef);
+    assertThat(detail.source().href()).isNull();
   }
 
   @Test
@@ -110,7 +159,7 @@ class TaskDetailServiceTest {
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId))
         .thenReturn(List.of(tagHi.toString(), tagLo.toString()));
 
-    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
     assertThat(detail.assignees()).containsExactly(assigneeLo, assigneeHi); // stabil sortiert
     assertThat(detail.tagIds()).containsExactly(tagLo, tagHi); // stabil sortiert
@@ -125,7 +174,7 @@ class TaskDetailServiceTest {
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
 
-    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
     assertThat(detail.assignees()).isEmpty();
     assertThat(detail.tagIds()).isEmpty();
@@ -167,7 +216,7 @@ class TaskDetailServiceTest {
         .thenReturn(
             List.of(new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
 
-    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
     assertThat(detail.createdById()).isEqualTo(creator);
     assertThat(detail.participantIds()).containsExactly(participantP);
@@ -200,7 +249,7 @@ class TaskDetailServiceTest {
             any()))
         .thenReturn(List.of(new HandoverTargetRow(taskId, null)));
 
-    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
     assertThat(detail.exit()).isNotNull();
     assertThat(detail.exit().kind()).isEqualTo("handover");
@@ -226,7 +275,7 @@ class TaskDetailServiceTest {
     when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
         .thenReturn(List.of());
 
-    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, USER_REF);
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
     assertThat(detail.createdById()).isEqualTo(creator);
     assertThat(detail.participantIds()).containsExactly(participantP);
@@ -244,7 +293,7 @@ class TaskDetailServiceTest {
     final UUID missing = UUID.randomUUID();
     when(taskRepository.findByUuid(missing.toString())).thenReturn(Optional.empty());
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () -> service.loadDetail(missing, TENANT_ID, USER_REF))
+            () -> service.loadDetail(missing, TENANT_ID, TENANT_UUID, USER_REF))
         .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class);
 
     final UUID foreign = UUID.randomUUID();
@@ -252,7 +301,7 @@ class TaskDetailServiceTest {
     foreignTask.setTenantId(999L); // fremder Mandant
     when(taskRepository.findByUuid(foreign.toString())).thenReturn(Optional.of(foreignTask));
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () -> service.loadDetail(foreign, TENANT_ID, USER_REF))
+            () -> service.loadDetail(foreign, TENANT_ID, TENANT_UUID, USER_REF))
         .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class);
 
     final UUID deactive = UUID.randomUUID();
@@ -260,7 +309,7 @@ class TaskDetailServiceTest {
     deactiveTask.setEntityState(io.keel.framework.api.model.EntityState.DEACTIVE);
     when(taskRepository.findByUuid(deactive.toString())).thenReturn(Optional.of(deactiveTask));
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () -> service.loadDetail(deactive, TENANT_ID, USER_REF))
+            () -> service.loadDetail(deactive, TENANT_ID, TENANT_UUID, USER_REF))
         .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class);
   }
 
@@ -282,7 +331,7 @@ class TaskDetailServiceTest {
         .requireReadMember(taskId, USER_REF, TENANT_ID);
 
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () -> service.loadDetail(taskUuid, TENANT_ID, USER_REF))
+            () -> service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF))
         .isInstanceOf(io.keel.framework.api.exception.EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
 

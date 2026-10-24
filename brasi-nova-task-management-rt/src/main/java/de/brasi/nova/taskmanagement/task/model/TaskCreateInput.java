@@ -1,9 +1,11 @@
 package de.brasi.nova.taskmanagement.task.model;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import io.keel.framework.api.validation.EntityValidationException;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -48,7 +50,16 @@ public record TaskCreateInput(
     @Schema(description = "Optionaler Pin-Marker des Erstellers (null = nicht angepinnt).")
     Boolean isPinned,
     @Schema(description = "Optionaler Flag-Marker des Erstellers (null = nicht markiert).")
-    Boolean isFlagged) {
+    Boolean isFlagged,
+    @Schema(description = "Optionaler registrierter Quellkontext; ohne Quelle bleibt die manuelle Anlage unveraendert.")
+    TaskSourceInput source) {
+
+  public TaskCreateInput(final String title, final String description, final String priorityCode,
+      final LocalDate startDate, final LocalDate dueDate, final List<UUID> assignees,
+      final List<UUID> tagIds, final Boolean isPinned, final Boolean isFlagged) {
+    this(title, description, priorityCode, startDate, dueDate, assignees, tagIds, isPinned,
+        isFlagged, null);
+  }
 
   /** Obergrenze je ID-Liste (schuetzt das SQL-Parameterlimit bei {@code IN (:uuids)}). */
   public static final int MAX_IDS = 100;
@@ -66,6 +77,16 @@ public record TaskCreateInput(
   public TaskCreateInput {
     assignees = normalizeIdList(assignees, "assignees");
     tagIds = normalizeIdList(tagIds, "tagIds");
+  }
+
+  // Preserve the existing lenient handling of unrelated future fields, while refusing client
+  // navigation URLs at the root of a create request. Only source identity is accepted.
+  @JsonAnySetter
+  public void rejectClientUrl(final String name, final Object value) {
+    final String field = name.toLowerCase(Locale.ROOT);
+    if (field.equals("url") || field.equals("href") || field.startsWith("source")) {
+      throw new EntityValidationException("Client-URL ist kein Quellkontext.");
+    }
   }
 
   /**

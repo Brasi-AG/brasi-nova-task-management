@@ -1,10 +1,13 @@
 package de.brasi.nova.taskmanagement.task.model;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import io.keel.framework.api.validation.EntityValidationException;
 import io.keel.framework.api.service.model.PatchValue;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.util.Set;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -49,6 +52,14 @@ public record TaskPatchInput(
         description = "Neues Startdatum ISO 8601 (absent = unveraendert, null = Datum loeschen).",
         example = "2026-11-01")
     PatchValue<LocalDate> startDate) {
+
+  @JsonAnySetter
+  public void rejectSourceMutation(final String name, final Object value) {
+    final String field = name.toLowerCase(Locale.ROOT);
+    if (field.startsWith("source") || field.equals("href") || field.equals("url")) {
+      throw new EntityValidationException("Quellkontext ist unveraenderlich.");
+    }
+  }
 
   /** Erzeugt eine leere Patch-Eingabe (alle Felder absent). */
   public static TaskPatchInput empty() {
