@@ -5,6 +5,7 @@ import de.brasi.nova.taskmanagement.security.CurrentActor;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -88,11 +89,13 @@ public final class CustomerTaskSourceAdapter implements TaskSourceAdapter {
         .header("Accept", "application/json")
         .timeout(requestTimeout)
         .build();
-    final CompletableFuture<HttpResponse<byte[]>> exchange =
+    final CompletableFuture<HttpResponse<ProofBody>> exchange =
         client.sendAsync(request, responseInfo -> responseInfo.statusCode() == 200
-            ? new BoundedProofSubscriber()
-            : HttpResponse.BodySubscribers.replacing(new byte[0]));
-    final HttpResponse<byte[]> response;
+            ? HttpResponse.BodySubscribers.mapping(new BoundedProofSubscriber(),
+                bytes -> new ProofBody(bytes, null))
+            : HttpResponse.BodySubscribers.mapping(HttpResponse.BodySubscribers.ofInputStream(),
+                stream -> new ProofBody(null, stream)));
+    final HttpResponse<ProofBody> response;
     try {
       response = exchange.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
     } catch (final InterruptedException interrupted) {
@@ -103,23 +106,33 @@ public final class CustomerTaskSourceAdapter implements TaskSourceAdapter {
       exchange.cancel(true);
       throw unavailable();
     }
-    if (response.statusCode() == 403 || response.statusCode() == 404) {
-      throw new EntityNotFoundException("Quelle nicht gefunden.");
-    }
-    if (response.statusCode() != 200) {
-      throw unavailable();
-    }
-    final CustomerProof proof;
     try {
-      proof = objectMapper.readValue(response.body(), CustomerProof.class);
-    } catch (final IOException malformed) {
-      throw unavailable();
-    }
-    if (proof == null || proof.tenantId() == null || proof.customerId() == null) {
-      throw unavailable();
-    }
-    if (!tenantUuid.equals(proof.tenantId()) || !entityRef.equals(proof.customerId())) {
-      throw new EntityNotFoundException("Quelle nicht gefunden.");
+      if (response.statusCode() == 403 || response.statusCode() == 404) {
+        throw new EntityNotFoundException("Quelle nicht gefunden.");
+      }
+      if (response.statusCode() != 200) {
+        throw unavailable();
+      }
+      final CustomerProof proof;
+      try {
+        proof = objectMapper.readValue(response.body().bytes(), CustomerProof.class);
+      } catch (final IOException malformed) {
+        throw unavailable();
+      }
+      if (proof == null || proof.tenantId() == null || proof.customerId() == null) {
+        throw unavailable();
+      }
+      if (!tenantUuid.equals(proof.tenantId()) || !entityRef.equals(proof.customerId())) {
+        throw new EntityNotFoundException("Quelle nicht gefunden.");
+      }
+    } finally {
+      if (response.body().errorStream() != null) {
+        try {
+          response.body().errorStream().close();
+        } catch (final IOException ignored) {
+          // The status is already known; the upstream error body is never part of the contract.
+        }
+      }
     }
   }
 
@@ -163,6 +176,9 @@ public final class CustomerTaskSourceAdapter implements TaskSourceAdapter {
     return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
         "Quellpruefung nicht verfuegbar.");
   }
+
+  /** Keep the error stream open until the response future has completed, then cancel it. */
+  private record ProofBody(byte[] bytes, InputStream errorStream) {}
 
   /** Cancels the HTTP subscription before an upstream response can exceed the proof contract. */
   private static final class BoundedProofSubscriber implements HttpResponse.BodySubscriber<byte[]> {

@@ -16,6 +16,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -38,12 +40,14 @@ class CustomerTaskSourceAdapterTest {
   private final AtomicReference<String> path = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
   private final AtomicInteger bodyStarted = new AtomicInteger();
+  private final CountDownLatch releaseStalledBody = new CountDownLatch(1);
   private HttpServer server;
   private volatile int responseStatus = 200;
   private volatile String responseBody;
   private volatile String redirectLocation;
   private volatile long responseDelayMillis;
-  private volatile long bodyDelayMillis;
+  private volatile boolean stallBody;
+  private volatile boolean stallBeforeFirstByte;
 
   @BeforeEach
   void startServer() throws IOException {
@@ -117,9 +121,41 @@ class CustomerTaskSourceAdapterTest {
     responseStatus = 403;
     responseBody = "x".repeat(5000);
 
-    assertThatThrownBy(() -> registry().requireReadable(source, actor))
+    assertThatThrownBy(() -> registry(5000).requireReadable(source, actor))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Quelle nicht gefunden.");
+  }
+
+  @Test
+  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() {
+    responseStatus = 403;
+    stallBody = true;
+
+    try {
+      assertThatThrownBy(() -> registry(3000).requireReadable(source, actor))
+          .isInstanceOf(EntityNotFoundException.class)
+          .hasMessage("Quelle nicht gefunden.");
+      assertThat(bodyStarted.get()).isEqualTo(1);
+    } finally {
+      releaseStalledBody.countDown();
+    }
+  }
+
+  @Test
+  void notFoundHeadersRemainNeutralBeforeFirstErrorBodyByte() {
+    responseStatus = 404;
+    stallBody = true;
+    stallBeforeFirstByte = true;
+
+    final TaskSourceRegistry proofRegistry = registry(3000);
+    try {
+      assertThatThrownBy(() -> proofRegistry.requireReadable(source, actor))
+          .isInstanceOf(EntityNotFoundException.class)
+          .hasMessage("Quelle nicht gefunden.");
+      assertThat(bodyStarted.get()).isZero();
+    } finally {
+      releaseStalledBody.countDown();
+    }
   }
 
   @Test
@@ -131,10 +167,14 @@ class CustomerTaskSourceAdapterTest {
 
   @Test
   void bodyStallIsBoundedByRequestTimeout() {
-    bodyDelayMillis = 1500;
+    stallBody = true;
 
-    assertSafeUnavailable(registry(750));
-    assertThat(bodyStarted.get()).isEqualTo(1);
+    try {
+      assertSafeUnavailable(registry(3000));
+      assertThat(bodyStarted.get()).isEqualTo(1);
+    } finally {
+      releaseStalledBody.countDown();
+    }
   }
 
   @Test
@@ -234,17 +274,24 @@ class CustomerTaskSourceAdapterTest {
     }
     final byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
     try {
-      if (bodyDelayMillis > 0) {
+      if (stallBody) {
         exchange.sendResponseHeaders(responseStatus, 0);
-        exchange.getResponseBody().write(bytes, 0, 1);
         exchange.getResponseBody().flush();
-        bodyStarted.incrementAndGet();
+        if (!stallBeforeFirstByte) {
+          exchange.getResponseBody().write(bytes, 0, 1);
+          exchange.getResponseBody().flush();
+          bodyStarted.incrementAndGet();
+        }
         try {
-          Thread.sleep(bodyDelayMillis);
+          releaseStalledBody.await(10, TimeUnit.SECONDS);
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
         }
-        exchange.getResponseBody().write(bytes, 1, bytes.length - 1);
+        if (stallBeforeFirstByte) {
+          exchange.getResponseBody().write(bytes);
+        } else {
+          exchange.getResponseBody().write(bytes, 1, bytes.length - 1);
+        }
       } else {
         exchange.sendResponseHeaders(responseStatus, bytes.length);
         exchange.getResponseBody().write(bytes);
