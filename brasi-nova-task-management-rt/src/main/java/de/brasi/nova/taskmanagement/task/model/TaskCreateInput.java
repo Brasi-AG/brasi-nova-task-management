@@ -14,51 +14,79 @@ import java.util.UUID;
  * <p>Direction wird serverseitig auf {@code CUSTOMER_INTERNAL} erzwungen (kein Input-Feld).
  * Prioritaet ist optional; fehlt sie, wird {@code NORMAL} verwendet.
  *
- * <p>BE-4: Zusaetzlich koennen {@code assignees}, {@code tagIds}, {@code isPinned} und
- * {@code isFlagged} als Initialwerte angegeben werden (alle optional; fehlen -&gt; keine
- * Zusatzwirkung). Die ID-Listen werden im kompakten Konstruktor validiert; die fachliche
- * Deduplizierung uebernimmt der Service (Set-Semantik beim Anlegen).
+ * <p>BE-4: Zusaetzlich koennen {@code assignees}, {@code tagIds}, {@code isPinned} und {@code
+ * isFlagged} als Initialwerte angegeben werden (alle optional; fehlen -&gt; keine Zusatzwirkung).
+ * Die ID-Listen werden im kompakten Konstruktor validiert; die fachliche Deduplizierung uebernimmt
+ * der Service (Set-Semantik beim Anlegen).
  *
- * @param title        Pflicht-Titel der Aufgabe
- * @param description  optionale Beschreibung
+ * @param title Pflicht-Titel der Aufgabe
+ * @param description optionale Beschreibung
  * @param priorityCode optionaler Prioritaets-CODE (z.B. "HIGH"); fehlt -> Default "NORMAL"
- * @param startDate    optionales Startdatum
- * @param dueDate      optionales Faelligkeitsdatum
- * @param assignees    optionale Initial-Assignees (UUIDs aktiver Benutzer DES Mandanten); null -> leer
- * @param tagIds       optionale Initial-Tags (UUIDs aktiver globaler Katalog-Tags); null -> leer
- * @param isPinned     optionaler Pin-Marker des Erstellers (null = Default false)
- * @param isFlagged    optionaler Flag-Marker des Erstellers (null = Default false)
+ * @param startDate optionales Startdatum
+ * @param dueDate optionales Faelligkeitsdatum
+ * @param assignees optionale Initial-Assignees (UUIDs aktiver Benutzer DES Mandanten); null -> leer
+ * @param tagIds optionale Initial-Tags (UUIDs aktiver globaler Katalog-Tags); null -> leer
+ * @param isPinned optionaler Pin-Marker des Erstellers (null = Default false)
+ * @param isFlagged optionaler Flag-Marker des Erstellers (null = Default false)
  */
 public record TaskCreateInput(
-    @Schema(description = "Titel der Aufgabe.", example = "Jahresabschluss vorbereiten",
-        requiredMode = Schema.RequiredMode.REQUIRED)
-    String title,
-    @Schema(description = "Optionale Beschreibung der Aufgabe.", example = "Bitte Unterlagen bis Montag bereitstellen.")
-    String description,
-    @Schema(description = "Prioritaets-CODE (z.B. HIGH, NORMAL, LOW). Fehlt der Wert, wird NORMAL verwendet.",
-        example = "NORMAL")
-    String priorityCode,
+    @Schema(
+            description = "Titel der Aufgabe.",
+            example = "Jahresabschluss vorbereiten",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+        String title,
+    @Schema(
+            description = "Optionale Beschreibung der Aufgabe.",
+            example = "Bitte Unterlagen bis Montag bereitstellen.")
+        String description,
+    @Schema(
+            description =
+                "Prioritaets-CODE (z.B. HIGH, NORMAL, LOW). Fehlt der Wert, wird NORMAL verwendet.",
+            example = "NORMAL")
+        String priorityCode,
     @Schema(description = "Optionales Startdatum (ISO 8601).", example = "2026-11-01")
-    LocalDate startDate,
+        LocalDate startDate,
     @Schema(description = "Optionales Faelligkeitsdatum (ISO 8601).", example = "2026-12-31")
-    LocalDate dueDate,
-    @Schema(description = "Optionale Initial-Assignees (UUIDs aktiver Benutzer des Mandanten)."
-        + " Der Ersteller ist bereits Assignee und wird ignoriert. Max. 100 Eintraege.")
-    List<UUID> assignees,
-    @Schema(description = "Optionale Initial-Tags (UUIDs aktiver globaler Katalog-Tags). Max. 100 Eintraege.")
-    List<UUID> tagIds,
+        LocalDate dueDate,
+    @Schema(
+            description =
+                "Optionale Initial-Assignees (UUIDs aktiver Benutzer des Mandanten)."
+                    + " Der Ersteller ist bereits Assignee und wird ignoriert. Max. 100 Eintraege.")
+        List<UUID> assignees,
+    @Schema(
+            description =
+                "Optionale Initial-Tags (UUIDs aktiver globaler Katalog-Tags). Max. 100 Eintraege.")
+        List<UUID> tagIds,
     @Schema(description = "Optionaler Pin-Marker des Erstellers (null = nicht angepinnt).")
-    Boolean isPinned,
+        Boolean isPinned,
     @Schema(description = "Optionaler Flag-Marker des Erstellers (null = nicht markiert).")
-    Boolean isFlagged,
-    @Schema(description = "Optionaler registrierter Quellkontext; ohne Quelle bleibt die manuelle Anlage unveraendert.")
-    TaskSourceInput source) {
+        Boolean isFlagged,
+    @Schema(
+            description =
+                "Registrierter Quellkontext; nur auf POST /api/v1/tasks/from-source erlaubt und dort erforderlich.")
+        TaskSourceInput source) {
 
-  public TaskCreateInput(final String title, final String description, final String priorityCode,
-      final LocalDate startDate, final LocalDate dueDate, final List<UUID> assignees,
-      final List<UUID> tagIds, final Boolean isPinned, final Boolean isFlagged) {
-    this(title, description, priorityCode, startDate, dueDate, assignees, tagIds, isPinned,
-        isFlagged, null);
+  public TaskCreateInput(
+      final String title,
+      final String description,
+      final String priorityCode,
+      final LocalDate startDate,
+      final LocalDate dueDate,
+      final List<UUID> assignees,
+      final List<UUID> tagIds,
+      final Boolean isPinned,
+      final Boolean isFlagged) {
+    this(
+        title,
+        description,
+        priorityCode,
+        startDate,
+        dueDate,
+        assignees,
+        tagIds,
+        isPinned,
+        isFlagged,
+        null);
   }
 
   /** Obergrenze je ID-Liste (schuetzt das SQL-Parameterlimit bei {@code IN (:uuids)}). */
@@ -67,12 +95,12 @@ public record TaskCreateInput(
   /**
    * Kompakter Konstruktor: validiert und normalisiert die optionalen ID-Listen (D6).
    *
-   * <p>{@code null} -&gt; leere Liste; mehr als {@link #MAX_IDS} Eintraege -&gt;
-   * {@link EntityValidationException} (400) auf der ROHEN Array-Laenge (vor jeder Deduplizierung,
-   * damit auch viele doppelte UUIDs die Grenze nicht umgehen und das SQL-Parameterlimit bei
-   * {@code IN (:uuids)} geschuetzt bleibt); {@code null}-Elemente -&gt; 400 statt NPE.
-   * {@code isPinned}/{@code isFlagged} bleiben nullable (null = Default false beim Anlegen).
-   * Die fachliche Deduplizierung passiert im Service (Set-Semantik beim Anlegen).
+   * <p>{@code null} -&gt; leere Liste; mehr als {@link #MAX_IDS} Eintraege -&gt; {@link
+   * EntityValidationException} (400) auf der ROHEN Array-Laenge (vor jeder Deduplizierung, damit
+   * auch viele doppelte UUIDs die Grenze nicht umgehen und das SQL-Parameterlimit bei {@code IN
+   * (:uuids)} geschuetzt bleibt); {@code null}-Elemente -&gt; 400 statt NPE. {@code
+   * isPinned}/{@code isFlagged} bleiben nullable (null = Default false beim Anlegen). Die fachliche
+   * Deduplizierung passiert im Service (Set-Semantik beim Anlegen).
    */
   public TaskCreateInput {
     assignees = normalizeIdList(assignees, "assignees");
@@ -94,7 +122,7 @@ public record TaskCreateInput(
    * leere Liste; die ROHE Laenge (inkl. Duplikate) gegen {@link #MAX_IDS} und null-Elemente werden
    * als {@link EntityValidationException} (400) abgewiesen, bevor der Service irgendetwas anlegt.
    *
-   * @param raw   die rohe Eingabe-Liste (nullable, darf null-Elemente enthalten)
+   * @param raw die rohe Eingabe-Liste (nullable, darf null-Elemente enthalten)
    * @param field Feldname fuer die Fehlermeldung
    * @return eine unveraenderliche, null-freie Liste (mit evtl. noch vorhandenen Duplikaten)
    */

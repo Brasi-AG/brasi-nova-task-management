@@ -5,9 +5,9 @@ import java.util.List;
 /**
  * Task-Management-Berechtigungen als KSF-native Permission-Authorities.
  *
- * <p><strong>Zwei-Ebenen-Vertrag (identisch zu KassenbuchSecurityRoles-Muster):</strong> kpl-identity
- * speichert den Action-Key BARE; der Enforcement-Constant ist {@code MODULE_NAME + ":" +
- * ACTION_KEY}. Der KSF-{@code PermissionEnforcementAspect} vergleicht die Annotation EXAKT gegen
+ * <p><strong>Zwei-Ebenen-Vertrag (identisch zu KassenbuchSecurityRoles-Muster):</strong>
+ * kpl-identity speichert den Action-Key BARE; der Enforcement-Constant ist {@code MODULE_NAME + ":"
+ * + ACTION_KEY}. Der KSF-{@code PermissionEnforcementAspect} vergleicht die Annotation EXAKT gegen
  * die JWT-Authority.
  *
  * <ul>
@@ -21,8 +21,8 @@ public final class TaskManagementPermissions {
 
   /**
    * Technischer Modul-Name (Permission-Praefix) - identisch mit {@code
-   * ksf.module-registration.module-name}. Der Identity-Server stellt die volle Authority als
-   * {@code MODULE_NAME + ":" + <action-key>} aus.
+   * ksf.module-registration.module-name}. Der Identity-Server stellt die volle Authority als {@code
+   * MODULE_NAME + ":" + <action-key>} aus.
    */
   public static final String MODULE_NAME = "task-management";
 
@@ -31,6 +31,9 @@ public final class TaskManagementPermissions {
 
   /** Barer Action-Key fuer schreibenden Zugriff auf Aufgaben. */
   public static final String TASK_WRITE_ACTION = "TASK_WRITE";
+
+  /** Barer Action-Key fuer die kontextgebundene Erstellung einer Aufgabe. */
+  public static final String TASK_CREATE_ACTION = "TASK_CREATE";
 
   /** Barer Action-Key fuer lesenden Zugriff auf Benachrichtigungen. */
   public static final String NOTIFICATION_READ_ACTION = "NOTIFICATION_READ";
@@ -50,6 +53,9 @@ public final class TaskManagementPermissions {
   /** Volle Authority fuer schreibenden Zugriff auf Aufgaben (Enforcement/Token). */
   public static final String TASK_WRITE = MODULE_NAME + ":" + TASK_WRITE_ACTION;
 
+  /** Volle Authority fuer die kontextgebundene Erstellung einer Aufgabe. */
+  public static final String TASK_CREATE = MODULE_NAME + ":" + TASK_CREATE_ACTION;
+
   /** Volle Authority fuer lesenden Zugriff auf Benachrichtigungen (Enforcement/Token). */
   public static final String NOTIFICATION_READ = MODULE_NAME + ":" + NOTIFICATION_READ_ACTION;
 
@@ -64,13 +70,14 @@ public final class TaskManagementPermissions {
       List.of(
           TASK_READ_ACTION,
           TASK_WRITE_ACTION,
+          TASK_CREATE_ACTION,
           NOTIFICATION_READ_ACTION,
           NOTIFICATION_WRITE_ACTION,
           TAG_ADMIN_ACTION);
 
   /** Katalog aller VOLLEN (prefixed) Authorities (Enforcement-Quelle). */
   public static final List<String> ALL_AUTHORITIES =
-      List.of(TASK_READ, TASK_WRITE, NOTIFICATION_READ, NOTIFICATION_WRITE, TAG_ADMIN);
+      List.of(TASK_READ, TASK_WRITE, TASK_CREATE, NOTIFICATION_READ, NOTIFICATION_WRITE, TAG_ADMIN);
 
   private TaskManagementPermissions() {}
 }

@@ -785,6 +785,94 @@
       ]
     },
     {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskSourceCreateReceipt",
+      "kind": "ENTITY",
+      "name": "TaskSourceCreateReceipt",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_SOURCE_CREATE_RECEIPT" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "tenantUuid",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "TENANT_UUID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "actorRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "ACTOR_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "idempotencyKey",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "IDEMPOTENCY_KEY",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "inputSha256",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "INPUT_SHA256",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "taskUuid",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "TASK_UUID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskSourceCreateReceiptCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskSourceCreateReceiptUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskSourceCreateReceiptModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskSourceCreateReceiptInfoModel"
+        }
+      ]
+    },
+    {
       "id": "de.brasi.nova.taskmanagement.entity.TaskTag",
       "kind": "ENTITY",
       "name": "TaskTag",

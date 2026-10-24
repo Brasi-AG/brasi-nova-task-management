@@ -29,6 +29,7 @@ public final class KsfMetamodelIndex {
         de.brasi.nova.taskmanagement.entity.TaskNotification.class,
         de.brasi.nova.taskmanagement.entity.TaskParticipant.class,
         de.brasi.nova.taskmanagement.entity.TaskReminderReceipt.class,
+        de.brasi.nova.taskmanagement.entity.TaskSourceCreateReceipt.class,
         de.brasi.nova.taskmanagement.entity.TaskTag.class,
         de.brasi.nova.taskmanagement.entity.TaskTagAssignment.class,
         de.brasi.nova.taskmanagement.entity.TaskUserState.class,

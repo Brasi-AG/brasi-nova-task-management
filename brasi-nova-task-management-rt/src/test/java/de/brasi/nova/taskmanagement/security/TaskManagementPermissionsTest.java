@@ -25,9 +25,7 @@ class TaskManagementPermissionsTest {
           .startsWith(EXPECTED_PREFIX);
 
       final String action = authority.substring(EXPECTED_PREFIX.length());
-      assertThat(action)
-          .as("Action-Teil von '%s' darf nicht leer sein", authority)
-          .isNotEmpty();
+      assertThat(action).as("Action-Teil von '%s' darf nicht leer sein", authority).isNotEmpty();
     }
   }
 
@@ -38,6 +36,8 @@ class TaskManagementPermissionsTest {
         .isEqualTo(MODULE_NAME + ":" + TaskManagementPermissions.TASK_READ_ACTION);
     assertThat(TaskManagementPermissions.TASK_WRITE)
         .isEqualTo(MODULE_NAME + ":" + TaskManagementPermissions.TASK_WRITE_ACTION);
+    assertThat(TaskManagementPermissions.TASK_CREATE)
+        .isEqualTo(MODULE_NAME + ":" + TaskManagementPermissions.TASK_CREATE_ACTION);
     assertThat(TaskManagementPermissions.NOTIFICATION_READ)
         .isEqualTo(MODULE_NAME + ":" + TaskManagementPermissions.NOTIFICATION_READ_ACTION);
     assertThat(TaskManagementPermissions.NOTIFICATION_WRITE)
@@ -56,9 +56,7 @@ class TaskManagementPermissionsTest {
 
     for (int i = 0; i < authorities.size(); i++) {
       assertThat(authorities.get(i))
-          .as(
-              "ALL_AUTHORITIES[%d] muss aus MODULE_NAME + ':' + ALL_ACTION_KEYS[%d] bestehen",
-              i, i)
+          .as("ALL_AUTHORITIES[%d] muss aus MODULE_NAME + ':' + ALL_ACTION_KEYS[%d] bestehen", i, i)
           .isEqualTo(MODULE_NAME + ":" + actionKeys.get(i));
     }
   }
@@ -70,12 +68,13 @@ class TaskManagementPermissionsTest {
   }
 
   @Test
-  @DisplayName("Alle fuenf erwarteten Authorities sind vorhanden")
-  void allFiveExpectedAuthoritiesPresent() {
+  @DisplayName("Alle sechs erwarteten Authorities sind vorhanden")
+  void allSixExpectedAuthoritiesPresent() {
     assertThat(TaskManagementPermissions.ALL_AUTHORITIES)
         .containsExactly(
             "task-management:TASK_READ",
             "task-management:TASK_WRITE",
+            "task-management:TASK_CREATE",
             "task-management:NOTIFICATION_READ",
             "task-management:NOTIFICATION_WRITE",
             "task-management:TAG_ADMIN");

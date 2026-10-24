@@ -10,8 +10,12 @@ Phase 1a (Core-Service) wird aktuell aufgebaut. Details/Architektur im Office-Br
 
 ## Customer als Task-Quelle (vorbereitet, nicht aktiviert)
 
-`POST /api/v1/tasks` akzeptiert optional `source: {module: "application",
-entityType: "customer", entityRef: UUID}`. Der Customer-Adapter wird nur mit
+`POST /api/v1/tasks` bleibt die manuelle Anlage mit `TASK_WRITE` und lehnt `source` ab.
+`POST /api/v1/tasks/from-source` verlangt `TASK_CREATE`, `Idempotency-Key` und
+`source: {module: "application", entityType: "customer", entityRef: UUID}`.
+`TASK_CREATE` erlaubt die initiale Zuweisung anderer aktiver Benutzer desselben
+Mandanten nach den bestehenden Create-Validierungen (maximal 100 Assignees/Tags).
+Der Customer-Adapter wird nur mit
 `task.source.customer.enabled=true` als Bean registriert; ohne diese Eigenschaft
 bleibt der Typ unregistriert. Er prueft den aktuellen Benutzer-Bearer gegen
 Applications `GET /api/v1/customers/{tenantId}/{customerId}/task-source-validation`.
@@ -32,13 +36,29 @@ nur an diese konfigurierte Origin.
 | `prod-alpha` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 | `prod` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 
-Aktivierung ist weiterhin gesperrt, bis Application-Gate und Identity-Token
-im jeweiligen Profil zusammenpassen, ein gleichwertig geschuetzter Link-Zielpfad
-vorliegt und der Idempotenzvertrag umgesetzt ist. Vorschlag fuer V1: Bei
-source-Create ist `Idempotency-Key` verpflichtend (1 bis 128 ASCII-Zeichen),
-eindeutig pro `(tenant UUID, actor UUID, key)` mit DB-Unique-Constraint und
-transaktional gespeicherter Task-UUID plus SHA-256 des kanonischen Create-DTOs.
-Erster Request liefert `201`; gleicher Key und gleicher Payload-Hash liefert
-`200` mit derselben Task-UUID; gleicher Key mit anderem Hash liefert `409`.
-Parallele Requests muessen ueber die DB-Unique-Grenze serialisiert werden.
-Dieser Vertrag ist noch nicht implementiert; das Feature-Flag bleibt deshalb aus.
+Source-Create verlangt einen Key mit 1 bis 128 sichtbaren ASCII-Zeichen. Die
+Receipt-Tabelle erzwingt `UNIQUE(tenant UUID, actor UUID, key)` mit binaerer
+Schluessel-Kollation. Receipt, Task, Teilnehmer, User-State und Create-Effekte
+werden in einer Transaktion gespeichert. Der SHA-256-Fingerprint kodiert in
+Version 1 den effektiven Titel (gestrippt), Beschreibung, Prioritaet (Default
+`NORMAL`, auf den Dictionary-CODE aufgeloest), Start-/Faelligkeitsdatum,
+sortierte deduplizierte Assignees (ohne Creator) und Tags, Marker (Default
+`false`) sowie das Source-Tupel. Erster
+Request liefert `201`; gleicher Key und Fingerprint liefert nach erneuter
+Source-Read-Pruefung des gespeicherten Task-Quellkontexts und aktiver
+PERSON-Membership-Pruefung `200` mit derselben UUID;
+anderer Fingerprint liefert bei fortbestehendem Zugriff `409`. Ausgetretene
+oder inaktive Teilnehmer und inaktive Tasks koennen per Replay keine
+gespeicherte ID lesen.
+Die vier technischen Priority-Codes sind V1-Seedwerte. Werden Dictionary-Eintraege
+spaeter deaktiviert oder umbenannt, kann ein historischer Replay bei der erneuten
+Code-Aufloesung mit 400 scheitern; solche Seed-Aenderungen brauchen eine eigene
+Receipt-Migration.
+
+Vor Profil-Aktivierung muessen `TASK_CREATE` als bare Action-Key in der
+`task-management`-Modulregistrierung von kpl-config/Identity bekannt sein und
+ein realer Profil-Token nach explizitem Grant `task-management:TASK_CREATE`
+tragen. Ein `TASK_WRITE`-Token allein darf den Kontext-Endpunkt nicht bedienen;
+ein reiner `TASK_CREATE`-Token darf die manuelle Route nicht bedienen. Customer-
+Read-Gate, Identity-Token und ein gleichwertig geschuetzter Link-Zielpfad sind
+weitere Profil-Gates. Das Customer-Feature-Flag bleibt bis zu diesen Proben aus.

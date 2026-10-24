@@ -62,14 +62,15 @@ import org.springframework.web.context.WebApplicationContext;
  * OpenAPI-Dokument {@code /v3/api-docs/task-management} ueber MockMvc ab. Beweist:
  *
  * <ul>
- *   <li>Die Scaffold-Gruppen-Id {@link TaskManagementOpenApiGroups#TASK_MANAGEMENT} ist als
- *       {@code GroupedOpenApi} registriert und liefert ein nicht-leeres Dokument (Pre-Release-Audit:
+ *   <li>Die Scaffold-Gruppen-Id {@link TaskManagementOpenApiGroups#TASK_MANAGEMENT} ist als {@code
+ *       GroupedOpenApi} registriert und liefert ein nicht-leeres Dokument (Pre-Release-Audit:
  *       Gruppe war disjunkt/tot).
- *   <li>Die Endpunkte tragen {@code @Operation}-Zusammenfassungen und dokumentierte
- *       Fehlerantworten (401/403).
+ *   <li>Die Endpunkte tragen {@code @Operation}-Zusammenfassungen und dokumentierte Fehlerantworten
+ *       (401/403).
  *   <li>Die Hand-DTOs tragen {@code @Schema}-Beschreibungen.
  *   <li>Der {@code PatchValue<T>}-Wrapper in {@code TaskPatchInput} ist zum fachlichen Wert
- *       kollabiert (kein Leak der Wrapper-Interna), und die Generierung schlaegt nicht mit 500 fehl.
+ *       kollabiert (kein Leak der Wrapper-Interna), und die Generierung schlaegt nicht mit 500
+ *       fehl.
  * </ul>
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
@@ -96,7 +97,8 @@ import org.springframework.web.context.WebApplicationContext;
       "ksf.web-security.tenant.binding.source=JWT",
       "ksf.web-security.tenant.binding.required=false",
       "ksf.web-security.tenant.entity-class=de.brasi.nova.taskmanagement.refentity.Firm",
-      // /v3/api-docs ohne JWT abrufbar (identisch zur Produktion: application.properties permit-paths)
+      // /v3/api-docs ohne JWT abrufbar (identisch zur Produktion: application.properties
+      // permit-paths)
       "ksf.web-security.permit-paths=/actuator/health,/actuator/info,/v3/api-docs/**,/swagger-ui/**,/ws",
       "ksf.security.jwt.enabled=true",
       "ksf.module-registration.enabled=false",
@@ -139,7 +141,8 @@ class SpringDocApiDocsIT {
     final String pemContent = toPem(RSA_KEY_PAIR.getPublic().getEncoded());
     try {
       pemTempFile = java.nio.file.Files.createTempFile("springdoc-it-jwk-", ".pem");
-      java.nio.file.Files.writeString(pemTempFile, pemContent, java.nio.charset.StandardCharsets.UTF_8);
+      java.nio.file.Files.writeString(
+          pemTempFile, pemContent, java.nio.charset.StandardCharsets.UTF_8);
     } catch (java.io.IOException e) {
       throw new RuntimeException("Konnte temporaere PEM-Datei nicht erstellen.", e);
     }
@@ -212,6 +215,16 @@ class SpringDocApiDocsIT {
     assertThat(createOp.path("responses").has("401")).as("401 dokumentiert").isTrue();
     assertThat(createOp.path("responses").has("403")).as("403 dokumentiert").isTrue();
 
+    final JsonNode contextCreateOp =
+        doc.path("paths").path("/api/v1/tasks/from-source").path("post");
+    assertThat(contextCreateOp.isMissingNode()).as("Kontext-Create dokumentiert").isFalse();
+    assertThat(contextCreateOp.path("responses").has("201")).isTrue();
+    assertThat(contextCreateOp.path("responses").has("200")).isTrue();
+    assertThat(contextCreateOp.path("responses").has("403")).isTrue();
+    assertThat(contextCreateOp.path("responses").has("409")).isTrue();
+    assertThat(contextCreateOp.path("parameters").toString())
+        .contains("Idempotency-Key", "\"required\":true");
+
     // 3. Mindestens ein Hand-DTO-Schema traegt eine Property mit description
     final JsonNode schemas = doc.path("components").path("schemas");
     assertThat(schemas.isMissingNode()).as("components.schemas vorhanden").isFalse();
@@ -236,8 +249,14 @@ class SpringDocApiDocsIT {
     // 6. Keyset-Items typisiert: GET /api/v1/tasks (aktive Aufgaben) -> 200-Schema referenziert den
     //    Typparameter TaskSummaryModel, nicht einen untypisierten KeysetPage (Codex-P2)
     final JsonNode activeSchema =
-        doc.path("paths").path("/api/v1/tasks").path("get").path("responses").path("200")
-            .path("content").path("application/json").path("schema");
+        doc.path("paths")
+            .path("/api/v1/tasks")
+            .path("get")
+            .path("responses")
+            .path("200")
+            .path("content")
+            .path("application/json")
+            .path("schema");
     assertThat(activeSchema.isMissingNode()).as("GET /api/v1/tasks 200-Schema vorhanden").isFalse();
     assertThat(activeSchema.toString())
         .as("Aktive-Aufgaben-Seite muss den Item-Typ TaskSummaryModel referenzieren")
@@ -246,14 +265,21 @@ class SpringDocApiDocsIT {
     // 7. Create-Response typisiert: POST /api/v1/tasks 201 referenziert CreatedResourceResponse,
     //    und dessen id-Feld ist eine UUID (Codex-P2)
     final JsonNode createSchema =
-        doc.path("paths").path("/api/v1/tasks").path("post").path("responses").path("201")
-            .path("content").path("application/json").path("schema");
+        doc.path("paths")
+            .path("/api/v1/tasks")
+            .path("post")
+            .path("responses")
+            .path("201")
+            .path("content")
+            .path("application/json")
+            .path("schema");
     assertThat(createSchema.toString())
         .as("POST /api/v1/tasks 201 muss CreatedResourceResponse referenzieren")
         .contains("CreatedResourceResponse");
     final JsonNode createdId =
         schemas.path("CreatedResourceResponse").path("properties").path("id");
-    assertThat(createdId.path("format").asText("")).as("CreatedResourceResponse.id Format uuid")
+    assertThat(createdId.path("format").asText(""))
+        .as("CreatedResourceResponse.id Format uuid")
         .isEqualTo("uuid");
   }
 
@@ -282,7 +308,9 @@ class SpringDocApiDocsIT {
         .isGreaterThanOrEqualTo(10);
   }
 
-  /** Nullability tolerant gegen OpenAPI 3.0 (nullable=true) und 3.1 ("null" im type-Set/-String). */
+  /**
+   * Nullability tolerant gegen OpenAPI 3.0 (nullable=true) und 3.1 ("null" im type-Set/-String).
+   */
   private static boolean isNullable(final JsonNode schema) {
     if (schema.path("nullable").asBoolean(false)) {
       return true;
