@@ -1944,6 +1944,53 @@ class AssigneeControllerIT {
 
   @Test
   @DisplayName(
+      "s4_handover_grantfrei_verdeckt_ziel_existenz: aktiver Tenant-A-Nichtmember und Tenant-B-User"
+          + " liefern beide 403 ohne Handover-, Participant- oder Exit-Mutation")
+  void s4_handover_grantfrei_verdeckt_ziel_existenz() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "S4-handover-target-authz-order");
+    final long dbId = taskDbId(taskId);
+    insertActiveMember(520203L, dbId, GRANTFREE_REF, TENANT_A_ID);
+
+    final int participantCountBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
+    final String tokenGrantFree = buildGrantFreeJwt(TENANT_A_UUID, GRANTFREE_REF, GRANTFREE_LOGIN);
+    for (final UUID targetRef : List.of(HANDOVER_TARGET_REF, USER_B_REF)) {
+      mvc.perform(
+              post("/api/v1/tasks/" + taskId + "/exit")
+                  .header("Authorization", "Bearer " + tokenGrantFree)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      om.writeValueAsString(
+                          Map.of(
+                              "exitKind",
+                              "HANDOVER",
+                              "handedOverToIds",
+                              List.of(targetRef.toString())))))
+          .andExpect(status().isForbidden());
+
+      assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", dbId))
+          .as("kein Handover-Ereignis fuer Ziel %s", targetRef)
+          .isZero();
+      assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId))
+          .as("keine Participant-Mutation fuer Ziel %s", targetRef)
+          .isEqualTo(participantCountBefore);
+      assertThat(
+              count(
+                  "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                      + " AND PARTICIPANT_REF = ? AND EXIT_KIND IS NULL",
+                  dbId, GRANTFREE_REF))
+          .as("Akteur bleibt aktiv fuer Ziel %s", targetRef)
+          .isEqualTo(1);
+    }
+  }
+
+  @Test
+  @DisplayName(
       "s4_handover_an_nicht_member_mit_task_write_204: HANDOVER an Nicht-WRITE-Member MIT TASK_WRITE"
           + " -> 204, Ziel wird neuer aktiver Assignee")
   void s4_handover_an_nicht_member_mit_task_write_204() throws Exception {

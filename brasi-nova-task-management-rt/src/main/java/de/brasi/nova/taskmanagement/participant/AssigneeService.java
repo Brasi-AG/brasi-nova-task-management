@@ -647,9 +647,36 @@ public class AssigneeService {
       }
     }
 
-    // Deduplizierte Zielmenge (stabile Reihenfolge). Alle Ziele muessen aktive Benutzer DES
-    // Mandanten sein (All-or-Nothing 400, keine Mutation bei Verstoss).
+    // Deduplizierte Zielmenge (stabile Reihenfolge).
     final Set<UUID> dedupedTargets = new LinkedHashSet<>(rawTargets);
+    // (2b) Handover-Autz-Grenze (Standard-Selfservice, Slice 4, Auflage 2 - Eskalationsschutz):
+    // HANDOVER fuehrt via ensureAssignee neue Assignees ein bzw. reaktiviert sie (= effektiv
+    // "add participant"). Da addParticipants/updateAssignees TASK_WRITE-gated BLEIBEN, ist ein
+    // grant-freier HANDOVER NUR dann zulaessig, wenn JEDES deduplizierte Ziel bereits VOLLER
+    // WRITE-Member der Aufgabe ist (reiner Rollenwechsel innerhalb bestehender aktiver Mitglieder).
+    // Fuehrt ODER reaktiviert der HANDOVER mindestens EIN Ziel, das KEIN WRITE-Member ist (neu,
+    // ausgetreten, inaktiv, TEAM, fremder PARTICIPANT_TENANT_ID), erfordert er exakte TASK_WRITE-
+    // Authority; fehlt sie dem (bestaetigten) Akteur -> 403, KEINE Mutation (All-or-Nothing ueber die
+    // GESAMTE deduplizierte Zielmenge). Dieser bedingte Grant-Check laeuft NACH dem Akteur-WRITE-Guard
+    // (oben, requireWriteMember) und VOR Zielnutzeraufloesung und jeder Mutation (403 statt 404 ist
+    // korrekt: der Akteur ist bestaetigtes Mitglied, kein Existenz-Leak). UNSUBSCRIBED hat keine Ziele
+    // -> immer grant-frei.
+    if (handover && !dedupedTargets.isEmpty()) {
+      final boolean allTargetsAreWriteMembers =
+          dedupedTargets.stream()
+              .allMatch(targetRef -> membershipGuard.isWriteMember(taskId, targetRef, tenantId));
+      if (!allTargetsAreWriteMembers
+          && !permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)) {
+        throw new PermissionDeniedException(
+            TaskManagementPermissions.TASK_WRITE,
+            "Die Uebergabe an ein noch nicht als WRITE-Mitglied gefuehrtes Ziel erfordert"
+                + " TASK_WRITE.");
+      }
+    }
+
+    // Alle Ziele muessen aktive Benutzer DES Mandanten sein (All-or-Nothing 400, keine Mutation bei
+    // Verstoss). Erst nach der Autorisierung aufloesen, damit grant-freie Member keine Existenz von
+    // Nicht-WRITE-Zielen ueber 400/403 unterscheiden koennen.
     if (!dedupedTargets.isEmpty()) {
       final Set<UUID> activeUserRefs =
           userReadRepository.findActiveByUuids(dedupedTargets).stream()
@@ -662,30 +689,6 @@ public class AssigneeService {
       if (!unknown.isEmpty()) {
         throw new EntityValidationException(
             "Unbekannte oder nicht zugelassene Uebergabeziele: " + unknown);
-      }
-    }
-
-    // (2b) Handover-Autz-Grenze (Standard-Selfservice, Slice 4, Auflage 2 - Eskalationsschutz):
-    // HANDOVER fuehrt via ensureAssignee neue Assignees ein bzw. reaktiviert sie (= effektiv
-    // "add participant"). Da addParticipants/updateAssignees TASK_WRITE-gated BLEIBEN, ist ein
-    // grant-freier HANDOVER NUR dann zulaessig, wenn JEDES deduplizierte Ziel bereits VOLLER
-    // WRITE-Member der Aufgabe ist (reiner Rollenwechsel innerhalb bestehender aktiver Mitglieder).
-    // Fuehrt ODER reaktiviert der HANDOVER mindestens EIN Ziel, das KEIN WRITE-Member ist (neu,
-    // ausgetreten, inaktiv, TEAM, fremder PARTICIPANT_TENANT_ID), erfordert er exakte TASK_WRITE-
-    // Authority; fehlt sie dem (bestaetigten) Akteur -> 403, KEINE Mutation (All-or-Nothing ueber die
-    // GESAMTE deduplizierte Zielmenge). Dieser bedingte Grant-Check laeuft NACH dem Akteur-WRITE-Guard
-    // (oben, requireWriteMember) und VOR jeder Mutation (403 statt 404 ist korrekt: der Akteur ist
-    // bestaetigtes Mitglied, kein Existenz-Leak). UNSUBSCRIBED hat keine Ziele -> immer grant-frei.
-    if (handover && !dedupedTargets.isEmpty()) {
-      final boolean allTargetsAreWriteMembers =
-          dedupedTargets.stream()
-              .allMatch(targetRef -> membershipGuard.isWriteMember(taskId, targetRef, tenantId));
-      if (!allTargetsAreWriteMembers
-          && !permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)) {
-        throw new PermissionDeniedException(
-            TaskManagementPermissions.TASK_WRITE,
-            "Die Uebergabe an ein noch nicht als WRITE-Mitglied gefuehrtes Ziel erfordert"
-                + " TASK_WRITE.");
       }
     }
 
