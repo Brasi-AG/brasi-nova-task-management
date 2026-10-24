@@ -27,6 +27,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -139,6 +140,15 @@ class ParticipantAddConcurrencyIT {
   private static final long REACT_REF_DB_ID = 593202L;
   private static final long REACT_PARTICIPANT_ID = 593301L;
 
+  // Zwei bestehende Ex-Refs fuer inverse Mehrfach-Ref-Reaktivierungen (keine Insert-Sequenz).
+  private static final long TASK_ORDER_ID = 593103L;
+  private static final UUID TASK_ORDER_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000593103");
+  private static final UUID ORDER_REF_A =
+      UUID.fromString("00000059-0003-0059-0000-000000000593");
+  private static final UUID ORDER_REF_B =
+      UUID.fromString("00000059-0004-0059-0000-000000000593");
+
   private static HikariDataSource master;
   private static String dbName;
 
@@ -180,6 +190,15 @@ class ParticipantAddConcurrencyIT {
     insertTask(jt, TASK_REACT_ID, TASK_REACT_UUID, TENANT_ID, "Reactivate-Race-Task");
     // Reaktivierungs-Race: eine bereits AUSGETRETENE Teilnehmer-Zeile fuer REACT_REF.
     insertExitedParticipant(jt, REACT_PARTICIPANT_ID, TASK_REACT_ID, REACT_REF, TENANT_ID);
+    seedBenutzer(jt, 593203L, ORDER_REF_A, "order-a@brasi.de", TENANT_ID);
+    seedBenutzer(jt, 593204L, ORDER_REF_B, "order-b@brasi.de", TENANT_ID);
+    insertTask(jt, TASK_ORDER_ID, TASK_ORDER_UUID, TENANT_ID, "Inverse-Order-Task");
+    insertExitedParticipant(jt, 593302L, TASK_ORDER_ID, ORDER_REF_A, TENANT_ID);
+    insertExitedParticipant(jt, 593303L, TASK_ORDER_ID, ORDER_REF_B, TENANT_ID);
+    insertExitedUserState(jt, 593501L, TASK_ORDER_ID, ORDER_REF_A);
+    insertExitedUserState(jt, 593502L, TASK_ORDER_ID, ORDER_REF_B);
+    insertGeneration(jt, 593601L, ORDER_REF_A);
+    insertGeneration(jt, 593602L, ORDER_REF_B);
   }
 
   // ---- Beweis 1: Insert-UNIQUE-Recovery (einthreadig, unabhaengige Konflikt-Injektion) ---------
@@ -280,6 +299,36 @@ class ParticipantAddConcurrencyIT {
         .isEqualTo(versionBefore);
   }
 
+  @Test
+  @DisplayName("inverse Mehrfach-Ref-Reaktivierungen committen ohne Lock-Inversion")
+  void inverse_mehrfach_ref_reaktivierungen_committen() throws Exception {
+    service.armBarrier(null); // anderer Test nutzt eine Single-Ref-Save-Barrier.
+    final int taskVersionBefore = taskVersion(TASK_ORDER_UUID);
+    final CountDownLatch start = new CountDownLatch(1);
+    final AtomicReference<Throwable> firstError = new AtomicReference<>();
+    final AtomicReference<Throwable> secondError = new AtomicReference<>();
+    final Thread first = inverseOrderThread(List.of(ORDER_REF_B, ORDER_REF_A), start, firstError);
+    final Thread second = inverseOrderThread(List.of(ORDER_REF_A, ORDER_REF_B), start, secondError);
+    first.start();
+    second.start();
+    start.countDown();
+    first.join(TimeUnit.SECONDS.toMillis(30));
+    second.join(TimeUnit.SECONDS.toMillis(30));
+
+    assertThat(first.isAlive()).as("erster Request beendet").isFalse();
+    assertThat(second.isAlive()).as("zweiter Request beendet").isFalse();
+    assertThat(firstError.get()).as("erster Request committet").isNull();
+    assertThat(secondError.get()).as("zweiter Request committet").isNull();
+    for (final UUID ref : List.of(ORDER_REF_A, ORDER_REF_B)) {
+      assertThat(activeParticipantRows(TASK_ORDER_ID, ref)).isEqualTo(1);
+      assertThat(userStateRows(TASK_ORDER_ID, ref)).isEqualTo(1);
+      assertThat(activeUserStateRows(TASK_ORDER_ID, ref)).isEqualTo(1);
+      assertThat(generation(ref)).as("genau ein Bump pro reaktiviertem Ref").isEqualTo(1L);
+    }
+    assertThat(taskVersion(TASK_ORDER_UUID)).isEqualTo(taskVersionBefore);
+    assertThat(notificationRows(TASK_ORDER_ID)).isZero();
+  }
+
   // ---- Helfer ----------------------------------------------------------------------------------
 
   private Thread raceThread(
@@ -295,6 +344,37 @@ class ParticipantAddConcurrencyIT {
             TenantContextHolder.clear();
           }
         });
+  }
+
+  private Thread inverseOrderThread(
+      final List<UUID> refs, final CountDownLatch start, final AtomicReference<Throwable> err) {
+    final Thread thread = new Thread(() -> {
+      try {
+        start.await(20, TimeUnit.SECONDS);
+        TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+        service.addParticipants(TASK_ORDER_UUID, new ParticipantAddInput(refs));
+      } catch (final Throwable t) {
+        err.set(t);
+      } finally {
+        TenantContextHolder.clear();
+      }
+    });
+    thread.setDaemon(true);
+    return thread;
+  }
+
+  private int activeUserStateRows(final long taskId, final UUID ref) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE]"
+            + " WHERE TASK_ID = ? AND USER_REF = ? AND TENANT_ID = ?"
+            + " AND ENTITY_STATUS = 'ACTIVE' AND UNSUBSCRIBED_AT IS NULL",
+        Integer.class, taskId, ref, TENANT_ID);
+  }
+
+  private int notificationRows(final long taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?",
+        Integer.class, taskId);
   }
 
   /** Legt eine bereits committete Konflikt-Zeile ueber eine UNABHAENGIGE Verbindung (autocommit) an. */
@@ -412,6 +492,27 @@ class ParticipantAddConcurrencyIT {
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, 'UNSUBSCRIBED', "
             + " GETDATE(), 'it-seed', GETDATE())",
         id, id, tenantId, taskId, ref, tenantId);
+  }
+
+  private static void insertExitedUserState(
+      final JdbcTemplate jt, final long id, final long taskId, final UUID ref) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_USER_STATE] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, TASK_ID, USER_REF,"
+            + " USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT,"
+            + " ANGELEGT_VON, ANGELEGT_AM)"
+            + " VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, 0, 0, 0,"
+            + " DATEADD(MINUTE, -1, GETDATE()), 'it-seed', DATEADD(MINUTE, -2, GETDATE()))",
+        id, TENANT_ID, taskId, ref, TENANT_ID);
+  }
+
+  private static void insertGeneration(final JdbcTemplate jt, final long id, final UUID ref) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_INBOX_GENERATION] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, USER_REF, GENERATION,"
+            + " ANGELEGT_VON, ANGELEGT_AM)"
+            + " VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, 0, 'it-seed', GETDATE())",
+        id, TENANT_ID, ref);
   }
 
   // ---- IT-Konfigurations-Context ---------------------------------------------------------------

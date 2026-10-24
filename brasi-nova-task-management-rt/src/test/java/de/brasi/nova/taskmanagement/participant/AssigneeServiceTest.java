@@ -1414,6 +1414,35 @@ class AssigneeServiceTest {
   // ============================================================================================
 
   @Test
+  @DisplayName("addParticipants verarbeitet inverse Mehrfach-Ref-Inputs in gleicher UUID-Reihenfolge")
+  void addParticipants_inverse_refs_haben_gleiche_mutationsreihenfolge() {
+    final UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    final UUID firstTaskUuid = UUID.randomUUID();
+    final UUID secondTaskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(firstTaskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(201L, firstTaskUuid)));
+    when(taskRepository.findByUuid(secondTaskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(202L, secondTaskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(anyLong(), any()))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(firstTaskUuid, new ParticipantAddInput(List.of(second, first)));
+    service.addParticipants(secondTaskUuid, new ParticipantAddInput(List.of(first, second)));
+
+    final ArgumentCaptor<TaskParticipant> saves = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, times(4)).save(saves.capture());
+    assertThat(saves.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList())
+        .containsExactly(first, second, first, second);
+
+    final ArgumentCaptor<UUID> stateRefs = ArgumentCaptor.forClass(UUID.class);
+    verify(userStateService, times(4)).ensure(anyLong(), stateRefs.capture(), eq(TENANT_ID));
+    assertThat(stateRefs.getAllValues()).containsExactly(first, second, first, second);
+  }
+
+  @Test
   @DisplayName(
       "addParticipants_neuer_ref: neuer Ref -> Teilnehmer (PARTICIPANT_FLAG=1, kein Assignee/Creator)"
           + " + ensure + bump + invalidate; KEINE Notification, KEIN Task-VERSION-Bump")

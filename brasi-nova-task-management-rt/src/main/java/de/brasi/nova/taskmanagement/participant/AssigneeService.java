@@ -377,9 +377,11 @@ public class AssigneeService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
-    // Deduplizieren (stabile Reihenfolge). Leere Menge -> No-Op: kein findActiveByUuids (MSSQL
-    // IN () waere ein Syntaxfehler), keine Mutation, kein invalidate.
-    final Set<UUID> refs = new LinkedHashSet<>(input.participantIds());
+    // Deduplizieren und vor den Participant-/UserState-Writes sortieren, damit parallele
+    // Mehrfach-Ref-Adds dieselben DB-Zeilen in gleicher Reihenfolge sperren.
+    // Leere Menge -> No-Op: kein findActiveByUuids (MSSQL IN () waere ein Syntaxfehler).
+    final List<UUID> refs = new ArrayList<>(new LinkedHashSet<>(input.participantIds()));
+    refs.sort(UUID::compareTo);
     if (refs.isEmpty()) {
       return;
     }
