@@ -36,6 +36,41 @@ nur an diese konfigurierte Origin.
 | `prod-alpha` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 | `prod` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 
+## Contact als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.contact.enabled=true` registriert
+und prueft `GET /api/v1/contacts/{tenantId}/{contactId}/task-source-validation`
+mit dem aktuellen Benutzer-Bearer. `application:contact` bleibt in allen
+Profilen ohne explizite kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.contact.application-base-url` und
+`task.source.contact.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+## Employee als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.employee.enabled=true` registriert
+und prueft `GET /api/v1/employees/{tenantId}/{employeeId}/task-source-validation`
+mit dem aktuellen Benutzer-Bearer. `application:employee` bleibt ohne explizite
+kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.employee.application-base-url` und
+`task.source.employee.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+## Firm als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.firm.enabled=true` registriert.
+Er akzeptiert als `entityRef` ausschliesslich die UUID des aktiven Mandanten und
+prueft `GET /api/v1/firms/{tenantId}/{firmId}/task-source-validation` mit dem
+aktuellen Benutzer-Bearer. `application:firm` bleibt ohne explizite
+kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.firm.application-base-url` und
+`task.source.firm.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+Die Flags fuer Customer, Contact, Employee und Firm bleiben in `dev-backend`,
+`dev-ui`, `prod-alpha` und `prod` fehlend beziehungsweise `false`, bis die
+jeweilige Profil-Aktivierung mit einem realen Benutzer-Token geprueft ist.
+
 Source-Create verlangt einen Key mit 1 bis 128 sichtbaren ASCII-Zeichen. Die
 Receipt-Tabelle erzwingt `UNIQUE(tenant UUID, actor UUID, key)` mit binaerer
 Schluessel-Kollation. Receipt, Task, Teilnehmer, User-State und Create-Effekte
