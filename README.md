@@ -36,6 +36,41 @@ nur an diese konfigurierte Origin.
 | `prod-alpha` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 | `prod` | fehlt / `false` | vor Aktivierung aus kpl-config | vor Aktivierung aus kpl-config |
 
+## Contact als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.contact.enabled=true` registriert
+und prueft `GET /api/v1/contacts/{tenantId}/{contactId}/task-source-validation`
+mit dem aktuellen Benutzer-Bearer. `application:contact` bleibt in allen
+Profilen ohne explizite kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.contact.application-base-url` und
+`task.source.contact.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+## Employee als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.employee.enabled=true` registriert
+und prueft `GET /api/v1/employees/{tenantId}/{employeeId}/task-source-validation`
+mit dem aktuellen Benutzer-Bearer. `application:employee` bleibt ohne explizite
+kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.employee.application-base-url` und
+`task.source.employee.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+## Firm als Task-Quelle (lokaler Kandidat, nicht aktiviert)
+
+Der separate Adapter wird nur mit `task.source.firm.enabled=true` registriert.
+Er akzeptiert als `entityRef` ausschliesslich die UUID des aktiven Mandanten und
+prueft `GET /api/v1/firms/{tenantId}/{firmId}/task-source-validation` mit dem
+aktuellen Benutzer-Bearer. `application:firm` bleibt ohne explizite
+kpl-config-Aktivierung unregistriert. Die Eigenschaften
+`task.source.firm.application-base-url` und
+`task.source.firm.allowed-base-urls` muessen wie beim Customer aus dem
+jeweiligen Profil stammen. `source.href` bleibt `null`.
+
+Die Flags fuer Customer, Contact, Employee und Firm bleiben in `dev-backend`,
+`dev-ui`, `prod-alpha` und `prod` fehlend beziehungsweise `false`, bis die
+jeweilige Profil-Aktivierung mit einem realen Benutzer-Token geprueft ist.
+
 Source-Create verlangt einen Key mit 1 bis 128 sichtbaren ASCII-Zeichen. Die
 Receipt-Tabelle erzwingt `UNIQUE(tenant UUID, actor UUID, key)` mit binaerer
 Schluessel-Kollation. Receipt, Task, Teilnehmer, User-State und Create-Effekte
@@ -62,3 +97,28 @@ tragen. Ein `TASK_WRITE`-Token allein darf den Kontext-Endpunkt nicht bedienen;
 ein reiner `TASK_CREATE`-Token darf die manuelle Route nicht bedienen. Customer-
 Read-Gate, Identity-Token und ein gleichwertig geschuetzter Link-Zielpfad sind
 weitere Profil-Gates. Das Customer-Feature-Flag bleibt bis zu diesen Proben aus.
+
+## PR-Validierung und MSSQL-Gate
+
+Der PR-Workflow `Validate Task Management PR` prueft den Merge-Stand gegen
+`developer`: Java-Formatierung der im PR geaenderten Runtime-Dateien mit JDK 21
+sowie Build und Unit-Tests mit JDK 25. Er braucht das Repository-Secret
+`KSF_PACKAGES_READ_TOKEN` fuer die KSF-Abhaengigkeiten. Ein fehlendes Secret
+laesst die Pruefung fehlschlagen. Der Workflow baut oder veroeffentlicht keine
+Snapshot-Release.
+
+Ein gruenes PR-Ergebnis ist **kein** MSSQL-Integrationsnachweis. Vor der
+Integration des Task-Source-Branches muss auf dem finalen Code-Stand der
+`TaskFacadeControllerIT` mit echtem MSSQL und den lokalen
+`BRASI_INT_DB_USER`/`BRASI_INT_DB_PASSWORD` (optional `BRASI_INT_DB_URL`)
+ausgefuehrt werden:
+
+```powershell
+mvn -pl brasi-nova-task-management-rt -am '-Dtest=TaskSourceRegistryTest,TaskSourceCreateServiceTest,CustomerTaskSourceAdapterTest,ContactTaskSourceAdapterTest,EmployeeTaskSourceAdapterTest,FirmTaskSourceAdapterTest' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dit.test=TaskFacadeControllerIT' verify
+```
+
+Der native Maven-Exit muss `0` sein; im Failsafe-XML fuer
+`TaskFacadeControllerIT` muessen Tests ausgefuehrt worden sein und `failures`,
+`errors` und `skipped` jeweils `0` sein. Der Test erstellt und entfernt seine
+eigene MSSQL-Wegwerf-Datenbank. Ohne DB-Zugang wird der IT uebersprungen und
+erfuellt dieses Gate nicht.

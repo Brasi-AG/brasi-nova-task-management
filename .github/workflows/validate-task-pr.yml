@@ -1,0 +1,145 @@
+name: Validate Task Management PR
+
+on:
+  pull_request:
+    branches: [developer]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      MAVEN_OPTS: -Dfile.encoding=UTF-8 -Xmx2048m
+      GH_PACKAGES_USER: naujoks-stefan
+      GH_PACKAGES_TOKEN: ${{ secrets.KSF_PACKAGES_READ_TOKEN }}
+
+    steps:
+      - name: Check out PR merge result
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record validated revisions
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "PR head: $PR_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated merge: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require KSF package credentials
+        run: |
+          if [[ -z "$GH_PACKAGES_TOKEN" ]]; then
+            echo "::error::KSF_PACKAGES_READ_TOKEN is required to resolve the KSF dependencies."
+            exit 1
+          fi
+
+      - name: Configure Maven package repository
+        run: |
+          mkdir -p "$HOME/.m2"
+          cat > "$HOME/.m2/settings.xml" <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>github-keel-spring-framework</id>
+                <username>${env.GH_PACKAGES_USER}</username>
+                <password>${env.GH_PACKAGES_TOKEN}</password>
+              </server>
+            </servers>
+            <profiles>
+              <profile>
+                <id>github-packages</id>
+                <repositories>
+                  <repository>
+                    <id>github-keel-spring-framework</id>
+                    <url>https://maven.pkg.github.com/naujoks-stefan/keel-spring-framework</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>github-keel-spring-framework</id>
+                    <url>https://maven.pkg.github.com/naujoks-stefan/keel-spring-framework</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+            <activeProfiles><activeProfile>github-packages</activeProfile></activeProfiles>
+          </settings>
+          XML
+
+      - name: Set up JDK 21 for changed Java formatting
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          overwrite-settings: false
+
+      - name: Check formatting of changed runtime Java files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! changed_paths="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- \
+            brasi-nova-task-management-rt/src/main/java \
+            brasi-nova-task-management-rt/src/test/java)"; then
+            echo "::error::Cannot determine changed Java files from PR base $BASE_SHA."
+            exit 1
+          fi
+          mapfile -t changed_java < <(
+            printf '%s\n' "$changed_paths" | grep '[.]java$' || true
+          )
+          if (( ${#changed_java[@]} == 0 )); then
+            echo "No runtime Java files changed."
+            exit 0
+          fi
+          pattern="$(printf '%s\n' "${changed_java[@]}" | python3 -c '
+          import os, re, sys
+          names = sorted({os.path.basename(path.strip()) for path in sys.stdin if path.strip()})
+          print(".*(?:" + "|".join(re.escape(name) for name in names) + ")$")
+          ')"
+          mvn -B -ntp -pl brasi-nova-task-management-rt "-DspotlessFiles=$pattern" spotless:check
+
+      - name: Set up JDK 25 for compilation and unit tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          overwrite-settings: false
+
+      - name: Build and run unit tests
+        run: mvn -B -ntp -pl brasi-nova-task-management-rt -am test
+
+      - name: Require source adapter test results
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          directory = Path('brasi-nova-task-management-rt/target/surefire-reports')
+          names = (
+              'CustomerTaskSourceAdapterTest',
+              'ContactTaskSourceAdapterTest',
+              'EmployeeTaskSourceAdapterTest',
+              'FirmTaskSourceAdapterTest',
+              'TaskSourceRegistryTest',
+              'TaskSourceCreateServiceTest',
+          )
+          total = 0
+          for name in names:
+              report = directory / f'TEST-de.brasi.nova.taskmanagement.task.{name}.xml'
+              suite = ElementTree.parse(report).getroot()
+              counts = {key: int(suite.get(key, '0')) for key in
+                        ('tests', 'failures', 'errors', 'skipped')}
+              if counts['tests'] == 0 or any(counts[key] for key in
+                    ('failures', 'errors', 'skipped')):
+                  raise SystemExit(f'{name}: unexpected test results {counts}')
+              total += counts['tests']
+          print(f'Source test gate: {total} tests, zero failures/errors/skips')
+          PY
