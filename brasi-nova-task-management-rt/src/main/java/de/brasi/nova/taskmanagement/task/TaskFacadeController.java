@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.task;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import de.brasi.nova.taskmanagement.task.model.TaskCreateFromSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
@@ -122,13 +123,40 @@ public class TaskFacadeController {
               + "Ein gleicher Idempotency-Key mit gleicher effektiver Eingabe liefert die bestehende "
               + "Aufgaben-ID nur bei weiterhin lesbarer Quelle und aktiver Teilnahme zurueck.")
   @ApiResponses({
-    @ApiResponse(responseCode = "201", description = "Neue Aufgabe atomar angelegt."),
-    @ApiResponse(responseCode = "200", description = "Idempotenter Replay derselben Aufgabe."),
-    @ApiResponse(responseCode = "400", description = "Quelle, Key oder Create-Eingabe ungueltig."),
-    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-    @ApiResponse(responseCode = "403", description = "Fehlende TASK_CREATE-Berechtigung."),
-    @ApiResponse(responseCode = "404", description = "Quelle oder aktive Teilnahme nicht lesbar."),
-    @ApiResponse(responseCode = "409", description = "Key fuer andere Eingabe verwendet.")
+    @ApiResponse(
+        responseCode = "201",
+        description = "Neue Aufgabe atomar angelegt.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = CreatedResourceResponse.class))),
+    @ApiResponse(
+        responseCode = "200",
+        description = "Idempotenter Replay derselben Aufgabe.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = CreatedResourceResponse.class))),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Quelle, Key oder Create-Eingabe ungueltig.",
+        content = @Content),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content = @Content),
+    @ApiResponse(
+        responseCode = "403",
+        description = "Fehlende TASK_CREATE-Berechtigung.",
+        content = @Content),
+    @ApiResponse(
+        responseCode = "404",
+        description = "Quelle oder aktive Teilnahme nicht lesbar.",
+        content = @Content),
+    @ApiResponse(
+        responseCode = "409",
+        description = "Key fuer andere Eingabe verwendet.",
+        content = @Content)
   })
   @PostMapping("/from-source")
   @RequiresPermission(TaskManagementPermissions.TASK_CREATE)
@@ -137,10 +165,23 @@ public class TaskFacadeController {
               name = "Idempotency-Key",
               in = ParameterIn.HEADER,
               required = true,
-              description = "1 bis 128 sichtbare ASCII-Zeichen; Mandant/Akteur-spezifisch.")
+              description = "1 bis 128 sichtbare ASCII-Zeichen; Mandant/Akteur-spezifisch.",
+              schema =
+                  @Schema(
+                      type = "string",
+                      minLength = 1,
+                      maxLength = 128,
+                      pattern = "^[!-~]{1,128}$"))
           @RequestHeader(value = "Idempotency-Key", required = false)
           final String idempotencyKey,
-      @RequestBody final TaskCreateInput input) {
+      @io.swagger.v3.oas.annotations.parameters.RequestBody(
+              required = true,
+              content =
+                  @Content(
+                      mediaType = "application/json",
+                      schema = @Schema(implementation = TaskCreateFromSourceInput.class)))
+          @RequestBody
+          final TaskCreateInput input) {
     final TaskSourceCreateResult result = sourceCreateService.create(input, idempotencyKey);
     if (!result.created()) {
       return ResponseEntity.ok(Map.of("id", result.taskId()));
