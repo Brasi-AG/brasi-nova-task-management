@@ -8,5 +8,7 @@ public record TaskSourceModel(
     String module,
     String entityType,
     UUID entityRef,
-    @Schema(description = "Gateway-relativer Link, nur fuer registrierte sichere Quelltypen.")
-    String href) {}
+    @Schema(
+            description = "Gateway-relativer Link, nur fuer registrierte sichere Quelltypen.",
+            nullable = true)
+        String href) {}

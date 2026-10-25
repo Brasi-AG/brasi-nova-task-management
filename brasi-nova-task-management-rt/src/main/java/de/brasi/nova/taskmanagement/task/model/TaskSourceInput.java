@@ -2,10 +2,17 @@ package de.brasi.nova.taskmanagement.task.model;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import io.keel.framework.api.validation.EntityValidationException;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.UUID;
 
 /** Source identity supplied by a client; never a navigation URL or access assertion. */
-public record TaskSourceInput(String module, String entityType, UUID entityRef) {
+@Schema(
+    description =
+        "Registrierter Quellkontext; nur auf POST /api/v1/tasks/from-source erlaubt und dort erforderlich.")
+public record TaskSourceInput(
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String module,
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String entityType,
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED) UUID entityRef) {
   public TaskSourceInput {
     if (!validName(module) || !validName(entityType) || entityRef == null) {
       throw new EntityValidationException("Ungueltiger Quellkontext.");

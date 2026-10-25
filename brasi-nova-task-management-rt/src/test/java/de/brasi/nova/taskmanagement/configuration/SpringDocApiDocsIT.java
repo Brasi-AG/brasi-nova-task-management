@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.openapi.TaskManagementOpenApiGroups;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
@@ -20,6 +21,8 @@ import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import io.keel.framework.security.KsfSecurityAutoConfiguration;
 import io.keel.framework.security.web.KsfWebSecurityAutoConfiguration;
 import io.keel.framework.web.openapi.KsfOpenApiConfig;
+import java.util.HashSet;
+import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -284,6 +287,142 @@ class SpringDocApiDocsIT {
   }
 
   @Test
+  void sourceCreateRequestRequiresSourceTupleOnlyOnSourceRoute() throws Exception {
+    final JsonNode doc = taskManagementDocument();
+    final JsonNode schemas = doc.path("components").path("schemas");
+    final JsonNode sourceRequest =
+        doc.path("paths")
+            .path("/api/v1/tasks/from-source")
+            .path("post")
+            .path("requestBody")
+            .path("content")
+            .path("application/json")
+            .path("schema");
+    final JsonNode manualRequest =
+        doc.path("paths")
+            .path("/api/v1/tasks")
+            .path("post")
+            .path("requestBody")
+            .path("content")
+            .path("application/json")
+            .path("schema");
+
+    assertThat(sourceRequest.path("$ref").asText())
+        .as("Generator braucht ein benanntes, routespezifisches Request-Schema: " + sourceRequest)
+        .isEqualTo("#/components/schemas/TaskCreateFromSourceInput");
+    final JsonNode sourceProperties = schemas.path("TaskCreateFromSourceInput").path("properties");
+    final JsonNode manualProperties = schemas.path("TaskCreateInput").path("properties");
+    final Set<String> sourceNames = new HashSet<>();
+    sourceProperties.fieldNames().forEachRemaining(sourceNames::add);
+    final Set<String> manualNames = new HashSet<>();
+    manualProperties.fieldNames().forEachRemaining(manualNames::add);
+    assertThat(sourceNames).as("Request-Feldparitaet").isEqualTo(manualNames);
+    for (final String name : manualNames) {
+      for (final String wireFacet :
+          new String[] {"type", "format", "$ref", "nullable", "additionalProperties"}) {
+        assertThat(sourceProperties.path(name).path(wireFacet))
+            .as("Request-Wire-Shape " + name + "." + wireFacet)
+            .isEqualTo(manualProperties.path(name).path(wireFacet));
+      }
+      for (final String itemFacet : new String[] {"type", "format", "$ref", "nullable"}) {
+        assertThat(sourceProperties.path(name).path("items").path(itemFacet))
+            .as("Request-Array-Item-Wire-Shape " + name + ".items." + itemFacet)
+            .isEqualTo(manualProperties.path(name).path("items").path(itemFacet));
+      }
+      for (final String documentationFacet : new String[] {"description", "example"}) {
+        assertThat(sourceProperties.path(name).path(documentationFacet))
+            .as("Request-Felddokumentation " + name + "." + documentationFacet)
+            .isEqualTo(manualProperties.path(name).path(documentationFacet));
+      }
+      assertThat(sourceProperties.path(name).path("items").path("description"))
+          .as("Request-Array-Item-Dokumentation " + name + ".items.description")
+          .isEqualTo(manualProperties.path(name).path("items").path("description"));
+    }
+    final Set<String> expectedSourceRequired =
+        requiredProperties(schemas.path("TaskCreateInput"), schemas);
+    expectedSourceRequired.add("source");
+    assertThat(requiredProperties(schemas.path("TaskCreateFromSourceInput"), schemas))
+        .as("Required-Paritaet mit source als einziger zusaetzlicher Pflicht")
+        .isEqualTo(expectedSourceRequired);
+
+    assertThat(requiredProperties(sourceRequest, schemas))
+        .as("from-source braucht source: " + sourceRequest)
+        .contains("source");
+    assertThat(requiredProperties(manualRequest, schemas))
+        .as("manuelle Create-Route darf source nicht verlangen: " + manualRequest)
+        .doesNotContain("source");
+    assertThat(requiredProperties(schemas.path("TaskSourceInput"), schemas))
+        .contains("module", "entityType", "entityRef");
+    assertThat(schemas.path("TaskSourceInput").path("description").asText())
+        .as("Quellkontext-Beschreibung bleibt im benannten Schema erhalten")
+        .isEqualTo(
+            "Registrierter Quellkontext; nur auf POST /api/v1/tasks/from-source erlaubt und dort erforderlich.");
+  }
+
+  @Test
+  void sourceCreateHeaderDocumentsVisibleAsciiLimit() throws Exception {
+    final JsonNode parameters =
+        taskManagementDocument()
+            .path("paths")
+            .path("/api/v1/tasks/from-source")
+            .path("post")
+            .path("parameters");
+    JsonNode header = MissingNode.getInstance();
+    for (final JsonNode parameter : parameters) {
+      if ("Idempotency-Key".equals(parameter.path("name").asText())) {
+        header = parameter;
+        break;
+      }
+    }
+
+    assertThat(header.isMissingNode()).as("Idempotency-Key dokumentiert").isFalse();
+    assertThat(header.path("required").asBoolean()).isTrue();
+    assertThat(header.path("schema").path("type").asText()).isEqualTo("string");
+    assertThat(header.path("schema").path("minLength").asInt()).isEqualTo(1);
+    assertThat(header.path("schema").path("maxLength").asInt()).isEqualTo(128);
+    assertThat(header.path("schema").path("pattern").asText()).isEqualTo("^[!-~]{1,128}$");
+  }
+
+  @Test
+  void sourceCreateResponsesRequireUuidIdWithoutSuccessSchemaOnErrors() throws Exception {
+    final JsonNode doc = taskManagementDocument();
+    final JsonNode schemas = doc.path("components").path("schemas");
+    final JsonNode responses =
+        doc.path("paths").path("/api/v1/tasks/from-source").path("post").path("responses");
+    for (final String statusCode : new String[] {"200", "201"}) {
+      final JsonNode schema =
+          responses.path(statusCode).path("content").path("application/json").path("schema");
+      assertThat(schema.isMissingNode()).as(statusCode + " Success-Schema vorhanden").isFalse();
+      assertThat(requiredProperties(schema, schemas))
+          .as(statusCode + " braucht id: " + schema)
+          .contains("id");
+      assertThat(propertySchema(schema, schemas, "id").path("format").asText())
+          .as(statusCode + " id ist UUID: " + schema)
+          .isEqualTo("uuid");
+    }
+    for (final String statusCode : new String[] {"400", "401", "403", "404", "409"}) {
+      final JsonNode schema =
+          responses.path(statusCode).path("content").path("application/json").path("schema");
+      assertThat(propertySchema(schema, schemas, "id").isMissingNode())
+          .as(statusCode + " darf kein Success-id-Schema tragen: " + schema)
+          .isTrue();
+    }
+  }
+
+  @Test
+  void taskSourceHrefIsNullable() throws Exception {
+    final JsonNode href =
+        taskManagementDocument()
+            .path("components")
+            .path("schemas")
+            .path("TaskSourceModel")
+            .path("properties")
+            .path("href");
+    assertThat(href.isMissingNode()).as("TaskSourceModel.href vorhanden").isFalse();
+    assertThat(isNullable(href)).as("TaskSourceModel.href nullable: " + href).isTrue();
+  }
+
+  @Test
   @DisplayName(
       "overview_gruppe_landet_nicht_auf_404: /v3/api-docs/overview -> 200 + nicht-leeres Dokument"
           + " (KSF-UI brasi.openapi.ui.groups[0]=OVERVIEW)")
@@ -324,6 +463,58 @@ class SpringDocApiDocsIT {
       }
     }
     return "null".equals(type.asText(""));
+  }
+
+  private JsonNode taskManagementDocument() throws Exception {
+    final MockMvc mvc =
+        MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .apply(SecurityMockMvcConfigurers.springSecurity())
+            .build();
+    final String body =
+        mvc.perform(get("/v3/api-docs/" + TaskManagementOpenApiGroups.TASK_MANAGEMENT))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final String snapshotPath = System.getProperty("task.openapi.snapshot.path");
+    if (snapshotPath != null && !snapshotPath.isBlank()) {
+      java.nio.file.Files.writeString(java.nio.file.Path.of(snapshotPath), body);
+    }
+    return new ObjectMapper().readTree(body);
+  }
+
+  private static Set<String> requiredProperties(final JsonNode schema, final JsonNode schemas) {
+    final Set<String> required = new HashSet<>();
+    for (final JsonNode name : schema.path("required")) {
+      required.add(name.asText());
+    }
+    final String ref = schema.path("$ref").asText("");
+    if (ref.startsWith("#/components/schemas/")) {
+      required.addAll(requiredProperties(schemas.path(ref.substring(21)), schemas));
+    }
+    for (final JsonNode part : schema.path("allOf")) {
+      required.addAll(requiredProperties(part, schemas));
+    }
+    return required;
+  }
+
+  private static JsonNode propertySchema(
+      final JsonNode schema, final JsonNode schemas, final String name) {
+    final JsonNode direct = schema.path("properties").path(name);
+    if (!direct.isMissingNode()) {
+      return direct;
+    }
+    final String ref = schema.path("$ref").asText("");
+    if (ref.startsWith("#/components/schemas/")) {
+      return propertySchema(schemas.path(ref.substring(21)), schemas, name);
+    }
+    for (final JsonNode part : schema.path("allOf")) {
+      final JsonNode nested = propertySchema(part, schemas, name);
+      if (!nested.isMissingNode()) {
+        return nested;
+      }
+    }
+    return MissingNode.getInstance();
   }
 
   private static boolean anySchemaPropertyHasDescription(final JsonNode schemas) {
