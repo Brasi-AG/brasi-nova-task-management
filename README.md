@@ -97,3 +97,28 @@ tragen. Ein `TASK_WRITE`-Token allein darf den Kontext-Endpunkt nicht bedienen;
 ein reiner `TASK_CREATE`-Token darf die manuelle Route nicht bedienen. Customer-
 Read-Gate, Identity-Token und ein gleichwertig geschuetzter Link-Zielpfad sind
 weitere Profil-Gates. Das Customer-Feature-Flag bleibt bis zu diesen Proben aus.
+
+## PR-Validierung und MSSQL-Gate
+
+Der PR-Workflow `Validate Task Management PR` prueft den Merge-Stand gegen
+`developer`: Java-Formatierung der im PR geaenderten Runtime-Dateien mit JDK 21
+sowie Build und Unit-Tests mit JDK 25. Er braucht das Repository-Secret
+`KSF_PACKAGES_READ_TOKEN` fuer die KSF-Abhaengigkeiten. Ein fehlendes Secret
+laesst die Pruefung fehlschlagen. Der Workflow baut oder veroeffentlicht keine
+Snapshot-Release.
+
+Ein gruenes PR-Ergebnis ist **kein** MSSQL-Integrationsnachweis. Vor der
+Integration des Task-Source-Branches muss auf dem finalen Code-Stand der
+`TaskFacadeControllerIT` mit echtem MSSQL und den lokalen
+`BRASI_INT_DB_USER`/`BRASI_INT_DB_PASSWORD` (optional `BRASI_INT_DB_URL`)
+ausgefuehrt werden:
+
+```powershell
+mvn -pl brasi-nova-task-management-rt -am '-Dtest=TaskSourceRegistryTest,TaskSourceCreateServiceTest,CustomerTaskSourceAdapterTest,ContactTaskSourceAdapterTest,EmployeeTaskSourceAdapterTest,FirmTaskSourceAdapterTest' '-Dsurefire.failIfNoSpecifiedTests=false' '-Dit.test=TaskFacadeControllerIT' verify
+```
+
+Der native Maven-Exit muss `0` sein; im Failsafe-XML fuer
+`TaskFacadeControllerIT` muessen Tests ausgefuehrt worden sein und `failures`,
+`errors` und `skipped` jeweils `0` sein. Der Test erstellt und entfernt seine
+eigene MSSQL-Wegwerf-Datenbank. Ohne DB-Zugang wird der IT uebersprungen und
+erfuellt dieses Gate nicht.
