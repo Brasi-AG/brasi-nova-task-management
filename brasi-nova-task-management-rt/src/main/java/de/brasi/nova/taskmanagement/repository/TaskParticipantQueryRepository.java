@@ -16,6 +16,53 @@ import org.springframework.data.repository.query.Param;
 public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepository {
 
   /**
+   * Document READ requires an active task and a current PERSON participant with an active,
+   * subscribed user state. Every base and domain tenant column must match the context tenant.
+   * Missing state is inconsistent data and fails closed. {@code :tenantId} is bound by KSF, not
+   * passed as a method argument.
+   */
+  @NovaQuery(
+      value =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM TASK_PARTICIPANT p "
+              + "JOIN TASK t ON t.ID = p.TASK_ID "
+              + "WHERE t.ID = :taskId AND t.TENANT_ID = :tenantId "
+              + "AND t.ENTITY_STATUS = 'ACTIVE' "
+              + "AND p.TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_REF = :actorRef "
+              + "AND p.PARTICIPANT_KIND = 'PERSON' "
+              + "AND p.ENTITY_STATUS = 'ACTIVE' "
+              + "AND p.EXIT_KIND IS NULL "
+              + "AND EXISTS (SELECT 1 FROM TASK_USER_STATE s "
+              + "WHERE s.TASK_ID = t.ID AND s.USER_REF = :actorRef "
+              + "AND s.TENANT_ID = :tenantId "
+              + "AND s.USER_TENANT_ID = :tenantId "
+              + "AND s.ENTITY_STATUS = 'ACTIVE' "
+              + "AND s.UNSUBSCRIBED_AT IS NULL)"
+              + ") THEN 1 ELSE 0 END",
+      mssql =
+          "SELECT CASE WHEN EXISTS ("
+              + "SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p "
+              + "JOIN [dbo].[TASK] t ON t.ID = p.TASK_ID "
+              + "WHERE t.ID = :taskId AND t.TENANT_ID = :tenantId "
+              + "AND t.ENTITY_STATUS = 'ACTIVE' "
+              + "AND p.TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_TENANT_ID = :tenantId "
+              + "AND p.PARTICIPANT_REF = :actorRef "
+              + "AND p.PARTICIPANT_KIND = 'PERSON' "
+              + "AND p.ENTITY_STATUS = 'ACTIVE' "
+              + "AND p.EXIT_KIND IS NULL "
+              + "AND EXISTS (SELECT 1 FROM [dbo].[TASK_USER_STATE] s "
+              + "WHERE s.TASK_ID = t.ID AND s.USER_REF = :actorRef "
+              + "AND s.TENANT_ID = :tenantId "
+              + "AND s.USER_TENANT_ID = :tenantId "
+              + "AND s.ENTITY_STATUS = 'ACTIVE' "
+              + "AND s.UNSUBSCRIBED_AT IS NULL)"
+              + ") THEN 1 ELSE 0 END")
+  boolean existsDocumentReadAccess(@Param("taskId") Long taskId, @Param("actorRef") UUID actorRef);
+
+  /**
    * Sucht den aktiven PERSON-{@link TaskParticipant} fuer eine Aufgabe und einen bestimmten
    * Teilnehmer im aktuellen (Task-)Mandanten.
    *
