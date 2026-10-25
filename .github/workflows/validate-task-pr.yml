@@ -79,6 +79,7 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+          overwrite-settings: false
 
       - name: Check formatting of changed runtime Java files
         env:
@@ -110,6 +111,7 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
+          overwrite-settings: false
 
       - name: Build and run unit tests
         run: mvn -B -ntp -pl brasi-nova-task-management-rt -am test
