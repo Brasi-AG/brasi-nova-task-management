@@ -5,22 +5,22 @@ import de.brasi.nova.taskmanagement.entity.TaskHandover;
 import de.brasi.nova.taskmanagement.entity.TaskHandoverTarget;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
-import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
-import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
+import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
-import de.brasi.nova.taskmanagement.refentity.User;
-import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
@@ -53,12 +53,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Transaktionale Kommando-Operationen fuer Assignee-Verwaltung und Austritt.
  *
- * <p>Alle Mutationen laufen in einer eigenen {@code @Transactional}-Transaktion.
- * Nach erfolgtem Commit wird via {@link InboxSignalService} ein {@code snapshot-invalidated}-Signal
- * an die betroffenen Benutzer gesendet.
+ * <p>Alle Mutationen laufen in einer eigenen {@code @Transactional}-Transaktion. Nach erfolgtem
+ * Commit wird via {@link InboxSignalService} ein {@code snapshot-invalidated}-Signal an die
+ * betroffenen Benutzer gesendet.
  *
- * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}),
- * NIEMALS aus Client-Eingabedaten.
+ * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}), NIEMALS aus
+ * Client-Eingabedaten.
  */
 @Service
 public class AssigneeService {
@@ -113,23 +113,25 @@ public class AssigneeService {
   }
 
   /**
-   * Aktualisiert die Assignee-Menge einer Aufgabe (PUT-Semantik: Ziel-Menge ersetzt aktuellen Stand).
+   * Aktualisiert die Assignee-Menge einer Aufgabe (PUT-Semantik: Ziel-Menge ersetzt aktuellen
+   * Stand).
    *
    * <p>Ablauf:
+   *
    * <ol>
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Aktuelle Assignees laden und mit Ziel-Menge vergleichen.
-   *   <li>Neu zugewiesene Assignees: {@link TaskParticipant} anlegen/reaktivieren
-   *       (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link UserStateService#reactivate}
-   *       (UserState sichern + UNSUBSCRIBED_AT zuruecksetzen), ASSIGN-Notification emittieren.
-   *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr):
-   *       EXIT_KIND=UNSUBSCRIBED + EXIT_AT setzen.
+   *   <li>Neu zugewiesene Assignees: {@link TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1,
+   *       PARTICIPANT_KIND=PERSON), {@link UserStateService#reactivate} (UserState sichern +
+   *       UNSUBSCRIBED_AT zuruecksetzen), ASSIGN-Notification emittieren.
+   *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
+   *       setzen.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer alle betroffenen userRefs.
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param input          Ziel-Assignee-Menge
-   * @throws EntityNotFoundException   wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
+   * @param input Ziel-Assignee-Menge
+   * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
    * @throws EntityValidationException wenn Input ungueltig
    */
   @Transactional
@@ -160,9 +162,7 @@ public class AssigneeService {
 
     // Neue Assignees: in desired, aber nicht in current
     final Set<UUID> toAdd =
-        desiredRefs.stream()
-            .filter(ref -> !currentRefs.contains(ref))
-            .collect(Collectors.toSet());
+        desiredRefs.stream().filter(ref -> !currentRefs.contains(ref)).collect(Collectors.toSet());
 
     // Abgewaehlte Assignees: in current, aber nicht in desired.
     // BE-7 (A3): Creator-Schutz ist nun MITGLIEDSCHAFTS-Schutz (nicht mehr "Creator nie aus
@@ -170,9 +170,7 @@ public class AssigneeService {
     // CREATOR_FLAG + PARTICIPANT_FLAG + aktiven UserState + EXIT_KIND=null (KEIN Austritt). Ein
     // ausgelassener Nicht-Creator wird wie bisher mit EXIT_KIND=UNSUBSCRIBED ausgetreten.
     final Set<UUID> toRemove =
-        currentRefs.stream()
-            .filter(ref -> !desiredRefs.contains(ref))
-            .collect(Collectors.toSet());
+        currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).collect(Collectors.toSet());
 
     // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
     // Sonst entstuenden orphan-/cross-tenant-Participant/UserState/Notification. Unbekannt/fremd/
@@ -246,7 +244,8 @@ public class AssigneeService {
       // Finding 2 / Option B: Zuweisung reaktiviert destruktiv die Membership-Felder dieses Refs
       // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation muss atomar in dieser Tx gebumpt werden,
       // damit alte Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410). Ref in
-      // affectedRefs gesammelt; der eigentliche (sortierte) Bump erfolgt gebuendelt NACH dem TASK-save
+      // affectedRefs gesammelt; der eigentliche (sortierte) Bump erfolgt gebuendelt NACH dem
+      // TASK-save
       // (einheitliche Save-dann-Bump- + Lock-Ordnung, Codex #6).
       log.info(
           "AssigneeService.updateAssignees: Assignee {} der Aufgabe {} (id={}) zugewiesen"
@@ -321,10 +320,14 @@ public class AssigneeService {
     // abgewaehlten) UND allen aktuell aktiven Teilnehmer-Refs der Aufgabe invalidieren.
     if (!affectedRefs.isEmpty()) {
       // Whole-Branch-Re-Gate P2 #3: Nebenlaeufige PUT-Set-Ersetzungen serialisieren. Zwei parallele
-      // Ersetzungen ab demselben Ist-Stand ({creator} -> {creator,A} bzw. {creator,B}) koennten sonst
-      // beide committen und die Ziel-Menge still zu {creator,A,B} mergen (PUT-Set-Semantik verletzt).
-      // Ein optimistischer Lock auf die Aufgabe (VERSION-Bump via save) laesst genau eine Transaktion
-      // gewinnen; die verlierende bricht mit BusinessRuleException (409) ab (0 betroffene Zeilen beim
+      // Ersetzungen ab demselben Ist-Stand ({creator} -> {creator,A} bzw. {creator,B}) koennten
+      // sonst
+      // beide committen und die Ziel-Menge still zu {creator,A,B} mergen (PUT-Set-Semantik
+      // verletzt).
+      // Ein optimistischer Lock auf die Aufgabe (VERSION-Bump via save) laesst genau eine
+      // Transaktion
+      // gewinnen; die verlierende bricht mit BusinessRuleException (409) ab (0 betroffene Zeilen
+      // beim
       // versionierten UPDATE) und der Client wiederholt den PUT gegen frischen Stand. Nur bei
       // tatsaechlicher Aenderung (affectedRefs nicht leer) - ein No-Op-PUT bumpt die Version nicht.
       taskRepository.save(task);
@@ -349,6 +352,7 @@ public class AssigneeService {
    * hinzu. Verleiht NIE die Assignee-Rolle (BE-6).
    *
    * <p>Ablauf:
+   *
    * <ol>
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Eingabe deduplizieren; leere Menge -> No-Op (keine DB-Mutation, kein Signal).
@@ -356,8 +360,8 @@ public class AssigneeService {
    *       ({@code findActiveByUuids}) - sonst 400 VOR jeder Mutation.
    *   <li>Je Ref: aktive Zeile -> SKIP (idempotent); ausgetretene Zeile -> als REINER Teilnehmer
    *       reaktivieren (ASSIGNEE_FLAG=false); keine Zeile -> neu anlegen (reiner Teilnehmer).
-   *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in
-   *       {@link #saveParticipantHandlingRace} idempotent aufgeloest.
+   *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
+   *       #saveParticipantHandlingRace} idempotent aufgeloest.
    *   <li>Generation-Bump + UserState NUR fuer tatsaechlich neu angelegte/reaktivierte Refs.
    *   <li><b>KEIN</b> TASK-Optimistic-Lock: die additive Union ist kommutativ (anders als die
    *       PUT-Set-Semantik von {@link #updateAssignees}) - die TASK-VERSION wird NICHT gebumpt.
@@ -365,8 +369,8 @@ public class AssigneeService {
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param input          hinzuzufuegende Teilnehmer-UUIDs
-   * @throws EntityNotFoundException   wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
+   * @param input hinzuzufuegende Teilnehmer-UUIDs
+   * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
    * @throws EntityValidationException wenn ein Ref kein aktiver Benutzer des Mandanten ist
    */
   @Transactional
@@ -408,13 +412,16 @@ public class AssigneeService {
 
     // Codex #6: Generation-Bump der tatsaechlich hinzugefuegten/reaktivierten Refs gebuendelt ueber
     // den zentralen Helfer in SORTIERTER Reihenfolge (konsistente Generation-Lock-Ordnung mit allen
-    // anderen Pfaden). addParticipants mutiert die TASK-Zeile NICHT (additive Union, kommutativ, kein
+    // anderen Pfaden). addParticipants mutiert die TASK-Zeile NICHT (additive Union, kommutativ,
+    // kein
     // LAST_ACTIVITY_AT/VERSION-Bump) -> eine TASK-vs-Generation-Inversion ist hier strukturell
-    // ausgeschlossen; der Helfer sichert nur die Generation-untereinander-Ordnung. Scope unveraendert
+    // ausgeschlossen; der Helfer sichert nur die Generation-untereinander-Ordnung. Scope
+    // unveraendert
     // (nur tatsaechlich geaenderte Refs, wie bisher je-Ref im Loop).
     inboxGenerationService.bumpSorted(tenantId, affectedRefs);
 
-    // D7 changed-Guard: invalidate NUR bei tatsaechlicher Aenderung (>=1 add/reactivate). Ein reiner
+    // D7 changed-Guard: invalidate NUR bei tatsaechlicher Aenderung (>=1 add/reactivate). Ein
+    // reiner
     // No-Op (alle schon aktiv) laedt die aktiven Teilnehmer nicht und sendet kein Signal (analog
     // updateAssignees / TaskCommandService.patch).
     if (!affectedRefs.isEmpty()) {
@@ -487,11 +494,11 @@ public class AssigneeService {
    *
    * <p>Bei {@link BusinessRuleException} aus {@code save} wird NUR bei passender Konfliktursache
    * erneut gelesen: KSF verpackt den UNIQUE-Insert als {@link DuplicateKeyException} und den
-   * VERSION-Konflikt als {@link OptimisticLockingFailureException}. Eine unverwandte
-   * {@link BusinessRuleException} (andere/fehlende Ursache) wird NIE als Erfolg geschluckt, auch
-   * nicht bei zufaellig passendem Re-Read. Bestaetigt der Re-Read den vollen aktiven
-   * Gewinner-Zustand (aktive Zeile, PARTICIPANT_FLAG=1, EXIT_KIND null), wird der Konflikt
-   * idempotent als SKIP behandelt; sonst wird die urspruengliche Exception weitergeworfen.
+   * VERSION-Konflikt als {@link OptimisticLockingFailureException}. Eine unverwandte {@link
+   * BusinessRuleException} (andere/fehlende Ursache) wird NIE als Erfolg geschluckt, auch nicht bei
+   * zufaellig passendem Re-Read. Bestaetigt der Re-Read den vollen aktiven Gewinner-Zustand (aktive
+   * Zeile, PARTICIPANT_FLAG=1, EXIT_KIND null), wird der Konflikt idempotent als SKIP behandelt;
+   * sonst wird die urspruengliche Exception weitergeworfen.
    *
    * <p>Die aeussere Transaktion bleibt dabei committable: das KSF-{@code save()} hat fuer
    * Einzel-Entities KEINE wirksame eigene Transaktions-Klammer und markiert die aeussere Tx daher
@@ -517,7 +524,8 @@ public class AssigneeService {
       if (!recoverableCause) {
         throw conflict;
       }
-      // Test-Seam: Catch-Zweig-Zaehlung + Committability-Sonde (XACT_STATE / @@OPTIONS) auf DERSELBEN
+      // Test-Seam: Catch-Zweig-Zaehlung + Committability-Sonde (XACT_STATE / @@OPTIONS) auf
+      // DERSELBEN
       // Tx-Verbindung VOR dem Re-Read (D8-Beweis-Auflagen 1+2). Produktiv No-Op.
       onParticipantConflictCaughtForTest(taskId, ref);
       final List<TaskParticipant> recheck =
@@ -539,27 +547,28 @@ public class AssigneeService {
   }
 
   /**
-   * Test-Seam (Default No-Op): Haken ZWISCHEN dem Vorab-Read und dem Participant-save in
-   * {@link #addSingleParticipant}/{@link #saveParticipantHandlingRace}. Ermoeglicht deterministische
-   * Nebenlaeufigkeits-ITs (D8): beide Threads werden nachweislich VOR dem ersten Write synchronisiert,
-   * sodass der gleich-Ref-Race den Konfliktzweig garantiert erreicht. Im Produktivbetrieb ein No-Op;
-   * nur Test-Subklassen ueberschreiben diesen Haken.
+   * Test-Seam (Default No-Op): Haken ZWISCHEN dem Vorab-Read und dem Participant-save in {@link
+   * #addSingleParticipant}/{@link #saveParticipantHandlingRace}. Ermoeglicht deterministische
+   * Nebenlaeufigkeits-ITs (D8): beide Threads werden nachweislich VOR dem ersten Write
+   * synchronisiert, sodass der gleich-Ref-Race den Konfliktzweig garantiert erreicht. Im
+   * Produktivbetrieb ein No-Op; nur Test-Subklassen ueberschreiben diesen Haken.
    *
    * @param taskId interne Aufgaben-ID
-   * @param ref    Teilnehmer-UUID
+   * @param ref Teilnehmer-UUID
    */
   protected void onBeforeParticipantSaveForTest(final Long taskId, final UUID ref) {
     // No-Op im Produktivbetrieb.
   }
 
   /**
-   * Test-Seam (Default No-Op): wird im Konfliktzweig von {@link #saveParticipantHandlingRace} NACH der
-   * gefangenen (recoverable) {@link BusinessRuleException} und VOR dem Re-Read aufgerufen, auf DERSELBEN
-   * Transaktionsverbindung. Ermoeglicht den Nebenlaeufigkeits-ITs die direkte Catch-Zweig-Zaehlung (D8-
-   * Auflage 1) und die Committability-Sonde (XACT_STATE()/@@OPTIONS, D8-Auflage 2). Produktiv ein No-Op.
+   * Test-Seam (Default No-Op): wird im Konfliktzweig von {@link #saveParticipantHandlingRace} NACH
+   * der gefangenen (recoverable) {@link BusinessRuleException} und VOR dem Re-Read aufgerufen, auf
+   * DERSELBEN Transaktionsverbindung. Ermoeglicht den Nebenlaeufigkeits-ITs die direkte
+   * Catch-Zweig-Zaehlung (D8- Auflage 1) und die Committability-Sonde (XACT_STATE()/@@OPTIONS,
+   * D8-Auflage 2). Produktiv ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
-   * @param ref    Teilnehmer-UUID
+   * @param ref Teilnehmer-UUID
    */
   protected void onParticipantConflictCaughtForTest(final Long taskId, final UUID ref) {
     // No-Op im Produktivbetrieb.
@@ -569,6 +578,7 @@ public class AssigneeService {
    * Aktueller Akteur verlaesst die Aufgabe bzw. uebergibt sie (BE-7, SPEC v3 Abschnitt 4).
    *
    * <p>Zwei Austrittsarten (Input {@link ExitInput#exitKind()}):
+   *
    * <ul>
    *   <li><b>UNSUBSCRIBED:</b> der Akteur meldet sich ab. {@code handedOverToIds} muss leer und
    *       {@code shouldStay} false sein (sonst 400). Nicht-Creator -> EXIT_KIND=UNSUBSCRIBED;
@@ -581,10 +591,10 @@ public class AssigneeService {
    * </ul>
    *
    * <p>Alles in EINER Transaktion: TASK_HANDOVER-Ereignis + Ziele + Rollenwechsel + History +
-   * LAST_ACTIVITY_AT + {@code taskRepository.save} (VERSION-Guard) + Notification-Persistenz; Signale
-   * (Push/Invalidate) strikt after-commit. Der VERSION-Guard macht die Aufgabe zum gemeinsamen
-   * Serialisierungspunkt gegen nebenlaeufige Membership-Mutationen (PUT/exit); der Verlierer bricht
-   * mit {@link BusinessRuleException} (409) ab und committet NICHTS.
+   * LAST_ACTIVITY_AT + {@code taskRepository.save} (VERSION-Guard) + Notification-Persistenz;
+   * Signale (Push/Invalidate) strikt after-commit. Der VERSION-Guard macht die Aufgabe zum
+   * gemeinsamen Serialisierungspunkt gegen nebenlaeufige Membership-Mutationen (PUT/exit); der
+   * Verlierer bricht mit {@link BusinessRuleException} (409) ab und committet NICHTS.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Codex #6):</b> Die Generation wird fuer die
    * VOLLSTAENDIGE betroffene Menge ATOMAR in dieser Tx gebumpt: Akteur (nur bei tatsaechlichem
@@ -594,11 +604,11 @@ public class AssigneeService {
    * ohne Bump lieferte dessen alter aktiver Cursor stale 200 (Skip/Dupe) statt 410.
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param input          Austritts-Eingabe (exitKind, handedOverToIds, shouldStay)
-   * @throws EntityNotFoundException   wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
-   * @throws EntityValidationException (400) bei ungueltiger Eingabe oder wenn der Akteur kein aktiver
-   *     Teilnehmer der Aufgabe ist
-   * @throws BusinessRuleException     (409) Creator-Austritt ohne Verbleib / nebenlaeufiger
+   * @param input Austritts-Eingabe (exitKind, handedOverToIds, shouldStay)
+   * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
+   * @throws EntityValidationException (400) bei ungueltiger Eingabe oder wenn der Akteur kein
+   *     aktiver Teilnehmer der Aufgabe ist
+   * @throws BusinessRuleException (409) Creator-Austritt ohne Verbleib / nebenlaeufiger
    *     Versionskonflikt
    */
   @Transactional
@@ -611,15 +621,20 @@ public class AssigneeService {
     final Long taskId = task.getId();
 
     // Standard-Selfservice (Slice 4, Auflage 2): WRITE-Member-Guard GANZ VORNE - direkt nach dem
-    // Task-Laden + Tenant/ENTITY_STATUS=ACTIVE-Check (requireTask), VOR jeder Eingabe-/Zielvalidierung.
-    // Fehlende/ausgetretene Membership -> einheitlich neutrale 404 (nicht 400, kein Ziel-Leak ueber die
+    // Task-Laden + Tenant/ENTITY_STATUS=ACTIVE-Check (requireTask), VOR jeder
+    // Eingabe-/Zielvalidierung.
+    // Fehlende/ausgetretene Membership -> einheitlich neutrale 404 (nicht 400, kein Ziel-Leak ueber
+    // die
     // nachgelagerte findActiveByUuids-Zielvalidierung). Der bestehende Service-interne Akteur-Check
-    // (unten, Z. ~670) bleibt als Defense-in-Depth erhalten, wird aber vom Guard vorweggenommen. Das
-    // Gate am Controller ist entfernt (authenticated-only); anonym bleibt 401 ueber die KSF-Filter-Chain.
+    // (unten, Z. ~670) bleibt als Defense-in-Depth erhalten, wird aber vom Guard vorweggenommen.
+    // Das
+    // Gate am Controller ist entfernt (authenticated-only); anonym bleibt 401 ueber die
+    // KSF-Filter-Chain.
     membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
 
     // Test-Seam: deterministische Synchronisation der Versions-Verlierer-ITs (BE-7 IT7) GENAU NACH
-    // dem Lesen der Aufgabe (VERSION erfasst) und VOR jeder Mutation - zu diesem Zeitpunkt haelt der
+    // dem Lesen der Aufgabe (VERSION erfasst) und VOR jeder Mutation - zu diesem Zeitpunkt haelt
+    // der
     // Verlierer noch KEINE Schreibsperren, sodass ein nebenlaeufiger Gewinner (Exit/PUT/Handover)
     // blockierungsfrei committen kann; der Verlierer trifft dann beim versionierten TASK-save die
     // stale VERSION -> 409 + voller Rollback. Produktiv ein No-Op.
@@ -658,10 +673,13 @@ public class AssigneeService {
     // WRITE-Member der Aufgabe ist (reiner Rollenwechsel innerhalb bestehender aktiver Mitglieder).
     // Fuehrt ODER reaktiviert der HANDOVER mindestens EIN Ziel, das KEIN WRITE-Member ist (neu,
     // ausgetreten, inaktiv, TEAM, fremder PARTICIPANT_TENANT_ID), erfordert er exakte TASK_WRITE-
-    // Authority; fehlt sie dem (bestaetigten) Akteur -> 403, KEINE Mutation (All-or-Nothing ueber die
-    // GESAMTE deduplizierte Zielmenge). Dieser bedingte Grant-Check laeuft NACH dem Akteur-WRITE-Guard
+    // Authority; fehlt sie dem (bestaetigten) Akteur -> 403, KEINE Mutation (All-or-Nothing ueber
+    // die
+    // GESAMTE deduplizierte Zielmenge). Dieser bedingte Grant-Check laeuft NACH dem
+    // Akteur-WRITE-Guard
     // (oben, requireWriteMember) und VOR Zielnutzeraufloesung und jeder Mutation (403 statt 404 ist
-    // korrekt: der Akteur ist bestaetigtes Mitglied, kein Existenz-Leak). UNSUBSCRIBED hat keine Ziele
+    // korrekt: der Akteur ist bestaetigtes Mitglied, kein Existenz-Leak). UNSUBSCRIBED hat keine
+    // Ziele
     // -> immer grant-frei.
     if (handover && !dedupedTargets.isEmpty()) {
       final boolean allTargetsAreWriteMembers =
@@ -747,7 +765,8 @@ public class AssigneeService {
       }
     }
 
-    // (6) Akteur-Rollenwechsel. ASSIGNEE_FLAG=false IMMER (auch Creator). Nicht-Creator + !shouldStay
+    // (6) Akteur-Rollenwechsel. ASSIGNEE_FLAG=false IMMER (auch Creator). Nicht-Creator +
+    // !shouldStay
     // (bei HANDOVER) ODER UNSUBSCRIBED -> echter Austritt (EXIT_KIND + EXIT_AT + UNSUBSCRIBED_AT).
     final boolean actorExits = !isCreator && !shouldStay;
     participant.setAssigneeFlag(false);
@@ -805,7 +824,9 @@ public class AssigneeService {
           taskId,
           NotificationTypeCodes.HANDOVER,
           NotificationSeverityCodes.INFO,
-          shouldStay ? "Du hast die Aufgabe uebergeben." : "Du hast die Aufgabe uebergeben und verlassen.",
+          shouldStay
+              ? "Du hast die Aufgabe uebergeben."
+              : "Du hast die Aufgabe uebergeben und verlassen.",
           task.getTitle(),
           actorRef);
     }
@@ -832,8 +853,10 @@ public class AssigneeService {
     // die findActiveUserRefsByTaskId-Menge erfasst.
     // Deadlock-Robustheit (Codex #6): die (ungeordnete HashSet-)Menge ueber den zentralen Helfer in
     // DETERMINISTISCH SORTIERTER Ref-Reihenfolge bumpen - NACH dem TASK-save (oben, taskRepository.
-    // save), sodass ueberall zuerst die TASK-Zeile und dann die TASK_INBOX_GENERATION-Zeilen gesperrt
-    // werden und parallele Membership-Mutationen mit ueberlappenden Teilnehmern die Generation-Zeilen
+    // save), sodass ueberall zuerst die TASK-Zeile und dann die TASK_INBOX_GENERATION-Zeilen
+    // gesperrt
+    // werden und parallele Membership-Mutationen mit ueberlappenden Teilnehmern die
+    // Generation-Zeilen
     // in gleicher Reihenfolge sperren (keine ueberkreuzte Lock-Order).
     inboxGenerationService.bumpSorted(tenantId, affected);
 
@@ -866,14 +889,15 @@ public class AssigneeService {
    * verfehlt). Die {@code <=1} Zeile wird dann klassifiziert:
    *
    * <ul>
-   *   <li><b>vorhanden, {@code PARTICIPANT_KIND='PERSON'} UND Basis-{@code TENANT_ID}=task-tenant</b>
-   *       (Status/Exit egal: aktiv/exited/inaktiv) -> VOLL reaktivieren: {@code ASSIGNEE_FLAG=
-   *       PARTICIPANT_FLAG=1}, {@code EXIT_KIND/EXIT_AT=null}, {@code ENTITY_STATUS='ACTIVE'} (auch
-   *       eine inaktive/exited PERSON wird voll auf aktiv gehoben - kein 204 ohne aktiven Assignee).
+   *   <li><b>vorhanden, {@code PARTICIPANT_KIND='PERSON'} UND Basis-{@code
+   *       TENANT_ID}=task-tenant</b> (Status/Exit egal: aktiv/exited/inaktiv) -> VOLL reaktivieren:
+   *       {@code ASSIGNEE_FLAG= PARTICIPANT_FLAG=1}, {@code EXIT_KIND/EXIT_AT=null}, {@code
+   *       ENTITY_STATUS='ACTIVE'} (auch eine inaktive/exited PERSON wird voll auf aktiv gehoben -
+   *       kein 204 ohne aktiven Assignee).
    *   <li><b>vorhanden, aber {@code PARTICIPANT_KIND='TEAM'} ODER Basis-{@code TENANT_ID} !=
-   *       task-tenant</b> -> <b>409, KEINE Mutation</b> ({@link BusinessRuleException}, fail-closed;
-   *       ein PERSON-Insert waere per Unique-Key unmoeglich, stilles Flippen wuerde ungueltige
-   *       Membership hinterlassen).
+   *       task-tenant</b> -> <b>409, KEINE Mutation</b> ({@link BusinessRuleException},
+   *       fail-closed; ein PERSON-Insert waere per Unique-Key unmoeglich, stilles Flippen wuerde
+   *       ungueltige Membership hinterlassen).
    *   <li><b>keine Zeile</b> (Unique-Key frei) -> NEUE PERSON-Zeile mit {@code TENANT_ID =
    *       PARTICIPANT_TENANT_ID = task-tenant}, {@code ENTITY_STATUS='ACTIVE'}, Assignee INSERT.
    * </ul>
@@ -881,13 +905,13 @@ public class AssigneeService {
    * <p><b>Konflikt-Recheck (volle Invariante):</b> bei gleich-Ref-Race ({@link
    * BusinessRuleException} aus {@code save}) ist ein idempotenter SKIP nur dann zulaessig, wenn der
    * Re-Read die VOLLE Membership-Invariante bestaetigt ({@code PARTICIPANT_KIND='PERSON' AND
-   * TENANT_ID=task-tenant AND PARTICIPANT_TENANT_ID=task-tenant AND ASSIGNEE_FLAG=1 AND EXIT_KIND IS
-   * NULL AND ENTITY_STATUS='ACTIVE'}); sonst Konflikt weiterwerfen -> voller Rollback (kein 204 ohne
-   * gueltigen aktiven Assignee).
+   * TENANT_ID=task-tenant AND PARTICIPANT_TENANT_ID=task-tenant AND ASSIGNEE_FLAG=1 AND EXIT_KIND
+   * IS NULL AND ENTITY_STATUS='ACTIVE'}); sonst Konflikt weiterwerfen -> voller Rollback (kein 204
+   * ohne gueltigen aktiven Assignee).
    *
-   * @param taskId    interne Aufgaben-ID
+   * @param taskId interne Aufgaben-ID
    * @param targetRef UUID des Uebergabeziels
-   * @param tenantId  Task-Mandant (= PARTICIPANT_TENANT_ID der zu haltenden/neu anzulegenden Zeile)
+   * @param tenantId Task-Mandant (= PARTICIPANT_TENANT_ID der zu haltenden/neu anzulegenden Zeile)
    * @throws BusinessRuleException 409 fail-closed, wenn die Unique-Key-Zeile TEAM ist oder ein
    *     fremdes Basis-{@code TENANT_ID} traegt (Laufzeit-Vertrag, keine Mutation); ODER bei einem
    *     nebenlaeufigen Konflikt, dessen Re-Read die volle Invariante NICHT bestaetigt
@@ -895,7 +919,8 @@ public class AssigneeService {
   private void ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
     // Unique-Key-exakter Lookup (ohne Status/EXIT/KIND-Filter) -> <=1 Zeile unabhaengig vom Basis-
     // TENANT_ID; die Klassifikation (reaktivieren vs. 409 vs. INSERT) erfolgt hier.
-    final List<TaskParticipant> rows = participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
+    final List<TaskParticipant> rows =
+        participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
     final TaskParticipant p;
     if (!rows.isEmpty()) {
       final TaskParticipant row = rows.get(0);
@@ -916,7 +941,8 @@ public class AssigneeService {
       p.setExitAt(null);
       p.setEntityState(EntityState.ACTIVE);
     } else {
-      // Unique-Key frei -> neue PERSON-Assignee-Zeile (TENANT_ID = PARTICIPANT_TENANT_ID = task-tenant).
+      // Unique-Key frei -> neue PERSON-Assignee-Zeile (TENANT_ID = PARTICIPANT_TENANT_ID =
+      // task-tenant).
       p = new TaskParticipant();
       p.setTenantId(tenantId);
       p.setTaskId(taskId);
@@ -965,7 +991,7 @@ public class AssigneeService {
    * Test-Seam (Default No-Op): Haken ZWISCHEN Vorab-Read und save in {@link #ensureAssignee}.
    * Ermoeglicht deterministische Ziel-Race-ITs (BE-7 IT6). Produktiv ein No-Op.
    *
-   * @param taskId    interne Aufgaben-ID
+   * @param taskId interne Aufgaben-ID
    * @param targetRef UUID des Uebergabeziels
    */
   protected void onBeforeHandoverAssigneeSaveForTest(final Long taskId, final UUID targetRef) {
@@ -973,13 +999,13 @@ public class AssigneeService {
   }
 
   /**
-   * Test-Seam (Default No-Op): Haken am ANFANG von {@link #exit} - direkt nach dem Laden der Aufgabe
-   * (VERSION erfasst) und VOR jeder Mutation. Ermoeglicht deterministische Versions-Verlierer-ITs
-   * (BE-7 IT7): ein nebenlaeufiger Gewinner (Exit/PUT/Handover) committet, waehrend der Verlierer hier
-   * pausiert und noch KEINE Schreibsperren haelt (der {@code requireTask}-SELECT gibt seine
-   * Shared-Locks statement-weise frei) - so entsteht KEIN Wartezyklus/Deadlock. Nach der Fortsetzung
-   * trifft der Verlierer beim versionierten {@code taskRepository.save} die stale VERSION -> 409 +
-   * voller Rollback. Produktiv ein No-Op.
+   * Test-Seam (Default No-Op): Haken am ANFANG von {@link #exit} - direkt nach dem Laden der
+   * Aufgabe (VERSION erfasst) und VOR jeder Mutation. Ermoeglicht deterministische
+   * Versions-Verlierer-ITs (BE-7 IT7): ein nebenlaeufiger Gewinner (Exit/PUT/Handover) committet,
+   * waehrend der Verlierer hier pausiert und noch KEINE Schreibsperren haelt (der {@code
+   * requireTask}-SELECT gibt seine Shared-Locks statement-weise frei) - so entsteht KEIN
+   * Wartezyklus/Deadlock. Nach der Fortsetzung trifft der Verlierer beim versionierten {@code
+   * taskRepository.save} die stale VERSION -> 409 + voller Rollback. Produktiv ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
    */
@@ -990,8 +1016,8 @@ public class AssigneeService {
   /**
    * Schreibt den Handover-/Austritts-Historieneintrag mit Namen-Snapshot (SPEC v3 Schritt 7). Refs
    * bleiben im Ereignis; die Namen werden zum Zeitpunkt aufgeloest ({@code findActiveByUuids} fuer
-   * Ziele, {@code userReadRepository} fuer den Akteur). Faellt ein Name aus, wird die Ref als Fallback
-   * verwendet.
+   * Ziele, {@code userReadRepository} fuer den Akteur). Faellt ein Name aus, wird die Ref als
+   * Fallback verwendet.
    */
   private void recordHandoverHistory(
       final Long taskId,
@@ -1019,7 +1045,8 @@ public class AssigneeService {
     } else {
       detail = actorName;
     }
-    taskHistoryService.record(taskId, tenantId, actorRef, handover ? text : unsubscribeText, detail);
+    taskHistoryService.record(
+        taskId, tenantId, actorRef, handover ? text : unsubscribeText, detail);
   }
 
   /** Loest die Anzeigenamen fuer Akteur + Ziele in EINER Abfrage auf (Namen-Snapshot). */
@@ -1039,11 +1066,11 @@ public class AssigneeService {
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
    * <p>Beide Fehlerfaelle (nicht gefunden / fremder Mandant) liefern eine identische, neutrale
-   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
-   * (arch-v2 §8 / Cross-Tenant-Disclosure-Schutz).
+   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben (arch-v2
+   * §8 / Cross-Tenant-Disclosure-Schutz).
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param tenantId       erwarteter Mandanten-Schluessel
+   * @param tenantId erwarteter Mandanten-Schluessel
    * @return die gefundene Aufgabe
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */

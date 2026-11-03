@@ -81,6 +81,7 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link AssigneeController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>PUT /assignees -> ASSIGNEE_FLAG=1 + TASK_USER_STATE angelegt
  *   <li>POST /exit HANDOVER -> EXIT_KIND='HANDOVER' persistiert + Task in findArchiveLeftPage
@@ -134,11 +135,13 @@ class AssigneeControllerIT {
 
   /** Assignee: wird als Assignee zugewiesen. */
   private static final UUID ASSIGNEE_REF = UUID.randomUUID();
+
   private static final String ASSIGNEE_LOGIN = "assignee@brasi.de";
   private static final long ASSIGNEE_DB_ID = 512L;
 
   /** BE-7: Uebergabeziel im SELBEN Mandanten A (muss aktiver Tenant-A-Benutzer sein). */
   private static final UUID HANDOVER_TARGET_REF = UUID.randomUUID();
+
   private static final String HANDOVER_TARGET_LOGIN = "handover-target@brasi.de";
   private static final long HANDOVER_TARGET_DB_ID = 515L;
 
@@ -152,15 +155,18 @@ class AssigneeControllerIT {
 
   /** User mit READ-Only-Recht (kein TASK_WRITE -> 403). */
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
+
   private static final String USER_READ_ONLY_LOGIN = "read-only-assignee@brasi.de";
 
   /** Slice 4: grant-freier aktiver Mandanten-Nutzer (KEINE task-management:*-Authority). */
   private static final UUID GRANTFREE_REF = UUID.randomUUID();
+
   private static final String GRANTFREE_LOGIN = "grantfree-member@brasi.de";
   private static final long GRANTFREE_DB_ID = 516L;
 
   /** Slice 4: zweiter grant-freier aktiver Mandanten-Nutzer (Handover-Ziel-WRITE-Member). */
   private static final UUID GRANTFREE2_REF = UUID.randomUUID();
+
   private static final String GRANTFREE2_LOGIN = "grantfree-member-2@brasi.de";
   private static final long GRANTFREE2_DB_ID = 517L;
 
@@ -201,8 +207,7 @@ class AssigneeControllerIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -256,9 +261,13 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Erst: Task anlegen
     final String createBody = om.writeValueAsString(Map.of("title", "Assignee-IT-Task"));
@@ -319,7 +328,8 @@ class AssigneeControllerIT {
         .isGreaterThanOrEqualTo(1);
   }
 
-  // ---- Positiv-IT: exit HANDOVER -> EXIT_KIND persistiert + Task in findArchiveLeftPage ----------
+  // ---- Positiv-IT: exit HANDOVER -> EXIT_KIND persistiert + Task in findArchiveLeftPage
+  // ----------
 
   @Test
   @DisplayName(
@@ -329,13 +339,21 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     // Der Austretende ist bewusst NICHT der Creator (P2-4: Creator kann nicht austreten).
-    final String tokenAssignee = buildJwtWithAuthority(
-        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Erst: Task anlegen (USER_A = Creator) und ASSIGNEE_REF als Nicht-Creator-Assignee zuweisen
     final String createBody = om.writeValueAsString(Map.of("title", "Exit-HANDOVER-IT-Task"));
@@ -361,7 +379,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Exit HANDOVER (ASSIGNEE_REF verlaesst den Task)
@@ -399,8 +418,7 @@ class AssigneeControllerIT {
               asOf,
               UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
               10);
-      final boolean taskFound =
-          leftTasks.stream().anyMatch(t -> taskId.equals(t.getUuid()));
+      final boolean taskFound = leftTasks.stream().anyMatch(t -> taskId.equals(t.getUuid()));
       assertThat(taskFound)
           .as("Task muss nach HANDOVER in findArchiveLeftPage sichtbar sein")
           .isTrue();
@@ -419,9 +437,13 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (USER_A = Creator)
     final String createBody = om.writeValueAsString(Map.of("title", "Creator-Schutz-IT-Task"));
@@ -460,9 +482,7 @@ class AssigneeControllerIT {
             taskId,
             TENANT_A_ID,
             USER_A_REF);
-    assertThat(creatorExitCount)
-        .as("Creator-Participant darf kein EXIT_KIND haben")
-        .isEqualTo(0);
+    assertThat(creatorExitCount).as("Creator-Participant darf kein EXIT_KIND haben").isEqualTo(0);
 
     // Beweis 2: Creator-UserState hat KEIN UNSUBSCRIBED_AT
     final Integer creatorUnsubCount =
@@ -515,13 +535,21 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     // Der Austretende ist bewusst NICHT der Creator (P2-4: Creator kann nicht austreten).
-    final String tokenAssignee = buildJwtWithAuthority(
-        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (USER_A = Creator) + ASSIGNEE_REF zuweisen (Nicht-Creator -> hat UserState)
     final String createBody = om.writeValueAsString(Map.of("title", "HANDOVER-ActivePage-IT-Task"));
@@ -545,7 +573,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Exit HANDOVER (ASSIGNEE_REF)
@@ -565,9 +594,7 @@ class AssigneeControllerIT {
             Integer.class,
             taskId,
             ASSIGNEE_REF);
-    assertThat(unsubCount)
-        .as("UNSUBSCRIBED_AT muss nach HANDOVER gesetzt sein")
-        .isEqualTo(1);
+    assertThat(unsubCount).as("UNSUBSCRIBED_AT muss nach HANDOVER gesetzt sein").isEqualTo(1);
 
     // Beweis 2: Task ist NICHT in findActivePage fuer ASSIGNEE_REF (MAJOR 2)
     final Long openStatusId;
@@ -607,12 +634,17 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen
-    final String createBody = om.writeValueAsString(Map.of("title", "Reassign-Reaktivierung-IT-Task"));
+    final String createBody =
+        om.writeValueAsString(Map.of("title", "Reassign-Reaktivierung-IT-Task"));
     final String postResponse =
         mvc.perform(
                 post("/api/v1/tasks")
@@ -634,7 +666,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Schritt 2: ASSIGNEE_REF abwaehlen (Creator USER_A bleibt)
@@ -663,7 +696,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Beweis 1: UNSUBSCRIBED_AT nach Reassign wieder null
@@ -731,33 +765,46 @@ class AssigneeControllerIT {
   void assignee_unbekannte_uuid_liefert_400() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final String postResponse =
-        mvc.perform(post("/api/v1/tasks")
-                .header("Authorization", "Bearer " + tokenA)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("title", "P1-2-Assignee-Test"))))
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", "P1-2-Assignee-Test"))))
             .andExpect(status().isCreated())
-            .andReturn().getResponse().getContentAsString();
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final UUID taskId =
         om.readValue(postResponse, com.fasterxml.jackson.databind.JsonNode.class)
-            .get("id").traverse(om).readValueAs(UUID.class);
+            .get("id")
+            .traverse(om)
+            .readValueAs(UUID.class);
 
     // Unbekannte UUID (kein aktiver PROD_BENUTZER im Mandanten) -> 400, bevor etwas angelegt wird
     final UUID unknown = UUID.randomUUID();
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", Set.of(unknown.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", Set.of(unknown.toString())))))
         .andExpect(status().isBadRequest());
 
-    final Integer count = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
-        Integer.class, taskId, unknown);
+    final Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+            Integer.class,
+            taskId,
+            unknown);
     assertThat(count).as("kein Participant fuer die unbekannte UUID").isZero();
   }
 
@@ -771,9 +818,13 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (USER_A = Creator + Assignee)
     final String postResponse =
@@ -840,12 +891,20 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
-    final String tokenAssignee = buildJwtWithAuthority(
-        TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (USER_A = Creator) + ASSIGNEE_REF zuweisen (Nicht-Creator-Participant)
     final String postResponse =
@@ -868,7 +927,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Erster Exit (HANDOVER) durch den Assignee -> 204
@@ -936,9 +996,13 @@ class AssigneeControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Beliebige Task-UUID (Validierung schlaegt vor Task-Lookup fehl - DTO-Ebene)
     // Aber: Task muss existieren, damit die Validierung ueberhaupt greift.
@@ -1008,9 +1072,9 @@ class AssigneeControllerIT {
         .andExpect(status().isUnauthorized());
 
     // 3. Falsche Permission (TASK_READ statt TASK_WRITE) -> 403 bei PUT /assignees
-    final String tokenReadOnly = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-        "task-management:TASK_READ");
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
     mvc.perform(
             put("/api/v1/tasks/" + UUID.randomUUID() + "/assignees")
                 .header("Authorization", "Bearer " + tokenReadOnly)
@@ -1019,8 +1083,9 @@ class AssigneeControllerIT {
         .andExpect(status().isForbidden());
 
     // 4. Fremder Tenant: User A legt Task an, User B versucht PUT /assignees -> 404
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     final String postResp =
         mvc.perform(
                 post("/api/v1/tasks")
@@ -1037,8 +1102,9 @@ class AssigneeControllerIT {
             .traverse(om)
             .readValueAs(UUID.class);
 
-    final String tokenB = buildJwtWithAuthority(
-        TENANT_B_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_WRITE");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_B_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_WRITE");
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenB)
@@ -1058,30 +1124,44 @@ class AssigneeControllerIT {
   void post_participants_legt_teilnehmer_an() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "Participants-Add-IT-Task");
 
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    final Integer participantRow = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
-            + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.CREATOR_FLAG = 0"
-            + " AND p.EXIT_KIND IS NULL",
-        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    final Integer participantRow =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.CREATOR_FLAG = 0"
+                + " AND p.EXIT_KIND IS NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
     assertThat(participantRow).as("reiner Teilnehmer-Row (nicht Assignee/Creator)").isEqualTo(1);
 
-    final Integer userState = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
-        Integer.class, taskId, ASSIGNEE_REF);
+    final Integer userState =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+            Integer.class,
+            taskId,
+            ASSIGNEE_REF);
     assertThat(userState).as("TASK_USER_STATE fuer Teilnehmer angelegt").isGreaterThanOrEqualTo(1);
   }
 
@@ -1091,28 +1171,40 @@ class AssigneeControllerIT {
   void post_participants_idempotent() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "Participants-Idempotent-IT-Task");
     final String body =
         om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())));
 
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON).content(body))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
         .andExpect(status().isNoContent());
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON).content(body))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
         .andExpect(status().isNoContent());
 
-    final Integer activeRows = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
-            + " AND p.ENTITY_STATUS = 'ACTIVE' AND p.EXIT_KIND IS NULL",
-        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    final Integer activeRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.ENTITY_STATUS = 'ACTIVE' AND p.EXIT_KIND IS NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
     assertThat(activeRows).as("genau 1 aktive Zeile trotz Doppel-Add (idempotent)").isEqualTo(1);
   }
 
@@ -1121,23 +1213,32 @@ class AssigneeControllerIT {
   void post_participants_unbekannt_400() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "Participants-Unknown-IT-Task");
     final UUID unknown = UUID.randomUUID();
 
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("participantIds", List.of(unknown.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("participantIds", List.of(unknown.toString())))))
         .andExpect(status().isBadRequest());
 
-    final Integer count = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
-        Integer.class, taskId, unknown);
+    final Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+            Integer.class,
+            taskId,
+            unknown);
     assertThat(count).as("keine Zeile fuer unbekannten Ref").isZero();
   }
 
@@ -1148,44 +1249,67 @@ class AssigneeControllerIT {
   void post_participants_ex_assignee_clears_assignee_flag() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "Participants-ExAssignee-IT-Task");
 
     // ASSIGNEE_REF zuweisen (ASSIGNEE_FLAG=1) ...
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
-    // ... dann abwaehlen (EXIT_KIND=UNSUBSCRIBED; ASSIGNEE_FLAG bleibt 1 auf der ausgetretenen Zeile).
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of()))))
+    // ... dann abwaehlen (EXIT_KIND=UNSUBSCRIBED; ASSIGNEE_FLAG bleibt 1 auf der ausgetretenen
+    // Zeile).
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of()))))
         .andExpect(status().isNoContent());
 
     // POST participants [ASSIGNEE_REF] -> reaktiviert als reiner Teilnehmer, ASSIGNEE_FLAG=0.
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/participants")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    final Integer pureParticipant = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
-            + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.EXIT_KIND IS NULL",
-        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    final Integer pureParticipant =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.PARTICIPANT_FLAG = 1 AND p.ASSIGNEE_FLAG = 0 AND p.EXIT_KIND IS NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
     assertThat(pureParticipant)
-        .as("Ex-Assignee als reiner Teilnehmer reaktiviert (ASSIGNEE_FLAG=0, nicht wieder Assignee)")
+        .as(
+            "Ex-Assignee als reiner Teilnehmer reaktiviert (ASSIGNEE_FLAG=0, nicht wieder Assignee)")
         .isEqualTo(1);
 
     // Gegenprobe: NICHT als aktiver Assignee gefuehrt.
-    final Integer stillAssignee = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
-            + " AND p.ASSIGNEE_FLAG = 1 AND p.EXIT_KIND IS NULL",
-        Integer.class, taskId, TENANT_A_ID, ASSIGNEE_REF);
+    final Integer stillAssignee =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = ? AND p.PARTICIPANT_REF = ?"
+                + " AND p.ASSIGNEE_FLAG = 1 AND p.EXIT_KIND IS NULL",
+            Integer.class,
+            taskId,
+            TENANT_A_ID,
+            ASSIGNEE_REF);
     assertThat(stillAssignee).as("darf nicht wieder aktiver Assignee sein").isZero();
   }
 
@@ -1203,76 +1327,114 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String tokenAssignee =
         buildJwtWithAuthority(
-            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT1-Handover");
     // ASSIGNEE_REF ist Nicht-Creator-Assignee und uebergibt an USER_B (Ziel).
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    // Exakter Bump-Nachweis: LAST_ACTIVITY_AT auf einen festen Vergangenheitswert zwingen, damit der
+    // Exakter Bump-Nachweis: LAST_ACTIVITY_AT auf einen festen Vergangenheitswert zwingen, damit
+    // der
     // Handover-Bump auf now() UNZWEIDEUTIG (strikt groesser, nicht nur >=/Sekunde) belegbar ist.
     jdbcTemplate.update(
         "UPDATE [dbo].[TASK] SET LAST_ACTIVITY_AT = '2000-01-01T00:00:00' WHERE EXTERNALID = ?"
             + " AND TENANT_ID = ?",
-        taskId.toString(), TENANT_A_ID);
+        taskId.toString(),
+        TENANT_A_ID);
     final Integer ticksBefore = lastActivityTicks(taskId);
 
     // Enges App-Uhr-Fenster um den Handover-Aufruf: der Service setzt LAST_ACTIVITY_AT=now() in
     // DERSELBEN JVM wie der Test -> der persistierte Wert muss im Intervall [vor, nach] des POST
     // liegen (kein DB-Uhr-Versatz noetig; exakter now()-Nachweis statt grober 24h-Toleranz).
     final long appBeforeMillis = System.currentTimeMillis();
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(HANDOVER_TARGET_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isNoContent());
     final long appAfterMillis = System.currentTimeMillis();
 
     // Ziel ist aktiver Assignee.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
-            taskId, HANDOVER_TARGET_REF))
-        .as("Ziel ist aktiver Assignee").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
+                taskId,
+                HANDOVER_TARGET_REF))
+        .as("Ziel ist aktiver Assignee")
+        .isEqualTo(1);
     // Akteur exited + ASSIGNEE_FLAG=false.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND='HANDOVER' AND p.ASSIGNEE_FLAG=0",
-            taskId, ASSIGNEE_REF))
-        .as("Akteur exited (HANDOVER) + de-assignt").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND='HANDOVER' AND p.ASSIGNEE_FLAG=0",
+                taskId,
+                ASSIGNEE_REF))
+        .as("Akteur exited (HANDOVER) + de-assignt")
+        .isEqualTo(1);
     // Event + Target persistiert.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0",
-            taskId, ASSIGNEE_REF))
-        .as("1 TASK_HANDOVER-Ereignis").isEqualTo(1);
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER_TARGET] tgt"
-                + " JOIN [dbo].[TASK_HANDOVER] h ON tgt.HANDOVER_ID=h.ID"
-                + " JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID WHERE t.EXTERNALID=? AND tgt.TO_REF=?",
-            taskId, HANDOVER_TARGET_REF))
-        .as("1 TASK_HANDOVER_TARGET fuer das Ziel").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0",
+                taskId,
+                ASSIGNEE_REF))
+        .as("1 TASK_HANDOVER-Ereignis")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER_TARGET] tgt"
+                    + " JOIN [dbo].[TASK_HANDOVER] h ON tgt.HANDOVER_ID=h.ID"
+                    + " JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID WHERE t.EXTERNALID=? AND tgt.TO_REF=?",
+                taskId,
+                HANDOVER_TARGET_REF))
+        .as("1 TASK_HANDOVER_TARGET fuer das Ziel")
+        .isEqualTo(1);
     // Ziel-Notification (HANDOVER): GENAU EINE (exakte Zahl, nicht "mindestens eine").
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND n.RECIPIENT_REF=?",
-            taskId, HANDOVER_TARGET_REF))
-        .as("genau eine Ziel-Notification").isEqualTo(1);
-    // LAST_ACTIVITY_AT wurde EXAKT auf now() gebumpt: strikt ueber dem erzwungenen Vergangenheitswert
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND n.RECIPIENT_REF=?",
+                taskId,
+                HANDOVER_TARGET_REF))
+        .as("genau eine Ziel-Notification")
+        .isEqualTo(1);
+    // LAST_ACTIVITY_AT wurde EXAKT auf now() gebumpt: strikt ueber dem erzwungenen
+    // Vergangenheitswert
     // UND nahe der aktuellen DB-Zeit (Toleranz fuer App/DB-Uhr-Versatz), nicht nur >=/Sekunde.
     assertThat(lastActivityTicks(taskId))
-        .as("LAST_ACTIVITY_AT strikt ueber den Vergangenheitswert gebumpt").isGreaterThan(ticksBefore);
-    final java.sql.Timestamp storedLastActivity = jdbcTemplate.queryForObject(
-        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ? AND TENANT_ID = ?",
-        java.sql.Timestamp.class, taskId, TENANT_A_ID);
+        .as("LAST_ACTIVITY_AT strikt ueber den Vergangenheitswert gebumpt")
+        .isGreaterThan(ticksBefore);
+    final java.sql.Timestamp storedLastActivity =
+        jdbcTemplate.queryForObject(
+            "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ? AND TENANT_ID = ?",
+            java.sql.Timestamp.class,
+            taskId,
+            TENANT_A_ID);
     assertThat(storedLastActivity.getTime())
         .as("LAST_ACTIVITY_AT liegt im engen App-Aufruf-Fenster (= now() des Handover), nicht 2000")
         .isBetween(appBeforeMillis - 2000L, appAfterMillis + 2000L);
@@ -1287,50 +1449,79 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String tokenAssignee =
         buildJwtWithAuthority(
-            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT2-Stay");
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of(
-                "exitKind", "HANDOVER", "shouldStay", true, "handedOverToIds",
-                List.of(HANDOVER_TARGET_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "shouldStay",
+                            true,
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Akteur bleibt aktiv (kein EXIT), aber ASSIGNEE_FLAG=false.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NULL"
-                + " AND p.ASSIGNEE_FLAG=0 AND p.PARTICIPANT_FLAG=1",
-            taskId, ASSIGNEE_REF))
-        .as("Akteur bleibt aktiver Teilnehmer, de-assignt").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NULL"
+                    + " AND p.ASSIGNEE_FLAG=0 AND p.PARTICIPANT_FLAG=1",
+                taskId,
+                ASSIGNEE_REF))
+        .as("Akteur bleibt aktiver Teilnehmer, de-assignt")
+        .isEqualTo(1);
     // UNSUBSCRIBED_AT NICHT gesetzt.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND s.USER_REF=? AND s.UNSUBSCRIBED_AT IS NOT NULL",
-            taskId, ASSIGNEE_REF))
-        .as("kein UNSUBSCRIBED_AT bei shouldStay").isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND s.USER_REF=? AND s.UNSUBSCRIBED_AT IS NOT NULL",
+                taskId,
+                ASSIGNEE_REF))
+        .as("kein UNSUBSCRIBED_AT bei shouldStay")
+        .isZero();
     // Ziel Assignee + Event SHOULD_STAY=1.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
-            taskId, HANDOVER_TARGET_REF))
-        .as("Ziel ist Assignee").isEqualTo(1);
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=1",
-            taskId, ASSIGNEE_REF))
-        .as("Event mit SHOULD_STAY=1").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.ASSIGNEE_FLAG=1 AND p.EXIT_KIND IS NULL",
+                taskId,
+                HANDOVER_TARGET_REF))
+        .as("Ziel ist Assignee")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=1",
+                taskId,
+                ASSIGNEE_REF))
+        .as("Event mit SHOULD_STAY=1")
+        .isEqualTo(1);
   }
 
   @Test
@@ -1342,31 +1533,52 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Fall A: Creator shouldStay=false -> 409.
     final UUID taskA = createTask(mvc, om, tokenA, "BE7-IT3-Creator-409");
-    mvc.perform(post("/api/v1/tasks/" + taskA + "/exit")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskA + "/exit")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isConflict());
 
     // Fall B: Creator shouldStay=true -> 204, de-assignt, bleibt aktiv.
     final UUID taskB = createTask(mvc, om, tokenA, "BE7-IT3-Creator-204");
-    mvc.perform(post("/api/v1/tasks/" + taskB + "/exit")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of(
-                "exitKind", "HANDOVER", "shouldStay", true,
-                "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskB + "/exit")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "shouldStay",
+                            true,
+                            "handedOverToIds",
+                            List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.CREATOR_FLAG=1"
-                + " AND p.ASSIGNEE_FLAG=0 AND p.EXIT_KIND IS NULL",
-            taskB, USER_A_REF))
-        .as("Creator de-assignt, bleibt aktiv (kein EXIT)").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.CREATOR_FLAG=1"
+                    + " AND p.ASSIGNEE_FLAG=0 AND p.EXIT_KIND IS NULL",
+                taskB,
+                USER_A_REF))
+        .as("Creator de-assignt, bleibt aktiv (kein EXIT)")
+        .isEqualTo(1);
   }
 
   @Test
@@ -1378,54 +1590,84 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String tokenAssignee =
         buildJwtWithAuthority(
-            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT4-Read");
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Vor Handover: aktiver Assignee -> exit=null.
     final String activeDetail =
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .get("/api/v1/tasks/" + taskId)
-                .header("Authorization", "Bearer " + tokenAssignee))
-            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                        "/api/v1/tasks/" + taskId)
+                    .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     assertThat(om.readTree(activeDetail).get("exit").isNull())
-        .as("aktiver Assignee -> exit=null").isTrue();
+        .as("aktiver Assignee -> exit=null")
+        .isTrue();
 
     // Handover an das Tenant-A-Ziel.
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(HANDOVER_TARGET_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isNoContent());
 
     final String exitedDetail =
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .get("/api/v1/tasks/" + taskId)
-                .header("Authorization", "Bearer " + tokenAssignee))
-            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                        "/api/v1/tasks/" + taskId)
+                    .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final com.fasterxml.jackson.databind.JsonNode exit = om.readTree(exitedDetail).get("exit");
     assertThat(exit.isNull()).as("ausgetretener Akteur -> exit gesetzt").isFalse();
     assertThat(exit.get("kind").asText()).isEqualTo("handover");
     assertThat(exit.get("handedOverToIds").isArray()).isTrue();
-    assertThat(exit.get("handedOverToIds").get(0).asText()).isEqualTo(HANDOVER_TARGET_REF.toString());
+    assertThat(exit.get("handedOverToIds").get(0).asText())
+        .isEqualTo(HANDOVER_TARGET_REF.toString());
 
     // MAJOR (IT4-Archiv): auch die ARCHIV-Ausgabe (filter=left) des ausgetretenen Akteurs muss
     // exit.handedOverToIds liefern - nicht nur das Detail (SPEC F6 / A6: Batch-Enrichment im
     // InboxSnapshotService innerhalb des Generation-Brackets).
     final String archiveJson =
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .get("/api/v1/tasks/archive?filter=left")
-                .header("Authorization", "Bearer " + tokenAssignee))
-            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                        "/api/v1/tasks/archive?filter=left")
+                    .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final com.fasterxml.jackson.databind.JsonNode items = om.readTree(archiveJson).get("items");
     com.fasterxml.jackson.databind.JsonNode archivedTask = null;
     for (final com.fasterxml.jackson.databind.JsonNode item : items) {
@@ -1435,13 +1677,15 @@ class AssigneeControllerIT {
       }
     }
     assertThat(archivedTask)
-        .as("ausgetretener Akteur sieht die uebergebene Aufgabe im left-Archiv").isNotNull();
+        .as("ausgetretener Akteur sieht die uebergebene Aufgabe im left-Archiv")
+        .isNotNull();
     final com.fasterxml.jackson.databind.JsonNode archiveExit = archivedTask.get("exit");
     assertThat(archiveExit.isNull()).as("Archiv-Eintrag traegt exit").isFalse();
     assertThat(archiveExit.get("kind").asText()).isEqualTo("handover");
     assertThat(archiveExit.get("handedOverToIds").isArray()).isTrue();
     assertThat(archiveExit.get("handedOverToIds").get(0).asText())
-        .as("Archiv-exit.handedOverToIds enthaelt das Ziel").isEqualTo(HANDOVER_TARGET_REF.toString());
+        .as("Archiv-exit.handedOverToIds enthaelt das Ziel")
+        .isEqualTo(HANDOVER_TARGET_REF.toString());
   }
 
   @Test
@@ -1452,54 +1696,91 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String tokenAssignee =
         buildJwtWithAuthority(
-            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT5-Validation");
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // self-Ziel -> 400
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isBadRequest());
     // unknown-Ziel -> 400
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(UUID.randomUUID().toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(UUID.randomUUID().toString())))))
         .andExpect(status().isBadRequest());
     // UNSUBSCRIBED mit Zielen -> 400
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "UNSUBSCRIBED", "handedOverToIds", List.of(USER_B_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "UNSUBSCRIBED",
+                            "handedOverToIds",
+                            List.of(USER_B_REF.toString())))))
         .andExpect(status().isBadRequest());
     // leer-stay -> 400
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER", "shouldStay", true))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "HANDOVER", "shouldStay", true))))
         .andExpect(status().isBadRequest());
 
     // Keine der 400-Antworten darf einen Austritt/Handover erzeugt haben.
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NOT NULL",
-            taskId, ASSIGNEE_REF))
-        .as("Akteur weiterhin ohne Austritt nach 400ern").isZero();
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=?",
-            taskId))
-        .as("kein TASK_HANDOVER-Ereignis nach 400ern").isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND p.PARTICIPANT_REF=? AND p.EXIT_KIND IS NOT NULL",
+                taskId,
+                ASSIGNEE_REF))
+        .as("Akteur weiterhin ohne Austritt nach 400ern")
+        .isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=?",
+                taskId))
+        .as("kein TASK_HANDOVER-Ereignis nach 400ern")
+        .isZero();
   }
 
   @Test
@@ -1511,57 +1792,91 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String tokenAssignee =
         buildJwtWithAuthority(
-            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN,
-            "task-management:TASK_WRITE", "task-management:TASK_READ");
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskId = createTask(mvc, om, tokenA, "BE7-IT8-Tiebreak");
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // 1. Stay-Handover an das Tenant-A-Ziel (Akteur bleibt, kann erneut handovern).
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of(
-                "exitKind", "HANDOVER", "shouldStay", true, "handedOverToIds",
-                List.of(HANDOVER_TARGET_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "shouldStay",
+                            true,
+                            "handedOverToIds",
+                            List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isNoContent());
     // 2. Finaler Handover (Austritt) an USER_A (Creator ist aktiv; USER_A als Ziel zulaessig).
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + tokenAssignee).contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(
-                Map.of("exitKind", "HANDOVER", "handedOverToIds", List.of(USER_A_REF.toString())))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(USER_A_REF.toString())))))
         .andExpect(status().isNoContent());
 
     // Codex-Re-Gate-Auflage: ECHTEN ID-DESC-Tie-Break erzwingen. Beide Ereignisse des Akteurs auf
     // SHOULD_STAY=0 UND IDENTISCHEN ANGELEGT_AM setzen -> die ANGELEGT_AM-Ordnung ist nicht mehr
     // eindeutig, NUR die hoehere ID (= das finale Ereignis an USER_A) darf das sichtbare Ereignis
-    // bestimmen. So wird der Sekundaer-Tie-Break ID DESC end-to-end (bis in die Detail-Anreicherung)
+    // bestimmen. So wird der Sekundaer-Tie-Break ID DESC end-to-end (bis in die
+    // Detail-Anreicherung)
     // geprueft, nicht nur die ANGELEGT_AM-Reihenfolge.
     jdbcTemplate.update(
         "UPDATE h SET h.SHOULD_STAY = 0, h.ANGELEGT_AM = '2026-06-01T12:00:00'"
             + " FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
             + " WHERE t.EXTERNALID = ? AND h.FROM_REF = ?",
-        taskId.toString(), ASSIGNEE_REF);
-    assertThat(count(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
-                + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0"
-                + " AND h.ANGELEGT_AM='2026-06-01T12:00:00'",
-            taskId, ASSIGNEE_REF))
-        .as("zwei sichtbare Gleichstand-Ereignisse (ANGELEGT_AM identisch)").isEqualTo(2);
+        taskId.toString(),
+        ASSIGNEE_REF);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] h JOIN [dbo].[TASK] t ON h.TASK_ID=t.ID"
+                    + " WHERE t.EXTERNALID=? AND h.FROM_REF=? AND h.SHOULD_STAY=0"
+                    + " AND h.ANGELEGT_AM='2026-06-01T12:00:00'",
+                taskId,
+                ASSIGNEE_REF))
+        .as("zwei sichtbare Gleichstand-Ereignisse (ANGELEGT_AM identisch)")
+        .isEqualTo(2);
 
-    // Bei ANGELEGT_AM-Gleichstand entscheidet ID DESC -> das Ereignis mit der hoeheren ID (der finale
+    // Bei ANGELEGT_AM-Gleichstand entscheidet ID DESC -> das Ereignis mit der hoeheren ID (der
+    // finale
     // Handover an USER_A) ist sichtbar -> handedOverToIds = [USER_A], nicht USER_B.
     final String detail =
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .get("/api/v1/tasks/" + taskId)
-                .header("Authorization", "Bearer " + tokenAssignee))
-            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                        "/api/v1/tasks/" + taskId)
+                    .header("Authorization", "Bearer " + tokenAssignee))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final com.fasterxml.jackson.databind.JsonNode exit = om.readTree(detail).get("exit");
     assertThat(exit.get("kind").asText()).isEqualTo("handover");
     assertThat(exit.get("handedOverToIds")).hasSize(1);
@@ -1576,12 +1891,16 @@ class AssigneeControllerIT {
     return jdbcTemplate.queryForObject(sql, Integer.class, args);
   }
 
-  /** Grobe LAST_ACTIVITY_AT-Ordnungssonde (Millisekunden seit Epoche als Integer-Vergleichswert). */
+  /**
+   * Grobe LAST_ACTIVITY_AT-Ordnungssonde (Millisekunden seit Epoche als Integer-Vergleichswert).
+   */
   private Integer lastActivityTicks(final UUID taskUuid) {
     return jdbcTemplate.queryForObject(
         "SELECT DATEDIFF(SECOND, '2026-01-01', LAST_ACTIVITY_AT) FROM [dbo].[TASK]"
             + " WHERE EXTERNALID = ? AND TENANT_ID = ?",
-        Integer.class, taskUuid, TENANT_A_ID);
+        Integer.class,
+        taskUuid,
+        TENANT_A_ID);
   }
 
   private UUID createTask(
@@ -1635,7 +1954,11 @@ class AssigneeControllerIT {
             + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
             + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1,"
             + " NULL, NULL)",
-        partId, TENANT_A_ID, taskId, ref, participantTenantId);
+        partId,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        participantTenantId);
   }
 
   /**
@@ -1709,7 +2032,10 @@ class AssigneeControllerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -1723,11 +2049,16 @@ class AssigneeControllerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   // ============================================================================================
-  // Slice 4 (Standard-Selfservice): exit authenticated-only + Membership-Guard-404 + Handover-Grenze
+  // Slice 4 (Standard-Selfservice): exit authenticated-only + Membership-Guard-404 +
+  // Handover-Grenze
   // + ensureAssignee-Auswahlvertrag (real-MSSQL)
   // ============================================================================================
 
@@ -1759,7 +2090,9 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
                 + " AND EXIT_KIND = 'UNSUBSCRIBED'",
-            Integer.class, dbId, GRANTFREE_REF);
+            Integer.class,
+            dbId,
+            GRANTFREE_REF);
     assertThat(exited).as("grant-frei UNSUBSCRIBED persistiert EXIT_KIND").isEqualTo(1);
   }
 
@@ -1776,14 +2109,15 @@ class AssigneeControllerIT {
             TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     final UUID taskId = createTask(mvc, om, tokenCreator, "S4-non-member-404");
     final long dbId = taskDbId(taskId);
-    final Integer participantRowsBefore = count(
-        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
-    final Integer handoverRowsBefore = count(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", dbId);
-    final Integer historyRowsBefore = count(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?", dbId);
-    final Object activityBefore = jdbcTemplate.queryForObject(
-        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId);
+    final Integer participantRowsBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
+    final Integer handoverRowsBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", dbId);
+    final Integer historyRowsBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?", dbId);
+    final Object activityBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId);
 
     // GRANTFREE2 ist KEIN Member dieser Aufgabe -> 404 (neutral), VOR jeder Zielvalidierung.
     final String tokenNonMember =
@@ -1803,10 +2137,11 @@ class AssigneeControllerIT {
 
     // Derselbe member-scoped Exit-Pfad muss auch einen Akteur aus einem anderen Tenant maskieren.
     final String foreign = buildGrantFreeJwt(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN);
-    mvc.perform(post("/api/v1/tasks/" + taskId + "/exit")
-            .header("Authorization", "Bearer " + foreign)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + foreign)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
         .andExpect(status().isNotFound());
     assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId))
         .isEqualTo(participantRowsBefore);
@@ -1814,8 +2149,9 @@ class AssigneeControllerIT {
         .isEqualTo(handoverRowsBefore);
     assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?", dbId))
         .isEqualTo(historyRowsBefore);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId))
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE ID = ?", Object.class, dbId))
         .isEqualTo(activityBefore);
   }
 
@@ -1857,13 +2193,15 @@ class AssigneeControllerIT {
     final Integer actorRows =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
-            Integer.class, dbId, GRANTFREE2_REF);
-    assertThat(actorRows).as("Nicht-Member-Akteur hat keine Teilnehmerzeile (keine Mutation)")
+            Integer.class,
+            dbId,
+            GRANTFREE2_REF);
+    assertThat(actorRows)
+        .as("Nicht-Member-Akteur hat keine Teilnehmerzeile (keine Mutation)")
         .isZero();
     final Integer handoverEvents =
         jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?",
-            Integer.class, dbId);
+            "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ?", Integer.class, dbId);
     assertThat(handoverEvents).as("kein Handover-Ereignis beim Binding-400").isZero();
   }
 
@@ -1915,7 +2253,9 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
                 + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND ENTITY_STATUS = 'ACTIVE'",
-            Integer.class, dbId, GRANTFREE2_REF);
+            Integer.class,
+            dbId,
+            GRANTFREE2_REF);
     assertThat(targetAssignee).as("WRITE-Member-Ziel bleibt aktiver Assignee").isEqualTo(1);
   }
 
@@ -1949,22 +2289,29 @@ class AssigneeControllerIT {
                             List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isForbidden());
 
-    // KEINE Mutation: kein Handover-Ereignis, Akteur weiterhin aktiv (nicht ausgetreten), Ziel nicht angelegt.
+    // KEINE Mutation: kein Handover-Ereignis, Akteur weiterhin aktiv (nicht ausgetreten), Ziel
+    // nicht angelegt.
     final Integer handoverEvents =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ? AND FROM_REF = ?",
-            Integer.class, dbId, GRANTFREE_REF);
+            Integer.class,
+            dbId,
+            GRANTFREE_REF);
     assertThat(handoverEvents).as("kein Handover-Ereignis (keine Mutation)").isZero();
     final Integer actorStillActive =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
                 + " AND EXIT_KIND IS NULL",
-            Integer.class, dbId, GRANTFREE_REF);
+            Integer.class,
+            dbId,
+            GRANTFREE_REF);
     assertThat(actorStillActive).as("Akteur bleibt aktiv (kein Austritt)").isEqualTo(1);
     final Integer targetRow =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
-            Integer.class, dbId, HANDOVER_TARGET_REF);
+            Integer.class,
+            dbId,
+            HANDOVER_TARGET_REF);
     assertThat(targetRow).as("Nicht-Member-Ziel wurde NICHT angelegt").isZero();
   }
 
@@ -2009,7 +2356,8 @@ class AssigneeControllerIT {
               count(
                   "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
                       + " AND PARTICIPANT_REF = ? AND EXIT_KIND IS NULL",
-                  dbId, GRANTFREE_REF))
+                  dbId,
+                  GRANTFREE_REF))
           .as("Akteur bleibt aktiv fuer Ziel %s", targetRef)
           .isEqualTo(1);
     }
@@ -2024,7 +2372,8 @@ class AssigneeControllerIT {
     final ObjectMapper om = new ObjectMapper();
 
     // Akteur ist Creator (TASK_WRITE) + Nicht-Creator-Austritt verboten -> stattdessen separaten
-    // Nicht-Creator-Member mit TASK_WRITE nutzen: USER_A legt an, weist ASSIGNEE_REF zu, ASSIGNEE_REF
+    // Nicht-Creator-Member mit TASK_WRITE nutzen: USER_A legt an, weist ASSIGNEE_REF zu,
+    // ASSIGNEE_REF
     // hat TASK_WRITE und uebergibt an HANDOVER_TARGET_REF (Nicht-Member).
     final String tokenCreator =
         buildJwtWithAuthority(
@@ -2034,7 +2383,8 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenCreator)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
     final long dbId = taskDbId(taskId);
 
@@ -2058,7 +2408,9 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
                 + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND PARTICIPANT_KIND = 'PERSON'",
-            Integer.class, dbId, HANDOVER_TARGET_REF);
+            Integer.class,
+            dbId,
+            HANDOVER_TARGET_REF);
     assertThat(targetAssignee).as("neues Ziel ist aktiver Assignee (mit TASK_WRITE)").isEqualTo(1);
   }
 
@@ -2078,14 +2430,23 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenCreator)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
     final long dbId = taskDbId(taskId);
 
-    // HANDOVER_TARGET_REF: inaktive (DEACTIVE) + ausgetretene (EXIT_KIND) PERSON-Zeile, task-tenant.
+    // HANDOVER_TARGET_REF: inaktive (DEACTIVE) + ausgetretene (EXIT_KIND) PERSON-Zeile,
+    // task-tenant.
     insertParticipantRow(
-        520301L, dbId, HANDOVER_TARGET_REF, "PERSON", TENANT_A_ID, TENANT_A_ID, "DEACTIVE",
-        false, "UNSUBSCRIBED");
+        520301L,
+        dbId,
+        HANDOVER_TARGET_REF,
+        "PERSON",
+        TENANT_A_ID,
+        TENANT_A_ID,
+        "DEACTIVE",
+        false,
+        "UNSUBSCRIBED");
 
     final String tokenAssignee =
         buildJwtWithAuthority(
@@ -2107,7 +2468,8 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND ENTITY_STATUS = 'ACTIVE'"
                 + " AND ASSIGNEE_FLAG = 1 AND PARTICIPANT_FLAG = 1 AND EXIT_KIND IS NULL",
-            Integer.class, 520301L);
+            Integer.class,
+            520301L);
     assertThat(reactivated)
         .as("inaktive/exited PERSON-Zeile voll auf ACTIVE reaktiviert (gleicher Unique-Key)")
         .isEqualTo(1);
@@ -2116,7 +2478,9 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?"
                 + " AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL AND ENTITY_STATUS = 'ACTIVE'",
-            Integer.class, dbId, HANDOVER_TARGET_REF);
+            Integer.class,
+            dbId,
+            HANDOVER_TARGET_REF);
     assertThat(activeAssignees).as("genau EIN aktiver Assignee").isEqualTo(1);
   }
 
@@ -2136,14 +2500,24 @@ class AssigneeControllerIT {
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenCreator)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
     final long dbId = taskDbId(taskId);
 
-    // HANDOVER_TARGET_REF: TEAM-Zeile (task-tenant). Grant-frei waere 403 (Nicht-WRITE-Member); erst
+    // HANDOVER_TARGET_REF: TEAM-Zeile (task-tenant). Grant-frei waere 403 (Nicht-WRITE-Member);
+    // erst
     // MIT TASK_WRITE erreicht ensureAssignee die TEAM-Zeile -> 409, keine Mutation.
     insertParticipantRow(
-        520401L, dbId, HANDOVER_TARGET_REF, "TEAM", TENANT_A_ID, TENANT_A_ID, "ACTIVE", false, null);
+        520401L,
+        dbId,
+        HANDOVER_TARGET_REF,
+        "TEAM",
+        TENANT_A_ID,
+        TENANT_A_ID,
+        "ACTIVE",
+        false,
+        null);
 
     final String tokenAssignee =
         buildJwtWithAuthority(
@@ -2161,17 +2535,21 @@ class AssigneeControllerIT {
                             List.of(HANDOVER_TARGET_REF.toString())))))
         .andExpect(status().isConflict());
 
-    // Keine Mutation: TEAM bleibt TEAM, kein Assignee-Flip, kein Handover-Ereignis (voller Rollback).
+    // Keine Mutation: TEAM bleibt TEAM, kein Assignee-Flip, kein Handover-Ereignis (voller
+    // Rollback).
     final Integer teamUnchanged =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND PARTICIPANT_KIND = 'TEAM'"
                 + " AND ASSIGNEE_FLAG = 0",
-            Integer.class, 520401L);
+            Integer.class,
+            520401L);
     assertThat(teamUnchanged).as("TEAM-Zeile unveraendert (fail-closed 409)").isEqualTo(1);
     final Integer handoverEvents =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID = ? AND FROM_REF = ?",
-            Integer.class, dbId, ASSIGNEE_REF);
+            Integer.class,
+            dbId,
+            ASSIGNEE_REF);
     assertThat(handoverEvents).as("kein Handover-Ereignis (voller Rollback)").isZero();
   }
 
@@ -2192,7 +2570,8 @@ class AssigneeControllerIT {
 
     // Zeile 1: gueltige task-tenant WRITE-Member-Zeile (PARTICIPANT_TENANT_ID = TENANT_A).
     insertActiveMember(520501L, dbId, GRANTFREE_REF, TENANT_A_ID);
-    // Zeile 2: zweite Zeile desselben Akteurs mit fremdem PARTICIPANT_TENANT_ID (eigener Unique-Key).
+    // Zeile 2: zweite Zeile desselben Akteurs mit fremdem PARTICIPANT_TENANT_ID (eigener
+    // Unique-Key).
     insertParticipantRow(
         520502L, dbId, GRANTFREE_REF, "PERSON", TENANT_A_ID, TENANT_B_ID, "ACTIVE", true, null);
 
@@ -2214,8 +2593,11 @@ class AssigneeControllerIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND EXIT_KIND IS NULL"
                 + " AND PARTICIPANT_TENANT_ID = ?",
-            Integer.class, 520502L, TENANT_B_ID);
-    assertThat(foreignUnchanged).as("fremd-tenant-Zeile unveraendert (deterministische Row-Wahl)")
+            Integer.class,
+            520502L,
+            TENANT_B_ID);
+    assertThat(foreignUnchanged)
+        .as("fremd-tenant-Zeile unveraendert (deterministische Row-Wahl)")
         .isEqualTo(1);
   }
 
@@ -2285,7 +2667,8 @@ class AssigneeControllerIT {
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
     // Slice 4: AssigneeService braucht den TaskMembershipGuard (member-scoped exit-Guard). Der
-    // PermissionEvaluator (programmatischer TASK_WRITE-Check) kommt aus KsfSecurityAutoConfiguration.
+    // PermissionEvaluator (programmatischer TASK_WRITE-Check) kommt aus
+    // KsfSecurityAutoConfiguration.
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
