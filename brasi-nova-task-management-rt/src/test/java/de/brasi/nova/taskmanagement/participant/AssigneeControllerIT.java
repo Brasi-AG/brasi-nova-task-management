@@ -170,6 +170,19 @@ class AssigneeControllerIT {
   private static final String GRANTFREE2_LOGIN = "grantfree-member-2@brasi.de";
   private static final long GRANTFREE2_DB_ID = 517L;
 
+  /**
+   * Assignee-Guard-Gap: aktiver Mandant-A-Nutzer MIT breiter {@code task-management:TASK_WRITE}-
+   * Authority, der aber KEIN Teilnehmer/Member der konkreten Aufgabe ist. Deckt die
+   * Privilege-Escalation ab: breit gegrantetes TASK_WRITE passiert das Controller-Gate, der
+   * fehlende objekt-level Membership-Guard liesse ihn sich sonst selbst als Assignee/Participant
+   * eintragen (-> Member -> Vollzugriff). Erwartet: neutrale 404 (Membership-Guard), keine
+   * Mutation.
+   */
+  private static final UUID WRITE_NON_MEMBER_REF = UUID.randomUUID();
+
+  private static final String WRITE_NON_MEMBER_LOGIN = "write-non-member@brasi.de";
+  private static final long WRITE_NON_MEMBER_DB_ID = 518L;
+
   private static final KeyPair RSA_KEY_PAIR;
 
   static {
@@ -249,6 +262,9 @@ class AssigneeControllerIT {
     // Slice 4: grant-freie Mandant-A-Nutzer.
     seedBenutzerIfAbsent(jt, GRANTFREE_DB_ID, GRANTFREE_REF, GRANTFREE_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, GRANTFREE2_DB_ID, GRANTFREE2_REF, GRANTFREE2_LOGIN, TENANT_A_ID);
+    // Assignee-Guard-Gap: aktiver Mandant-A-Nutzer mit TASK_WRITE, aber kein Task-Member.
+    seedBenutzerIfAbsent(
+        jt, WRITE_NON_MEMBER_DB_ID, WRITE_NON_MEMBER_REF, WRITE_NON_MEMBER_LOGIN, TENANT_A_ID);
   }
 
   // ---- Positiv-IT: Assignee zuweisen -> ASSIGNEE_FLAG + TASK_USER_STATE -------------------------
@@ -2599,6 +2615,342 @@ class AssigneeControllerIT {
     assertThat(foreignUnchanged)
         .as("fremd-tenant-Zeile unveraendert (deterministische Row-Wahl)")
         .isEqualTo(1);
+  }
+
+  // ============================================================================================
+  // Assignee-Guard-Gap (Privilege-Escalation): PUT /assignees + POST /participants brauchen den
+  // WRITE-Member-Guard GANZ VORNE (analog exit). Ein TASK_WRITE-Nicht-Member darf sich NICHT
+  // selbst/andere eintragen -> neutrale 404, keine Mutation (real-MSSQL).
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "guard_gap_put_assignees_write_non_member_404: TASK_WRITE-Nicht-Member PUT /assignees -> 404"
+          + " (Membership-Guard), KEIN neuer TASK_PARTICIPANT fuer das Assignee-Ziel")
+  void guard_gap_put_assignees_write_non_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an und wird dadurch Creator/WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-PUT-Assignees");
+    final long dbId = taskDbId(taskId);
+
+    // Angreifer: besitzt breites TASK_WRITE (Controller-Gate passiert), ist aber KEIN Member.
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenWriteNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", Set.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: das Assignee-Ziel hat keine neue TASK_PARTICIPANT-Zeile erhalten.
+    final Integer assigneeRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(assigneeRows)
+        .as("TASK_WRITE-Nicht-Member darf per PUT /assignees keinen Participant anlegen")
+        .isZero();
+    // Gegenprobe: der Angreifer selbst hat sich nicht eingetragen.
+    final Integer attackerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            WRITE_NON_MEMBER_REF);
+    assertThat(attackerRows)
+        .as("TASK_WRITE-Nicht-Member hat sich selbst nicht als Participant eingetragen")
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "guard_gap_post_participants_write_non_member_404: TASK_WRITE-Nicht-Member POST /participants"
+          + " -> 404 (Membership-Guard), KEIN neuer TASK_PARTICIPANT fuer die Ref")
+  void guard_gap_post_participants_write_non_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an und wird dadurch Creator/WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-POST-Participants");
+    final long dbId = taskDbId(taskId);
+
+    // Angreifer: besitzt breites TASK_WRITE (Controller-Gate passiert), ist aber KEIN Member.
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenWriteNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: die hinzuzufuegende Ref hat keine neue TASK_PARTICIPANT-Zeile erhalten.
+    final Integer refRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(refRows)
+        .as("TASK_WRITE-Nicht-Member darf per POST /participants keinen Participant anlegen")
+        .isZero();
+    // Gegenprobe: der Angreifer selbst hat sich nicht eingetragen.
+    final Integer attackerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            WRITE_NON_MEMBER_REF);
+    assertThat(attackerRows)
+        .as("TASK_WRITE-Nicht-Member hat sich selbst nicht als Participant eingetragen")
+        .isZero();
+  }
+
+  // --- MAJOR 2 (Codex-Re-Gate): der BENANNTE Angriff - der Nicht-Member traegt SICH SELBST ein ---
+
+  @Test
+  @DisplayName(
+      "guard_gap_put_assignees_self_enrollment_404: TASK_WRITE-Nicht-Member traegt SICH SELBST"
+          + " (+ Dritten) als Assignee ein -> 404 (Membership-Guard VOR jeder Mutation), WEDER der"
+          + " Angreifer NOCH das Dritt-Ziel angelegt")
+  void guard_gap_put_assignees_self_enrollment_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an und wird dadurch Creator/WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-PUT-Self-Enroll");
+    final long dbId = taskDbId(taskId);
+
+    // Angreifer: breites TASK_WRITE (Controller-Gate passiert), aber KEIN Member. Der Payload
+    // traegt
+    // den Angreifer SELBST (Selbst-Eintragung = Eskalationskern) UND einen Dritten (ASSIGNEE_REF).
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenWriteNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "assignees",
+                            Set.of(WRITE_NON_MEMBER_REF.toString(), ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: der Angreifer hat SICH SELBST nicht als Assignee eingetragen (= verhinderte
+    // Eskalation zum Member).
+    final Integer attackerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            WRITE_NON_MEMBER_REF);
+    assertThat(attackerRows)
+        .as("TASK_WRITE-Nicht-Member hat sich NICHT selbst als Assignee eingetragen")
+        .isZero();
+    // KEINE Mutation: auch das mitgeschickte Dritt-Ziel wurde nicht angelegt (All-or-Nothing VORs
+    // Guard).
+    final Integer thirdPartyRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(thirdPartyRows)
+        .as("auch das Dritt-Ziel wurde durch den geblockten Nicht-Member nicht angelegt")
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "guard_gap_post_participants_self_enrollment_404: TASK_WRITE-Nicht-Member traegt SICH SELBST"
+          + " per POST /participants ein -> 404 (Membership-Guard), keine Selbst-Eintragung")
+  void guard_gap_post_participants_self_enrollment_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an und wird dadurch Creator/WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-POST-Self-Enroll");
+    final long dbId = taskDbId(taskId);
+
+    // Angreifer traegt SICH SELBST als Teilnehmer ein (Selbst-Eintragung = Eskalationskern).
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenWriteNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(WRITE_NON_MEMBER_REF.toString())))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: der Angreifer hat SICH SELBST nicht als Teilnehmer eingetragen.
+    final Integer attackerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Integer.class,
+            dbId,
+            WRITE_NON_MEMBER_REF);
+    assertThat(attackerRows)
+        .as("TASK_WRITE-Nicht-Member hat sich NICHT selbst als Teilnehmer eingetragen")
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "guard_gap_post_participants_empty_array_non_member_404: Nicht-Member POST /participants mit"
+          + " leerem participantIds-Array -> 404 - der Membership-Guard greift VOR dem"
+          + " Leeres-Array-No-Op (return), kein Teilnehmer angelegt")
+  void guard_gap_post_participants_empty_array_non_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an und wird dadurch Creator/WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-POST-Empty");
+    final long dbId = taskDbId(taskId);
+    final Integer participantRowsBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
+
+    // Angreifer (Nicht-Member) sendet ein LEERES Array. Ohne Guard waere das ein stiller No-Op
+    // (200/
+    // 204); mit Guard greift der requireWriteMember GANZ VORNE und maskiert neutral mit 404 - der
+    // Leeres-Array-return liegt erst DANACH im addParticipants-Fluss.
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenWriteNonMember)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("participantIds", List.of()))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: Teilnehmerbestand unveraendert.
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId))
+        .as("leeres Array durch Nicht-Member erzeugt keine Teilnehmer (Guard VOR No-Op)")
+        .isEqualTo(participantRowsBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "guard_gap_ex_member_write_cannot_readd_404: ausgetretener Ex-Member MIT TASK_WRITE ruft POST"
+          + " /participants -> 404 (kein WRITE-Member mehr), keine Mutation")
+  void guard_gap_ex_member_write_cannot_readd_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+
+    // USER_A legt die Aufgabe an (Creator) und weist ASSIGNEE_REF zu -> ASSIGNEE wird WRITE-Member.
+    final String tokenCreator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenCreator, "Guard-Gap-ExMember-Readd");
+    final long dbId = taskDbId(taskId);
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenCreator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
+        .andExpect(status().isNoContent());
+
+    // ASSIGNEE (Nicht-Creator) tritt per POST /exit aus (UNSUBSCRIBED) -> kein WRITE-Member mehr.
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/exit")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("exitKind", "UNSUBSCRIBED"))))
+        .andExpect(status().isNoContent());
+    // Vorbedingung: ASSIGNEE ist jetzt ausgetreten (EXIT_KIND gesetzt).
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF"
+                    + " = ? AND EXIT_KIND = 'UNSUBSCRIBED'",
+                dbId,
+                ASSIGNEE_REF))
+        .as("ASSIGNEE ist ausgetreten (kein WRITE-Member mehr)")
+        .isEqualTo(1);
+
+    final Integer participantRowsBefore =
+        count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId);
+
+    // Der ausgetretene Ex-Member hat weiterhin TASK_WRITE, ist aber KEIN aktiver WRITE-Member mehr:
+    // POST /participants (irgendeine gueltige Ref) -> 404, keine Mutation.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNotFound());
+
+    // KEINE Mutation: Teilnehmerbestand unveraendert, insbesondere das Ziel nicht angelegt.
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?", dbId))
+        .as("ausgetretener Ex-Member erzeugt keine Teilnehmer-Mutation")
+        .isEqualTo(participantRowsBefore);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF"
+                    + " = ?",
+                dbId,
+                HANDOVER_TARGET_REF))
+        .as("das Ziel wurde durch den geblockten Ex-Member nicht angelegt")
+        .isZero();
   }
 
   private static String toPem(final byte[] der) {

@@ -143,6 +143,16 @@ public class AssigneeService {
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
 
+    // Privilege-Escalation-Schutz: WRITE-Member-Guard GANZ VORNE - direkt nach requireTask (Task-
+    // Laden + Tenant/ENTITY_STATUS=ACTIVE), VOR jeder Eingabe-/Zielvalidierung und jeder Mutation
+    // (analog exit(), Z. ~619). Ohne diesen Guard koennte ein Akteur mit breit gegrantetem
+    // TASK_WRITE,
+    // der KEIN Member der Aufgabe ist, sich selbst/andere als Assignee eintragen -> wuerde Member
+    // ->
+    // Vollzugriff. Fehlende/ausgetretene Membership -> einheitlich neutrale 404 (kein
+    // Existenz-Leak).
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
     // Aktuelle Assignees laden (Snapshot vor Mutationen)
     final List<TaskParticipant> currentAssignees =
         participantQueryRepository.findActiveAssigneesByTaskId(taskId);
@@ -377,9 +387,19 @@ public class AssigneeService {
   public void addParticipants(final UUID taskExternalId, final ParticipantAddInput input) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
+    final UUID actorRef = actor.user().id();
 
     final Task task = requireTask(taskExternalId, tenantId);
     final Long taskId = task.getId();
+
+    // Privilege-Escalation-Schutz: WRITE-Member-Guard GANZ VORNE - direkt nach requireTask (Task-
+    // Laden + Tenant/ENTITY_STATUS=ACTIVE), VOR der Dedup-/Zielvalidierung und jeder Mutation
+    // (analog
+    // exit(), Z. ~619). Ohne diesen Guard koennte ein Akteur mit breit gegrantetem TASK_WRITE, der
+    // KEIN Member der Aufgabe ist, sich selbst/andere als Teilnehmer eintragen -> wuerde Member ->
+    // Vollzugriff. Fehlende/ausgetretene Membership -> einheitlich neutrale 404 (kein
+    // Existenz-Leak).
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
 
     // Deduplizieren und vor den Participant-/UserState-Writes sortieren, damit parallele
     // Mehrfach-Ref-Adds dieselben DB-Zeilen in gleicher Reihenfolge sperren.
