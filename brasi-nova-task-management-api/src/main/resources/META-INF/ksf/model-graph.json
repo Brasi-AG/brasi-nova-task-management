@@ -886,6 +886,17 @@
       "associationCandidate": false,
       "properties": [
         {
+          "name": "color",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "COLOR",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
           "name": "entryValue",
           "javaType": "java.lang.String",
           "source": "PERSISTED",
@@ -2492,9 +2503,9 @@
       "sourceColumn": "SEVERITY_ID",
       "targetEntity": "de.brasi.nova.taskmanagement.entity.dictionary.TagSeverity",
       "referencedColumn": "ID",
-      "sourceCardinality": "EXACTLY_ONE",
+      "sourceCardinality": "ZERO_OR_ONE",
       "targetCardinality": "ZERO_OR_MANY",
-      "nullable": false,
+      "nullable": true,
       "unique": false,
       "updateable": false,
       "tenantScope": { "mode": "GLOBAL", "property": null },
@@ -2502,7 +2513,7 @@
       "label": null,
       "inverseLabel": null,
       "evidence": [
-        "NOVA_COLUMN_NULLABLE_FALSE",
+        "NOVA_COLUMN_NULLABLE_TRUE",
         "NO_SINGLE_COLUMN_UNIQUENESS"
       ],
       "dtoProjections": []

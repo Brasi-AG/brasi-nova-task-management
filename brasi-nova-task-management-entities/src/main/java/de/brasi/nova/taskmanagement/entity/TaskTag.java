@@ -29,11 +29,21 @@ public class TaskTag extends NovaDictionaryEntry<TaskTag> {
 
   private static final long serialVersionUID = 1L;
 
-  /** FK auf {@code DIC_TAG_SEVERITY} (global). */
+  /**
+   * FK auf {@code DIC_TAG_SEVERITY} (global). Seit Intake #135 (Phase 1) nullable: Tags koennen ohne
+   * severity existieren (color-only oder neutral).
+   */
   @NovaColumn(
       name = "SEVERITY_ID",
-      nullable = false,
+      nullable = true,
       foreignKey = @NovaForeignKey(referencedEntity = TagSeverity.class))
   @NovaFkScope(mode = NovaFkScope.Mode.GLOBAL)
   private Long severityId;
+
+  /**
+   * UI-Farbe des Tags als Hex-String ({@code #RRGGBB} / {@code #RGB}, normalisiert Grossbuchstaben).
+   * Additiv seit Intake #135 (Phase 1); {@code null} = keine Farbe (neutraler Tag).
+   */
+  @NovaColumn(name = "COLOR", nullable = true, length = 7)
+  private String color;
 }

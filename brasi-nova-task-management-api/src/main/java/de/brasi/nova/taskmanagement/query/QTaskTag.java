@@ -19,6 +19,7 @@ import io.keel.framework.persistence.query.path.*;
  */
 public final class QTaskTag extends QNovaDictionaryEntry {
 
+    public final StringProperty color = NovaPropertyFactory.createString("color");
     public final LongProperty severityId = NovaPropertyFactory.createLong("severityId");
 
 

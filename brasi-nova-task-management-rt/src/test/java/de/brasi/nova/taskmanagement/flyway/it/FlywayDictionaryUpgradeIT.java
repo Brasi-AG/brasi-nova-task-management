@@ -1,19 +1,32 @@
 package de.brasi.nova.taskmanagement.flyway.it;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TagSeverityCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TagSeverityColors;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.util.FileCopyUtils;
 
 /**
  * Upgrade-Pfad-IT (Intake #133): beweist auf EINER Wegwerf-DB den echten Staged-Upgrade. Erst wird
@@ -98,6 +111,368 @@ class FlywayDictionaryUpgradeIT {
       assertThat(externalId(jt, "DIC_TASK_DIRECTION", "BRASI_CUSTOMER"))
           .isEqualToIgnoringCase(dirExtId);
     }
+  }
+
+  // ===========================================================================================
+  // Intake #135 Phase 1 - V8 tag-color: AC6 (V7->V8-Upgrade + Backfill-Idempotenz), FK-Erhalt,
+  // AC10-Preflight-Negativmatrix (P1 bidirektional + P2) + Positivfall.
+  // Jeder Fall laeuft auf einer EIGENEN Wegwerf-DB (Isolation der Preflight-Zustaende).
+  // ===========================================================================================
+
+  @Test
+  @DisplayName("ac6_v7_zu_v8_backfill_befuellt_color_aus_severity_und_ist_idempotent")
+  void ac6_v7_zu_v8_backfill_und_idempotenz() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // (2) je ein severity-behafteter TASK_TAG OHNE color pro kanonischem CODE (601..605;
+          //     601=PRIMARY, 602=SUCCESS, 603=WARN, 604=DANGER, 605=SECONDARY).
+          insertTag(jt, 9001, "T-PRIMARY", 601L, null);
+          insertTag(jt, 9002, "T-SUCCESS", 602L, null);
+          insertTag(jt, 9003, "T-WARN", 603L, null);
+          insertTag(jt, 9004, "T-DANGER", 604L, null);
+          insertTag(jt, 9005, "T-SECONDARY", 605L, null);
+
+          // (3) V8 anwenden -> COLOR-Spalte + Nullable + einmaliger Backfill.
+          migrateTo(jt, "8");
+          assertThat(historyVersions(jt)).contains("8");
+
+          // Parity: der DB-Backfill faerbt ALLE 5 exakt nach TagSeverityColors.BY_CODE (Java-Mapping
+          // = EINE Wahrheit, identisch zum V8-CASE).
+          assertThat(colorOf(jt, 9001)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.PRIMARY));
+          assertThat(colorOf(jt, 9002)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
+          assertThat(colorOf(jt, 9003)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.WARN));
+          assertThat(colorOf(jt, 9004)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.DANGER));
+          assertThat(colorOf(jt, 9005)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SECONDARY));
+
+          // (4) eine Zeile auf custom COLOR + eine neue severity-Zeile mit COLOR NULL (Alt-Writer).
+          jt.update("UPDATE [dbo].[TASK_TAG] SET [COLOR] = N'#123ABC' WHERE [ID] = 9001");
+          insertTag(jt, 9006, "Alt-Writer-SUCCESS", 602L, null); // COLOR NULL
+
+          // (5) Echtes V8-Backfill-Statement SEPARAT erneut ausfuehren (nicht Flyway.migrate()).
+          runBackfillStatement(jt);
+
+          // custom-Zeile UNVERAENDERT (WHERE COLOR IS NULL schuetzt), Alt-Writer-Zeile befuellt.
+          assertThat(colorOf(jt, 9001)).isEqualTo("#123ABC");
+          assertThat(colorOf(jt, 9006)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
+        });
+  }
+
+  @Test
+  @DisplayName("ac6_v8_setzt_severity_id_nullable_und_stellt_fk_identisch_wieder_her")
+  void ac6_v8_fk_erhalt_und_nullable() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // FK-Metadaten VOR V8 (nach V1..V7) festhalten.
+          final Map<String, Object> fkBefore = foreignKeyMeta(jt);
+
+          // V8 anwenden: SEVERITY_ID nullable + FK identisch wiederhergestellt.
+          migrateTo(jt, "8");
+          assertThat(historyVersions(jt)).contains("8");
+
+          // FK-Metadaten NACH V8 - muessen in allen relevanten Attributen identisch sein.
+          final Map<String, Object> fkAfter = foreignKeyMeta(jt);
+          assertThat(fkAfter.get("fk_name")).isEqualTo(fkBefore.get("fk_name")).isEqualTo("FK_TASK_TAG_Severity");
+          assertThat(fkAfter.get("ref_table")).isEqualTo(fkBefore.get("ref_table")).isEqualTo("DIC_TAG_SEVERITY");
+          assertThat(fkAfter.get("ref_col")).isEqualTo(fkBefore.get("ref_col")).isEqualTo("ID");
+          assertThat(fkAfter.get("parent_col")).isEqualTo(fkBefore.get("parent_col")).isEqualTo("SEVERITY_ID");
+          // Referenzaktionen unveraendert (NO ACTION == 0) und FK ist trusted (WITH CHECK).
+          // Hinweis: sys.foreign_keys liefert die Aktionen als tinyint -> JDBC Short; der
+          // Vor/Nach-Vergleich ist typkonsistent, der Soll-Wert 0 wird numerisch (intValue) geprueft.
+          assertThat(fkAfter.get("del_action")).isEqualTo(fkBefore.get("del_action"));
+          assertThat(((Number) fkAfter.get("del_action")).intValue()).isZero();
+          assertThat(fkAfter.get("upd_action")).isEqualTo(fkBefore.get("upd_action"));
+          assertThat(((Number) fkAfter.get("upd_action")).intValue()).isZero();
+          assertThat(fkAfter.get("is_not_trusted")).isEqualTo(fkBefore.get("is_not_trusted"));
+          assertThat(((Number) fkAfter.get("is_not_trusted")).intValue()).isZero();
+
+          // NULL-SEVERITY_ID ist nach V8 erlaubt (color-only / neutraler Tag).
+          insertTag(jt, 9100, "Neutral-Tag", null, "#60A5FA");
+          assertThat(colorOf(jt, 9100)).isEqualTo("#60A5FA");
+
+          // FK bleibt scharf: ungueltige (nicht existierende) SEVERITY_ID -> FK-Verletzung.
+          assertThatThrownBy(() -> insertTag(jt, 9101, "Bad-FK", 999999L, null))
+              .isInstanceOf(DataIntegrityViolationException.class);
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_p1a_zusaetzlicher_aktiver_code_vor_v8_laesst_migration_scheitern")
+  void ac10_p1a_extra_active_code_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Zusaetzlicher aktiver+gueltiger, nicht-kanonischer Severity-Code (6.).
+          insertSeverity(jt, 606, "INFO", "ACTIVE", null);
+          assertV8Fails(jt, "P1");
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_p1b_fehlender_kanonischer_code_vor_v8_laesst_migration_scheitern")
+  void ac10_p1b_missing_canonical_code_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Ein kanonischer Code (SECONDARY=605) deaktiviert -> P1 (Vollstaendigkeit) verletzt.
+          jt.update(
+              "UPDATE [dbo].[DIC_TAG_SEVERITY] SET [ENTITY_STATUS] = 'DEACTIVE' WHERE [ID] = 605");
+          assertV8Fails(jt, "P1");
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_p2_task_tag_referenziert_inaktiven_nicht_kanonischen_eintrag_laesst_v8_scheitern")
+  void ac10_p2_reference_to_non_canonical_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Ein INAKTIVER nicht-kanonischer Dictionary-Eintrag (P1 sieht ihn nicht, da nicht aktiv)...
+          insertSeverity(jt, 607, "LEGACY", "DEACTIVE", null);
+          // ...aber TASK_TAG referenziert ihn -> P2 (Referenz-Totalitaet) verletzt.
+          insertTag(jt, 9200, "Legacy-Ref", 607L, null);
+          assertV8Fails(jt, "P2");
+        });
+  }
+
+  // ---- FIX 1 (BLOCKER): byte-exakter CODE-Vergleich (fail-closed, Java-Map-Key-Parity) ---------
+  // Die Server-Default-Kollation ist case-INSENSITIV und '=' / IN PADDEN nachgestellte Leerzeichen
+  // weg. Ohne Byte-Genauigkeit zaehlte ein aktiver+gueltiger CODE 'PRIMARY ' (trailing space) oder
+  // 'primary' (lower) faelschlich als kanonisch (P1 saehe 5/0) und wuerde gefaerbt, waere aber KEIN
+  // TagSeverityColors.BY_CODE-Key -> SQL- und Java-Domaene divergierten. Live gegen die reale DB
+  // belegt: der UNIQUE(TENANT_ID,CODE)-Index (ci/pad) blockiert das INSERT eines solchen Near-Miss
+  // neben dem exakten Seed, die Entartung ist daher nur durch UMWIDMEN des kanonischen Seeds selbst
+  // erreichbar - und genau DAS muss P1 fail-closed fangen. Mit naivem IN liefe die Migration durch.
+
+  @Test
+  @DisplayName("ac10_p1_fix1_trailing_space_near_miss_code_laesst_v8_scheitern")
+  void ac10_p1_fix1_trailing_space_near_miss_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Kanonischen PRIMARY-Seed (601) auf trailing-space Near-Miss umwidmen (kein Duplikat,
+          // da einzige PRIMARY-Zeile). Mit naivem IN zaehlte er weiter als 'PRIMARY' -> P1 gruen.
+          jt.update(
+              "UPDATE [dbo].[DIC_TAG_SEVERITY] SET [CODE] = N'PRIMARY ' WHERE [ID] = 601");
+          assertV8Fails(jt, "P1");
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_p1_fix1_lowercase_near_miss_code_laesst_v8_scheitern")
+  void ac10_p1_fix1_lowercase_near_miss_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Kanonischen PRIMARY-Seed (601) auf lowercase Near-Miss umwidmen. Case-insensitive '='
+          // wuerde ihn als 'PRIMARY' sehen (P1 gruen); byte-exakt (BIN2) faengt ihn fail-closed.
+          jt.update("UPDATE [dbo].[DIC_TAG_SEVERITY] SET [CODE] = N'primary' WHERE [ID] = 601");
+          assertV8Fails(jt, "P1");
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_p2_fix1_whitespace_near_miss_referenz_laesst_v8_scheitern")
+  void ac10_p2_fix1_whitespace_near_miss_reference_fails() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          // Alle 5 kanonischen bleiben exakt+aktiv (P1 gruen). Ein INAKTIVER Eintrag mit leading-
+          // space Near-Miss ' PRIMARY' (unter dem UNIQUE-Index distinct, da leading space nicht
+          // gepaddet wird) wird von P1 nicht gesehen (inaktiv) - ein TASK_TAG referenziert ihn.
+          // Der byte-exakte P2-JOIN muss ihn als nicht-kanonisch werten -> P2 fail-closed.
+          insertSeverity(jt, 609, " PRIMARY", "DEACTIVE", null);
+          insertTag(jt, 9210, "Whitespace-Ref", 609L, null);
+          assertV8Fails(jt, "P2");
+        });
+  }
+
+  @Test
+  @DisplayName("ac10_positiv_genau_5_kanonisch_und_alle_referenzen_kanonisch_migration_ok")
+  void ac10_positive_clean_domain_ok() {
+    withFreshDbMigratedTo(
+        "7",
+        jt -> {
+          insertTag(jt, 9300, "Clean-PRIMARY", 601L, null);
+          // Genau 5 kanonische aktiv+gueltig + alle Referenzen kanonisch -> V8 geht durch.
+          migrateTo(jt, "8");
+          assertThat(historyVersions(jt)).contains("8");
+          assertThat(colorOf(jt, 9300)).isEqualTo("#60A5FA"); // PRIMARY -> blue-400
+        });
+  }
+
+  // ---- Helper (Intake #135) -----------------------------------------------------------------
+
+  /** Legt eine frische Wegwerf-DB an, migriert bis {@code target} und fuehrt den Body aus. */
+  private static void withFreshDbMigratedTo(final String target, final Consumer<JdbcTemplate> body) {
+    final HikariDataSource localMaster = RefSchemaItDb.masterDataSource();
+    final String localDb = RefSchemaItDb.createThrowawayDb(localMaster);
+    try (HikariDataSource ds = RefSchemaItDb.throwawayDataSource(localDb, 2)) {
+      final JdbcTemplate jt = new JdbcTemplate(ds);
+      migrateTo(jt, target);
+      body.accept(jt);
+    } finally {
+      try {
+        RefSchemaItDb.dropThrowawayDb(localMaster, localDb);
+      } finally {
+        localMaster.close();
+      }
+    }
+  }
+
+  private static void migrateTo(final JdbcTemplate jt, final String target) {
+    Flyway.configure()
+        .dataSource(jt.getDataSource())
+        .locations("classpath:db/migration")
+        .baselineOnMigrate(true)
+        .baselineVersion("0")
+        .target(target)
+        .load()
+        .migrate();
+  }
+
+  /** Erwartet, dass die V8-Migration fail-closed scheitert (Preflight-Verletzung). */
+  private static void assertV8Fails(final JdbcTemplate jt, final String preflightHint) {
+    assertThatThrownBy(() -> migrateTo(jt, "8"))
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining(preflightHint);
+    // V8 darf NICHT in der History landen (Migration fehlgeschlagen).
+    assertThat(historyVersions(jt)).doesNotContain("8");
+    // Fail-closed: COLOR-Spalte wurde nicht hinzugefuegt (Preflight vor jeder Aenderung).
+    assertThat(columnExists(jt, "TASK_TAG", "COLOR")).isFalse();
+  }
+
+  private static final String V8_RESOURCE = "db/migration/V8__tag_color.sql";
+
+  /**
+   * Fuehrt das TATSAECHLICHE Backfill-UPDATE aus {@code V8__tag_color.sql} separat erneut aus
+   * (Idempotenz-Beweis). Kein handgepflegtes Zweit-SQL mehr: die V8-Ressource wird geladen, an
+   * {@code GO} in Batches zerlegt und genau der Backfill-UPDATE-Batch extrahiert und ausgefuehrt.
+   * Damit kann der Test nicht stillschweigend von V8 driften (Codex-IMPL-MAJOR FIX 2).
+   */
+  private static void runBackfillStatement(final JdbcTemplate jt) {
+    jt.update(extractV8BackfillBatch());
+  }
+
+  /** Laedt V8, zerlegt an {@code GO} und liefert exakt den einen Backfill-UPDATE-Batch zurueck. */
+  static String extractV8BackfillBatch() {
+    final String raw;
+    try {
+      raw =
+          new String(
+              FileCopyUtils.copyToByteArray(new ClassPathResource(V8_RESOURCE).getInputStream()),
+              StandardCharsets.UTF_8);
+    } catch (final IOException e) {
+      throw new UncheckedIOException("V8-Ressource nicht lesbar: " + V8_RESOURCE, e);
+    }
+    // Kommentarzeilen entfernen (ein 'GO' in einem Kommentar darf NICHT als Batch-Trenner wirken),
+    // dann an einer alleinstehenden GO-Zeile (MSSQL-Batch-Trenner) zerlegen.
+    final StringBuilder codeOnly = new StringBuilder();
+    for (final String line : raw.split("\\R")) {
+      final String trimmed = line.trim();
+      if (!trimmed.startsWith("--")) {
+        codeOnly.append(line).append('\n');
+      }
+    }
+    final List<String> backfillBatches = new ArrayList<>();
+    for (final String part : codeOnly.toString().split("(?im)^\\s*GO\\s*$")) {
+      final String batch = part.trim();
+      // Der Backfill ist der einzige UPDATE-Batch in V8.
+      if (batch.toUpperCase().startsWith("UPDATE")) {
+        backfillBatches.add(batch);
+      }
+    }
+    // Sentinel: genau EIN Backfill-UPDATE-Batch - sonst ist V8 strukturell anders als erwartet.
+    assertThat(backfillBatches)
+        .as("genau ein Backfill-UPDATE-Batch in " + V8_RESOURCE)
+        .hasSize(1);
+    final String backfill = backfillBatches.get(0);
+    // Die FROM/JOIN/WHERE-Form, auf die sich der Idempotenz-Beweis stuetzt, muss vorhanden sein.
+    assertThat(backfill)
+        .as("echter V8-Backfill (JOIN DIC_TAG_SEVERITY, WHERE COLOR IS NULL)")
+        .containsIgnoringCase("JOIN [dbo].[DIC_TAG_SEVERITY]")
+        .containsIgnoringCase("WHERE t.[COLOR] IS NULL");
+    return backfill;
+  }
+
+  private static void insertTag(
+      final JdbcTemplate jt,
+      final long id,
+      final String name,
+      final Long severityId,
+      final String color) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_TAG]"
+            + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, ANGELEGT_VON,"
+            + "  ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, SEVERITY_ID"
+            + (color != null ? ", COLOR" : "")
+            + ") VALUES (?, 'ACTIVE', ?, 'SYSTEM_PUBLIC', CAST(GETDATE() AS DATE), 'it',"
+            + " getdate(), NEWID(), 1, 0, ?"
+            + (color != null ? ", ?" : "")
+            + ")",
+        color != null
+            ? new Object[] {id, name, severityId, color}
+            : new Object[] {id, name, severityId});
+  }
+
+  private static void insertSeverity(
+      final JdbcTemplate jt,
+      final long id,
+      final String code,
+      final String entityStatus,
+      final java.time.LocalDate gueltigBis) {
+    jt.update(
+        "INSERT INTO [dbo].[DIC_TAG_SEVERITY]"
+            + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, GUELTIG_BIS,"
+            + "  ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, CODE)"
+            + " VALUES (?, ?, ?, 'SYSTEM_PUBLIC', CAST(GETDATE() AS DATE), ?, 'it', getdate(),"
+            + " NEWID(), 1, 0, ?)",
+        id,
+        entityStatus,
+        code,
+        gueltigBis,
+        code);
+  }
+
+  private static String colorOf(final JdbcTemplate jt, final long id) {
+    return jt.queryForObject(
+        "SELECT COLOR FROM [dbo].[TASK_TAG] WHERE ID = ?", String.class, id);
+  }
+
+  /**
+   * Liest die Metadaten des FK {@code FK_TASK_TAG_Severity} aus den Systemkatalogen: Name, Ziel-
+   * Tabelle+Spalte, delete/update-Referenzaktion, is_not_trusted. Dient dem Beweis, dass V8 den FK
+   * identisch wiederherstellt (Codex-IMPL-MAJOR FIX 3). Leere Map, wenn der FK nicht existiert.
+   */
+  private static Map<String, Object> foreignKeyMeta(final JdbcTemplate jt) {
+    final List<Map<String, Object>> rows =
+        jt.queryForList(
+            "SELECT fk.name AS fk_name,"
+                + "       OBJECT_NAME(fk.referenced_object_id) AS ref_table,"
+                + "       COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ref_col,"
+                + "       COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS parent_col,"
+                + "       fk.delete_referential_action AS del_action,"
+                + "       fk.update_referential_action AS upd_action,"
+                + "       CAST(fk.is_not_trusted AS int) AS is_not_trusted"
+                + "  FROM sys.foreign_keys fk"
+                + "  JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id"
+                + " WHERE fk.name = 'FK_TASK_TAG_Severity'"
+                + "   AND fk.parent_object_id = OBJECT_ID('dbo.TASK_TAG')");
+    assertThat(rows).as("genau eine FK-Spalte fuer FK_TASK_TAG_Severity").hasSize(1);
+    return rows.get(0);
+  }
+
+  private static boolean columnExists(
+      final JdbcTemplate jt, final String table, final String column) {
+    final Integer count =
+        jt.queryForObject(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                + " WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+            Integer.class,
+            table,
+            column);
+    return count != null && count > 0;
   }
 
   private static String bezeichnung(final JdbcTemplate jt, final String table, final String code) {

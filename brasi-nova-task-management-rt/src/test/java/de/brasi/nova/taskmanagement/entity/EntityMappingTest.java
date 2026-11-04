@@ -351,8 +351,15 @@ class EntityMappingTest {
   }
 
   @Test
-  void taskTag_severityId_isLongFkGlobal() throws Exception {
-    assertLongFkGlobal(TaskTag.class, "severityId", "SEVERITY_ID", TagSeverity.class, false);
+  void taskTag_severityId_isLongFkGlobalNullable() throws Exception {
+    // Intake #135 Phase 1: SEVERITY_ID ist nullable (Tags koennen ohne severity existieren).
+    assertLongFkGlobal(TaskTag.class, "severityId", "SEVERITY_ID", TagSeverity.class, true);
+  }
+
+  @Test
+  void taskTag_color_isColumnName() throws Exception {
+    // Intake #135 Phase 1: neues additives COLOR-Feld (Hex, nullable).
+    assertColumnName(TaskTag.class, "color", "COLOR");
   }
 
   @Test
