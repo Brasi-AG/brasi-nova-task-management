@@ -18,9 +18,11 @@ import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHistoryEntryQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskTagRefRow;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
+import de.brasi.nova.taskmanagement.task.model.TagRefModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import java.time.LocalDateTime;
@@ -36,8 +38,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Fokus P2 (per-Task-Read-Contract): GET /tasks/{id} liefert die aktuellen Assignee- und
  * Tag-GUID-Sets (stabil sortiert, non-null), damit ein Client vor PUT /assignees bzw. PATCH tagIds
- * read-modify-write fahren kann. Die Tag-GUIDs kommen faithful aus einer JOIN-Projektion
- * ({@code findActiveTagUuidsByTaskId}) - unabhaengig von Katalog-Status/Visibility.
+ * read-modify-write fahren kann. Die Tag-GUIDs kommen faithful aus einer JOIN-Projektion ({@code
+ * findActiveTagUuidsByTaskId}) - unabhaengig von Katalog-Status/Visibility.
  */
 class TaskDetailServiceTest {
 
@@ -145,7 +147,8 @@ class TaskDetailServiceTest {
   void detail_liefert_assignees_und_tagIds_sortiert() {
     final long taskId = 1000L;
     final UUID taskUuid = UUID.randomUUID();
-    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
 
     // Zwei Assignees in unsortierter Reihenfolge
     final UUID assigneeHi = UUID.fromString("ffffffff-0000-0000-0000-000000000001");
@@ -166,11 +169,46 @@ class TaskDetailServiceTest {
   }
 
   @Test
+  @DisplayName(
+      "detail_tags_mit_name_farbe_status_agnostisch_sortiert:"
+          + " tags-Feld traegt je zugeordnetem Tag id/name/color (auch retire-ter DEACTIVE-Tag),"
+          + " stabil nach id sortiert (Intake #138 Slice 138-1)")
+  void detail_tags_mit_name_farbe_status_agnostisch_sortiert() {
+    final long taskId = 1050L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    // tagIds-Projektion (faithful) liefert beide UUIDs ...
+    final UUID tagHi = UUID.fromString("ffffffff-0000-0000-0000-0000000000aa");
+    final UUID tagLo = UUID.fromString("00000000-0000-0000-0000-0000000000bb");
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId))
+        .thenReturn(List.of(tagHi.toString(), tagLo.toString()));
+    // ... und die neue tags-Anreicherung liefert je Zuordnung (uuid, name, color) - unsortiert, mit
+    // einem retire-ten Tag ohne Farbe (color null) und einem aktiven Tag mit Farbe.
+    when(tagAssignmentQueryRepository.findActiveTagRefsByTaskId(taskId))
+        .thenReturn(
+            List.of(
+                new TaskTagRefRow(tagHi, "Retired-Tag", null),
+                new TaskTagRefRow(tagLo, "Aktiv-Tag", "#F87171")));
+
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
+
+    // stabil nach id sortiert (lexikografisch), deckungsgleich mit tagIds
+    assertThat(detail.tags()).extracting(TagRefModel::id).containsExactly(tagLo, tagHi);
+    assertThat(detail.tags())
+        .containsExactly(
+            new TagRefModel(tagLo, "Aktiv-Tag", "#F87171"),
+            new TagRefModel(tagHi, "Retired-Tag", null));
+  }
+
+  @Test
   @DisplayName("detail_leere_sets")
   void detail_leere_sets() {
     final long taskId = 1001L;
     final UUID taskUuid = UUID.randomUUID();
-    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
 
@@ -194,7 +232,8 @@ class TaskDetailServiceTest {
     final UUID taskUuid = UUID.randomUUID();
     final UUID creator = UUID.fromString("00000000-0000-0000-0000-0000000000c0");
     final UUID participantP = UUID.fromString("00000000-0000-0000-0000-0000000000d0");
-    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
     when(participantQueryRepository.findActiveByTaskIds(List.of(taskId)))
@@ -202,7 +241,8 @@ class TaskDetailServiceTest {
             List.of(
                 participantRow(taskId, creator, true, false, false, null),
                 participantRow(taskId, participantP, false, false, true, null),
-                // Actor ist Teilnehmer, aber ausgetreten (HANDOVER) -> aus participantIds raus, exit gesetzt
+                // Actor ist Teilnehmer, aber ausgetreten (HANDOVER) -> aus participantIds raus,
+                // exit gesetzt
                 participantRow(taskId, USER_REF, false, false, true, ExitKind.HANDOVER)));
     when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
         .thenReturn(List.of(userState(taskId, USER_REF, true, false, true)));
@@ -214,7 +254,8 @@ class TaskDetailServiceTest {
             org.mockito.ArgumentMatchers.eq(USER_REF),
             any()))
         .thenReturn(
-            List.of(new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
+            List.of(
+                new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
 
     final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
 
@@ -234,7 +275,8 @@ class TaskDetailServiceTest {
   void detail_handover_ohne_ziele_leere_targets() {
     final long taskId = 1004L;
     final UUID taskUuid = UUID.randomUUID();
-    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
     when(participantQueryRepository.findActiveByTaskIds(List.of(taskId)))
@@ -257,13 +299,15 @@ class TaskDetailServiceTest {
   }
 
   @Test
-  @DisplayName("detail_nicht_teilnehmer_actor: createdById/participantIds gesetzt, Marker false, exit null")
+  @DisplayName(
+      "detail_nicht_teilnehmer_actor: createdById/participantIds gesetzt, Marker false, exit null")
   void detail_nicht_teilnehmer_actor() {
     final long taskId = 1003L;
     final UUID taskUuid = UUID.randomUUID();
     final UUID creator = UUID.fromString("00000000-0000-0000-0000-0000000000c1");
     final UUID participantP = UUID.fromString("00000000-0000-0000-0000-0000000000d1");
-    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
     when(participantQueryRepository.findActiveByTaskIds(List.of(taskId)))
@@ -288,7 +332,8 @@ class TaskDetailServiceTest {
   // ---- 404-Maske (fehlend / fremder Mandant / DEACTIVE) --------------------------------------
 
   @Test
-  @DisplayName("loadDetail_404_je_getrennt: fehlende / fremde / DEACTIVE Aufgabe -> EntityNotFoundException")
+  @DisplayName(
+      "loadDetail_404_je_getrennt: fehlende / fremde / DEACTIVE Aufgabe -> EntityNotFoundException")
   void loadDetail_404_je_getrennt() {
     final UUID missing = UUID.randomUUID();
     when(taskRepository.findByUuid(missing.toString())).thenReturn(Optional.empty());

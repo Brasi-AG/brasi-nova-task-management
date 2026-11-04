@@ -505,9 +505,29 @@ public class TaskCommandService {
         }
       }
 
-      // Alle Tag-UUIDs gegen den globalen Katalog aufloesen (unbekannt/inaktiv/abgelaufen -> 400)
-      // Verwendet findActiveByUuid (F-P1): filtert ENTITY_STATUS + Gueltigkeit;
-      // findByUuid wuerde inaktive/abgelaufene Tags akzeptieren (R-PATCH-Verletzung).
+      // Aktuelle aktive Assignments ZUERST laden - sie bestimmen die Bestandsschutz-Toleranz
+      // (Intake #138): eine bereits aktiv zugeordnete Tag-UUID darf resubmittet werden, auch wenn
+      // der Katalog-Tag inzwischen DEACTIVE ist (Retire behaelt Zuordnungen). Nur NEU-Hinzufuegen
+      // eines inaktiven Tags bleibt 400.
+      final List<TaskTagAssignment> currentAssignments =
+          tagAssignmentQueryRepository.findActiveByTaskId(taskId);
+      final Map<Long, TaskTagAssignment> currentByTagId =
+          currentAssignments.stream()
+              .collect(Collectors.toMap(TaskTagAssignment::getTagId, a -> a));
+      // Externe UUIDs der bereits aktiv zugeordneten Tags (status-agnostisch projiziert) -
+      // Grundlage
+      // der Resolve-Toleranz: steht eine desired-UUID hier drin, ist sie "bereits zugeordnet".
+      final Set<UUID> alreadyAssignedUuids =
+          tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId).stream()
+              .map(UUID::fromString)
+              .collect(Collectors.toCollection(HashSet::new));
+
+      // Alle Tag-UUIDs gegen den globalen Katalog aufloesen. Intake #138 Bestandsschutz-Toleranz:
+      // - bereits aktiv zugeordnete UUID -> status-agnostischer Resolve (findByUuid), auch DEACTIVE
+      //   wird toleriert (KEIN 400) -> der Resubmit eines retire-ten, aber zugeordneten Tags bleibt
+      //   erhalten.
+      // - NEUE UUID (nicht zugeordnet) -> weiterhin findActiveByUuid (F-P1): ENTITY_STATUS +
+      //   Gueltigkeit; inaktiv/abgelaufen/unbekannt -> 400.
       // Abbruch-sicher: alle validieren BEVOR irgendwas geaendert wird.
       // Intake #134: Zusaetzlich die aufgeloesten Tag-Namen (entryValue, Spalte BEZEICHNUNG) je
       // interner Tag-Id merken, damit der Verlauf bei HINZUGEFUEGTEN Tags den Namen ohne
@@ -523,8 +543,11 @@ public class TaskCommandService {
               () -> {
                 final Map<UUID, Long> result = new java.util.HashMap<>();
                 for (final UUID tagUuid : desiredTagUuids) {
+                  final boolean alreadyAssigned = alreadyAssignedUuids.contains(tagUuid);
                   final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
-                      tagRepository.findActiveByUuid(tagUuid.toString());
+                      alreadyAssigned
+                          ? tagRepository.findByUuid(tagUuid.toString())
+                          : tagRepository.findActiveByUuid(tagUuid.toString());
                   if (found.isEmpty()) {
                     throw new EntityValidationException(
                         "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");
@@ -537,13 +560,6 @@ public class TaskCommandService {
                 }
                 return result;
               });
-
-      // Aktuelle aktive Assignments laden
-      final List<TaskTagAssignment> currentAssignments =
-          tagAssignmentQueryRepository.findActiveByTaskId(taskId);
-      final Map<Long, TaskTagAssignment> currentByTagId =
-          currentAssignments.stream()
-              .collect(Collectors.toMap(TaskTagAssignment::getTagId, a -> a));
 
       // Neue Tag-IDs: gewuenschaft aber noch nicht vorhanden
       final Set<Long> desiredTagIds = new HashSet<>(tagUuidToId.values());

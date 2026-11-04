@@ -733,6 +733,83 @@ class TaskCommandServiceTest {
         .hasMessageContaining(inactiveTagUuid.toString());
   }
 
+  // ---- Intake #138 Slice 138-1: Bestandsschutz-Toleranz fuer zugeordnete, retire-te Tags --------
+
+  @Test
+  @DisplayName(
+      "patch_bereits_zugeordneter_inaktiver_tag_kept_kein_400:"
+          + " Resubmit einer aktiv zugeordneten, inzwischen DEACTIVE Tag-UUID -> status-agnostischer"
+          + " Resolve (findByUuid), KEIN 400, kein Add/Remove (Intake #138)")
+  void patch_bereits_zugeordneter_inaktiver_tag_kept_kein_400() {
+    final Long taskId = 170L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    final UUID tagUuid = UUID.randomUUID();
+    final long tagId = 7100L;
+    // Der Tag ist BEREITS aktiv zugeordnet (Assignment + Projektion), aber im Katalog DEACTIVE:
+    // findActiveByUuid liefert empty, findByUuid (status-agnostisch) liefert ihn.
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId))
+        .thenReturn(List.of(assignment(910L, taskId, tagId)));
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId))
+        .thenReturn(List.of(tagUuid.toString()));
+    when(tagRepository.findActiveByUuid(tagUuid.toString())).thenReturn(Optional.empty());
+    when(tagRepository.findByUuid(tagUuid.toString()))
+        .thenReturn(Optional.of(tagWithId(tagId, tagUuid, "Retired-Tag")));
+
+    // Resubmit derselben (jetzt inaktiven) zugeordneten UUID -> kein Throw (toleriert).
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent()));
+
+    // Kein-Add/Kein-Remove: keine neue/reaktivierte Zuordnung, keine Deaktivierung, keine
+    // Tag-History (die Menge ist unveraendert -> changed bleibt fuer den Tag-Block aus).
+    verify(tagAssignmentQueryRepository, never()).save(any());
+    verify(tagAssignmentQueryRepository, never()).deactivateAllByIds(any());
+    verify(historyService, never())
+        .record(anyLong(), anyLong(), any(), eq("Tag hinzugefuegt"), any());
+    verify(historyService, never()).record(anyLong(), anyLong(), any(), eq("Tag entfernt"), any());
+    // findActiveByUuid wurde fuer die bereits zugeordnete UUID NICHT verwendet (Toleranz-Pfad).
+    verify(tagRepository).findByUuid(tagUuid.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_neuer_inaktiver_tag_400_keine_toleranz:"
+          + " NEU-Hinzufuegen eines DEACTIVE (nicht zugeordneten) Tags -> findActiveByUuid empty ->"
+          + " 400 (Toleranz gilt nur fuer bereits zugeordnete Tags, Intake #138)")
+  void patch_neuer_inaktiver_tag_400_keine_toleranz() {
+    final Long taskId = 171L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+
+    final UUID newInactiveTag = UUID.randomUUID();
+    // Keine Zuordnung vorhanden -> der Tag ist NEU; findActiveByUuid empty -> 400, findByUuid wird
+    // fuer einen NEUEN Tag NICHT konsultiert.
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+    when(tagRepository.findActiveByUuid(newInactiveTag.toString())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of(Set.of(newInactiveTag)),
+                        PatchValue.absent())))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessageContaining(newInactiveTag.toString());
+    verify(tagRepository, never()).findByUuid(newInactiveTag.toString());
+  }
+
   // ---- F-P2b: null-Element in tagIds -> 400 ----------------------------------------------------
 
   @Test

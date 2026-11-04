@@ -18,6 +18,7 @@ import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.HistoryModel;
+import de.brasi.nova.taskmanagement.task.model.TagRefModel;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskSourceModel;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
@@ -33,8 +34,8 @@ import org.springframework.stereotype.Service;
 /**
  * Laedt und montiert das {@link TaskDetailModel} fuer den GET-Endpunkt.
  *
- * <p>Alle Reads laufen ohne eigene Transaktion (KSF-Default: REQUIRED) in der des Aufrufers.
- * Der Aufrufer (Controller) traegt die Verantwortung fuer den Mandanten-Kontext.
+ * <p>Alle Reads laufen ohne eigene Transaktion (KSF-Default: REQUIRED) in der des Aufrufers. Der
+ * Aufrufer (Controller) traegt die Verantwortung fuer den Mandanten-Kontext.
  */
 @Service
 public class TaskDetailService {
@@ -80,16 +81,17 @@ public class TaskDetailService {
   /**
    * Laedt das Detail einer Aufgabe anhand ihrer externen UUID.
    *
-   * <p>Nicht gefunden UND fremder Mandant werden mit identischer, neutraler
-   * {@link EntityNotFoundException} (HTTP 404) beantwortet, um keine Existenz-Information
-   * preiszugeben (arch-v2 §8; konsistent zu {@code TaskCommandService.requireTask}). Die Meldung
-   * enthaelt bewusst KEINE UUID und unterscheidet die beiden Faelle NICHT.
+   * <p>Nicht gefunden UND fremder Mandant werden mit identischer, neutraler {@link
+   * EntityNotFoundException} (HTTP 404) beantwortet, um keine Existenz-Information preiszugeben
+   * (arch-v2 §8; konsistent zu {@code TaskCommandService.requireTask}). Die Meldung enthaelt
+   * bewusst KEINE UUID und unterscheidet die beiden Faelle NICHT.
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param tenantId       aktueller Mandanten-Schluessel (Plausibilitaetspruefung)
-   * @param userRef        UUID des Anfragers (Actor) fuer persoenliche Marker + Austritt
+   * @param tenantId aktueller Mandanten-Schluessel (Plausibilitaetspruefung)
+   * @param userRef UUID des Anfragers (Actor) fuer persoenliche Marker + Austritt
    * @return aufgebautes {@link TaskDetailModel}
-   * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Mandanten zugehoerig (HTTP 404)
+   * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Mandanten zugehoerig (HTTP
+   *     404)
    */
   public TaskDetailModel loadDetail(
       final UUID taskExternalId, final long tenantId, final UUID tenantUuid, final UUID userRef) {
@@ -142,14 +144,28 @@ public class TaskDetailService {
             .toList();
 
     // Aktuelle Tag-GUIDs (faithful): EINE JOIN-Projektion liefert die EXTERNALIDs ALLER aktiven
-    // Tag-Zuordnungen - unabhaengig von Katalog-Status/Visibility des Tags -, damit kein zugeordneter
-    // Tag im Detail verloren geht (kein stiller Verlust beim Read-modify-write). Die Konfliktpruefung
+    // Tag-Zuordnungen - unabhaengig von Katalog-Status/Visibility des Tags -, damit kein
+    // zugeordneter
+    // Tag im Detail verloren geht (kein stiller Verlust beim Read-modify-write). Die
+    // Konfliktpruefung
     // (inaktiv/abgelaufen) bleibt beim PATCH (findActiveByUuid -> 400). Nur EIN gebundener :taskId-
     // Parameter (plus auto-:tenantId) -> kein SQL-Parameterlimit-Risiko bei vielen Zuordnungen.
     final List<UUID> tagIds =
         tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(task.getId()).stream()
             .map(UUID::fromString)
             .sorted(Comparator.comparing(UUID::toString))
+            .toList();
+
+    // Detail-Anreicherung (Intake #138, Slice 138-1): zu jeder aktiven Zuordnung Name + Farbe des
+    // globalen Katalog-Tags (status-agnostisch, auch retire-te DEACTIVE-Tags). EINE JOIN-Projektion
+    // (kein N+1); die Assignment-Seite bleibt tenant-scoped (Request-Mandant, bindet :tenantId),
+    // tag.TENANT_ID=0 ist der feste globale Dictionary-Scope -> kein runWithTenant noetig (analog
+    // zu
+    // findActiveTagUuidsByTaskId). Stabil nach id sortiert (deckungsgleich mit tagIds).
+    final List<TagRefModel> tags =
+        tagAssignmentQueryRepository.findActiveTagRefsByTaskId(task.getId()).stream()
+            .map(row -> new TagRefModel(row.uuid(), row.name(), row.color()))
+            .sorted(Comparator.comparing(ref -> ref.id().toString()))
             .toList();
 
     // Actor-/Personen-Anreicherung (BE-3): der BE-1-Assembler wird fuer DIESE eine Aufgabe
@@ -178,11 +194,19 @@ public class TaskDetailService {
             : new ExitModel(enrichment.exitKind(), enrichment.handedOverToIds());
 
     final TaskSourceModel source;
-    if (task.getSourceModule() != null && task.getSourceEntityType() != null
+    if (task.getSourceModule() != null
+        && task.getSourceEntityType() != null
         && task.getSourceEntityRef() != null) {
-      source = new TaskSourceModel(task.getSourceModule(), task.getSourceEntityType(),
-          task.getSourceEntityRef(), sourceRegistry.href(task.getSourceModule(),
-              task.getSourceEntityType(), task.getSourceEntityRef(), tenantUuid));
+      source =
+          new TaskSourceModel(
+              task.getSourceModule(),
+              task.getSourceEntityType(),
+              task.getSourceEntityRef(),
+              sourceRegistry.href(
+                  task.getSourceModule(),
+                  task.getSourceEntityType(),
+                  task.getSourceEntityRef(),
+                  tenantUuid));
     } else {
       source = null;
     }
@@ -201,6 +225,7 @@ public class TaskDetailService {
         history,
         assignees,
         tagIds,
+        tags,
         enrichment.createdById(),
         enrichment.participantIds(),
         enrichment.isPinned(),
@@ -218,12 +243,13 @@ public class TaskDetailService {
    * <p>Standard-Selfservice (Slice 2): READ_AT wird nur fuer READ-Member gesetzt. Fuer einen
    * Non-Member wird KEIN READ_AT geschrieben (best-effort, kein Fehler): der Guard ist reiner
    * EXISTS-Read; schlaegt er fehl, wird der Aufruf still ignoriert (konsistent zum Not-Found-/
-   * Fremd-Tenant-Pfad). Im reaelen Request-Fluss hat {@code loadDetail} fuer einen Non-Member bereits
-   * 404 geworfen, sodass diese Methode dann gar nicht mehr erreicht wird (Defense-in-Depth).
+   * Fremd-Tenant-Pfad). Im reaelen Request-Fluss hat {@code loadDetail} fuer einen Non-Member
+   * bereits 404 geworfen, sodass diese Methode dann gar nicht mehr erreicht wird
+   * (Defense-in-Depth).
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param tenantId       aktueller Mandant
-   * @param userRef        UUID des Benutzers
+   * @param tenantId aktueller Mandant
+   * @param userRef UUID des Benutzers
    * @param userStateService der {@link UserStateService}
    */
   public void markReadForUser(

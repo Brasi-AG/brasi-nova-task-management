@@ -424,6 +424,77 @@ class SpringDocApiDocsIT {
 
   @Test
   @DisplayName(
+      "tag_lifecycle_endpunkte_dokumentiert: DELETE /api/v1/tags/{id} (204/403/404/409) +"
+          + " POST .../deactivate (204/403/404) + TaskDetailModel.tags-Schema (Intake #138)")
+  void tag_lifecycle_endpunkte_dokumentiert() throws Exception {
+    final JsonNode doc = taskManagementDocument();
+
+    // DELETE /api/v1/tags/{id}: Operation + Statuscodes 204/403/404/409 dokumentiert
+    final JsonNode deleteOp = doc.path("paths").path("/api/v1/tags/{id}").path("delete");
+    assertThat(deleteOp.isMissingNode()).as("DELETE /api/v1/tags/{id} dokumentiert").isFalse();
+    assertThat(deleteOp.path("summary").asText("")).as("DELETE-Summary gesetzt").isNotBlank();
+    for (final String statusCode : new String[] {"204", "403", "404", "409"}) {
+      assertThat(deleteOp.path("responses").has(statusCode))
+          .as("DELETE-Response " + statusCode + " dokumentiert")
+          .isTrue();
+    }
+
+    // POST /api/v1/tags/{id}/deactivate: Operation + Statuscodes 204/403/404
+    final JsonNode deactivateOp =
+        doc.path("paths").path("/api/v1/tags/{id}/deactivate").path("post");
+    assertThat(deactivateOp.isMissingNode())
+        .as("POST /api/v1/tags/{id}/deactivate dokumentiert")
+        .isFalse();
+    assertThat(deactivateOp.path("summary").asText(""))
+        .as("deactivate-Summary gesetzt")
+        .isNotBlank();
+    for (final String statusCode : new String[] {"204", "403", "404"}) {
+      assertThat(deactivateOp.path("responses").has(statusCode))
+          .as("deactivate-Response " + statusCode + " dokumentiert")
+          .isTrue();
+    }
+
+    // 409-Fehlerschema: die DELETE-409-Antwort referenziert ein Fehlerschema (ApiError-Shape mit
+    // errorKey/message), nicht eine Success-id.
+    final JsonNode schemas = doc.path("components").path("schemas");
+    final JsonNode conflictSchema =
+        deleteOp
+            .path("responses")
+            .path("409")
+            .path("content")
+            .path("application/json")
+            .path("schema");
+    assertThat(conflictSchema.isMissingNode())
+        .as("DELETE 409 traegt ein Fehler-Schema (application/json): " + deleteOp.path("responses"))
+        .isFalse();
+    // Fehlerschema traegt errorKey + message (ApiError-Shape), nicht eine Success-id.
+    assertThat(propertySchema(conflictSchema, schemas, "errorKey").isMissingNode())
+        .as("409-Fehlerschema traegt errorKey: " + conflictSchema)
+        .isFalse();
+    assertThat(propertySchema(conflictSchema, schemas, "message").isMissingNode())
+        .as("409-Fehlerschema traegt message: " + conflictSchema)
+        .isFalse();
+    assertThat(propertySchema(conflictSchema, schemas, "id").isMissingNode())
+        .as("409 darf kein Success-id-Schema tragen: " + conflictSchema)
+        .isTrue();
+
+    // TaskDetailModel.tags-Feld dokumentiert (additive Anreicherung, Intake #138) +
+    // TagRefModel-Schema
+    final JsonNode detailSchema = schemas.path("TaskDetailModel");
+    assertThat(detailSchema.isMissingNode()).as("TaskDetailModel-Schema vorhanden").isFalse();
+    final JsonNode tagsProp = detailSchema.path("properties").path("tags");
+    assertThat(tagsProp.isMissingNode()).as("TaskDetailModel.tags dokumentiert").isFalse();
+    assertThat(tagsProp.path("type").asText("")).as("tags ist ein Array").isEqualTo("array");
+    assertThat(tagsProp.path("description").asText(""))
+        .as("tags traegt eine description")
+        .isNotBlank();
+    assertThat(schemas.path("TagRefModel").isMissingNode())
+        .as("TagRefModel-Schema (id/name/color) vorhanden")
+        .isFalse();
+  }
+
+  @Test
+  @DisplayName(
       "overview_gruppe_landet_nicht_auf_404: /v3/api-docs/overview -> 200 + nicht-leeres Dokument"
           + " (KSF-UI brasi.openapi.ui.groups[0]=OVERVIEW)")
   void overview_gruppe_landet_nicht_auf_404() throws Exception {
