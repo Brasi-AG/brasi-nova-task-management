@@ -266,6 +266,79 @@ class DictionaryCatalogIT {
     }
   }
 
+  // ---- IT 1b (Intake #133): Labels sind exakt die deutschen Begriffe (alle 27) ---------
+
+  @Test
+  @DisplayName(
+      "get_dictionaries_labels_sind_exakt_deutsch (Intake #133): alle 27 code->label deutsch")
+  void get_dictionaries_labels_sind_exakt_deutsch() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String token =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+
+    final String json =
+        mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final JsonNode root = new ObjectMapper().readTree(json);
+
+    assertLabels(
+        root, "taskStatus", Map.of("OPEN", "Offen", "DONE", "Erledigt", "CANCELLED", "Abgebrochen"));
+    assertLabels(
+        root,
+        "taskPriority",
+        Map.of("LOW", "Niedrig", "NORMAL", "Normal", "HIGH", "Hoch", "URGENT", "Dringend"));
+    assertLabels(
+        root,
+        "taskDirection",
+        Map.of(
+            "BRASI_CUSTOMER", "Brasi ↔ Kunde",
+            "CUSTOMER_INTERNAL", "Kundenintern",
+            "INTER_COMPANY", "Firmenübergreifend"));
+    assertLabels(
+        root,
+        "notificationType",
+        Map.of(
+            "ASSIGN", "Zuweisung",
+            "REPLY", "Antwort",
+            "DUE", "Fällig",
+            "MENTION", "Erwähnung",
+            "DONE", "Erledigt",
+            "CHANGE", "Änderung",
+            "HANDOVER", "Übergabe",
+            "SYSTEM", "System"));
+    assertLabels(
+        root,
+        "notificationSeverity",
+        Map.of("INFO", "Information", "SUCCESS", "Erfolg", "WARN", "Warnung", "ERROR", "Fehler"));
+    assertLabels(
+        root,
+        "tagSeverity",
+        Map.of(
+            "PRIMARY", "Primär",
+            "SUCCESS", "Erfolg",
+            "WARN", "Warnung",
+            "DANGER", "Gefahr",
+            "SECONDARY", "Sekundär"));
+  }
+
+  /** Prueft je erwartetem CODE, dass das `label` im gegebenen Dictionary-Feld exakt passt. */
+  private static void assertLabels(
+      final JsonNode root, final String field, final Map<String, String> expected) {
+    final Map<String, String> actual = new java.util.HashMap<>();
+    for (final JsonNode entry : root.get(field)) {
+      actual.put(entry.get("code").asText(), entry.get("label").asText());
+    }
+    for (final Map.Entry<String, String> e : expected.entrySet()) {
+      assertThat(actual.get(e.getKey()))
+          .as("%s label fuer CODE %s", field, e.getKey())
+          .isEqualTo(e.getValue());
+    }
+  }
+
   // ---- IT 2: Global sichtbar - zwei Tenants sehen denselben Katalog --------------------
 
   @Test

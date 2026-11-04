@@ -210,14 +210,18 @@ class FlywayMigrationIT {
     @Test
     @DisplayName("dic_task_status_seeds_korrekt: OPEN DONE CANCELLED TENANT_ID=0 SYSTEM_PUBLIC")
     void dic_task_status_seeds_korrekt() {
-      assertSeedCodes("DIC_TASK_STATUS", List.of("OPEN", "DONE", "CANCELLED"));
+      assertSeedCodes(
+          "DIC_TASK_STATUS",
+          Map.of("OPEN", "Offen", "DONE", "Erledigt", "CANCELLED", "Abgebrochen"));
       assertAllGlobal("DIC_TASK_STATUS");
     }
 
     @Test
     @DisplayName("dic_task_priority_seeds_korrekt_mit_sort_order")
     void dic_task_priority_seeds_korrekt_mit_sort_order() {
-      assertSeedCodes("DIC_TASK_PRIORITY", List.of("LOW", "NORMAL", "HIGH", "URGENT"));
+      assertSeedCodes(
+          "DIC_TASK_PRIORITY",
+          Map.of("LOW", "Niedrig", "NORMAL", "Normal", "HIGH", "Hoch", "URGENT", "Dringend"));
       assertAllGlobal("DIC_TASK_PRIORITY");
       // SORT_ORDER: LOW=1, NORMAL=2, HIGH=3, URGENT=4
       assertSortOrder("LOW", 1);
@@ -231,7 +235,10 @@ class FlywayMigrationIT {
     void dic_task_direction_seeds_korrekt() {
       assertSeedCodes(
           "DIC_TASK_DIRECTION",
-          List.of("BRASI_CUSTOMER", "CUSTOMER_INTERNAL", "INTER_COMPANY"));
+          Map.of(
+              "BRASI_CUSTOMER", "Brasi ↔ Kunde",
+              "CUSTOMER_INTERNAL", "Kundenintern",
+              "INTER_COMPANY", "Firmenübergreifend"));
       assertAllGlobal("DIC_TASK_DIRECTION");
     }
 
@@ -240,14 +247,24 @@ class FlywayMigrationIT {
     void dic_notification_type_seeds_korrekt() {
       assertSeedCodes(
           "DIC_NOTIFICATION_TYPE",
-          List.of("ASSIGN", "REPLY", "DUE", "MENTION", "DONE", "CHANGE", "HANDOVER", "SYSTEM"));
+          Map.of(
+              "ASSIGN", "Zuweisung",
+              "REPLY", "Antwort",
+              "DUE", "Fällig",
+              "MENTION", "Erwähnung",
+              "DONE", "Erledigt",
+              "CHANGE", "Änderung",
+              "HANDOVER", "Übergabe",
+              "SYSTEM", "System"));
       assertAllGlobal("DIC_NOTIFICATION_TYPE");
     }
 
     @Test
     @DisplayName("dic_notification_severity_seeds_korrekt")
     void dic_notification_severity_seeds_korrekt() {
-      assertSeedCodes("DIC_NOTIFICATION_SEVERITY", List.of("INFO", "SUCCESS", "WARN", "ERROR"));
+      assertSeedCodes(
+          "DIC_NOTIFICATION_SEVERITY",
+          Map.of("INFO", "Information", "SUCCESS", "Erfolg", "WARN", "Warnung", "ERROR", "Fehler"));
       assertAllGlobal("DIC_NOTIFICATION_SEVERITY");
     }
 
@@ -255,7 +272,13 @@ class FlywayMigrationIT {
     @DisplayName("dic_tag_severity_seeds_korrekt_5_eintraege")
     void dic_tag_severity_seeds_korrekt() {
       assertSeedCodes(
-          "DIC_TAG_SEVERITY", List.of("PRIMARY", "SUCCESS", "WARN", "DANGER", "SECONDARY"));
+          "DIC_TAG_SEVERITY",
+          Map.of(
+              "PRIMARY", "Primär",
+              "SUCCESS", "Erfolg",
+              "WARN", "Warnung",
+              "DANGER", "Gefahr",
+              "SECONDARY", "Sekundär"));
       assertAllGlobal("DIC_TAG_SEVERITY");
     }
   }
@@ -450,6 +473,37 @@ class FlywayMigrationIT {
     assertThat(((Number) row.get("HAS_EXTERNALID")).intValue()).isEqualTo(1);
   }
 
+  // ---- 8. V7: Deutsche Dictionary-Labels (Intake #133) ---
+  // Hinweis: Dieser Fresh-DB-Lauf wendet V1..V7 der Reihe nach an und prueft den Zielzustand
+  // (deutsche Labels, V7 in History, EXTERNALID unveraendert). Den expliziten Staged-Upgrade von
+  // einem bereits gespeicherten V6-Stand auf V7 (inkl. Checksum-Validierung V1..V6) belegt separat
+  // {@link FlywayDictionaryUpgradeIT}.
+
+  @Test
+  @DisplayName("flyway_schema_history_enthaelt_v7")
+  void flyway_schema_history_enthaelt_v7() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    final boolean hasV7 =
+        rows.stream().anyMatch(r -> "7".equals(String.valueOf(r.get("version"))));
+    assertThat(hasV7).as("V7 in flyway_schema_history").isTrue();
+  }
+
+  @Test
+  @DisplayName("v7_bewahrt_externalid_der_dictionary_seeds: V7 heilt nur BEZEICHNUNG, nicht EXTERNALID")
+  void v7_bewahrt_externalid_der_dictionary_seeds() {
+    assertExternalIdUnchanged("DIC_TASK_STATUS", "OPEN", "11111101-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged("DIC_TASK_PRIORITY", "LOW", "22222201-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged(
+        "DIC_TASK_DIRECTION", "BRASI_CUSTOMER", "33333301-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged(
+        "DIC_NOTIFICATION_TYPE", "ASSIGN", "44444401-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged(
+        "DIC_NOTIFICATION_SEVERITY", "INFO", "55555501-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged("DIC_TAG_SEVERITY", "PRIMARY", "66666601-0000-0000-0000-000000000000");
+  }
+
   // ---- Hilfsmethoden ---
 
   private void assertIndexExists(final String tableName, final String indexName) {
@@ -473,23 +527,38 @@ class FlywayMigrationIT {
     assertThat(count).as("Tabelle " + tableName + " muss existieren").isEqualTo(1);
   }
 
-  private void assertSeedCodes(final String table, final List<String> expectedCodes) {
+  private void assertSeedCodes(final String table, final Map<String, String> codeToLabel) {
     // CODE-Menge exakt
     final List<String> actualCodes =
         jdbcTemplate.queryForList(
             "SELECT CODE FROM [dbo].[" + table + "] ORDER BY CODE", String.class);
     assertThat(actualCodes)
         .as("Seed-CODEs in " + table)
-        .containsExactlyInAnyOrderElementsOf(expectedCodes);
-    // CODE/BEZEICHNUNG-Paare: Label = CODE-Wert (arch-v3 §2.1); je CODE genau ein Treffer
-    for (final String code : expectedCodes) {
+        .containsExactlyInAnyOrderElementsOf(codeToLabel.keySet());
+    // CODE/BEZEICHNUNG-Paare: Label = deutscher Begriff (Intake #133 / V7); je CODE ein Treffer
+    for (final Map.Entry<String, String> e : codeToLabel.entrySet()) {
       final String bezeichnung =
           jdbcTemplate.queryForObject(
-              "SELECT BEZEICHNUNG FROM [dbo].[" + table + "] WHERE CODE = ?", String.class, code);
+              "SELECT BEZEICHNUNG FROM [dbo].[" + table + "] WHERE CODE = ?",
+              String.class,
+              e.getKey());
       assertThat(bezeichnung)
-          .as("BEZEICHNUNG (Label) fuer CODE %s in %s", code, table)
-          .isEqualTo(code);
+          .as("BEZEICHNUNG (Label) fuer CODE %s in %s", e.getKey(), table)
+          .isEqualTo(e.getValue());
     }
+  }
+
+  /** Prueft, dass V7 die EXTERNALID eines Seed-Eintrags NICHT veraendert hat. */
+  private void assertExternalIdUnchanged(
+      final String table, final String code, final String expectedExternalId) {
+    final String actual =
+        jdbcTemplate.queryForObject(
+            "SELECT CONVERT(nvarchar(36), EXTERNALID) FROM [dbo].[" + table + "] WHERE CODE = ?",
+            String.class,
+            code);
+    assertThat(actual)
+        .as("EXTERNALID fuer %s.%s muss durch V7 unveraendert bleiben", table, code)
+        .isEqualToIgnoringCase(expectedExternalId);
   }
 
   private int characterMaxLength(final String table, final String column) {
