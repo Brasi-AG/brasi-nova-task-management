@@ -56,7 +56,10 @@ public class TagController {
    */
   @Operation(
       summary = "Tags auflisten",
-      description = "Liefert alle aktiven Tags des globalen Katalogs (TENANT_ID=0).")
+      description =
+          "Liefert alle aktiven Tags des globalen Katalogs (TENANT_ID=0). Jeder Tag traegt eine"
+              + " optionale UI-Farbe (color als Hex) und einen optionalen severityCode; ein"
+              + " color-only oder neutraler Tag liefert severityCode null.")
   @ApiResponses({
       @ApiResponse(
           responseCode = "200",
@@ -65,8 +68,9 @@ public class TagController {
               mediaType = "application/json",
               examples = @ExampleObject(value = "["
                   + "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\","
-                  + "\"name\": \"Dringend\","
-                  + "\"severityCode\": \"DANGER\"}]"))),
+                  + "\"name\": \"Dringend\",\"severityCode\": \"DANGER\",\"color\": \"#F87171\"},"
+                  + "{\"id\": \"bb0e8400-e29b-41d4-a716-446655440011\","
+                  + "\"name\": \"Intern\",\"severityCode\": null,\"color\": \"#60A5FA\"}]"))),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @GetMapping
@@ -77,12 +81,18 @@ public class TagController {
   /**
    * Legt einen neuen Tag im globalen Katalog an.
    *
-   * @param input Eingabe-DTO (name, severityCode)
+   * <p>{@code severityCode} und {@code color} sind beide optional: ein gueltiger Hex-{@code color}
+   * gewinnt; sonst wird die Farbe aus einem kanonischen {@code severityCode} abgeleitet; ohne beides
+   * entsteht ein neutraler Tag (color und severity null).
+   *
+   * @param input Eingabe-DTO (name; optional severityCode; optional color)
    * @return 201 Created mit {"id": "<uuid>"}
    */
   @Operation(
       summary = "Tag anlegen",
-      description = "Legt einen neuen Tag im globalen Katalog an. Erfordert TAG_ADMIN-Berechtigung.")
+      description =
+          "Legt einen neuen Tag im globalen Katalog an (name; optional color als Hex #RGB/#RRGGBB;"
+              + " optional severityCode). Erfordert TAG_ADMIN-Berechtigung.")
   @ApiResponses({
       @ApiResponse(
           responseCode = "201",
@@ -91,7 +101,11 @@ public class TagController {
               mediaType = "application/json",
               schema = @Schema(implementation = CreatedResourceResponse.class),
               examples = @ExampleObject(value = "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\"}"))),
-      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Name, unbekannter severityCode)."),
+      @ApiResponse(
+          responseCode = "400",
+          description =
+              "Ungueltige Eingabe: leerer/zu langer Name, ungueltiger Hex-color, oder unbekannter"
+                  + " bzw. nicht-kanonischer severityCode."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung.")
   })
@@ -103,18 +117,31 @@ public class TagController {
   }
 
   /**
-   * Aktualisiert einen bestehenden Tag im globalen Katalog.
+   * Aktualisiert einen bestehenden Tag im globalen Katalog (PatchValue-Semantik: absent = Feld
+   * unveraendert).
+   *
+   * <p>{@code color} present+null/leer loescht die Farbe und neutralisiert dabei die severity
+   * (COLOR und SEVERITY_ID werden null). Eine widerspruechliche Kombination (color leeren UND
+   * severityCode setzen in derselben Anfrage) ergibt 400.
    *
    * @param id    externe UUID des Tags
-   * @param input Patch-Eingabe (name, severityCode)
+   * @param input Patch-Eingabe (name, severityCode, color - je optional/PatchValue)
    * @return 204 No Content
    */
   @Operation(
       summary = "Tag aktualisieren",
-      description = "Aktualisiert einen bestehenden Tag (name und/oder severityCode). Erfordert TAG_ADMIN-Berechtigung.")
+      description =
+          "Aktualisiert einen bestehenden Tag (name, severityCode und/oder color; PatchValue:"
+              + " absent = unveraendert, color null/leer = Farbe und severity loeschen). Erfordert"
+              + " TAG_ADMIN-Berechtigung.")
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Tag erfolgreich aktualisiert."),
-      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Name, unbekannter severityCode)."),
+      @ApiResponse(
+          responseCode = "400",
+          description =
+              "Ungueltige Eingabe: leerer/zu langer Name, ungueltiger Hex-color, unbekannter bzw."
+                  + " nicht-kanonischer severityCode, oder widerspruechliche color-Loeschung +"
+                  + " severityCode-Setzen."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung."),
       @ApiResponse(responseCode = "404", description = "Tag nicht gefunden.")
