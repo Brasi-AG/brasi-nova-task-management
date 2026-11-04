@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
@@ -24,17 +25,17 @@ import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
-import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
-import de.brasi.nova.taskmanagement.task.model.TaskSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
+import de.brasi.nova.taskmanagement.task.model.TaskSourceInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
@@ -56,15 +57,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Unit-Tests fuer {@link TaskCommandService} (gemockt, kein DB-Zugriff).
  *
  * <p>TDD-Rationale: beweist die drei Kern-Invarianten:
+ *
  * <ol>
  *   <li>Anlage erzwingt CUSTOMER_INTERNAL als Direction (serverseitig)
  *   <li>Creator-Participant und UserState werden in DERSELBEN Tx angelegt
@@ -137,8 +138,10 @@ class TaskCommandServiceTest {
     when(resolver.resolveTaskStatus(TaskStatusCodes.OPEN)).thenReturn(STATUS_ID_OPEN);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL)).thenReturn(PRIORITY_ID_NORMAL);
 
-    // Codex #6: Der Service bumpt Multi-Ref-Mengen jetzt ueber den zentralen Helfer bumpSorted; dieser
-    // delegiert produktiv je Ref (sortiert) an bump. Der gemockte Helfer an denselben Mock delegieren,
+    // Codex #6: Der Service bumpt Multi-Ref-Mengen jetzt ueber den zentralen Helfer bumpSorted;
+    // dieser
+    // delegiert produktiv je Ref (sortiert) an bump. Der gemockte Helfer an denselben Mock
+    // delegieren,
     // damit die bestehenden je-Ref bump(..)-Verifikationen (WELCHE Refs, times/never) unveraendert
     // gueltig bleiben - sie pruefen die fachliche Ref-Menge, nicht die Aufruf-Form.
     org.mockito.Mockito.doAnswer(
@@ -169,14 +172,17 @@ class TaskCommandServiceTest {
   void sourceIsVerifiedBeforeAnyMutationAndPersistedWithTask() {
     final UUID sourceRef = UUID.randomUUID();
     final TaskSourceInput source = new TaskSourceInput("application", "customer", sourceRef);
-    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> {
-      final Task task = inv.getArgument(0);
-      task.setId(42L);
-      task.setUuid(UUID.randomUUID());
-      return task;
-    });
+    when(taskRepository.save(any(Task.class)))
+        .thenAnswer(
+            inv -> {
+              final Task task = inv.getArgument(0);
+              task.setId(42L);
+              task.setUuid(UUID.randomUUID());
+              return task;
+            });
 
-    service.create(new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source));
+    service.create(
+        new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source));
 
     final org.mockito.InOrder order = org.mockito.Mockito.inOrder(sourceRegistry, taskRepository);
     order.verify(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
@@ -190,12 +196,17 @@ class TaskCommandServiceTest {
 
   @Test
   void deniedSourceNeverCreatesTaskParticipantOrState() {
-    final TaskSourceInput source = new TaskSourceInput("application", "customer", UUID.randomUUID());
+    final TaskSourceInput source =
+        new TaskSourceInput("application", "customer", UUID.randomUUID());
     org.mockito.Mockito.doThrow(new EntityNotFoundException("Quelle nicht gefunden."))
-        .when(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
+        .when(sourceRegistry)
+        .requireReadable(eq(source), any(CurrentActor.class));
 
-    assertThatThrownBy(() -> service.create(
-            new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source)))
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    new TaskCreateInput(
+                        "Titel", null, null, null, null, null, null, null, null, source)))
         .isInstanceOf(EntityNotFoundException.class);
 
     verify(taskRepository, never()).save(any(Task.class));
@@ -207,10 +218,14 @@ class TaskCommandServiceTest {
   void unavailableSourceNeverCreatesTaskParticipantOrState() {
     final TaskSourceInput source = new TaskSourceInput("fixture", "item", UUID.randomUUID());
     org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE))
-        .when(sourceRegistry).requireReadable(eq(source), any(CurrentActor.class));
+        .when(sourceRegistry)
+        .requireReadable(eq(source), any(CurrentActor.class));
 
-    assertThatThrownBy(() -> service.create(
-            new TaskCreateInput("Titel", null, null, null, null, null, null, null, null, source)))
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    new TaskCreateInput(
+                        "Titel", null, null, null, null, null, null, null, null, source)))
         .isInstanceOf(ResponseStatusException.class);
 
     verify(taskRepository, never()).save(any(Task.class));
@@ -226,7 +241,8 @@ class TaskCommandServiceTest {
     when(taskRepository.save(any(Task.class))).thenReturn(savedTask);
 
     // Act
-    service.create(new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
+    service.create(
+        new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
 
     // Assert: gespeicherte Task hat DIRECTION_ID = CUSTOMER_INTERNAL
     final ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
@@ -250,24 +266,17 @@ class TaskCommandServiceTest {
     final UUID taskUuid = UUID.randomUUID();
     when(taskRepository.save(any(Task.class))).thenReturn(taskWithId(taskId, taskUuid));
 
-    service.create(new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
+    service.create(
+        new TaskCreateInput("Testtitel", null, null, null, null, null, null, null, null));
 
     // TaskParticipant: CREATOR_FLAG=1, ASSIGNEE_FLAG=1, PARTICIPANT_REF=USER_REF
     final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
     verify(participantRepository).save(pCaptor.capture());
     final TaskParticipant p = pCaptor.getValue();
-    assertThat(p.isCreatorFlag())
-        .as("CREATOR_FLAG muss true sein")
-        .isTrue();
-    assertThat(p.isAssigneeFlag())
-        .as("ASSIGNEE_FLAG muss true sein")
-        .isTrue();
-    assertThat(p.getParticipantRef())
-        .as("PARTICIPANT_REF muss USER_REF sein")
-        .isEqualTo(USER_REF);
-    assertThat(p.getTaskId())
-        .as("TASK_ID muss die gespeicherte Task-ID sein")
-        .isEqualTo(taskId);
+    assertThat(p.isCreatorFlag()).as("CREATOR_FLAG muss true sein").isTrue();
+    assertThat(p.isAssigneeFlag()).as("ASSIGNEE_FLAG muss true sein").isTrue();
+    assertThat(p.getParticipantRef()).as("PARTICIPANT_REF muss USER_REF sein").isEqualTo(USER_REF);
+    assertThat(p.getTaskId()).as("TASK_ID muss die gespeicherte Task-ID sein").isEqualTo(taskId);
 
     // UserStateService.ensure wird in DERSELBEN Tx (vor Commit) aufgerufen
     verify(userStateService).ensure(eq(taskId), eq(USER_REF), eq(TENANT_ID));
@@ -287,12 +296,13 @@ class TaskCommandServiceTest {
       final Task savedTask = taskWithId(10L, UUID.randomUUID());
       when(taskRepository.save(any(Task.class))).thenReturn(savedTask);
 
-      service.create(new TaskCreateInput("Invalidierungstest", null, null, null, null, null, null, null, null));
+      service.create(
+          new TaskCreateInput(
+              "Invalidierungstest", null, null, null, null, null, null, null, null));
 
       // InboxSignalService.invalidate wurde mit tenantId + [USER_REF] aufgerufen
       @SuppressWarnings("unchecked")
-      final ArgumentCaptor<Collection<UUID>> refsCaptor =
-          ArgumentCaptor.forClass(Collection.class);
+      final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
       verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
 
       assertThat(refsCaptor.getValue())
@@ -493,19 +503,29 @@ class TaskCommandServiceTest {
   // ---- MAJOR 1: patch auf unbekannte UUID -> 404 -----------------------------------------------
 
   @Test
-  @DisplayName("patch_nicht_gefundene_uuid_liefert_404: EntityNotFoundException bei unbekannter UUID")
+  @DisplayName(
+      "patch_nicht_gefundene_uuid_liefert_404: EntityNotFoundException bei unbekannter UUID")
   void patch_nicht_gefundene_uuid_liefert_404() {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
 
     assertThatThrownBy(
-            () -> service.patch(UUID.randomUUID(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () ->
+                service.patch(
+                    UUID.randomUUID(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
 
   @Test
-  @DisplayName("patch_fremder_tenant_liefert_404: EntityNotFoundException bei fremdem Mandant,"
-      + " identische Meldung wie nicht gefunden")
+  @DisplayName(
+      "patch_fremder_tenant_liefert_404: EntityNotFoundException bei fremdem Mandant,"
+          + " identische Meldung wie nicht gefunden")
   void patch_fremder_tenant_liefert_404() {
     // Task gehoert Mandant TENANT_ID+1 (anderer Tenant als der aktuelle Benutzer)
     final Task foreignTask = taskWithId(99L, UUID.randomUUID());
@@ -513,7 +533,15 @@ class TaskCommandServiceTest {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(foreignTask));
 
     assertThatThrownBy(
-            () -> service.patch(foreignTask.getUuid(), new TaskPatchInput(PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent())))
+            () ->
+                service.patch(
+                    foreignTask.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -534,14 +562,15 @@ class TaskCommandServiceTest {
         .requireWriteMember(taskId, USER_REF, TENANT_ID);
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.of("Neuer Titel"),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.of("Neuer Titel"),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
 
@@ -552,10 +581,12 @@ class TaskCommandServiceTest {
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
-  // ---- MAJOR 2: patch invalidiert alle aktiven Teilnehmer ----------------------------------------
+  // ---- MAJOR 2: patch invalidiert alle aktiven Teilnehmer
+  // ----------------------------------------
 
   @Test
-  @DisplayName("patch_invalidiert_alle_aktiven_teilnehmer: A und B werden invalidiert wenn B patcht")
+  @DisplayName(
+      "patch_invalidiert_alle_aktiven_teilnehmer: A und B werden invalidiert wenn B patcht")
   void patch_invalidiert_alle_aktiven_teilnehmer() {
     final UUID creatorRef = UUID.randomUUID();
     final UUID patcherRef = USER_REF; // aktueller Benutzer (aus setUp)
@@ -590,7 +621,10 @@ class TaskCommandServiceTest {
     service.patch(
         task.getUuid(),
         new TaskPatchInput(
-            PatchValue.of("Neuer Titel"), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(),
+            PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     @SuppressWarnings("unchecked")
@@ -612,20 +646,24 @@ class TaskCommandServiceTest {
   // ---- MAJOR 3: unbekannte Client-Codes -> 400 -------------------------------------------------
 
   @Test
-  @DisplayName("create_ungültiger_priorityCode_liefert_400: EntityValidationException bei unbekanntem Code")
+  @DisplayName(
+      "create_ungültiger_priorityCode_liefert_400: EntityValidationException bei unbekanntem Code")
   void create_ungultiger_priority_code_liefert_400() {
     when(resolver.resolveTaskPriority("UNBEKANNT_CODE"))
         .thenThrow(new DictionaryResolverException("CODE 'UNBEKANNT_CODE' nicht gefunden."));
 
     assertThatThrownBy(
-            () -> service.create(
-                new TaskCreateInput("Titel", null, "UNBEKANNT_CODE", null, null, null, null, null, null)))
+            () ->
+                service.create(
+                    new TaskCreateInput(
+                        "Titel", null, "UNBEKANNT_CODE", null, null, null, null, null, null)))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNBEKANNT_CODE");
   }
 
   @Test
-  @DisplayName("patch_ungültiger_statusCode_liefert_400: EntityValidationException bei unbekanntem statusCode")
+  @DisplayName(
+      "patch_ungültiger_statusCode_liefert_400: EntityValidationException bei unbekanntem statusCode")
   void patch_ungultiger_status_code_liefert_400() {
     final Task task = taskWithId(77L, UUID.randomUUID());
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
@@ -634,33 +672,36 @@ class TaskCommandServiceTest {
         .thenThrow(new DictionaryResolverException("CODE 'UNGUELTIG_STATUS' nicht gefunden."));
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.of("UNGUELTIG_STATUS"),
-                    PatchValue.absent(),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of("UNGUELTIG_STATUS"),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNGUELTIG_STATUS");
   }
 
   @Test
-  @DisplayName("patch_leerer_statusCode_liefert_400: EntityValidationException bei leerem statusCode")
+  @DisplayName(
+      "patch_leerer_statusCode_liefert_400: EntityValidationException bei leerem statusCode")
   void patch_leerer_status_code_liefert_400() {
     final Task task = taskWithId(78L, UUID.randomUUID());
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.of(""),
-                    PatchValue.absent(),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of(""),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -674,18 +715,20 @@ class TaskCommandServiceTest {
 
     final UUID inactiveTagUuid = UUID.randomUUID();
     // findActiveByUuid liefert empty (Tag inaktiv oder abgelaufen)
-    when(tagRepository.findActiveByUuid(inactiveTagUuid.toString())).thenReturn(java.util.Optional.empty());
+    when(tagRepository.findActiveByUuid(inactiveTagUuid.toString()))
+        .thenReturn(java.util.Optional.empty());
     when(tagAssignmentQueryRepository.findActiveByTaskId(task.getId())).thenReturn(List.of());
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.of(java.util.Set.of(inactiveTagUuid)),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of(java.util.Set.of(inactiveTagUuid)),
+                        PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining(inactiveTagUuid.toString());
   }
@@ -693,7 +736,8 @@ class TaskCommandServiceTest {
   // ---- F-P2b: null-Element in tagIds -> 400 ----------------------------------------------------
 
   @Test
-  @DisplayName("patch_null_element_in_tag_ids_liefert_400: Set mit null-Element -> 400 statt NPE (F-P2b)")
+  @DisplayName(
+      "patch_null_element_in_tag_ids_liefert_400: Set mit null-Element -> 400 statt NPE (F-P2b)")
   void patch_null_element_in_tag_ids_liefert_400() {
     final Task task = taskWithId(81L, UUID.randomUUID());
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
@@ -703,21 +747,278 @@ class TaskCommandServiceTest {
     tagIdsWithNull.add(null);
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.of(tagIdsWithNull),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of(tagIdsWithNull),
+                        PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
+  }
+
+  // ---- Intake #134: Tag-PATCH schreibt Verlauf (hinzugefuegt/entfernt) --------------------------
+
+  @Test
+  @DisplayName(
+      "U1 patch_tag_hinzufuegen_schreibt_history: neuer Tag -> record('Tag hinzugefuegt', Name<=500)")
+  void u1_patch_tag_hinzufuegen_schreibt_history() {
+    final Long taskId = 160L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final UUID tagUuid = UUID.randomUUID();
+    final long tagId = 7001L;
+    when(tagRepository.findActiveByUuid(tagUuid.toString()))
+        .thenReturn(Optional.of(tagWithId(tagId, tagUuid, "Dringend")));
+    // Kein aktives Assignment vorhanden -> der Tag wird neu hinzugefuegt.
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagId))
+        .thenReturn(Optional.empty());
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent()));
+
+    final ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
+    verify(historyService)
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            eq("Tag hinzugefuegt"),
+            detailCaptor.capture());
+    assertThat(detailCaptor.getValue()).isEqualTo("Dringend");
+    assertThat(detailCaptor.getValue().length()).isLessThanOrEqualTo(500);
+  }
+
+  @Test
+  @DisplayName(
+      "U1b patch_tag_hinzufuegen_ohne_name_nutzt_uuid: neuer Tag mit leerem entryValue ->"
+          + " Fallback-Kette entryValue -> UUID (nicht direkt tagId)")
+  void u1b_patch_tag_hinzufuegen_ohne_name_nutzt_uuid() {
+    final Long taskId = 161L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final UUID tagUuid = UUID.randomUUID();
+    final long tagId = 7002L;
+    // Aktiver Tag, aber entryValue (BEZEICHNUNG) leer -> Fallback auf UUID, NICHT tagId.
+    when(tagRepository.findActiveByUuid(tagUuid.toString()))
+        .thenReturn(Optional.of(tagWithId(tagId, tagUuid, "")));
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagId))
+        .thenReturn(Optional.empty());
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent()));
+
+    verify(historyService)
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            eq("Tag hinzugefuegt"),
+            eq(tagUuid.toString()));
+  }
+
+  @Test
+  @DisplayName(
+      "U2 patch_tag_entfernen_schreibt_history: entfernter Tag -> record('Tag entfernt', Name)")
+  void u2_patch_tag_entfernen_schreibt_history() {
+    final Long taskId = 161L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final long tagId = 7002L;
+    final UUID tagUuid = UUID.randomUUID();
+    final TaskTagAssignment current = assignment(900L, taskId, tagId);
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId)).thenReturn(List.of(current));
+    // Ziel-Menge leer -> der aktive Tag wird entfernt. Namensaufloesung ueber findById
+    // (status-agnostisch).
+    when(tagRepository.findById(tagId))
+        .thenReturn(Optional.of(tagWithId(tagId, tagUuid, "Niedrig")));
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of()),
+            PatchValue.absent()));
+
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag entfernt"), eq("Niedrig"));
+  }
+
+  @Test
+  @DisplayName(
+      "U3 patch_tag_replace_schreibt_je_einen_eintrag: Tag1->Tag2 -> 1x hinzugefuegt(Tag2) +"
+          + " 1x entfernt(Tag1)")
+  void u3_patch_tag_replace_schreibt_je_einen_eintrag() {
+    final Long taskId = 162L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final long tagId1 = 7003L;
+    final long tagId2 = 7004L;
+    final UUID tagUuid1 = UUID.randomUUID();
+    final UUID tagUuid2 = UUID.randomUUID();
+
+    // Ist: Tag1 aktiv; Ziel: nur Tag2 -> Tag1 entfernt, Tag2 hinzugefuegt.
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId))
+        .thenReturn(List.of(assignment(901L, taskId, tagId1)));
+    when(tagRepository.findActiveByUuid(tagUuid2.toString()))
+        .thenReturn(Optional.of(tagWithId(tagId2, tagUuid2, "Tag-Zwei")));
+    when(tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagId2))
+        .thenReturn(Optional.empty());
+    when(tagRepository.findById(tagId1))
+        .thenReturn(Optional.of(tagWithId(tagId1, tagUuid1, "Tag-Eins")));
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuid2)),
+            PatchValue.absent()));
+
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag hinzugefuegt"), eq("Tag-Zwei"));
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag entfernt"), eq("Tag-Eins"));
+  }
+
+  @Test
+  @DisplayName(
+      "U4 patch_tag_repatch_identische_menge_keine_history: unveraenderte Tag-Menge ->"
+          + " kein Tag-History-Eintrag")
+  void u4_patch_tag_repatch_identische_menge_keine_history() {
+    final Long taskId = 163L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final long tagId = 7005L;
+    final UUID tagUuid = UUID.randomUUID();
+    // Ist == Ziel (Tag bereits aktiv zugeordnet) -> toAdd/toRemove leer -> kein Tag-History.
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId))
+        .thenReturn(List.of(assignment(902L, taskId, tagId)));
+    when(tagRepository.findActiveByUuid(tagUuid.toString()))
+        .thenReturn(Optional.of(tagWithId(tagId, tagUuid, "Stabil")));
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent()));
+
+    verify(historyService, never())
+        .record(anyLong(), anyLong(), any(), eq("Tag hinzugefuegt"), any());
+    verify(historyService, never()).record(anyLong(), anyLong(), any(), eq("Tag entfernt"), any());
+  }
+
+  @Test
+  @DisplayName(
+      "U5 patch_mehrere_tags_hinzufuegen_je_ein_eintrag: 2 neue Tags -> 2x 'Tag hinzugefuegt'")
+  void u5_patch_mehrere_tags_hinzufuegen_je_ein_eintrag() {
+    final Long taskId = 164L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final long tagIdA = 7006L;
+    final long tagIdB = 7007L;
+    final UUID tagUuidA = UUID.randomUUID();
+    final UUID tagUuidB = UUID.randomUUID();
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId)).thenReturn(List.of());
+    when(tagRepository.findActiveByUuid(tagUuidA.toString()))
+        .thenReturn(Optional.of(tagWithId(tagIdA, tagUuidA, "Alpha")));
+    when(tagRepository.findActiveByUuid(tagUuidB.toString()))
+        .thenReturn(Optional.of(tagWithId(tagIdB, tagUuidB, "Beta")));
+    when(tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagIdA))
+        .thenReturn(Optional.empty());
+    when(tagAssignmentQueryRepository.findByTaskIdAndTagId(taskId, tagIdB))
+        .thenReturn(Optional.empty());
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of(tagUuidA, tagUuidB)),
+            PatchValue.absent()));
+
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag hinzugefuegt"), eq("Alpha"));
+    verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag hinzugefuegt"), eq("Beta"));
+  }
+
+  @Test
+  @DisplayName(
+      "U6 patch_tag_entfernen_name_nicht_aufloesbar_fallback: findById leer -> Eintrag mit"
+          + " tagId-Fallback statt Fehler")
+  void u6_patch_tag_entfernen_name_nicht_aufloesbar_fallback() {
+    final Long taskId = 165L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    final long tagId = 7008L;
+    when(tagAssignmentQueryRepository.findActiveByTaskId(taskId))
+        .thenReturn(List.of(assignment(903L, taskId, tagId)));
+    // findById leer -> Name nicht aufloesbar -> Fallback auf die numerische tagId (kein Fehler).
+    when(tagRepository.findById(tagId)).thenReturn(Optional.empty());
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(Set.of()),
+            PatchValue.absent()));
+
+    verify(historyService)
+        .record(
+            eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag entfernt"), eq(String.valueOf(tagId)));
   }
 
   // ---- P2-D: Title-History-Detail bounded 500 Zeichen -----------------------------------------
 
   @Test
-  @DisplayName("patch_langer_titel_trunciert_change_detail: changeDetail ueberschreitet nicht 500 Zeichen")
+  @DisplayName(
+      "patch_langer_titel_trunciert_change_detail: changeDetail ueberschreitet nicht 500 Zeichen")
   void patch_langer_titel_trunciert_change_detail() {
     final String longTitle = "A".repeat(500);
     final Task task = taskWithId(90L, UUID.randomUUID());
@@ -748,27 +1049,33 @@ class TaskCommandServiceTest {
   // ---- P2-C: Blank-Titel ablehnen (create + patch) --------------------------------------------
 
   @Test
-  @DisplayName("create_leerer_titel_liefert_400: Whitespace-only Titel -> EntityValidationException")
+  @DisplayName(
+      "create_leerer_titel_liefert_400: Whitespace-only Titel -> EntityValidationException")
   void create_leerer_titel_liefert_400() {
-    assertThatThrownBy(() -> service.create(new TaskCreateInput("   ", null, null, null, null, null, null, null, null)))
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    new TaskCreateInput("   ", null, null, null, null, null, null, null, null)))
         .isInstanceOf(EntityValidationException.class);
   }
 
   @Test
-  @DisplayName("patch_leerer_titel_liefert_400: Whitespace-only Titel beim Patch -> EntityValidationException")
+  @DisplayName(
+      "patch_leerer_titel_liefert_400: Whitespace-only Titel beim Patch -> EntityValidationException")
   void patch_leerer_titel_liefert_400() {
     final Task task = taskWithId(82L, UUID.randomUUID());
     when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
 
     assertThatThrownBy(
-            () -> service.patch(
-                task.getUuid(),
-                new TaskPatchInput(
-                    PatchValue.of("   "),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent(),
-                    PatchValue.absent())))
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.of("   "),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -802,8 +1109,7 @@ class TaskCommandServiceTest {
   }
 
   @Test
-  @DisplayName(
-      "patch_startdate_loeschen: present(null) -> setStartDate(null) + History + save")
+  @DisplayName("patch_startdate_loeschen: present(null) -> setStartDate(null) + History + save")
   void patch_startdate_loeschen() {
     final Long taskId = 86L;
     final Task task = taskWithId(taskId, UUID.randomUUID());
@@ -841,8 +1147,7 @@ class TaskCommandServiceTest {
     service.patch(task.getUuid(), TaskPatchInput.empty());
 
     assertThat(task.getStartDate()).as("startDate unveraendert").isEqualTo(vorher);
-    verify(historyService, never())
-        .record(any(), any(), any(), eq("Startdatum geaendert"), any());
+    verify(historyService, never()).record(any(), any(), any(), eq("Startdatum geaendert"), any());
     verify(taskRepository, never()).save(any(Task.class));
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
@@ -877,7 +1182,8 @@ class TaskCommandServiceTest {
   void truncate_null_kurz_und_vollstaendiges_paar_bleiben_intakt() {
     assertThat(TaskCommandService.truncate(null, 500)).isNull();
     assertThat(TaskCommandService.truncate("kurz", 500)).isEqualTo("kurz");
-    // Emoji endet VOR der Kappungsgrenze -> vollstaendiges Paar bleibt erhalten, Ellipse angehaengt.
+    // Emoji endet VOR der Kappungsgrenze -> vollstaendiges Paar bleibt erhalten, Ellipse
+    // angehaengt.
     final String value = "a".repeat(400) + "😀" + "b".repeat(200);
     final String result = TaskCommandService.truncate(value, 500);
     assertThat(result).endsWith("...");
@@ -896,5 +1202,29 @@ class TaskCommandServiceTest {
     task.setLastActivityAt(java.time.LocalDateTime.now());
     task.setCommentCount(0);
     return task;
+  }
+
+  /** Baut einen TaskTag mit interner Id, UUID und Bezeichnung ({@code entryValue}). */
+  private static de.brasi.nova.taskmanagement.entity.TaskTag tagWithId(
+      final Long id, final UUID uuid, final String entryValue) {
+    final de.brasi.nova.taskmanagement.entity.TaskTag tag =
+        new de.brasi.nova.taskmanagement.entity.TaskTag();
+    tag.setId(id);
+    tag.setUuid(uuid);
+    tag.setEntryValue(entryValue);
+    return tag;
+  }
+
+  /** Baut ein aktives TaskTagAssignment mit interner Id und Tag-Id. */
+  private static de.brasi.nova.taskmanagement.entity.TaskTagAssignment assignment(
+      final Long id, final Long taskId, final Long tagId) {
+    final de.brasi.nova.taskmanagement.entity.TaskTagAssignment a =
+        new de.brasi.nova.taskmanagement.entity.TaskTagAssignment();
+    a.setId(id);
+    a.setTaskId(taskId);
+    a.setTagId(tagId);
+    a.setTenantId(TENANT_ID);
+    a.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
+    return a;
   }
 }
