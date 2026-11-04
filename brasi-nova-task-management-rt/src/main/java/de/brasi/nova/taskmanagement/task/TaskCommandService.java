@@ -5,28 +5,28 @@ import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskTag;
 import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
+import de.brasi.nova.taskmanagement.refentity.User;
+import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagAssignmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskTagRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
-import de.brasi.nova.taskmanagement.refentity.User;
-import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.resolver.DictionaryResolverException;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
-import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
-import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
-import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
-import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
-import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -35,7 +35,6 @@ import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -57,10 +56,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Nach erfolgtem Commit wird via {@link InboxSignalService} ein {@code snapshot-invalidated}-Signal
  * an die betroffenen Benutzer gesendet.
  *
- * <p>Creator-Invariante: Bei {@link #create} wird in DERSELBEN Transaktion verbindlich ein
- * {@link TaskParticipant} (CREATOR_FLAG=1, ASSIGNEE_FLAG=1) und ein {@link
- * de.brasi.nova.taskmanagement.entity.TaskUserState} fuer den Ersteller angelegt. Ohne
- * diesen Eintrag verschwaaende der neue Task aus der eigenen user-scoped Inbox.
+ * <p>Creator-Invariante: Bei {@link #create} wird in DERSELBEN Transaktion verbindlich ein {@link
+ * TaskParticipant} (CREATOR_FLAG=1, ASSIGNEE_FLAG=1) und ein {@link
+ * de.brasi.nova.taskmanagement.entity.TaskUserState} fuer den Ersteller angelegt. Ohne diesen
+ * Eintrag verschwaaende der neue Task aus der eigenen user-scoped Inbox.
  */
 @Service
 public class TaskCommandService {
@@ -124,6 +123,7 @@ public class TaskCommandService {
    * Legt eine neue Aufgabe an.
    *
    * <p>Erzwingt:
+   *
    * <ul>
    *   <li>Direction = {@code CUSTOMER_INTERNAL} (serverseitig, unabhaengig vom Input)
    *   <li>Status = {@code OPEN}
@@ -181,7 +181,8 @@ public class TaskCommandService {
             .filter(ref -> !ref.equals(creatorRef))
             .collect(Collectors.toCollection(LinkedHashSet::new));
     // Assignees validieren: aktive Benutzer DES Mandanten (findActiveByUuids ist tenant-scoped).
-    // Nur aufrufen wenn nicht leer (MSSQL IN () ist ein Syntaxfehler). Unbekannt/fremd/inaktiv -> 400.
+    // Nur aufrufen wenn nicht leer (MSSQL IN () ist ein Syntaxfehler). Unbekannt/fremd/inaktiv ->
+    // 400.
     if (!initialAssignees.isEmpty()) {
       final Set<UUID> activeRefs =
           userReadRepository.findActiveByUuids(initialAssignees).stream()
@@ -196,8 +197,10 @@ public class TaskCommandService {
             "Unbekannte oder nicht zugelassene Assignee-Benutzer: " + unknown);
       }
     }
-    // Tags validieren + aufloesen (globaler Katalog, Tenant 0): unbekannt/inaktiv -> 400. Laeuft VOR
-    // dem Task-Insert -> ein ungueltiger Tag (auch zusammen mit gueltigen Assignees) verhindert jede
+    // Tags validieren + aufloesen (globaler Katalog, Tenant 0): unbekannt/inaktiv -> 400. Laeuft
+    // VOR
+    // dem Task-Insert -> ein ungueltiger Tag (auch zusammen mit gueltigen Assignees) verhindert
+    // jede
     // Anlage (fail-fast; die Transaktion wuerde sonst ohnehin zurueckrollen).
     final Map<UUID, Long> tagUuidToId = resolveInitialTags(input.tagIds());
 
@@ -264,14 +267,18 @@ public class TaskCommandService {
     }
 
     // Codex #6: Alle in dieser Tx zu bumpenden Refs sammeln und EINMAL NACH dem TASK-save (oben, Z.
-    // taskRepository.save) ueber den zentralen Helfer in SORTIERTER Reihenfolge bumpen. Der TASK-save
-    // liegt am Anfang der Mutation -> TASK-Zeile wird vor den Generation-Zeilen gesperrt (einheitliche
-    // Save-dann-Bump-Ordnung). Menge = Nicht-Creator-Assignees + Creator (disjunkt per Dedupe oben);
+    // taskRepository.save) ueber den zentralen Helfer in SORTIERTER Reihenfolge bumpen. Der
+    // TASK-save
+    // liegt am Anfang der Mutation -> TASK-Zeile wird vor den Generation-Zeilen gesperrt
+    // (einheitliche
+    // Save-dann-Bump-Ordnung). Menge = Nicht-Creator-Assignees + Creator (disjunkt per Dedupe
+    // oben);
     // Reihenfolge/Platzierung geaendert, NICHT welche Refs gebumpt werden.
     final Set<UUID> refsToBump = new LinkedHashSet<>();
 
     // D3: Nicht-Creator-Assignees initial zuweisen (volle Semantik wie AssigneeService):
-    // neuer Participant (ASSIGNEE+PARTICIPANT_FLAG) + UserState + ASSIGN-Notification + Generation-Bump.
+    // neuer Participant (ASSIGNEE+PARTICIPANT_FLAG) + UserState + ASSIGN-Notification +
+    // Generation-Bump.
     for (final UUID assigneeRef : initialAssignees) {
       final TaskParticipant assigneeParticipant = new TaskParticipant();
       assigneeParticipant.setTenantId(tenantId);
@@ -313,11 +320,14 @@ public class TaskCommandService {
     // D3b (Codex-Gate-1 MAJOR): Auch der Ersteller erhaelt beim Create eine NEUE Inbox-Membership
     // (Participant+UserState) -> seine Generation EINMAL in derselben Tx bumpen, sonst koennte ein
     // paralleler Read mit altem Cursor den neuen Task auf einer Folgeseite sehen
-    // (LAST_ACTIVITY_AT < asOf < commit). Ref sammeln; der (sortierte) Bump erfolgt gebuendelt unten.
+    // (LAST_ACTIVITY_AT < asOf < commit). Ref sammeln; der (sortierte) Bump erfolgt gebuendelt
+    // unten.
     refsToBump.add(creatorRef);
 
-    // Codex #6: gesamte betroffene Menge (Assignees + Creator) EINMAL in SORTIERTER Reihenfolge NACH
-    // dem TASK-save bumpen (einheitliche Save-dann-Bump- + Lock-Ordnung ueber den zentralen Helfer).
+    // Codex #6: gesamte betroffene Menge (Assignees + Creator) EINMAL in SORTIERTER Reihenfolge
+    // NACH
+    // dem TASK-save bumpen (einheitliche Save-dann-Bump- + Lock-Ordnung ueber den zentralen
+    // Helfer).
     inboxGenerationService.bumpSorted(tenantId, refsToBump);
 
     // D8 Schritt 8 / After-Commit: snapshot-invalidated Signal fuer Ersteller + alle initialen
@@ -337,7 +347,8 @@ public class TaskCommandService {
    * inaktive/abgelaufene Tags fuehren zu {@link EntityValidationException} (400), BEVOR irgendetwas
    * angelegt wird. Leere Eingabe -&gt; leere Map (kein DB-Zugriff; {@code IN ()} vermeiden).
    *
-   * @param tagIds die bereits laengen-/null-validierten, angeforderten Tag-UUIDs (ggf. mit Duplikaten)
+   * @param tagIds die bereits laengen-/null-validierten, angeforderten Tag-UUIDs (ggf. mit
+   *     Duplikaten)
    * @return Zuordnung UUID -&gt; interne Tag-ID
    */
   private Map<UUID, Long> resolveInitialTags(final List<UUID> tagIds) {
@@ -365,8 +376,8 @@ public class TaskCommandService {
   /**
    * Patcht eine bestehende Aufgabe (title, dueDate, startDate, statusCode, tagIds).
    *
-   * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion.
-   * Nach Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
+   * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion. Nach
+   * Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
    *
    * <p><b>statusCode / Transition-Semantik:</b> Es gibt KEINE terminalen Status. Der Patch prueft
    * ausschliesslich, ob der Ziel-Code im globalen Dictionary existiert (unbekannt/leer -&gt; 400) -
@@ -376,26 +387,29 @@ public class TaskCommandService {
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
-   * JEDES aktiven Teilnehmers der Aufgabe gebumpt - exakt die Menge, fuer die auch
-   * {@link InboxSignalService#invalidate} gesendet wird. Begruendung (jeder-{@code changed} statt
+   * JEDES aktiven Teilnehmers der Aufgabe gebumpt - exakt die Menge, fuer die auch {@link
+   * InboxSignalService#invalidate} gesendet wird. Begruendung (jeder-{@code changed} statt
    * nur-Status): Zwei asOf-gebundene, requester-gescopte Reads brechen bei einem Patch:
+   *
    * <ul>
    *   <li><b>Status-Change</b> ({@code OPEN} &harr; {@code DONE}/{@code CANCELLED}) verschiebt den
    *       Task zwischen aktiver Seite ({@code findActivePage}, OPEN-gefiltert) und Archiv-Zaehlung
    *       ({@code countArchive*}) - eine Membership-/Ergebnismengen-Aenderung fuer jeden aktiven
    *       Teilnehmer.
-   *   <li><b>Jeder {@code changed}-Patch</b> setzt {@code LAST_ACTIVITY_AT = now()} (unten) neu.
-   *       Da der Keyset-Cursor genau auf {@code (asOf, LAST_ACTIVITY_AT, externalId)} ordnet,
+   *   <li><b>Jeder {@code changed}-Patch</b> setzt {@code LAST_ACTIVITY_AT = now()} (unten) neu. Da
+   *       der Keyset-Cursor genau auf {@code (asOf, LAST_ACTIVITY_AT, externalId)} ordnet,
    *       verschiebt das die Position des Tasks im Scroll - ein alter aktiver Cursor koennte den
    *       Task sonst ueberspringen oder doppelt liefern (stale pagination), ohne 410 zu erhalten.
    * </ul>
+   *
    * Der Bump laeuft atomar in dieser Transaktion (siehe {@link InboxGenerationService}); ein alter
-   * aktiver Cursor jedes betroffenen Teilnehmers wird beim naechsten Folge-Read mit 410
-   * ({@code SnapshotExpired}) abgelehnt und re-bootstrappt gegen den frischen Stand.
+   * aktiver Cursor jedes betroffenen Teilnehmers wird beim naechsten Folge-Read mit 410 ({@code
+   * SnapshotExpired}) abgelehnt und re-bootstrappt gegen den frischen Stand.
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param input          Patch-Eingabe
-   * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant gehoert
+   * @param input Patch-Eingabe
+   * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant
+   *     gehoert
    * @throws EntityValidationException bei unbekanntem statusCode
    */
   @Transactional
@@ -421,7 +435,10 @@ public class TaskCommandService {
         throw new EntityValidationException("Titel darf nicht leer sein.");
       }
       historyService.record(
-          taskId, tenantId, actorRef, "Titel geaendert",
+          taskId,
+          tenantId,
+          actorRef,
+          "Titel geaendert",
           truncate(task.getTitle() + " -> " + newTitle, 500));
       task.setTitle(newTitle);
       changed = true;
@@ -441,8 +458,10 @@ public class TaskCommandService {
     }
 
     // startDate (BE-5): present(date) = setzen, present(null) = loeschen; absent = unberuehrt.
-    // Semantik gespiegelt zu dueDate (keine Gleichheitspruefung: ein praesenter Wert erzeugt bewusst
-    // History/Save/Invalidate, auch wenn er dem Ist-Wert gleicht). Keine startDate<=dueDate-Pruefung
+    // Semantik gespiegelt zu dueDate (keine Gleichheitspruefung: ein praesenter Wert erzeugt
+    // bewusst
+    // History/Save/Invalidate, auch wenn er dem Ist-Wert gleicht). Keine
+    // startDate<=dueDate-Pruefung
     // (konsistent zu Create und dem dueDate-PATCH).
     if (input.startDate().isPresent()) {
       final java.time.LocalDate newStartDate = input.startDate().get();
@@ -466,11 +485,9 @@ public class TaskCommandService {
       try {
         newStatusId = resolver.resolveTaskStatus(newStatusCode);
       } catch (DictionaryResolverException e) {
-        throw new EntityValidationException(
-            "Ungueltiger statusCode: '" + newStatusCode + "'.");
+        throw new EntityValidationException("Ungueltiger statusCode: '" + newStatusCode + "'.");
       }
-      historyService.record(
-          taskId, tenantId, actorRef, "Status geaendert", "-> " + newStatusCode);
+      historyService.record(taskId, tenantId, actorRef, "Status geaendert", "-> " + newStatusCode);
       task.setTaskStatusId(newStatusId);
       changed = true;
     }
@@ -484,47 +501,70 @@ public class TaskCommandService {
       // Iteration statt contains(null): ImmutableSet.contains(null) wuerde NPE ausloesen.
       for (final UUID tagUuid : desiredTagUuids) {
         if (tagUuid == null) {
-          throw new EntityValidationException(
-              "tagIds darf keine null-Elemente enthalten.");
+          throw new EntityValidationException("tagIds darf keine null-Elemente enthalten.");
         }
       }
 
       // Alle Tag-UUIDs gegen den globalen Katalog aufloesen (unbekannt/inaktiv/abgelaufen -> 400)
       // Verwendet findActiveByUuid (F-P1): filtert ENTITY_STATUS + Gueltigkeit;
       // findByUuid wuerde inaktive/abgelaufene Tags akzeptieren (R-PATCH-Verletzung).
-      // Abbruch-sicher: alle validieren BEVOR irgendwas geaendert wird
+      // Abbruch-sicher: alle validieren BEVOR irgendwas geaendert wird.
+      // Intake #134: Zusaetzlich die aufgeloesten Tag-Namen (entryValue, Spalte BEZEICHNUNG) je
+      // interner Tag-Id merken, damit der Verlauf bei HINZUGEFUEGTEN Tags den Namen ohne
+      // Zusatz-Read
+      // schreiben kann.
+      final Map<Long, String> tagNameById = new java.util.HashMap<>();
+      // Intake #134: UUID (EXTERNALID) je interner Tag-Id fuer die Verlaufs-Fallback-Kette
+      // (entryValue -> UUID -> tagId) bei HINZUGEFUEGTEN Tags.
+      final Map<Long, String> tagUuidById = new java.util.HashMap<>();
       final Map<UUID, Long> tagUuidToId =
-          TenantContextHolder.runWithTenant(TenantInfo.global(), () -> {
-            final Map<UUID, Long> result = new java.util.HashMap<>();
-            for (final UUID tagUuid : desiredTagUuids) {
-              final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
-                  tagRepository.findActiveByUuid(tagUuid.toString());
-              if (found.isEmpty()) {
-                throw new EntityValidationException(
-                    "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");
-              }
-              result.put(tagUuid, found.get().getId());
-            }
-            return result;
-          });
+          TenantContextHolder.runWithTenant(
+              TenantInfo.global(),
+              () -> {
+                final Map<UUID, Long> result = new java.util.HashMap<>();
+                for (final UUID tagUuid : desiredTagUuids) {
+                  final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
+                      tagRepository.findActiveByUuid(tagUuid.toString());
+                  if (found.isEmpty()) {
+                    throw new EntityValidationException(
+                        "Unbekannte oder inaktive Tag-UUID: '" + tagUuid + "'.");
+                  }
+                  result.put(tagUuid, found.get().getId());
+                  tagNameById.put(found.get().getId(), found.get().getEntryValue());
+                  final UUID resolvedUuid = found.get().getUuid();
+                  tagUuidById.put(
+                      found.get().getId(), resolvedUuid != null ? resolvedUuid.toString() : null);
+                }
+                return result;
+              });
 
       // Aktuelle aktive Assignments laden
       final List<TaskTagAssignment> currentAssignments =
           tagAssignmentQueryRepository.findActiveByTaskId(taskId);
-      final Map<Long, TaskTagAssignment> currentByTagId = currentAssignments.stream()
-          .collect(Collectors.toMap(TaskTagAssignment::getTagId, a -> a));
+      final Map<Long, TaskTagAssignment> currentByTagId =
+          currentAssignments.stream()
+              .collect(Collectors.toMap(TaskTagAssignment::getTagId, a -> a));
 
       // Neue Tag-IDs: gewuenschaft aber noch nicht vorhanden
       final Set<Long> desiredTagIds = new HashSet<>(tagUuidToId.values());
-      final Set<Long> toAdd = desiredTagIds.stream()
-          .filter(id -> !currentByTagId.containsKey(id))
-          .collect(Collectors.toSet());
+      final Set<Long> toAdd =
+          desiredTagIds.stream()
+              .filter(id -> !currentByTagId.containsKey(id))
+              .collect(Collectors.toSet());
 
       // Abgewaehlte Tag-IDs: vorhanden aber nicht gewuenscht
-      final List<Long> toRemoveIds = currentByTagId.entrySet().stream()
-          .filter(e -> !desiredTagIds.contains(e.getKey()))
-          .map(e -> e.getValue().getId())
-          .collect(Collectors.toList());
+      final List<Long> toRemoveIds =
+          currentByTagId.entrySet().stream()
+              .filter(e -> !desiredTagIds.contains(e.getKey()))
+              .map(e -> e.getValue().getId())
+              .collect(Collectors.toList());
+
+      // Intake #134: Die TAG-Ids der entfernten Zuordnungen (Map-Key) - fuer die Namensaufloesung
+      // des Verlaufs. toRemoveIds enthaelt Assignment-Ids, nicht Tag-Ids.
+      final Set<Long> removedTagIds =
+          currentByTagId.keySet().stream()
+              .filter(tagId -> !desiredTagIds.contains(tagId))
+              .collect(Collectors.toCollection(LinkedHashSet::new));
 
       if (!toAdd.isEmpty() || !toRemoveIds.isEmpty()) {
         // Neue Assignments anlegen oder inaktive reaktivieren (UNIQUE-Guard: [TASK_ID, TAG_ID])
@@ -545,15 +585,49 @@ public class TaskCommandService {
             tagAssignmentQueryRepository.save(assignment);
           }
         }
+        // Intake #134: Namen der ENTFERNTEN Tags VOR der Deaktivierung status-agnostisch aufloesen
+        // (findById filtert nicht auf ENTITY_STATUS; loest auch inaktive/abgelaufene Katalog-Tags
+        // auf). Deaktiviert wird nur das Assignment, nie der Katalog-Tag - die Reihenfolge ist
+        // daher
+        // unkritisch; die Aufloesung bleibt aber bewusst vor der Mutation (SPEC #4).
+        final Map<Long, String> removedNameById = new java.util.HashMap<>();
+        for (final Long tagId : removedTagIds) {
+          removedNameById.put(tagId, resolveRemovedTagName(tagId));
+        }
+
         // Abgewaehlte deaktivieren (KSF-idiomatisch)
         if (!toRemoveIds.isEmpty()) {
           tagAssignmentQueryRepository.deactivateAllByIds(toRemoveIds);
         }
+
+        // Intake #134: Verlauf NACH erfolgreicher Mutation in DERSELBEN Transaktion schreiben.
+        // Pro hinzugefuegtem Tag (inkl. Reaktivierung) ein "Tag hinzugefuegt", pro entferntem Tag
+        // ein "Tag entfernt"; changeDetail = Tag-Name (gekuerzt auf 500). Der History-Eintrag darf
+        // nie am fehlenden Namen scheitern (Fallback-Kette: entryValue -> UUID -> tagId).
+        for (final Long tagId : toAdd) {
+          historyService.record(
+              taskId,
+              tenantId,
+              actorRef,
+              "Tag hinzugefuegt",
+              truncate(resolveAddedTagName(tagId, tagNameById, tagUuidById), 500));
+        }
+        for (final Long tagId : removedTagIds) {
+          historyService.record(
+              taskId,
+              tenantId,
+              actorRef,
+              "Tag entfernt",
+              truncate(removedNameById.get(tagId), 500));
+        }
+
         changed = true;
         log.info(
             "TaskCommandService.patch: Tag-Menge fuer Aufgabe {} aktualisiert"
                 + " (hinzugefuegt={}, entfernt={}).",
-            taskExternalId, toAdd.size(), toRemoveIds.size());
+            taskExternalId,
+            toAdd.size(),
+            toRemoveIds.size());
       }
     }
 
@@ -583,11 +657,66 @@ public class TaskCommandService {
   }
 
   /**
+   * Loest den Verlaufs-Namen eines HINZUGEFUEGTEN Tags auf (Intake #134). Der Name wurde im
+   * Resolution-Loop bereits ohne Zusatz-Read aus dem aktiven Katalog geladen ({@code entryValue} =
+   * Spalte BEZEICHNUNG). Fallback-Kette, falls der Name fehlt: {@code tagId} als String. Ein
+   * fehlender Name darf den History-Eintrag nie verhindern.
+   *
+   * <p>Fallback-Kette (SPEC #4, konsistent zu {@link #resolveRemovedTagName(Long)}): {@code
+   * entryValue} -&gt; {@code UUID} (EXTERNALID) -&gt; {@code tagId} als String. Ein fehlender Name
+   * darf den History-Eintrag nie verhindern.
+   *
+   * @param tagId interne Tag-Id
+   * @param tagNameById im Resolution-Loop gefuellte Map (interne Tag-Id -> entryValue)
+   * @param tagUuidById im Resolution-Loop gefuellte Map (interne Tag-Id -> UUID-String)
+   * @return aufgeloester Tag-Name, nie {@code null}
+   */
+  private static String resolveAddedTagName(
+      final Long tagId, final Map<Long, String> tagNameById, final Map<Long, String> tagUuidById) {
+    final String name = tagNameById.get(tagId);
+    if (name != null && !name.isBlank()) {
+      return name;
+    }
+    final String uuid = tagUuidById.get(tagId);
+    if (uuid != null && !uuid.isBlank()) {
+      return uuid;
+    }
+    return String.valueOf(tagId);
+  }
+
+  /**
+   * Loest den Verlaufs-Namen eines ENTFERNTEN Tags auf (Intake #134). Fuer entfernte Tags ist nur
+   * die interne {@code tagId} bekannt; der Katalog-Tag wird VOR/beim History-Schreiben mit einem
+   * status-agnostischen {@code findById} im globalen Tenant-Scope gelesen. {@code findById} ist
+   * KSF-Base und filtert NICHT auf {@code ENTITY_STATUS} - so werden auch inaktive/abgelaufene
+   * Katalog-Tags aufgeloest ({@code findActiveByUuid} waere hier falsch). Fallback-Kette: {@code
+   * entryValue} -&gt; {@code getUuid()} (EXTERNALID) -&gt; {@code tagId} als String.
+   *
+   * @param tagId interne Tag-Id des entfernten Tags
+   * @return aufgeloester Tag-Name, nie {@code null}
+   */
+  private String resolveRemovedTagName(final Long tagId) {
+    final Optional<de.brasi.nova.taskmanagement.entity.TaskTag> found =
+        TenantContextHolder.runWithTenant(TenantInfo.global(), () -> tagRepository.findById(tagId));
+    if (found.isPresent()) {
+      final String name = found.get().getEntryValue();
+      if (name != null && !name.isBlank()) {
+        return name;
+      }
+      final UUID uuid = found.get().getUuid();
+      if (uuid != null) {
+        return uuid.toString();
+      }
+    }
+    return String.valueOf(tagId);
+  }
+
+  /**
    * Kuerzt {@code s} auf hoechstens {@code max} UTF-16-Code-Units inkl. abschliessender Ellipse
    * ("...") und schneidet dabei NICHT mitten in ein Surrogatpaar (z.B. Emoji) - sonst entstuende
    * ein ungepaartes Surrogat (korrupter Unicode / Insert-Fehler). Paketsichtbar fuer Unit-Tests.
    *
-   * @param s   der zu kuerzende Wert (null-sicher)
+   * @param s der zu kuerzende Wert (null-sicher)
    * @param max maximale Gesamtlaenge inkl. Ellipse
    * @return der ggf. gekuerzte Wert
    */
@@ -609,11 +738,11 @@ public class TaskCommandService {
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
    * <p>Beide Fehlerfaelle (nicht gefunden / fremder Mandant) liefern eine identische, neutrale
-   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
-   * (arch-v2 §8 / Cross-Tenant-Disclosure-Schutz).
+   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben (arch-v2
+   * §8 / Cross-Tenant-Disclosure-Schutz).
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param tenantId       erwarteter Mandanten-Schluessel
+   * @param tenantId erwarteter Mandanten-Schluessel
    * @return die gefundene Aufgabe
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */
