@@ -16,75 +16,114 @@ import java.util.UUID;
  * persoenliche Marker, {@code participantIds}, {@code exit}); die bestehenden Felder bleiben
  * unveraendert.
  *
- * @param id             externe UUID der Aufgabe (EXTERNALID)
- * @param title          Titel der Aufgabe
- * @param description    optionale Beschreibung
- * @param statusCode     aktueller Status-CODE (z.B. "OPEN")
- * @param priorityCode   Prioritaets-CODE (z.B. "NORMAL")
- * @param directionCode  Direction-CODE (z.B. "CUSTOMER_INTERNAL")
- * @param startDate      optionales Startdatum
- * @param dueDate        optionales Faelligkeitsdatum
+ * @param id externe UUID der Aufgabe (EXTERNALID)
+ * @param title Titel der Aufgabe
+ * @param description optionale Beschreibung
+ * @param statusCode aktueller Status-CODE (z.B. "OPEN")
+ * @param priorityCode Prioritaets-CODE (z.B. "NORMAL")
+ * @param directionCode Direction-CODE (z.B. "CUSTOMER_INTERNAL")
+ * @param startDate optionales Startdatum
+ * @param dueDate optionales Faelligkeitsdatum
  * @param lastActivityAt Zeitpunkt der letzten Aktivitaet (UTC)
- * @param commentCount   Anzahl der Kommentare (denormalisiert)
- * @param history        Liste der Historieneintraege (neueste zuerst)
- * @param assignees      aktuelle Assignee-GUIDs (PROD_BENUTZER.EXTERNALID) dieser Aufgabe, stabil
- *                       sortiert; Read-before-edit fuer {@code PUT /tasks/{id}/assignees}
- * @param tagIds         aktuelle Tag-GUIDs (TASK_TAG.EXTERNALID) dieser Aufgabe, stabil sortiert;
- *                       Read-before-edit fuer {@code PATCH /tasks/{id}} (tagIds)
- * @param createdById    UUID des Erstellers ({@code CREATOR_FLAG}, PERSON) oder {@code null}
- * @param participantIds UUIDs der aktiven PERSON-Teilnehmer ohne Assignees/Ersteller (stabil sortiert)
- * @param isPinned       persoenlicher Marker des Anfragers (Actor)
- * @param isFlagged      persoenlicher Marker des Anfragers (Actor)
- * @param isMuted        persoenlicher Marker des Anfragers (Actor)
- * @param exit           aktueller Austritt des Anfragers (handover/unsubscribed) oder {@code null}
+ * @param commentCount Anzahl der Kommentare (denormalisiert)
+ * @param history Liste der Historieneintraege (neueste zuerst)
+ * @param assignees aktuelle Assignee-GUIDs (PROD_BENUTZER.EXTERNALID) dieser Aufgabe, stabil
+ *     sortiert; Read-before-edit fuer {@code PUT /tasks/{id}/assignees}
+ * @param tagIds aktuelle Tag-GUIDs (TASK_TAG.EXTERNALID) dieser Aufgabe, stabil sortiert;
+ *     Read-before-edit fuer {@code PATCH /tasks/{id}} (tagIds)
+ * @param tags Anzeige-Projektion ALLER zugeordneten Tags ({@code id}/{@code name}/ {@code color},
+ *     stabil sortiert) - Intake #138; enthaelt auch katalog-inaktive (retire-te), aber noch
+ *     zugeordnete Tags (faithful, status-agnostisch)
+ * @param createdById UUID des Erstellers ({@code CREATOR_FLAG}, PERSON) oder {@code null}
+ * @param participantIds UUIDs der aktiven PERSON-Teilnehmer ohne Assignees/Ersteller (stabil
+ *     sortiert)
+ * @param isPinned persoenlicher Marker des Anfragers (Actor)
+ * @param isFlagged persoenlicher Marker des Anfragers (Actor)
+ * @param isMuted persoenlicher Marker des Anfragers (Actor)
+ * @param exit aktueller Austritt des Anfragers (handover/unsubscribed) oder {@code null}
  */
 public record TaskDetailModel(
-    @Schema(description = "Externe UUID der Aufgabe.", example = "550e8400-e29b-41d4-a716-446655440000")
-    UUID id,
-    @Schema(description = "Titel der Aufgabe.", example = "Jahresabschluss vorbereiten")
-    String title,
-    @Schema(description = "Optionale Beschreibung der Aufgabe.", example = "Bitte Unterlagen bis Montag bereitstellen.")
-    String description,
-    @Schema(description = "Aktueller Status-CODE der Aufgabe.", example = "OPEN")
-    String statusCode,
-    @Schema(description = "Prioritaets-CODE der Aufgabe.", example = "NORMAL")
-    String priorityCode,
-    @Schema(description = "Richtungs-CODE der Aufgabe.", example = "CUSTOMER_INTERNAL")
-    String directionCode,
-    @Schema(description = "Optionales Startdatum (ISO 8601).", example = "2026-11-01")
-    LocalDate startDate,
-    @Schema(description = "Optionales Faelligkeitsdatum (ISO 8601).", example = "2026-12-31")
-    LocalDate dueDate,
-    @Schema(description = "Zeitpunkt der letzten Aktivitaet (UTC).", example = "2026-10-18T08:00:00Z")
-    Instant lastActivityAt,
-    @Schema(description = "Anzahl der Kommentare (denormalisiert).", example = "3")
-    int commentCount,
-    @Schema(description = "Liste der Historieneintraege (neueste zuerst).")
-    List<HistoryModel> history,
-    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
-        description = "GUID eines aktuellen Assignees (PROD_BENUTZER.EXTERNALID)."))
-    @Schema(description = "Aktuelle Assignee-GUIDs (stabil sortiert); Read-before-edit fuer PUT assignees.")
-    List<UUID> assignees,
-    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
-        description = "GUID eines aktuell zugeordneten Tags (TASK_TAG.EXTERNALID)."))
-    @Schema(description = "Aktuelle Tag-GUIDs (stabil sortiert); Read-before-edit fuer PATCH tagIds."
-        + " Enthaelt auch katalog-inaktive, aber noch zugeordnete Tags (faithful).")
-    List<UUID> tagIds,
     @Schema(
-        description = "UUID des Erstellers (CREATOR_FLAG, PERSON) oder null.",
-        example = "550e8400-e29b-41d4-a716-446655440000")
-    UUID createdById,
-    @ArraySchema(schema = @Schema(type = "string", format = "uuid",
-        description = "GUID eines aktiven PERSON-Teilnehmers (ohne Assignees/Ersteller)."))
-    @Schema(description = "Aktive PERSON-Teilnehmer ohne Assignees/Ersteller (stabil sortiert).")
-    List<UUID> participantIds,
+            description = "Externe UUID der Aufgabe.",
+            example = "550e8400-e29b-41d4-a716-446655440000")
+        UUID id,
+    @Schema(description = "Titel der Aufgabe.", example = "Jahresabschluss vorbereiten")
+        String title,
+    @Schema(
+            description = "Optionale Beschreibung der Aufgabe.",
+            example = "Bitte Unterlagen bis Montag bereitstellen.")
+        String description,
+    @Schema(description = "Aktueller Status-CODE der Aufgabe.", example = "OPEN") String statusCode,
+    @Schema(description = "Prioritaets-CODE der Aufgabe.", example = "NORMAL") String priorityCode,
+    @Schema(description = "Richtungs-CODE der Aufgabe.", example = "CUSTOMER_INTERNAL")
+        String directionCode,
+    @Schema(description = "Optionales Startdatum (ISO 8601).", example = "2026-11-01")
+        LocalDate startDate,
+    @Schema(description = "Optionales Faelligkeitsdatum (ISO 8601).", example = "2026-12-31")
+        LocalDate dueDate,
+    @Schema(
+            description = "Zeitpunkt der letzten Aktivitaet (UTC).",
+            example = "2026-10-18T08:00:00Z")
+        Instant lastActivityAt,
+    @Schema(description = "Anzahl der Kommentare (denormalisiert).", example = "3")
+        int commentCount,
+    @Schema(description = "Liste der Historieneintraege (neueste zuerst).")
+        List<HistoryModel> history,
+    @ArraySchema(
+            schema =
+                @Schema(
+                    type = "string",
+                    format = "uuid",
+                    description = "GUID eines aktuellen Assignees (PROD_BENUTZER.EXTERNALID)."))
+        @Schema(
+            description =
+                "Aktuelle Assignee-GUIDs (stabil sortiert); Read-before-edit fuer PUT assignees.")
+        List<UUID> assignees,
+    @ArraySchema(
+            schema =
+                @Schema(
+                    type = "string",
+                    format = "uuid",
+                    description = "GUID eines aktuell zugeordneten Tags (TASK_TAG.EXTERNALID)."))
+        @Schema(
+            description =
+                "Aktuelle Tag-GUIDs (stabil sortiert); Read-before-edit fuer PATCH tagIds."
+                    + " Enthaelt auch katalog-inaktive, aber noch zugeordnete Tags (faithful).")
+        List<UUID> tagIds,
+    @ArraySchema(
+            schema =
+                @Schema(
+                    implementation = TagRefModel.class,
+                    description = "Anzeige-Projektion eines zugeordneten Tags (id, name, color)."))
+        @Schema(
+            description =
+                "Anzeige-Projektion ALLER zugeordneten Tags (id/name/color, stabil"
+                    + " sortiert nach id). Enthaelt - wie tagIds - auch katalog-inaktive (retire-te), aber noch"
+                    + " zugeordnete Tags (faithful, status-agnostischer globaler Katalog-Read), damit das"
+                    + " Frontend auch deaktivierte zugeordnete Tags mit Name/Farbe rendern kann. Additiv zu"
+                    + " tagIds (Intake #138).")
+        List<TagRefModel> tags,
+    @Schema(
+            description = "UUID des Erstellers (CREATOR_FLAG, PERSON) oder null.",
+            example = "550e8400-e29b-41d4-a716-446655440000")
+        UUID createdById,
+    @ArraySchema(
+            schema =
+                @Schema(
+                    type = "string",
+                    format = "uuid",
+                    description =
+                        "GUID eines aktiven PERSON-Teilnehmers (ohne Assignees/Ersteller)."))
+        @Schema(
+            description = "Aktive PERSON-Teilnehmer ohne Assignees/Ersteller (stabil sortiert).")
+        List<UUID> participantIds,
     @Schema(description = "Persoenlicher Marker des Anfragers: angepinnt.", example = "false")
-    boolean isPinned,
+        boolean isPinned,
     @Schema(description = "Persoenlicher Marker des Anfragers: markiert.", example = "false")
-    boolean isFlagged,
+        boolean isFlagged,
     @Schema(description = "Persoenlicher Marker des Anfragers: stummgeschaltet.", example = "false")
-    boolean isMuted,
+        boolean isMuted,
     @Schema(description = "Aktueller Austritt des Anfragers (handover/unsubscribed) oder null.")
-    ExitModel exit,
+        ExitModel exit,
     @Schema(description = "Quellkontext, sofern vorhanden; href nur bei registriertem Typ.")
-    TaskSourceModel source) {}
+        TaskSourceModel source) {}

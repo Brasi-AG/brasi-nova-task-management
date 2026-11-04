@@ -501,6 +501,23 @@ class TaskTagPatchIT {
     assertThat(tagIds).containsExactlyInAnyOrder(tagOneUuid.toString(), tagTwoUuid.toString());
     // stabil sortiert (lexikografisch nach UUID-String)
     assertThat(tagIds).isSorted();
+
+    // Intake #138: das additive tags-Feld traegt je zugeordnetem Tag id + name (+ color), stabil
+    // nach id sortiert, deckungsgleich mit tagIds.
+    final JsonNode tags = detail.get("tags");
+    assertThat(tags.isArray()).as("tags ist ein Array").isTrue();
+    assertThat(tags.size()).as("tags enthaelt beide zugeordneten Tags").isEqualTo(2);
+    final List<String> tagRefIds = new java.util.ArrayList<>();
+    for (final JsonNode entry : tags) {
+      tagRefIds.add(entry.get("id").asText());
+      assertThat(entry.get("name").asText()).as("tags[].name gesetzt").isNotBlank();
+    }
+    assertThat(tagRefIds)
+        .as("tags[].id deckungsgleich mit tagIds")
+        .containsExactlyInAnyOrder(tagOneUuid.toString(), tagTwoUuid.toString());
+    assertThat(tagRefIds).as("tags stabil nach id sortiert").isSorted();
+    assertThat(tagsContainsName(detail, tagOneUuid, "IT-Tag-One")).isTrue();
+    assertThat(tagsContainsName(detail, tagTwoUuid, "IT-Tag-Two")).isTrue();
   }
 
   @Test
@@ -522,14 +539,14 @@ class TaskTagPatchIT {
     assertThat(detail.get("tagIds").size()).isEqualTo(0);
   }
 
-  // ---- P2 IT (Codex-BLOCKER): katalog-inaktiver, aber zugeordneter Tag - faithful + laute 400 ---
+  // ---- Intake #138 Slice 138-1: Bestandsschutz-Toleranz - retire-ter zugeordneter Tag bleibt ----
 
   @Test
   @DisplayName(
-      "inaktiver_zugeordneter_tag_bleibt_im_detail_resubmit_400_kein_verlust:"
-          + " Tag zugeordnet -> Katalog inaktiv -> GET listet ihn weiter -> Resubmit PATCH 400,"
-          + " Zuordnung bleibt AKTIV (kein stiller Verlust)")
-  void inaktiver_zugeordneter_tag_bleibt_im_detail_resubmit_400_kein_verlust() throws Exception {
+      "inaktiver_zugeordneter_tag_resubmit_kept_kein_400_kein_verlust:"
+          + " Tag zugeordnet -> Katalog DEACTIVE -> GET listet ihn weiter (tagIds + tags mit"
+          + " Name/Farbe) -> Resubmit PATCH 204 (toleriert), Zuordnung bleibt AKTIV (Intake #138)")
+  void inaktiver_zugeordneter_tag_resubmit_kept_kein_400_kein_verlust() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
     final String token =
@@ -552,29 +569,31 @@ class TaskTagPatchIT {
                 .content(om.writeValueAsString(Map.of("tagIds", List.of(lifecycleTag)))))
         .andExpect(status().isNoContent());
 
-    // 2. Katalog-Tag deaktivieren (gueltiger EntityState DEACTIVE; Zuordnung bleibt aktiv).
-    // DEACTIVE wird von findActiveByUuid (ENTITY_STATUS='ACTIVE') abgelehnt, ist aber ein gueltiger
-    // Enum-Wert und daher vom faithful findByIdIn weiterhin mappbar/zurueckgebbar.
+    // 2. Katalog-Tag retiren (ENTITY_STATUS=DEACTIVE; Zuordnung bleibt aktiv). DEACTIVE wird von
+    // findActiveByUuid abgelehnt, ist aber ein gueltiger Enum-Wert -> fuer eine bereits aktive
+    // Zuordnung status-agnostisch (findByUuid) toleriert (Intake #138 Bestandsschutz).
     jdbcTemplate.update(
         "UPDATE [dbo].[TASK_TAG] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?",
         lifecycleTag);
 
-    // 3. GET Detail listet den Tag WEITERHIN (faithful) - Client sieht den vollen Ist-Stand
+    // 3. GET Detail listet den Tag WEITERHIN (faithful) - in tagIds UND in tags (mit Name/Farbe).
     final JsonNode detail = getDetail(mvc, om, token, taskUuid);
     assertThat(readStringArray(detail.get("tagIds")))
-        .as("katalog-inaktiver, aber noch zugeordneter Tag MUSS im Detail sichtbar bleiben")
+        .as("katalog-inaktiver, aber noch zugeordneter Tag MUSS in tagIds sichtbar bleiben")
         .contains(lifecycleTag.toString());
+    assertThat(tagsContainsName(detail, lifecycleTag, "IT-Tag-Lifecycle"))
+        .as("tags-Feld muss den retire-ten zugeordneten Tag mit Name tragen (Intake #138)")
+        .isTrue();
 
-    // 4. Resubmit der gelesenen tagIds -> LAUT 400 (findActiveByUuid lehnt inaktiv ab), KEIN
-    // stiller Verlust
+    // 4. Resubmit der gelesenen tagIds -> 204 (toleriert, Intake #138), KEIN 400, kein Verlust.
     mvc.perform(
             patch("/api/v1/tasks/" + taskUuid)
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("tagIds", List.of(lifecycleTag)))))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNoContent());
 
-    // 5. DB-Beweis: die Zuordnung ist UNVERAENDERT AKTIV (kein stiller Verlust durch den 400)
+    // 5. DB-Beweis: die Zuordnung ist UNVERAENDERT AKTIV (kein Verlust, kein Dubletten-Insert)
     final Integer stillActive =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
@@ -585,8 +604,125 @@ class TaskTagPatchIT {
             taskUuid,
             lifecycleTag);
     assertThat(stillActive)
-        .as("Zuordnung des inaktiven Tags darf durch den 400-Resubmit NICHT deaktiviert werden")
+        .as("Zuordnung des retire-ten Tags bleibt durch den tolerierten Resubmit AKTIV (genau 1)")
         .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "neuer_inaktiver_tag_400_keine_toleranz:"
+          + " NEU-Hinzufuegen eines DEACTIVE-Katalog-Tags (nicht zugeordnet) -> 400, keine Zuordnung"
+          + " (Toleranz gilt nur fuer bereits zugeordnete Tags, Intake #138)")
+  void neuer_inaktiver_tag_400_keine_toleranz() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token =
+        buildJwtWithAuthority(
+            TENANT_UUID,
+            USER_REF,
+            USER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    // DEACTIVE-Tag, der NIE zugeordnet war.
+    final UUID neverAssigned = seedGlobalTag(jdbcTemplate, 9151L, "IT-Tag-NieZugeordnet");
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_TAG] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?",
+        neverAssigned);
+
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-NewInactive");
+
+    // NEU-Hinzufuegen des inaktiven, nie zugeordneten Tags -> 400 (keine Toleranz).
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("tagIds", List.of(neverAssigned)))))
+        .andExpect(status().isBadRequest());
+
+    assertThat(countActiveAssignments(taskUuid))
+        .as(
+            "NEU-Hinzufuegen eines inaktiven Tags darf keine Zuordnung anlegen (400, keine Toleranz)")
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "toleranz_endzustand_deterministisch_deactive_tag_mit_farbe_zugeordnet:"
+          + " Endzustand DEACTIVE-Tag + aktive Zuordnung direkt hergestellt (kein Thread-Timing) ->"
+          + " Detail.tags liefert Name UND Farbe, PATCH-Echo der zugeordneten UUID bleibt (204,"
+          + " kein 400) - Intake #138 Toleranz-Invariante")
+  void toleranz_endzustand_deterministisch_deactive_tag_mit_farbe_zugeordnet() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String token =
+        buildJwtWithAuthority(
+            TENANT_UUID,
+            USER_REF,
+            USER_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    // Tag mit expliziter Farbe seeden (COLOR gesetzt), damit tags[].color geprueft werden kann.
+    final long tagDbId = 9170L;
+    final UUID coloredTag = UUID.randomUUID();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_TAG] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, BEZEICHNUNG, ENTRY_TYPE,"
+            + " GUELTIG_VON, SEVERITY_ID, COLOR) "
+            + "VALUES (?, 'ACTIVE', ?, 1, 0, 'IT-Tag-Farbe', 'SYSTEM_PUBLIC',"
+            + " CAST(GETDATE() AS DATE), 601, '#F87171')",
+        tagDbId,
+        coloredTag);
+
+    final UUID taskUuid = createTask(mvc, om, token, "TagPatch-ToleranzEndzustand");
+    // 1. Zuordnung herstellen (Tag noch ACTIVE).
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("tagIds", List.of(coloredTag)))))
+        .andExpect(status().isNoContent());
+    // 2. Endzustand direkt herstellen: Katalog-Tag DEACTIVE, Zuordnung bleibt aktiv
+    // (deterministisch,
+    // kein flakey Thread-Rennen).
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_TAG] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", coloredTag);
+
+    // 3. Detail.tags liefert Name UND Farbe des deaktivierten, zugeordneten Tags.
+    final JsonNode detail = getDetail(mvc, om, token, taskUuid);
+    JsonNode found = null;
+    for (final JsonNode entry : detail.get("tags")) {
+      if (coloredTag.toString().equals(entry.get("id").asText())) {
+        found = entry;
+        break;
+      }
+    }
+    assertThat(found).as("deaktivierter zugeordneter Tag MUSS in tags erscheinen").isNotNull();
+    assertThat(found.get("name").asText()).isEqualTo("IT-Tag-Farbe");
+    assertThat(found.get("color").asText())
+        .as("tags[].color des deaktivierten zugeordneten Tags")
+        .isEqualTo("#F87171");
+
+    // 4. PATCH-Echo der zugeordneten (jetzt inaktiven) UUID bleibt (204, kein 400).
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("tagIds", List.of(coloredTag)))))
+        .andExpect(status().isNoContent());
+
+    // 5. Zuordnung weiterhin genau 1x aktiv (kein Verlust, kein Dublette).
+    final Integer stillActive =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+                + " JOIN [dbo].[TASK] t ON a.TASK_ID = t.ID"
+                + " JOIN [dbo].[TASK_TAG] tag ON a.TAG_ID = tag.ID"
+                + " WHERE t.EXTERNALID = ? AND tag.EXTERNALID = ? AND a.ENTITY_STATUS = 'ACTIVE'",
+            Integer.class,
+            taskUuid,
+            coloredTag);
+    assertThat(stillActive).as("Toleranz-Endzustand: Zuordnung bleibt genau 1x aktiv").isEqualTo(1);
   }
 
   // ---- Intake #134: Tag-PATCH schreibt Verlauf (add/remove) ----------------------------------
@@ -864,6 +1000,29 @@ class TaskTagPatchIT {
             Integer.class,
             taskUuid);
     return c == null ? 0 : c;
+  }
+
+  /**
+   * {@code true}, wenn das {@code tags}-Feld des Details einen Eintrag mit der gegebenen id und dem
+   * gegebenen Namen enthaelt (Intake #138 Slice 138-1).
+   */
+  private static boolean tagsContainsName(
+      final JsonNode detail, final UUID tagId, final String name) {
+    final JsonNode tags = detail.get("tags");
+    if (tags == null || !tags.isArray()) {
+      return false;
+    }
+    for (final JsonNode entry : tags) {
+      final JsonNode id = entry.get("id");
+      final JsonNode nameNode = entry.get("name");
+      if (id != null
+          && tagId.toString().equals(id.asText())
+          && nameNode != null
+          && name.equals(nameNode.asText())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** {@code true}, wenn die GET-Detail-history einen Eintrag mit text+changeDetail enthaelt. */
