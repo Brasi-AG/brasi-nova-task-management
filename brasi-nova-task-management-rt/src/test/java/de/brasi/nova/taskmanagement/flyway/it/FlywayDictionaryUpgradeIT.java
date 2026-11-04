@@ -30,12 +30,13 @@ import org.springframework.util.FileCopyUtils;
 
 /**
  * Upgrade-Pfad-IT (Intake #133): beweist auf EINER Wegwerf-DB den echten Staged-Upgrade. Erst wird
- * bis V6 migriert (Zwischenstand wie eine bestehende dev-ui-DB vor V7: BEZEICHNUNG == CODE), dann auf
- * V7. Beim V7-Schritt validiert Flyway die Checksums von V1..V6 (validateOnMigrate ist Default true).
+ * bis V6 migriert (Zwischenstand wie eine bestehende dev-ui-DB vor V7: BEZEICHNUNG == CODE), dann
+ * auf V7. Beim V7-Schritt validiert Flyway die Checksums von V1..V6 (validateOnMigrate ist Default
+ * true).
  *
- * <p>Danach wird geprueft: deutsche Labels gesetzt, CODE und EXTERNALID der Seed-Zeilen unveraendert,
- * V7 in {@code flyway_schema_history}. Das adressiert den Codex-IMPL-MINOR, dass ein reiner
- * Fresh-DB-Lauf den Heilungs-Upgrade nicht separat vom V6-Stand belegt.
+ * <p>Danach wird geprueft: deutsche Labels gesetzt, CODE und EXTERNALID der Seed-Zeilen
+ * unveraendert, V7 in {@code flyway_schema_history}. Das adressiert den Codex-IMPL-MINOR, dass ein
+ * reiner Fresh-DB-Lauf den Heilungs-Upgrade nicht separat vom V6-Stand belegt.
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -103,7 +104,8 @@ class FlywayDictionaryUpgradeIT {
       assertThat(historyVersions(jt)).contains("7");
       assertThat(bezeichnung(jt, "DIC_TASK_STATUS", "OPEN")).isEqualTo("Offen");
       assertThat(bezeichnung(jt, "DIC_NOTIFICATION_TYPE", "DUE")).isEqualTo("Fällig");
-      assertThat(bezeichnung(jt, "DIC_TASK_DIRECTION", "BRASI_CUSTOMER")).isEqualTo("Brasi ↔ Kunde");
+      assertThat(bezeichnung(jt, "DIC_TASK_DIRECTION", "BRASI_CUSTOMER"))
+          .isEqualTo("Brasi ↔ Kunde");
 
       // CODE unveraendert (Zeile weiter per CODE auffindbar) + EXTERNALID identisch zum V6-Stand.
       assertThat(externalId(jt, "DIC_TASK_STATUS", "OPEN")).isEqualToIgnoringCase(openExtId);
@@ -137,13 +139,19 @@ class FlywayDictionaryUpgradeIT {
           migrateTo(jt, "8");
           assertThat(historyVersions(jt)).contains("8");
 
-          // Parity: der DB-Backfill faerbt ALLE 5 exakt nach TagSeverityColors.BY_CODE (Java-Mapping
+          // Parity: der DB-Backfill faerbt ALLE 5 exakt nach TagSeverityColors.BY_CODE
+          // (Java-Mapping
           // = EINE Wahrheit, identisch zum V8-CASE).
-          assertThat(colorOf(jt, 9001)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.PRIMARY));
-          assertThat(colorOf(jt, 9002)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
-          assertThat(colorOf(jt, 9003)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.WARN));
-          assertThat(colorOf(jt, 9004)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.DANGER));
-          assertThat(colorOf(jt, 9005)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SECONDARY));
+          assertThat(colorOf(jt, 9001))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.PRIMARY));
+          assertThat(colorOf(jt, 9002))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
+          assertThat(colorOf(jt, 9003))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.WARN));
+          assertThat(colorOf(jt, 9004))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.DANGER));
+          assertThat(colorOf(jt, 9005))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SECONDARY));
 
           // (4) eine Zeile auf custom COLOR + eine neue severity-Zeile mit COLOR NULL (Alt-Writer).
           jt.update("UPDATE [dbo].[TASK_TAG] SET [COLOR] = N'#123ABC' WHERE [ID] = 9001");
@@ -154,7 +162,8 @@ class FlywayDictionaryUpgradeIT {
 
           // custom-Zeile UNVERAENDERT (WHERE COLOR IS NULL schuetzt), Alt-Writer-Zeile befuellt.
           assertThat(colorOf(jt, 9001)).isEqualTo("#123ABC");
-          assertThat(colorOf(jt, 9006)).isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
+          assertThat(colorOf(jt, 9006))
+              .isEqualTo(TagSeverityColors.BY_CODE.get(TagSeverityCodes.SUCCESS));
         });
   }
 
@@ -173,13 +182,20 @@ class FlywayDictionaryUpgradeIT {
 
           // FK-Metadaten NACH V8 - muessen in allen relevanten Attributen identisch sein.
           final Map<String, Object> fkAfter = foreignKeyMeta(jt);
-          assertThat(fkAfter.get("fk_name")).isEqualTo(fkBefore.get("fk_name")).isEqualTo("FK_TASK_TAG_Severity");
-          assertThat(fkAfter.get("ref_table")).isEqualTo(fkBefore.get("ref_table")).isEqualTo("DIC_TAG_SEVERITY");
+          assertThat(fkAfter.get("fk_name"))
+              .isEqualTo(fkBefore.get("fk_name"))
+              .isEqualTo("FK_TASK_TAG_Severity");
+          assertThat(fkAfter.get("ref_table"))
+              .isEqualTo(fkBefore.get("ref_table"))
+              .isEqualTo("DIC_TAG_SEVERITY");
           assertThat(fkAfter.get("ref_col")).isEqualTo(fkBefore.get("ref_col")).isEqualTo("ID");
-          assertThat(fkAfter.get("parent_col")).isEqualTo(fkBefore.get("parent_col")).isEqualTo("SEVERITY_ID");
+          assertThat(fkAfter.get("parent_col"))
+              .isEqualTo(fkBefore.get("parent_col"))
+              .isEqualTo("SEVERITY_ID");
           // Referenzaktionen unveraendert (NO ACTION == 0) und FK ist trusted (WITH CHECK).
           // Hinweis: sys.foreign_keys liefert die Aktionen als tinyint -> JDBC Short; der
-          // Vor/Nach-Vergleich ist typkonsistent, der Soll-Wert 0 wird numerisch (intValue) geprueft.
+          // Vor/Nach-Vergleich ist typkonsistent, der Soll-Wert 0 wird numerisch (intValue)
+          // geprueft.
           assertThat(fkAfter.get("del_action")).isEqualTo(fkBefore.get("del_action"));
           assertThat(((Number) fkAfter.get("del_action")).intValue()).isZero();
           assertThat(fkAfter.get("upd_action")).isEqualTo(fkBefore.get("upd_action"));
@@ -223,12 +239,14 @@ class FlywayDictionaryUpgradeIT {
   }
 
   @Test
-  @DisplayName("ac10_p2_task_tag_referenziert_inaktiven_nicht_kanonischen_eintrag_laesst_v8_scheitern")
+  @DisplayName(
+      "ac10_p2_task_tag_referenziert_inaktiven_nicht_kanonischen_eintrag_laesst_v8_scheitern")
   void ac10_p2_reference_to_non_canonical_fails() {
     withFreshDbMigratedTo(
         "7",
         jt -> {
-          // Ein INAKTIVER nicht-kanonischer Dictionary-Eintrag (P1 sieht ihn nicht, da nicht aktiv)...
+          // Ein INAKTIVER nicht-kanonischer Dictionary-Eintrag (P1 sieht ihn nicht, da nicht
+          // aktiv)...
           insertSeverity(jt, 607, "LEGACY", "DEACTIVE", null);
           // ...aber TASK_TAG referenziert ihn -> P2 (Referenz-Totalitaet) verletzt.
           insertTag(jt, 9200, "Legacy-Ref", 607L, null);
@@ -253,8 +271,7 @@ class FlywayDictionaryUpgradeIT {
         jt -> {
           // Kanonischen PRIMARY-Seed (601) auf trailing-space Near-Miss umwidmen (kein Duplikat,
           // da einzige PRIMARY-Zeile). Mit naivem IN zaehlte er weiter als 'PRIMARY' -> P1 gruen.
-          jt.update(
-              "UPDATE [dbo].[DIC_TAG_SEVERITY] SET [CODE] = N'PRIMARY ' WHERE [ID] = 601");
+          jt.update("UPDATE [dbo].[DIC_TAG_SEVERITY] SET [CODE] = N'PRIMARY ' WHERE [ID] = 601");
           assertV8Fails(jt, "P1");
         });
   }
@@ -302,10 +319,184 @@ class FlywayDictionaryUpgradeIT {
         });
   }
 
+  // ===========================================================================================
+  // Intake #136 - V9 notification-type COMMENT: I2 (frischer V1->V9), I2b (Heal abweichende
+  // Schreibweise + stale Metadaten), V9-Skript-Idempotenz (zweiter Lauf des heal-or-insert).
+  // ===========================================================================================
+
+  @Test
+  @DisplayName("i2_frisch_v1_zu_v9_genau_ein_aktiver_comment_typ_resolverfaehig")
+  void i2_fresh_v1_to_v9_exactly_one_active_comment() {
+    withFreshDbMigratedTo(
+        "9",
+        jt -> {
+          assertThat(historyVersions(jt)).contains("9");
+          // GENAU EINE aktive+gueltige COMMENT-Zeile im globalen Katalog.
+          assertThat(activeCommentCount(jt)).isEqualTo(1);
+          // Resolver-Beleg: die Zeile ist aktiv+gueltig (findByCode-Praedikat) auffindbar und
+          // traegt die kanonischen Werte.
+          final Map<String, Object> row = canonicalCommentRow(jt);
+          assertThat(row.get("CODE")).isEqualTo("COMMENT");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Neuer Kommentar");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("TENANT_ID")).longValue()).isZero();
+          // Fester Seed (frische DB ohne Vor-Zeile): ID=409, feste UUIDv4-EXTERNALID.
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(409L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("9c4e1f82-7a3d-4b6e-8f05-2d9a1c7e4b60");
+        });
+  }
+
+  @Test
+  @DisplayName(
+      "i2b_heal_abweichende_schreibweise_und_stale_metadaten_wird_kanonisch_id_externalid_erhalten")
+  void i2b_heal_variant_spelling_and_stale_metadata() {
+    withFreshDbMigratedTo(
+        "8",
+        jt -> {
+          // Vor V9 eine Zeile mit ABWEICHENDER Schreibweise 'comment' + stale Metadaten einfuegen:
+          // DEACTIVE, abgelaufenes GUELTIG_BIS, veraltete BEZEICHNUNG, abweichender ENTRY_TYPE.
+          // Feste ID/EXTERNALID, um den Erhalt (heal) zu beweisen. UNIQUE(TENANT_ID,CODE) laesst
+          // bei
+          // case-insensitiver Server-Kollation nur EINE COMMENT-Zeile zu.
+          jt.update(
+              "INSERT INTO [dbo].[DIC_NOTIFICATION_TYPE]"
+                  + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, GUELTIG_BIS,"
+                  + "  ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, CODE)"
+                  + " VALUES (770, 'DEACTIVE', N'Alter Kommentar', 'SYSTEM_PRIVATE',"
+                  + "  '2020-01-01', '2020-12-31', 'legacy', GETDATE(),"
+                  + "  '44444409-0000-0000-0000-00000000aaaa', 3, 0, 'comment')");
+
+          // V9 anwenden -> heal.
+          migrateTo(jt, "9");
+          assertThat(historyVersions(jt)).contains("9");
+
+          // Genau EINE aktive COMMENT-Zeile, kanonisch; ID + EXTERNALID der Vor-Zeile UNVERAENDERT.
+          assertThat(activeCommentCount(jt)).isEqualTo(1);
+          final Map<String, Object> row = canonicalCommentRow(jt);
+          assertThat(row.get("CODE")).isEqualTo("COMMENT");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Neuer Kommentar");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(770L); // ID erhalten (heal)
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("44444409-0000-0000-0000-00000000aaaa"); // EXTERNALID erhalten
+          // Gueltig: GUELTIG_VON<=heute, GUELTIG_BIS=NULL (stale-Ablauf geheilt).
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          // Zustands-Idempotenz: ein bereits gueltiges GUELTIG_VON (2020-01-01 <= heute) wird vom
+          // Heal BEWAHRT, NICHT auf GETDATE() gesetzt (sonst Datums-Drift bei Re-Run an spaeterem
+          // Tag).
+          assertThat(String.valueOf(row.get("GUELTIG_VON"))).isEqualTo("2020-01-01");
+
+          // Der Resolver-Code (Reverse) ist EXAKT 'COMMENT' (nicht die Alt-Schreibweise 'comment').
+          final String storedCode =
+              jt.queryForObject(
+                  "SELECT CODE FROM [dbo].[DIC_NOTIFICATION_TYPE]"
+                      + " WHERE TENANT_ID = 0 AND ID = 770",
+                  String.class);
+          assertThat(storedCode).isEqualTo("COMMENT");
+
+          // V9-Skript-Idempotenz: das ECHTE heal-or-insert aus V9 ein ZWEITES Mal ausfuehren
+          // (nicht Flyway-Re-Migrate) -> weiterhin genau eine aktive kanonische Zeile,
+          // unveraendert.
+          runV9HealOrInsert(jt);
+          assertThat(activeCommentCount(jt)).isEqualTo(1);
+          final Map<String, Object> rowAgain = canonicalCommentRow(jt);
+          assertThat(((Number) rowAgain.get("ID")).longValue()).isEqualTo(770L);
+          assertThat(rowAgain.get("CODE")).isEqualTo("COMMENT");
+          assertThat(rowAgain.get("BEZEICHNUNG")).isEqualTo("Neuer Kommentar");
+          assertThat(rowAgain.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          // Zustands-Idempotenz-Kern: der zweite Lauf aendert GUELTIG_VON NICHT (bewahrt
+          // 2020-01-01).
+          assertThat(rowAgain.get("GUELTIG_VON")).isEqualTo(row.get("GUELTIG_VON"));
+        });
+  }
+
+  // ---- Helper (Intake #136) -----------------------------------------------------------------
+
+  /**
+   * Anzahl der aktiven+gueltigen COMMENT-Zeilen (identisches Praedikat wie
+   * NotificationType.findByCode).
+   */
+  private static int activeCommentCount(final JdbcTemplate jt) {
+    final Integer n =
+        jt.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[DIC_NOTIFICATION_TYPE]"
+                + " WHERE TENANT_ID = 0 AND ENTITY_STATUS = 'ACTIVE' AND CODE = 'COMMENT'"
+                + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
+                + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))",
+            Integer.class);
+    return n == null ? 0 : n;
+  }
+
+  /** Die eine COMMENT-Zeile (Unique-Key TENANT_ID=0, CODE='COMMENT') mit relevanten Spalten. */
+  private static Map<String, Object> canonicalCommentRow(final JdbcTemplate jt) {
+    return jt.queryForMap(
+        "SELECT ID, CODE, BEZEICHNUNG, ENTRY_TYPE, ENTITY_STATUS, TENANT_ID,"
+            + " CONVERT(nvarchar(36), EXTERNALID) AS EXTERNALID,"
+            + " CONVERT(varchar(10), GUELTIG_VON, 120) AS GUELTIG_VON, GUELTIG_BIS"
+            + " FROM [dbo].[DIC_NOTIFICATION_TYPE] WHERE TENANT_ID = 0 AND CODE = 'COMMENT'");
+  }
+
+  private static final String V9_RESOURCE = "db/migration/V9__notification_type_comment.sql";
+
+  /**
+   * Fuehrt das TATSAECHLICHE heal-or-insert aus {@code V9__notification_type_comment.sql} separat
+   * erneut aus (SQL-Idempotenz-Beweis). Die V9-Ressource wird geladen, Kommentarzeilen entfernt und
+   * an {@code GO} in Batches zerlegt; genau der UPDATE- und der INSERT-Batch werden erneut
+   * ausgefuehrt (nicht Flyway-Re-Migrate). Driftet V9 strukturell, schlaegt der Sentinel an.
+   */
+  private static void runV9HealOrInsert(final JdbcTemplate jt) {
+    for (final String batch : extractV9Batches()) {
+      jt.update(batch);
+    }
+  }
+
+  /**
+   * Laedt V9, zerlegt an {@code GO} und liefert den UPDATE- + INSERT-Batch (in Dateireihenfolge).
+   */
+  static List<String> extractV9Batches() {
+    final String raw;
+    try {
+      raw =
+          new String(
+              FileCopyUtils.copyToByteArray(new ClassPathResource(V9_RESOURCE).getInputStream()),
+              StandardCharsets.UTF_8);
+    } catch (final IOException e) {
+      throw new UncheckedIOException("V9-Ressource nicht lesbar: " + V9_RESOURCE, e);
+    }
+    final StringBuilder codeOnly = new StringBuilder();
+    for (final String line : raw.split("\\R")) {
+      final String trimmed = line.trim();
+      if (!trimmed.startsWith("--")) {
+        codeOnly.append(line).append('\n');
+      }
+    }
+    final List<String> batches = new ArrayList<>();
+    for (final String part : codeOnly.toString().split("(?im)^\\s*GO\\s*$")) {
+      final String batch = part.trim();
+      if (batch.toUpperCase().startsWith("UPDATE") || batch.toUpperCase().startsWith("INSERT")) {
+        batches.add(batch);
+      }
+    }
+    // Sentinel: genau EIN UPDATE (heal) + EIN INSERT (insert) in V9.
+    assertThat(batches)
+        .as("genau ein UPDATE-Batch (heal) und ein INSERT-Batch (insert) in " + V9_RESOURCE)
+        .hasSize(2);
+    assertThat(batches.get(0)).as("erster V9-Batch = heal-UPDATE").containsIgnoringCase("UPDATE");
+    assertThat(batches.get(1))
+        .as("zweiter V9-Batch = INSERT ... WHERE NOT EXISTS")
+        .containsIgnoringCase("INSERT")
+        .containsIgnoringCase("WHERE NOT EXISTS");
+    return batches;
+  }
+
   // ---- Helper (Intake #135) -----------------------------------------------------------------
 
   /** Legt eine frische Wegwerf-DB an, migriert bis {@code target} und fuehrt den Body aus. */
-  private static void withFreshDbMigratedTo(final String target, final Consumer<JdbcTemplate> body) {
+  private static void withFreshDbMigratedTo(
+      final String target, final Consumer<JdbcTemplate> body) {
     final HikariDataSource localMaster = RefSchemaItDb.masterDataSource();
     final String localDb = RefSchemaItDb.createThrowawayDb(localMaster);
     try (HikariDataSource ds = RefSchemaItDb.throwawayDataSource(localDb, 2)) {
@@ -384,9 +575,7 @@ class FlywayDictionaryUpgradeIT {
       }
     }
     // Sentinel: genau EIN Backfill-UPDATE-Batch - sonst ist V8 strukturell anders als erwartet.
-    assertThat(backfillBatches)
-        .as("genau ein Backfill-UPDATE-Batch in " + V8_RESOURCE)
-        .hasSize(1);
+    assertThat(backfillBatches).as("genau ein Backfill-UPDATE-Batch in " + V8_RESOURCE).hasSize(1);
     final String backfill = backfillBatches.get(0);
     // Die FROM/JOIN/WHERE-Form, auf die sich der Idempotenz-Beweis stuetzt, muss vorhanden sein.
     assertThat(backfill)
@@ -436,8 +625,7 @@ class FlywayDictionaryUpgradeIT {
   }
 
   private static String colorOf(final JdbcTemplate jt, final long id) {
-    return jt.queryForObject(
-        "SELECT COLOR FROM [dbo].[TASK_TAG] WHERE ID = ?", String.class, id);
+    return jt.queryForObject("SELECT COLOR FROM [dbo].[TASK_TAG] WHERE ID = ?", String.class, id);
   }
 
   /**

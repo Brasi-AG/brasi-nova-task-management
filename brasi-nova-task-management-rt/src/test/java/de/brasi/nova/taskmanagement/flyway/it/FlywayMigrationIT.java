@@ -16,12 +16,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
-import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -86,7 +86,8 @@ class FlywayMigrationIT {
     master = RefSchemaItDb.masterDataSource();
     dbName = RefSchemaItDb.createThrowawayDb(master);
     // Fremd-Daten in PROD_FIRMA/PROD_BENUTZER (preseeded-Szenario): V1 darf sie nicht veraendern.
-    // Sentinel-Zeilen mit festen Werten; nach V1 werden die vollstaendigen relevanten Werte geprueft.
+    // Sentinel-Zeilen mit festen Werten; nach V1 werden die vollstaendigen relevanten Werte
+    // geprueft.
     try (HikariDataSource throwaway = RefSchemaItDb.throwawayDataSource(dbName, 1)) {
       final JdbcTemplate jdbc = new JdbcTemplate(throwaway);
       jdbc.update(
@@ -121,8 +122,7 @@ class FlywayMigrationIT {
     }
   }
 
-  @Autowired
-  private JdbcTemplate jdbcTemplate;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   // ---- 1. Alle Tabellen vorhanden ---
 
@@ -153,8 +153,7 @@ class FlywayMigrationIT {
     assertThat(rows).hasSizeGreaterThanOrEqualTo(2);
     final boolean hasBaseline =
         rows.stream().anyMatch(r -> "0".equals(String.valueOf(r.get("version"))));
-    final boolean hasV1 =
-        rows.stream().anyMatch(r -> "1".equals(String.valueOf(r.get("version"))));
+    final boolean hasV1 = rows.stream().anyMatch(r -> "1".equals(String.valueOf(r.get("version"))));
     assertThat(hasBaseline).as("Baseline 0 in flyway_schema_history").isTrue();
     assertThat(hasV1).as("V1 in flyway_schema_history").isTrue();
   }
@@ -243,19 +242,22 @@ class FlywayMigrationIT {
     }
 
     @Test
-    @DisplayName("dic_notification_type_seeds_korrekt_8_eintraege")
+    @DisplayName("dic_notification_type_seeds_korrekt_9_eintraege")
     void dic_notification_type_seeds_korrekt() {
+      // Intake #136: COMMENT als 9. Typ (V9 heal-or-insert) ergaenzt; Map.of ist auf 10 Paare
+      // begrenzt -> ofEntries verwenden.
       assertSeedCodes(
           "DIC_NOTIFICATION_TYPE",
-          Map.of(
-              "ASSIGN", "Zuweisung",
-              "REPLY", "Antwort",
-              "DUE", "Fällig",
-              "MENTION", "Erwähnung",
-              "DONE", "Erledigt",
-              "CHANGE", "Änderung",
-              "HANDOVER", "Übergabe",
-              "SYSTEM", "System"));
+          Map.ofEntries(
+              Map.entry("ASSIGN", "Zuweisung"),
+              Map.entry("REPLY", "Antwort"),
+              Map.entry("DUE", "Fällig"),
+              Map.entry("MENTION", "Erwähnung"),
+              Map.entry("DONE", "Erledigt"),
+              Map.entry("CHANGE", "Änderung"),
+              Map.entry("HANDOVER", "Übergabe"),
+              Map.entry("SYSTEM", "System"),
+              Map.entry("COMMENT", "Neuer Kommentar")));
       assertAllGlobal("DIC_NOTIFICATION_TYPE");
     }
 
@@ -310,8 +312,7 @@ class FlywayMigrationIT {
     final List<Map<String, Object>> rows =
         jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
-    final boolean hasV3 =
-        rows.stream().anyMatch(r -> "3".equals(String.valueOf(r.get("version"))));
+    final boolean hasV3 = rows.stream().anyMatch(r -> "3".equals(String.valueOf(r.get("version"))));
     assertThat(hasV3).as("V3 in flyway_schema_history").isTrue();
   }
 
@@ -359,8 +360,7 @@ class FlywayMigrationIT {
     final List<Map<String, Object>> rows =
         jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
-    final boolean hasV4 =
-        rows.stream().anyMatch(r -> "4".equals(String.valueOf(r.get("version"))));
+    final boolean hasV4 = rows.stream().anyMatch(r -> "4".equals(String.valueOf(r.get("version"))));
     assertThat(hasV4).as("V4 in flyway_schema_history").isTrue();
   }
 
@@ -402,8 +402,7 @@ class FlywayMigrationIT {
     final List<Map<String, Object>> rows =
         jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
-    final boolean hasV5 =
-        rows.stream().anyMatch(r -> "5".equals(String.valueOf(r.get("version"))));
+    final boolean hasV5 = rows.stream().anyMatch(r -> "5".equals(String.valueOf(r.get("version"))));
     assertThat(hasV5).as("V5 in flyway_schema_history").isTrue();
   }
 
@@ -457,7 +456,8 @@ class FlywayMigrationIT {
   }
 
   @Test
-  @DisplayName("v5_handover_defaults: INSERT ohne ENTITY_STATUS/EXTERNALID/VERSION -> Defaults greifen")
+  @DisplayName(
+      "v5_handover_defaults: INSERT ohne ENTITY_STATUS/EXTERNALID/VERSION -> Defaults greifen")
   void v5_handover_defaults_greifen() {
     jdbcTemplate.update(
         "INSERT INTO [dbo].[TASK_HANDOVER] (ID, TENANT_ID, TASK_ID, FROM_REF, SHOULD_STAY)"
@@ -485,13 +485,13 @@ class FlywayMigrationIT {
     final List<Map<String, Object>> rows =
         jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
-    final boolean hasV7 =
-        rows.stream().anyMatch(r -> "7".equals(String.valueOf(r.get("version"))));
+    final boolean hasV7 = rows.stream().anyMatch(r -> "7".equals(String.valueOf(r.get("version"))));
     assertThat(hasV7).as("V7 in flyway_schema_history").isTrue();
   }
 
   @Test
-  @DisplayName("v7_bewahrt_externalid_der_dictionary_seeds: V7 heilt nur BEZEICHNUNG, nicht EXTERNALID")
+  @DisplayName(
+      "v7_bewahrt_externalid_der_dictionary_seeds: V7 heilt nur BEZEICHNUNG, nicht EXTERNALID")
   void v7_bewahrt_externalid_der_dictionary_seeds() {
     assertExternalIdUnchanged("DIC_TASK_STATUS", "OPEN", "11111101-0000-0000-0000-000000000000");
     assertExternalIdUnchanged("DIC_TASK_PRIORITY", "LOW", "22222201-0000-0000-0000-000000000000");
@@ -501,7 +501,8 @@ class FlywayMigrationIT {
         "DIC_NOTIFICATION_TYPE", "ASSIGN", "44444401-0000-0000-0000-000000000000");
     assertExternalIdUnchanged(
         "DIC_NOTIFICATION_SEVERITY", "INFO", "55555501-0000-0000-0000-000000000000");
-    assertExternalIdUnchanged("DIC_TAG_SEVERITY", "PRIMARY", "66666601-0000-0000-0000-000000000000");
+    assertExternalIdUnchanged(
+        "DIC_TAG_SEVERITY", "PRIMARY", "66666601-0000-0000-0000-000000000000");
   }
 
   // ---- Hilfsmethoden ---
@@ -515,7 +516,9 @@ class FlywayMigrationIT {
             Integer.class,
             tableName,
             indexName);
-    assertThat(count).as("Index " + indexName + " auf " + tableName + " muss existieren").isEqualTo(1);
+    assertThat(count)
+        .as("Index " + indexName + " auf " + tableName + " muss existieren")
+        .isEqualTo(1);
   }
 
   private void assertTableExists(final String tableName) {
@@ -577,9 +580,7 @@ class FlywayMigrationIT {
     final Integer nonGlobal =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[" + table + "] WHERE TENANT_ID <> 0", Integer.class);
-    assertThat(nonGlobal)
-        .as(table + ": alle Seeds muessen TENANT_ID=0 haben")
-        .isZero();
+    assertThat(nonGlobal).as(table + ": alle Seeds muessen TENANT_ID=0 haben").isZero();
     final Integer notSystemPublic =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[" + table + "] WHERE ENTRY_TYPE <> 'SYSTEM_PUBLIC'",
@@ -591,17 +592,13 @@ class FlywayMigrationIT {
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[" + table + "] WHERE ENTITY_STATUS <> 'ACTIVE'",
             Integer.class);
-    assertThat(notActive)
-        .as(table + ": alle Seeds muessen ENTITY_STATUS=ACTIVE haben")
-        .isZero();
+    assertThat(notActive).as(table + ": alle Seeds muessen ENTITY_STATUS=ACTIVE haben").isZero();
   }
 
   private void assertSortOrder(final String code, final int expectedOrder) {
     final Integer actual =
         jdbcTemplate.queryForObject(
-            "SELECT SORT_ORDER FROM [dbo].[DIC_TASK_PRIORITY] WHERE CODE = ?",
-            Integer.class,
-            code);
+            "SELECT SORT_ORDER FROM [dbo].[DIC_TASK_PRIORITY] WHERE CODE = ?", Integer.class, code);
     assertThat(actual).as("SORT_ORDER fuer PRIORITY " + code).isEqualTo(expectedOrder);
   }
 

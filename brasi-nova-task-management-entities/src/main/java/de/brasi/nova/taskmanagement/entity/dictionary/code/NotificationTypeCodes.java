@@ -13,4 +13,10 @@ public final class NotificationTypeCodes {
   public static final String CHANGE = "CHANGE";
   public static final String HANDOVER = "HANDOVER";
   public static final String SYSTEM = "SYSTEM";
+
+  /**
+   * Neuer Top-Level-Kommentar an einer Aufgabe (Intake #136). Benachrichtigt die zugewiesene Person
+   * auch ohne @-Erwaehnung.
+   */
+  public static final String COMMENT = "COMMENT";
 }
