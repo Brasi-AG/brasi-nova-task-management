@@ -76,10 +76,12 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link CommentController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>POST /comments -> TASK_COMMENT persistiert, COMMENT_COUNT++, LAST_ACTIVITY_AT aktualisiert,
  *       MENTION-Notification fuer erwaehnte Benutzer vorhanden
- *   <li>POST /comments mit parentCommentId -> PARENT_COMMENT_ID gesetzt, REPLY-Notification emittiert
+ *   <li>POST /comments mit parentCommentId -> PARENT_COMMENT_ID gesetzt, REPLY-Notification
+ *       emittiert
  *   <li>Anonym -> 401; falsche Permission -> 403; unbekannte Task-UUID -> 404
  * </ul>
  *
@@ -126,11 +128,13 @@ class CommentControllerIT {
 
   /** Zweiter Benutzer: wird als @mention-Ziel und Eltern-Kommentar-Autor eingesetzt. */
   private static final UUID USER_B_REF = UUID.randomUUID();
+
   private static final String USER_B_LOGIN = "user-b-comment";
   private static final long USER_B_DB_ID = 562L;
 
   /** User mit READ-Only-Recht (kein TASK_WRITE -> 403). */
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
+
   private static final String USER_READ_ONLY_LOGIN = "read-only-comment@brasi.de";
 
   /** Mandant B: fremder Tenant fuer 404-Test. */
@@ -178,8 +182,7 @@ class CommentControllerIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -214,7 +217,8 @@ class CommentControllerIT {
     seedBenutzerIfAbsent(jt, USER_C_DB_ID, USER_C_REF, USER_C_LOGIN, TENANT_B_ID);
   }
 
-  // ---- IT 1: POST comment -> persistiert + COMMENT_COUNT++ + LAST_ACTIVITY_AT + MENTION-Notification
+  // ---- IT 1: POST comment -> persistiert + COMMENT_COUNT++ + LAST_ACTIVITY_AT +
+  // MENTION-Notification
 
   @Test
   @DisplayName(
@@ -225,9 +229,13 @@ class CommentControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen
     final String createBody = om.writeValueAsString(Map.of("title", "Comment-IT-Task-1"));
@@ -250,19 +258,19 @@ class CommentControllerIT {
     assertThat(taskUuid).isNotNull();
 
     // Slice 4 (Auflage 4): Mention-Empfaenger sind auf die WRITE-Member-Menge begrenzt. Damit die
-    // MENTION-Notification fuer USER_B tatsaechlich entsteht, muss USER_B aktiver WRITE-Member sein.
+    // MENTION-Notification fuer USER_B tatsaechlich entsteht, muss USER_B aktiver WRITE-Member
+    // sein.
     insertActiveMember(560101L, taskDbId(taskUuid), USER_B_REF);
 
     // COMMENT_COUNT vor dem Kommentar
     final Integer countBefore =
         jdbcTemplate.queryForObject(
-            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
-            Integer.class,
-            taskUuid);
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
 
     // Kommentar mit STRUKTURIERTER Mention posten (Ziel-GUID, NICHT aus dem Text geparst).
-    final String commentBody = om.writeValueAsString(
-        Map.of("text", "Hallo, bitte pruefen.", "mentions", List.of(USER_B_REF)));
+    final String commentBody =
+        om.writeValueAsString(
+            Map.of("text", "Hallo, bitte pruefen.", "mentions", List.of(USER_B_REF)));
     final String commentResponse =
         mvc.perform(
                 post("/api/v1/tasks/" + taskUuid + "/comments")
@@ -297,12 +305,8 @@ class CommentControllerIT {
     // Beweis 2: COMMENT_COUNT wurde um 1 erhoeht
     final Integer countAfter =
         jdbcTemplate.queryForObject(
-            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
-            Integer.class,
-            taskUuid);
-    assertThat(countAfter)
-        .as("COMMENT_COUNT muss um 1 gestiegen sein")
-        .isEqualTo(countBefore + 1);
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+    assertThat(countAfter).as("COMMENT_COUNT muss um 1 gestiegen sein").isEqualTo(countBefore + 1);
 
     // Beweis 3: LAST_ACTIVITY_AT wurde aktualisiert (nicht null)
     final Object lastActivity =
@@ -326,6 +330,117 @@ class CommentControllerIT {
         .isGreaterThanOrEqualTo(1);
   }
 
+  // ---- IT I1 (Intake #136): Top-Level-Kommentar -> COMMENT-Notification fuer Assignee, NICHT
+  // Autor
+
+  @Test
+  @DisplayName(
+      "i1_top_level_comment_benachrichtigt_assignee_nicht_autor (Intake #136):"
+          + " USER_A (Autor) postet Top-Level-Kommentar, USER_B ist aktiver Assignee"
+          + " -> TASK_NOTIFICATION Typ COMMENT (TYPE_ID=409) fuer USER_B, KEIN COMMENT fuer USER_A")
+  void i1_top_level_comment_benachrichtigt_assignee_nicht_autor() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-136-Assignee");
+    final long taskId = taskDbId(taskUuid);
+
+    // USER_B als aktiven Assignee (ASSIGNEE_FLAG=1, EXIT_KIND null) direkt per JDBC setzen.
+    insertActiveMember(560501L, taskId, USER_B_REF);
+
+    // Top-Level-Kommentar OHNE jede Mention -> COMMENT entsteht rein aus der Assignee-Regel.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("text", "Top-Level, bitte ansehen."))))
+        .andExpect(status().isCreated());
+
+    // COMMENT-Notification (TYPE_ID=409) fuer den Assignee USER_B.
+    final Integer commentNotifB =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND n.TYPE_ID = 409",
+            Integer.class,
+            taskUuid,
+            USER_B_REF);
+    assertThat(commentNotifB)
+        .as("COMMENT-Notification fuer Assignee USER_B muss existieren")
+        .isEqualTo(1);
+
+    // KEIN COMMENT fuer den Autor USER_A (Self-Exclusion), auch falls er selbst Assignee ist.
+    final Integer commentNotifA =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND n.TYPE_ID = 409",
+            Integer.class,
+            taskUuid,
+            USER_A_REF);
+    assertThat(commentNotifA)
+        .as("Autor USER_A darf KEINE COMMENT-Notification erhalten (Self-Exclusion)")
+        .isEqualTo(0);
+  }
+
+  // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------
+
+  @Test
+  @DisplayName(
+      "i3_comment_filter_reiner_participant_und_ex_assignee_kein_comment (Intake #136):"
+          + " ein reiner Participant (ASSIGNEE_FLAG=0) UND ein ausgetretener Assignee (EXIT_KIND"
+          + " gesetzt) erhalten bei Top-Level-Kommentar KEIN COMMENT (findActiveAssigneesByTaskId-Filter)")
+  void i3_comment_filter_reiner_participant_und_ex_assignee_kein_comment() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-136-Filter");
+    final long taskId = taskDbId(taskUuid);
+
+    // (a) reiner Participant: PERSON, aktiv, aber ASSIGNEE_FLAG=0 (USER_B).
+    insertPureParticipant(560601L, taskId, USER_B_REF);
+    // (b) ausgetretener Assignee: ASSIGNEE_FLAG=1, aber EXIT_KIND=UNSUBSCRIBED (USER_C_REF nur als
+    //     neutrale UUID verwendet; die Zeile ist ohnehin im Task-Mandanten PERSON-aktiv-mit-exit).
+    insertExitedAssignee(560602L, taskId, USER_C_REF);
+
+    // Top-Level-Kommentar OHNE Mention.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("text", "Nur fuer aktive Assignees."))))
+        .andExpect(status().isCreated());
+
+    // Weder der reine Participant noch der ausgetretene Assignee erhalten ein COMMENT.
+    final Integer commentNotifs =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.TYPE_ID = 409"
+                + " AND n.RECIPIENT_REF IN (?, ?)",
+            Integer.class,
+            taskUuid,
+            USER_B_REF,
+            USER_C_REF);
+    assertThat(commentNotifs)
+        .as("reiner Participant + ausgetretener Assignee duerfen KEIN COMMENT erhalten")
+        .isEqualTo(0);
+  }
+
   // ---- IT 2: Reply -> PARENT_COMMENT_ID gesetzt + REPLY-Notification ---------------------------
 
   @Test
@@ -337,12 +452,20 @@ class CommentControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
-    final String tokenB = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_B_REF, USER_B_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (USER_A)
     final String createBody = om.writeValueAsString(Map.of("title", "Comment-IT-Task-2"));
@@ -434,26 +557,34 @@ class CommentControllerIT {
   void fremd_tenant_mention_keine_notification() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-FremdMention");
 
     // GUID aus Tenant B -> loest in Tenant A NICHT auf (findActiveByUuids mandanten-scoped)
-    final String body = om.writeValueAsString(
-        Map.of("text", "Fremd-Mention.", "mentions", List.of(USER_C_REF)));
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(body))
+    final String body =
+        om.writeValueAsString(Map.of("text", "Fremd-Mention.", "mentions", List.of(USER_C_REF)));
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
         .andExpect(status().isCreated());
 
-    final Integer notifForC = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
-            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
-        Integer.class, taskUuid, USER_C_REF);
+    final Integer notifForC =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+            Integer.class,
+            taskUuid,
+            USER_C_REF);
     assertThat(notifForC)
         .as("fremd-tenant Mention darf KEINE Notification erzeugen (cross-tenant dicht)")
         .isEqualTo(0);
@@ -468,26 +599,35 @@ class CommentControllerIT {
   void email_text_ohne_mentions_keine_notification() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-EmailText");
 
-    // Text enthaelt Email-Erwaehnungen, aber KEIN strukturiertes mentions-Feld -> kein Text-Parsing.
-    final String body = om.writeValueAsString(
-        Map.of("text", "Bitte pruefen @" + USER_B_LOGIN + "@brasi.de und foo@bar.de danke."));
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(body))
+    // Text enthaelt Email-Erwaehnungen, aber KEIN strukturiertes mentions-Feld -> kein
+    // Text-Parsing.
+    final String body =
+        om.writeValueAsString(
+            Map.of("text", "Bitte pruefen @" + USER_B_LOGIN + "@brasi.de und foo@bar.de danke."));
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
         .andExpect(status().isCreated());
 
-    final Integer mentionNotifs = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
-            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND n.TYPE_ID = 404",
-        Integer.class, taskUuid);
+    final Integer mentionNotifs =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND n.TYPE_ID = 404",
+            Integer.class,
+            taskUuid);
     assertThat(mentionNotifs)
         .as("ohne strukturierte mentions darf KEINE MENTION aus dem Text entstehen")
         .isEqualTo(0);
@@ -500,21 +640,28 @@ class CommentControllerIT {
   void mentions_null_element_400() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-NullMention");
 
-    // null-Element im mentions-Array -> CommentCreateInput-Konstruktor wirft bei der Deserialisierung.
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"text\":\"Test\",\"mentions\":[null]}"))
+    // null-Element im mentions-Array -> CommentCreateInput-Konstruktor wirft bei der
+    // Deserialisierung.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"Test\",\"mentions\":[null]}"))
         .andExpect(status().isBadRequest());
   }
 
-  // ---- IT 6: langer Kommentartext > 255 Zeichen -> 201 (nvarchar max, kein 255-Validierungscap) --
+  // ---- IT 6: langer Kommentartext > 255 Zeichen -> 201 (nvarchar max, kein 255-Validierungscap)
+  // --
 
   @Test
   @DisplayName(
@@ -523,26 +670,35 @@ class CommentControllerIT {
   void langer_kommentartext_ueber_255_wird_akzeptiert() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "LangText-Kommentar-Task");
     final String longText = "L".repeat(300); // > 255
 
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("text", longText))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("text", longText))))
         .andExpect(status().isCreated());
 
     // DB-Beweis: der volle Text wurde persistiert (nicht gekappt/abgewiesen).
-    final Integer longCount = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c"
-            + " JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND LEN(c.TEXT) = 300",
-        Integer.class, taskUuid);
-    assertThat(longCount).as("Kommentar mit 300 Zeichen muss vollstaendig persistiert sein").isEqualTo(1);
+    final Integer longCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c"
+                + " JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND LEN(c.TEXT) = 300",
+            Integer.class,
+            taskUuid);
+    assertThat(longCount)
+        .as("Kommentar mit 300 Zeichen muss vollstaendig persistiert sein")
+        .isEqualTo(1);
   }
 
   // ---- Negativ-IT: 401 / 403 / 404 -----------------------------------------------------------
@@ -564,42 +720,72 @@ class CommentControllerIT {
         .andExpect(status().isUnauthorized());
 
     // 2. Slice 4: POST /comments ist nicht mehr permission-gated. Ein TASK_READ-Grant-Holder OHNE
-    // Membership erreicht eine real existierende Fremd-Task nicht -> neutral 404 (statt frueher 403).
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // Membership erreicht eine real existierende Fremd-Task nicht -> neutral 404 (statt frueher
+    // 403).
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-POST-authz");
-    final Integer commentsBefore = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer notificationsBefore = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer historyBefore = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer commentCountBefore = jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
-    final String tokenReadOnly = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-        "task-management:TASK_READ");
+    final Integer commentsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer notificationsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer historyBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer commentCountBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
     mvc.perform(
             post("/api/v1/tasks/" + taskUuid + "/comments")
                 .header("Authorization", "Bearer " + tokenReadOnly)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("text", "Test Non-Member"))))
         .andExpect(status().isNotFound());
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(commentsBefore);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(notificationsBefore);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(historyBefore);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(commentsBefore);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(notificationsBefore);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(historyBefore);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
         .isEqualTo(commentCountBefore);
 
     // 3. Member-Token (USER_A), aber unbekannte Task-UUID -> 404
@@ -612,72 +798,115 @@ class CommentControllerIT {
   }
 
   @Test
-  @DisplayName("Grantfreier Member schreibt Kommentar; Ex-Member und fremder Tenant lesen oder schreiben nicht")
+  @DisplayName(
+      "Grantfreier Member schreibt Kommentar; Ex-Member und fremder Tenant lesen oder schreiben nicht")
   void comment_membership_guard_wire_und_keine_verweigerten_writes() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String creator = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final String creator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     final UUID taskUuid = createTask(mvc, om, creator, "Comment-Membership-Wire");
     insertActiveMember(560401L, taskDbId(taskUuid), USER_B_REF);
     final String member = buildGrantFreeJwt(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
 
-    final Integer commentsBefore = jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer commentsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
     final UUID commentUuid = postComment(mvc, om, member, taskUuid, "Grantfreier Kommentar", null);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND c.EXTERNALID = ? AND c.AUTHOR_REF = ?",
-        Integer.class, taskUuid, commentUuid, USER_B_REF)).isEqualTo(1);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ? AND c.EXTERNALID = ? AND c.AUTHOR_REF = ?",
+                Integer.class,
+                taskUuid,
+                commentUuid,
+                USER_B_REF))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
         .isEqualTo(commentsBefore + 1);
 
-    final Integer commentRows = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer notificationRows = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer historyRows = jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid);
-    final Integer count = jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+    final Integer commentRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer notificationRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer historyRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ?",
+            Integer.class,
+            taskUuid);
+    final Integer count =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
 
     final String foreign = buildGrantFreeJwt(TENANT_B_UUID, USER_C_REF, USER_C_LOGIN);
-    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + foreign))
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + foreign))
         .andExpect(status().isNotFound());
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + foreign)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("text", "Fremder Kommentar",
-                "mentions", List.of(USER_A_REF)))))
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + foreign)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("text", "Fremder Kommentar", "mentions", List.of(USER_A_REF)))))
         .andExpect(status().isNotFound());
 
     jdbcTemplate.update(
         "UPDATE [dbo].[TASK_PARTICIPANT] SET EXIT_KIND = 'UNSUBSCRIBED', EXIT_AT = GETDATE()"
             + " WHERE TASK_ID = ? AND TENANT_ID = ? AND PARTICIPANT_REF = ?",
-        taskDbId(taskUuid), TENANT_A_ID, USER_B_REF);
-    mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + member)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("text", "Ex-Member Kommentar",
-                "mentions", List.of(USER_A_REF)))))
+        taskDbId(taskUuid),
+        TENANT_A_ID,
+        USER_B_REF);
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + member)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("text", "Ex-Member Kommentar", "mentions", List.of(USER_A_REF)))))
         .andExpect(status().isNotFound());
 
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(commentRows);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(notificationRows);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ?", Integer.class, taskUuid)).isEqualTo(historyRows);
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid))
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(commentRows);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(notificationRows);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .isEqualTo(historyRows);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
         .isEqualTo(count);
   }
 
@@ -690,17 +919,22 @@ class CommentControllerIT {
   void get_comments_flache_liste_chronologisch_parent_resolved() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-flat");
     final UUID c1 = postComment(mvc, om, tokenA, taskUuid, "C1-top", null);
     final UUID c2 = postComment(mvc, om, tokenA, taskUuid, "C2-reply", c1);
 
     final String resp =
-        mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-                .header("Authorization", "Bearer " + tokenA))
+        mvc.perform(
+                get("/api/v1/tasks/" + taskUuid + "/comments")
+                    .header("Authorization", "Bearer " + tokenA))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -709,7 +943,9 @@ class CommentControllerIT {
     final JsonNode arr = om.readTree(resp);
     assertThat(arr.isArray()).isTrue();
     assertThat(arr.size()).isEqualTo(2);
-    assertThat(arr.get(0).get("id").asText()).as("chronologisch: C1 zuerst").isEqualTo(c1.toString());
+    assertThat(arr.get(0).get("id").asText())
+        .as("chronologisch: C1 zuerst")
+        .isEqualTo(c1.toString());
     assertThat(arr.get(0).get("parentCommentId").isNull()).as("Top-Level -> null").isTrue();
     assertThat(arr.get(1).get("id").asText()).isEqualTo(c2.toString());
     assertThat(arr.get(1).get("parentCommentId").asText())
@@ -726,9 +962,13 @@ class CommentControllerIT {
   void get_comments_deaktivierter_elternkommentar_parent_null() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-dangling");
     final UUID c1 = postComment(mvc, om, tokenA, taskUuid, "C1-parent", null);
@@ -739,8 +979,9 @@ class CommentControllerIT {
         "UPDATE [dbo].[TASK_COMMENT] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", c1);
 
     final String resp =
-        mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-                .header("Authorization", "Bearer " + tokenA))
+        mvc.perform(
+                get("/api/v1/tasks/" + taskUuid + "/comments")
+                    .header("Authorization", "Bearer " + tokenA))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -759,14 +1000,19 @@ class CommentControllerIT {
   void get_comments_leere_aufgabe_200_empty() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-empty");
 
-    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.length()").value(0));
   }
@@ -778,30 +1024,42 @@ class CommentControllerIT {
   void get_comments_404_unbekannt_und_deaktivierte_task() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // unbekannte UUID -> 404
-    mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNotFound());
 
     // DEACTIVE Task -> 404
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-deactive-task");
     jdbcTemplate.update(
         "UPDATE [dbo].[TASK] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", taskUuid);
-    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNotFound());
 
-    // EXISTIERENDE Aufgabe eines FREMDEN Mandanten (Tenant B) -> 404 (Tenant-Maske; Codex-IMPL-Gate).
-    final String tokenC = buildJwtWithAuthority(
-        TENANT_B_UUID, USER_C_REF, USER_C_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    // EXISTIERENDE Aufgabe eines FREMDEN Mandanten (Tenant B) -> 404 (Tenant-Maske;
+    // Codex-IMPL-Gate).
+    final String tokenC =
+        buildJwtWithAuthority(
+            TENANT_B_UUID,
+            USER_C_REF,
+            USER_C_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final UUID foreignTaskUuid = createTask(mvc, om, tokenC, "Comment-GET-foreign-tenant");
-    mvc.perform(get("/api/v1/tasks/" + foreignTaskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            get("/api/v1/tasks/" + foreignTaskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNotFound());
   }
 
@@ -813,9 +1071,13 @@ class CommentControllerIT {
   void get_comments_d1_nicht_teilnehmer_gleicher_tenant_200() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-GET-d1");
     postComment(mvc, om, tokenA, taskUuid, "nur-Mitglieder-sichtbar", null);
@@ -823,16 +1085,19 @@ class CommentControllerIT {
     // (a) USER_B: gleicher Mandant, GRANT-FREI, aber aktiver WRITE-Member -> 200 (Happy Path).
     insertActiveMember(560301L, taskDbId(taskUuid), USER_B_REF);
     final String tokenMember = buildGrantFreeJwt(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
-    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenMember))
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenMember))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.length()").value(1));
 
     // (b) USER_READ_ONLY: gleicher Mandant, TASK_READ-Grant, aber KEIN Teilnehmer -> neutral 404.
-    final String tokenNonMember = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
-    mvc.perform(get("/api/v1/tasks/" + taskUuid + "/comments")
-            .header("Authorization", "Bearer " + tokenNonMember))
+    final String tokenNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenNonMember))
         .andExpect(status().isNotFound());
   }
 
@@ -850,10 +1115,12 @@ class CommentControllerIT {
 
     // Slice 4: GET /comments ist nicht mehr TASK_READ-gated. Ein beliebig berechtigter Nutzer auf
     // eine unbekannte Task -> neutral 404 (statt frueher 403 mangels TASK_READ).
-    final String tokenWriteOnly = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
-    mvc.perform(get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
-            .header("Authorization", "Bearer " + tokenWriteOnly))
+    final String tokenWriteOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(
+            get("/api/v1/tasks/" + UUID.randomUUID() + "/comments")
+                .header("Authorization", "Bearer " + tokenWriteOnly))
         .andExpect(status().isNotFound());
   }
 
@@ -873,10 +1140,11 @@ class CommentControllerIT {
             ? Map.of("text", text)
             : Map.of("text", text, "parentCommentId", parentCommentId);
     final String resp =
-        mvc.perform(post("/api/v1/tasks/" + taskUuid + "/comments")
-                .header("Authorization", "Bearer " + token)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(body)))
+        mvc.perform(
+                post("/api/v1/tasks/" + taskUuid + "/comments")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(body)))
             .andExpect(status().isCreated())
             .andReturn()
             .getResponse()
@@ -895,10 +1163,11 @@ class CommentControllerIT {
       final MockMvc mvc, final ObjectMapper om, final String token, final String title)
       throws Exception {
     final String response =
-        mvc.perform(post("/api/v1/tasks")
-                .header("Authorization", "Bearer " + token)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(om.writeValueAsString(Map.of("title", title))))
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsString(Map.of("title", title))))
             .andExpect(status().isCreated())
             .andReturn()
             .getResponse()
@@ -935,7 +1204,50 @@ class CommentControllerIT {
             + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
             + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1,"
             + " NULL, NULL)",
-        partId, TENANT_A_ID, taskId, ref, TENANT_A_ID);
+        partId,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        TENANT_A_ID);
+  }
+
+  /**
+   * Fuegt einen aktiven REINEN Teilnehmer (PERSON, EXIT_KIND null, ASSIGNEE_FLAG=0) hinzu (Intake
+   * #136, I3): belegt, dass {@code findActiveAssigneesByTaskId} reine Participants ausschliesst.
+   */
+  private void insertPureParticipant(final long partId, final long taskId, final UUID ref) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1,"
+            + " NULL, NULL)",
+        partId,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        TENANT_A_ID);
+  }
+
+  /**
+   * Fuegt einen AUSGETRETENEN Assignee (PERSON, ASSIGNEE_FLAG=1, EXIT_KIND=UNSUBSCRIBED) hinzu
+   * (Intake #136, I3): belegt, dass {@code findActiveAssigneesByTaskId} (EXIT_KIND IS NULL)
+   * ausgetretene Assignees ausschliesst.
+   */
+  private void insertExitedAssignee(final long partId, final long taskId, final UUID ref) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, 'ACTIVE', 'it', GETDATE(), NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1,"
+            + " 'UNSUBSCRIBED', GETDATE())",
+        partId,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        TENANT_A_ID);
   }
 
   private static String buildJwtWithAuthority(
@@ -975,7 +1287,10 @@ class CommentControllerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -989,7 +1304,11 @@ class CommentControllerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {
@@ -1058,7 +1377,8 @@ class CommentControllerIT {
     KsfWebSecurityAutoConfiguration.class,
     SecurityContextUserAccessor.class,
     WhoAmIProbeController.class,
-    // Slice 4 (Standard-Selfservice): CommentService/CommentQueryService haengen jetzt am objekt-level
+    // Slice 4 (Standard-Selfservice): CommentService/CommentQueryService haengen jetzt am
+    // objekt-level
     // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,

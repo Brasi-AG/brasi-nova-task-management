@@ -194,18 +194,14 @@ class EntityMappingTest {
   @Test
   void participantKind_hasPersonAndTeam() {
     Set<String> constants =
-        Arrays.stream(ParticipantKind.values())
-            .map(Enum::name)
-            .collect(Collectors.toSet());
+        Arrays.stream(ParticipantKind.values()).map(Enum::name).collect(Collectors.toSet());
     assertThat(constants).containsExactlyInAnyOrder("PERSON", "TEAM");
   }
 
   @Test
   void exitKind_hasHandoverAndUnsubscribed() {
     Set<String> constants =
-        Arrays.stream(ExitKind.values())
-            .map(Enum::name)
-            .collect(Collectors.toSet());
+        Arrays.stream(ExitKind.values()).map(Enum::name).collect(Collectors.toSet());
     assertThat(constants).containsExactlyInAnyOrder("HANDOVER", "UNSUBSCRIBED");
   }
 
@@ -481,12 +477,23 @@ class EntityMappingTest {
         .isEqualTo(boolean.class);
 
     // Fachliche Spalten non-nullable (SHOULD_STAY bit NOT NULL -> boolean, kein nullable Boolean).
-    assertThat(TaskHandover.class.getDeclaredField("taskId").getAnnotation(NovaColumn.class).nullable())
-        .isFalse();
-    assertThat(TaskHandover.class.getDeclaredField("fromRef").getAnnotation(NovaColumn.class).nullable())
+    assertThat(
+            TaskHandover.class
+                .getDeclaredField("taskId")
+                .getAnnotation(NovaColumn.class)
+                .nullable())
         .isFalse();
     assertThat(
-            TaskHandover.class.getDeclaredField("shouldStay").getAnnotation(NovaColumn.class).nullable())
+            TaskHandover.class
+                .getDeclaredField("fromRef")
+                .getAnnotation(NovaColumn.class)
+                .nullable())
+        .isFalse();
+    assertThat(
+            TaskHandover.class
+                .getDeclaredField("shouldStay")
+                .getAnnotation(NovaColumn.class)
+                .nullable())
         .isFalse();
   }
 
@@ -538,14 +545,15 @@ class EntityMappingTest {
 
   @Test
   void notificationTypeCodes_exactSet() throws Exception {
+    // Intake #136: COMMENT als 9. Notification-Typ ergaenzt (Top-Level-Kommentar an Assignee).
     Set<String> values = getPublicStringConstants(NotificationTypeCodes.class);
     assertThat(values)
         .containsExactlyInAnyOrder(
-            "ASSIGN", "REPLY", "DUE", "MENTION", "DONE", "CHANGE", "HANDOVER", "SYSTEM");
+            "ASSIGN", "REPLY", "DUE", "MENTION", "DONE", "CHANGE", "HANDOVER", "SYSTEM", "COMMENT");
     Set<String> fieldNames = getPublicStringConstantFieldNames(NotificationTypeCodes.class);
     assertThat(fieldNames)
         .containsExactlyInAnyOrder(
-            "ASSIGN", "REPLY", "DUE", "MENTION", "DONE", "CHANGE", "HANDOVER", "SYSTEM");
+            "ASSIGN", "REPLY", "DUE", "MENTION", "DONE", "CHANGE", "HANDOVER", "SYSTEM", "COMMENT");
   }
 
   @Test
@@ -582,9 +590,7 @@ class EntityMappingTest {
     assertThat(f.getType()).isEqualTo(Long.class);
 
     NovaColumn col = f.getAnnotation(NovaColumn.class);
-    assertThat(col)
-        .as("@NovaColumn fehlt an %s.%s", clazz.getSimpleName(), fieldName)
-        .isNotNull();
+    assertThat(col).as("@NovaColumn fehlt an %s.%s", clazz.getSimpleName(), fieldName).isNotNull();
     assertThat(col.name()).isEqualTo(expectedColumn);
     assertThat(col.nullable()).isEqualTo(nullable);
 
