@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TagSeverityColors;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.push.NoOpNotificationPushConfig;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
@@ -454,7 +456,449 @@ class TagCatalogIT {
         .andExpect(status().isOk());
   }
 
+  // ---- IT Intake #135 Phase 1 Slice 3: color/severity optional (create/read/PUT/snapshot) -----
+
+  @Test
+  @DisplayName(
+      "ac1_color_only_create_201_db_color_uppercase_severity_null_tenant0:"
+          + " POST /tags {name, color:'#f87171'} ohne severityCode (TAG_ADMIN) -> 201;"
+          + " DB TASK_TAG COLOR='#F87171' (uppercase), SEVERITY_ID NULL, TENANT_ID=0")
+  void ac1_color_only_create_201_db_color_uppercase_severity_null_tenant0() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // AC1: color-only Create (lowercase Hex -> wird normalisiert auf Grossbuchstaben)
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC1-ColorOnly-Tag\",\"color\":\"#f87171\"}");
+
+    // DB: COLOR='#F87171' (uppercase normalisiert), SEVERITY_ID NULL, TENANT_ID=0, aktiv
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG]"
+                + " WHERE EXTERNALID = ? AND TENANT_ID = 0 AND ENTITY_STATUS = 'ACTIVE'"
+                + " AND COLOR = '#F87171' AND SEVERITY_ID IS NULL",
+            Integer.class,
+            tagId);
+    assertThat(rowCount)
+        .as("color-only-Tag: COLOR='#F87171' uppercase, SEVERITY_ID NULL, TENANT_ID=0")
+        .isEqualTo(1);
+
+    // Zusatzbeweis Uppercase-Normalisierung case-sensitiv (MSSQL-Collation ist case-insensitiv, der
+    // DB-Vergleich oben beweist die Grossschreibung daher nicht zuverlaessig): GET-Response mit
+    // case-sensitivem Java-Vergleich belegt '#F87171' (nicht '#f87171').
+    final ObjectMapper om = new ObjectMapper();
+    final String listResponse =
+        mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final JsonNode arr = om.readValue(listResponse, JsonNode.class);
+    JsonNode node = null;
+    for (JsonNode n : arr) {
+      if (tagId.toString().equals(n.get("id").asText())) {
+        node = n;
+        break;
+      }
+    }
+    assertThat(node).as("AC1-Tag muss in GET /tags erscheinen").isNotNull();
+    assertThat(node.get("color").asText())
+        .as("AC1: color uppercase-normalisiert (case-sensitiver Java-Vergleich via GET-Response)")
+        .isEqualTo("#F87171");
+  }
+
+  @Test
+  @DisplayName(
+      "ac2_severity_derive_create_201_db_color_abgeleitet_severity_gesetzt:"
+          + " POST /tags {name, severityCode:'DANGER'} ohne color -> 201;"
+          + " DB COLOR='#F87171' (aus severity abgeleitet), SEVERITY_ID (DANGER) gesetzt")
+  void ac2_severity_derive_create_201_db_color_abgeleitet_severity_gesetzt() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // AC2: severity-only Create -> Farbe wird aus der severity abgeleitet
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC2-SeverityDerive-Tag\",\"severityCode\":\"DANGER\"}");
+
+    // DB: COLOR aus DANGER abgeleitet (#F87171); SEVERITY_ID gesetzt und zeigt via JOIN auf CODE=DANGER
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG] t"
+                + " JOIN [dbo].[DIC_TAG_SEVERITY] s ON s.ID = t.SEVERITY_ID"
+                + " WHERE t.EXTERNALID = ? AND t.TENANT_ID = 0 AND t.ENTITY_STATUS = 'ACTIVE'"
+                + " AND t.COLOR = ? AND t.SEVERITY_ID IS NOT NULL AND s.CODE = 'DANGER'",
+            Integer.class,
+            tagId,
+            TagSeverityColors.DANGER);
+    assertThat(rowCount)
+        .as("severity-derive: COLOR aus DANGER abgeleitet, SEVERITY_ID gesetzt (CODE=DANGER)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac2b_neutral_create_201_db_color_null_severity_null:"
+          + " POST /tags {name} ohne color/severity -> 201; DB COLOR NULL, SEVERITY_ID NULL")
+  void ac2b_neutral_create_201_db_color_null_severity_null() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // AC2b: neutraler Tag (weder color noch severity)
+    final UUID tagId = createTag(mvc, tokenA, "{\"name\":\"AC2b-Neutral-Tag\"}");
+
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG]"
+                + " WHERE EXTERNALID = ? AND TENANT_ID = 0 AND ENTITY_STATUS = 'ACTIVE'"
+                + " AND COLOR IS NULL AND SEVERITY_ID IS NULL",
+            Integer.class,
+            tagId);
+    assertThat(rowCount)
+        .as("neutraler Tag: COLOR NULL, SEVERITY_ID NULL")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac3_read_null_safe_color_only_tag_in_get_tags_color_gesetzt_severitycode_null_kein_500:"
+          + " GET /tags (TASK_READ) -> 200; color-only-Tag traegt color, severityCode null; kein 500")
+  void ac3_read_null_safe_color_only_tag_in_get_tags_color_gesetzt_severitycode_null_kein_500()
+      throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = adminTokenA();
+
+    // color-only Tag anlegen
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC3-Read-ColorOnly\",\"color\":\"#4ade80\"}");
+
+    // GET mit reinem TASK_READ -> 200 (kein 500 trotz null-severity)
+    final String tokenRead =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+    final String listResponse =
+        mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenRead))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode tagArray = om.readValue(listResponse, JsonNode.class);
+    assertThat(tagArray.isArray()).isTrue();
+    JsonNode found = null;
+    for (JsonNode node : tagArray) {
+      if (tagId.toString().equals(node.get("id").asText())) {
+        found = node;
+        break;
+      }
+    }
+    assertThat(found).as("color-only-Tag muss in GET /tags erscheinen").isNotNull();
+    assertThat(found.get("color").asText())
+        .as("color-only-Tag: color-Feld gesetzt (uppercase normalisiert)")
+        .isEqualTo(TagSeverityColors.SUCCESS);
+    // severityCode null/weggelassen (null-safe Mapping; kein Reverse-Resolver-Aufruf)
+    assertThat(found.hasNonNull("severityCode"))
+        .as("color-only-Tag: severityCode ist null/weggelassen")
+        .isFalse();
+  }
+
+  @Test
+  @DisplayName(
+      "ac8_read_severity_tag_severitycode_nonnull_in_response:"
+          + " severity-behafteter Tag traegt in GET /tags einen NICHT-null severityCode (DANGER)"
+          + " + abgeleitete color (AC8 backward-compat, positiver Read-Fall)")
+  void ac8_read_severity_tag_severitycode_nonnull_in_response() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = adminTokenA();
+
+    // severity-behafteter Tag (DANGER) -> Response muss severityCode='DANGER' (nicht-null) tragen
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC8-SeverityRead\",\"severityCode\":\"DANGER\"}");
+
+    final String tokenRead =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+    final String listResponse =
+        mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenRead))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode arr = om.readValue(listResponse, JsonNode.class);
+    JsonNode found = null;
+    for (JsonNode n : arr) {
+      if (tagId.toString().equals(n.get("id").asText())) {
+        found = n;
+        break;
+      }
+    }
+    assertThat(found).as("severity-Tag muss in GET /tags erscheinen").isNotNull();
+    assertThat(found.hasNonNull("severityCode"))
+        .as("AC8: severityCode ist NICHT null fuer einen severity-behafteten Tag")
+        .isTrue();
+    assertThat(found.get("severityCode").asText())
+        .as("AC8: severityCode-Response = 'DANGER' (Resolver-Rueckweg, case-sensitiv)")
+        .isEqualTo("DANGER");
+    assertThat(found.get("color").asText())
+        .as("severity-Tag: color aus DANGER abgeleitet im Response")
+        .isEqualTo(TagSeverityColors.DANGER);
+  }
+
+  @Test
+  @DisplayName(
+      "ac5_put_color_present_null_neutralisiert_color_und_severity:"
+          + " PUT /tags/{id} {\"color\":null} auf color+severity-Tag -> 204;"
+          + " DB COLOR NULL UND SEVERITY_ID NULL (voll neutralisiert)")
+  void ac5_put_color_present_null_neutralisiert_color_und_severity() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // Tag mit color+severity anlegen (DANGER -> COLOR abgeleitet, SEVERITY_ID gesetzt)
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC5i-Neutralize\",\"severityCode\":\"DANGER\"}");
+
+    // PUT {"color":null} -> 204; neutralisiert COLOR und SEVERITY_ID
+    mvc.perform(
+            put("/api/v1/tags/" + tagId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"color\":null}"))
+        .andExpect(status().isNoContent());
+
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG]"
+                + " WHERE EXTERNALID = ? AND COLOR IS NULL AND SEVERITY_ID IS NULL",
+            Integer.class,
+            tagId);
+    assertThat(rowCount)
+        .as("PUT color=null: COLOR UND SEVERITY_ID auf NULL (voll neutralisiert)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac5_put_name_only_laesst_color_und_severity_unveraendert:"
+          + " PUT /tags/{id} {\"name\":\"X\"} auf Tag mit color -> 204;"
+          + " DB COLOR/SEVERITY_ID unveraendert, BEZEICHNUNG='X'")
+  void ac5_put_name_only_laesst_color_und_severity_unveraendert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // Tag mit color+severity anlegen (DANGER)
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC5ii-NamePatch\",\"severityCode\":\"DANGER\"}");
+
+    // reiner Namens-Patch -> 204
+    mvc.perform(
+            put("/api/v1/tags/" + tagId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"AC5ii-Renamed\"}"))
+        .andExpect(status().isNoContent());
+
+    // DB: COLOR unveraendert (#F87171), SEVERITY_ID unveraendert (CODE=DANGER), BEZEICHNUNG neu
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG] t"
+                + " JOIN [dbo].[DIC_TAG_SEVERITY] s ON s.ID = t.SEVERITY_ID"
+                + " WHERE t.EXTERNALID = ? AND t.BEZEICHNUNG = 'AC5ii-Renamed'"
+                + " AND t.COLOR = ? AND t.SEVERITY_ID IS NOT NULL AND s.CODE = 'DANGER'",
+            Integer.class,
+            tagId,
+            TagSeverityColors.DANGER);
+    assertThat(rowCount)
+        .as("Namens-Patch: BEZEICHNUNG neu, COLOR/SEVERITY_ID unveraendert (DANGER)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac5_put_severitycode_auf_color_null_tag_setzt_severity_und_leitet_color_ab:"
+          + " PUT /tags/{id} {\"severityCode\":\"WARN\"} auf Tag mit COLOR NULL -> 204;"
+          + " DB SEVERITY_ID=WARN, COLOR abgeleitet '#FBBF24'")
+  void ac5_put_severitycode_auf_color_null_tag_setzt_severity_und_leitet_color_ab()
+      throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // neutraler Tag (COLOR NULL, SEVERITY_ID NULL)
+    final UUID tagId = createTag(mvc, tokenA, "{\"name\":\"AC5iii-SeverityOnNullColor\"}");
+
+    // severityCode-Patch -> 204; severity gesetzt, color aus WARN abgeleitet (Write-Invariante)
+    mvc.perform(
+            put("/api/v1/tags/" + tagId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"severityCode\":\"WARN\"}"))
+        .andExpect(status().isNoContent());
+
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG] t"
+                + " JOIN [dbo].[DIC_TAG_SEVERITY] s ON s.ID = t.SEVERITY_ID"
+                + " WHERE t.EXTERNALID = ? AND t.SEVERITY_ID IS NOT NULL AND s.CODE = 'WARN'"
+                + " AND t.COLOR = ?",
+            Integer.class,
+            tagId,
+            TagSeverityColors.WARN);
+    assertThat(rowCount)
+        .as("severity-Patch auf COLOR-NULL-Tag: SEVERITY_ID=WARN, COLOR aus WARN abgeleitet '#FBBF24'")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac5_put_color_null_und_severitycode_zugleich_400_tag_unveraendert:"
+          + " PUT /tags/{id} {\"color\":null,\"severityCode\":\"DANGER\"} -> 400; DB Tag unveraendert")
+  void ac5_put_color_null_und_severitycode_zugleich_400_tag_unveraendert() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // Ausgangs-Tag mit bekannter Farbe (SUCCESS -> COLOR='#4ADE80')
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC5iv-Conflict\",\"severityCode\":\"SUCCESS\"}");
+
+    // Konflikt color=null + severityCode zugleich -> 400
+    mvc.perform(
+            put("/api/v1/tags/" + tagId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"color\":null,\"severityCode\":\"DANGER\"}"))
+        .andExpect(status().isBadRequest());
+
+    // DB: Tag unveraendert (COLOR weiterhin #4ADE80, SEVERITY_ID zeigt auf SUCCESS)
+    final Integer rowCount =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG] t"
+                + " JOIN [dbo].[DIC_TAG_SEVERITY] s ON s.ID = t.SEVERITY_ID"
+                + " WHERE t.EXTERNALID = ? AND t.COLOR = ? AND s.CODE = 'SUCCESS'",
+            Integer.class,
+            tagId,
+            TagSeverityColors.SUCCESS);
+    assertThat(rowCount)
+        .as("Konflikt -> 400: Tag unveraendert (COLOR='#4ADE80', SEVERITY_ID=SUCCESS)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac5_put_ohne_tag_admin_nur_task_read_403:"
+          + " PUT /tags/{id} mit nur TASK_READ (kein TAG_ADMIN) -> 403")
+  void ac5_put_ohne_tag_admin_nur_task_read_403() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String tokenA = adminTokenA();
+
+    // Ziel-Tag anlegen (mit Admin)
+    final UUID tagId = createTag(mvc, tokenA, "{\"name\":\"AC5v-AuthzTarget\"}");
+
+    // PUT ohne TAG_ADMIN -> 403
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    mvc.perform(
+            put("/api/v1/tags/" + tagId)
+                .header("Authorization", "Bearer " + tokenReadOnly)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"AC5v-Denied\"}"))
+        .andExpect(status().isForbidden());
+
+    // verweigerter PUT (403) darf den Tag NICHT veraendert haben (BEZEICHNUNG bleibt original)
+    final Integer unchanged =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_TAG]"
+                + " WHERE EXTERNALID = ? AND BEZEICHNUNG = 'AC5v-AuthzTarget'",
+            Integer.class,
+            tagId);
+    assertThat(unchanged)
+        .as("403: verweigerter PUT laesst den Tag unveraendert (BEZEICHNUNG original)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "ac4_snapshot_null_safe_color_only_tag_im_katalog_kein_500:"
+          + " color-only-Tag anlegen -> GET /api/v1/tasks/snapshot (gueltiges Token) -> 200;"
+          + " snapshot.tags enthaelt den color-only-Tag mit color gesetzt und severityCode null")
+  void ac4_snapshot_null_safe_color_only_tag_im_katalog_kein_500() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = adminTokenA();
+
+    // color-only Tag anlegen (SECONDARY-Farbe, aber OHNE severity -> severityCode bleibt null)
+    final UUID tagId =
+        createTag(mvc, tokenA, "{\"name\":\"AC4-Snapshot-ColorOnly\",\"color\":\"#cbd5e1\"}");
+
+    // Inbox-Snapshot abrufen (authenticated-only, TASK_READ reicht; kein 500 trotz null-severity)
+    final String snapshotResponse =
+        mvc.perform(
+                get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    final JsonNode snapshot = om.readValue(snapshotResponse, JsonNode.class);
+    final JsonNode tags = snapshot.get("tags");
+    assertThat(tags).as("snapshot.tags muss vorhanden sein").isNotNull();
+    assertThat(tags.isArray()).isTrue();
+
+    JsonNode found = null;
+    for (JsonNode node : tags) {
+      if (tagId.toString().equals(node.get("id").asText())) {
+        found = node;
+        break;
+      }
+    }
+    assertThat(found)
+        .as("color-only-Tag muss im snapshot.tags-Katalog erscheinen (kein 500)")
+        .isNotNull();
+    assertThat(found.get("color").asText())
+        .as("snapshot: color-only-Tag traegt color gesetzt")
+        .isEqualTo(TagSeverityColors.SECONDARY);
+    assertThat(found.hasNonNull("severityCode"))
+        .as("snapshot: color-only-Tag hat severityCode null/weggelassen")
+        .isFalse();
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  /** Admin-Token (Tenant A) mit TASK_WRITE/TASK_READ/TAG_ADMIN fuer Create/PUT/Task-Operationen. */
+  private static String adminTokenA() {
+    return buildJwtWithAuthority(
+        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        "task-management:TASK_WRITE",
+        "task-management:TASK_READ",
+        "task-management:TAG_ADMIN");
+  }
+
+  /**
+   * Legt per POST /api/v1/tags (roher JSON-Body) einen Tag an, erwartet 201 und liefert die UUID
+   * aus {@code $.id} zurueck. Roher JSON-String erlaubt explizites {@code null} und absente Felder.
+   *
+   * @param mvc       MockMvc-Instanz
+   * @param token     Bearer-Token (muss TAG_ADMIN tragen)
+   * @param jsonBody  roher JSON-Request-Body
+   * @return externe UUID des angelegten Tags
+   */
+  private static UUID createTag(final MockMvc mvc, final String token, final String jsonBody)
+      throws Exception {
+    final ObjectMapper om = new ObjectMapper();
+    final String response =
+        mvc.perform(
+                post("/api/v1/tags")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(jsonBody))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(response, JsonNode.class).get("id").traverse(om).readValueAs(UUID.class);
+  }
 
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
