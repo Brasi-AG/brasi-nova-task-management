@@ -445,6 +445,20 @@ public class TagCatalogService {
   private TagModel toModel(final TaskTag tag) {
     final String severityCode =
         tag.getSeverityId() == null ? null : resolver.resolveTagSeverityCode(tag.getSeverityId());
-    return new TagModel(tag.getUuid(), tag.getEntryValue(), severityCode, tag.getColor());
+    final TagModel model =
+        new TagModel(tag.getUuid(), tag.getEntryValue(), severityCode, tag.getColor());
+
+    // PLAN #141 Slice 2: die KSF-Enrichment-Pipeline braucht die geladene Entity am Model
+    // (entityClass + refId werden daraus gesetzt) sowie einen expliziten modelState (die
+    // IS_ACTIVE-Bedingung von deactivate liest ihn). Die daraus erzeugten _links sind rein additiv
+    // und veraendern den fachlichen Wire NICHT; die Enforcement bleibt @RequiresPermission(TAG_ADMIN)
+    // an jedem Mutations-Handler.
+    model.setEntity(tag);
+    model.setModelState(
+        tag.getEntityState() != null
+            ? io.keel.framework.api.service.model.ModelState.fromString(tag.getEntityState().name())
+            : null);
+
+    return model;
   }
 }

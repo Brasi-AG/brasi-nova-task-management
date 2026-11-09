@@ -1,6 +1,8 @@
 package de.brasi.nova.taskmanagement.participant;
 
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
+import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -51,6 +53,7 @@ public class UserStateController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/pin")
+  @HateoasLinkTarget(TaskHateoas.Targets.PIN)
   public ResponseEntity<Void> pin(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {
@@ -75,6 +78,7 @@ public class UserStateController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/flag")
+  @HateoasLinkTarget(TaskHateoas.Targets.FLAG)
   public ResponseEntity<Void> flag(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {
@@ -99,6 +103,7 @@ public class UserStateController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/mute")
+  @HateoasLinkTarget(TaskHateoas.Targets.MUTE)
   public ResponseEntity<Void> mute(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final MarkerInput input) {

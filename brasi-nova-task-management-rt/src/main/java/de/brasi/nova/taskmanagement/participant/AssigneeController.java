@@ -4,6 +4,8 @@ import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -63,6 +65,7 @@ public class AssigneeController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
   })
   @PutMapping("/{id}/assignees")
+  @HateoasLinkTarget(TaskHateoas.Targets.UPDATE_ASSIGNEES)
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> updateAssignees(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
@@ -116,6 +119,7 @@ public class AssigneeController {
                   + " Stand).")
   })
   @PostMapping("/{id}/exit")
+  @HateoasLinkTarget(TaskHateoas.Targets.EXIT)
   public ResponseEntity<Void> exit(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final ExitInput input) {
@@ -147,6 +151,7 @@ public class AssigneeController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
   })
   @PostMapping("/{id}/participants")
+  @HateoasLinkTarget(TaskHateoas.Targets.ADD_PARTICIPANTS)
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Void> addParticipants(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,

@@ -1,16 +1,12 @@
 package de.brasi.nova.taskmanagement.inbox;
 
-import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
-import de.brasi.nova.taskmanagement.paging.KeysetPage;
+import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
-import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
-import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.keel.framework.api.openapi.annotation.ApiFindCollectionResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.ResponseEntity;
@@ -20,8 +16,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Handgeschriebener Facade-Controller fuer Inbox-Snapshot und aktive/Archiv-Reads (arch-v2 §7,
- * plan-v3 Task 14).
+ * Handgeschriebener Facade-Controller fuer aktive/Archiv-Reads (arch-v2 §7, plan-v3 Task 14).
+ *
+ * <p>PLAN #141 Slice 5 (Teil B): der {@code GET /tasks/snapshot}-Handler wurde in den
+ * {@code TaskFacadeController} verschoben, damit er im Kontext eines {@code @EnableNovaHateoas}-
+ * Rule-Owners (Task) ausgeliefert wird. Der SelfLinkEnricher benoetigt genau das fuer die
+ * verschachtelten {@link de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel}-Items.
  *
  * <p>Diese Reads sind AUTHENTICATED-ONLY (kein {@code @RequiresPermission}): das Lesen der EIGENEN
  * Inbox ist eine Basis-Faehigkeit jedes angemeldeten Nutzers (wie das eigene Profil), keine
@@ -29,13 +29,10 @@ import org.springframework.web.bind.annotation.RestController;
  * ({@link CurrentActor#require(UserAccessor)}), NIEMALS aus Client-Eingabedaten - die Sicht ist
  * damit strikt aktor-scoped (ein Nutzer sieht nur die eigene Inbox). Anonyme Requests weist die
  * KSF-Default-Filter-Chain ({@code anyRequest().authenticated()}) bereits mit 401 ab.
- * NOTIFICATION_READ bleibt eine echte Permission und steuert nur die Notification-Sichtbarkeit im
- * Snapshot.
  *
- * <p>Route-Praezedenz: die literalen Pfade {@code /snapshot} und {@code /archive} werden vor dem
- * variablen {@code /{id}} des {@code TaskFacadeController} gematcht (gleiches Muster wie
- * {@code NotificationController} {@code /read-all} vor {@code /{id}/read}). Die Collection-Route
- * {@code GET /api/v1/tasks} existiert im Facade-Controller nicht (nur POST), daher kollisionsfrei.
+ * <p>Route-Praezedenz: die literalen Pfade {@code /archive} werden vor dem variablen {@code /{id}}
+ * des {@code TaskFacadeController} gematcht. Die Collection-Route {@code GET /api/v1/tasks}
+ * existiert im Facade-Controller nicht (nur POST), daher kollisionsfrei.
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -43,75 +40,32 @@ public class InboxSnapshotController {
 
   private final InboxSnapshotService snapshotService;
   private final UserAccessor userAccessor;
-  private final PermissionEvaluator permissionEvaluator;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public InboxSnapshotController(
       final InboxSnapshotService snapshotService,
-      final UserAccessor userAccessor,
-      final PermissionEvaluator permissionEvaluator) {
+      final UserAccessor userAccessor) {
     this.snapshotService = snapshotService;
     this.userAccessor = userAccessor;
-    this.permissionEvaluator = permissionEvaluator;
   }
 
   /**
-   * Liefert den Bootstrap-Snapshot der Inbox fuer den angemeldeten Benutzer.
+   * Liefert eine HAL-Collection aktiver (OPEN) Aufgaben (Fortsetzung des Snapshots).
    *
-   * @return 200 OK mit {@link InboxSnapshotModel}
-   */
-  @Operation(
-      summary = "Inbox-Snapshot laden",
-      description = "Liefert den vollstaendigen Bootstrap-Snapshot der Inbox:"
-          + " aktive Aufgaben (erste Seite), Benachrichtigungen, Tag-Katalog,"
-          + " Teilnehmer-Zusammenfassungen und Archiv-Gesamtzahlen."
-          + " Erzeugt ein asOf-Wasserzeichen fuer konsistente Keyset-Paginierung."
-          + " Die Benachrichtigungs-Seite (notifications) wird NUR befuellt, wenn der Benutzer"
-          + " die Permission NOTIFICATION_READ besitzt (konsistent zu GET /api/v1/notifications);"
-          + " andernfalls ist sie eine leere Seite (items=[], nextCursor=null, hasMore=false) -"
-          + " eine leere Seite unterscheidet 'kein Recht' nicht von 'keine Eintraege'.")
-  @ApiResponses({
-      @ApiResponse(
-          responseCode = "200",
-          description = "Inbox-Snapshot erfolgreich geladen.",
-          content = @Content(
-              mediaType = "application/json",
-              schema = @Schema(implementation = InboxSnapshotModel.class))),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(
-          responseCode = "410",
-          description = "Snapshot konnte unter anhaltender Membership-Aenderung nicht konsistent"
-              + " erzeugt werden (seltene Degradation); Client wiederholt die Anfrage.")
-  })
-  @GetMapping("/snapshot")
-  public ResponseEntity<InboxSnapshotModel> snapshot() {
-    final CurrentActor actor = CurrentActor.require(userAccessor);
-    // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
-    // @RequiresPermission). Der Service bleibt framework-neutral und erhaelt nur die Capability.
-    final boolean notificationsVisible =
-        permissionEvaluator.hasExactAuthority(TaskManagementPermissions.NOTIFICATION_READ);
-    return ResponseEntity.ok(
-        snapshotService.loadSnapshot(
-            actor.user().id(), actor.tenant().id(), notificationsVisible));
-  }
-
-  /**
-   * Liefert eine Keyset-Seite aktiver (OPEN) Aufgaben (Fortsetzung des Snapshots).
+   * <p>Slice 4: Return-Typ ist {@link CursorCollectionModel} (HAL-Collection mit top-level
+   * Cursor-Feldern + Item-rels via KSF-Enrichment-Pipeline).
    *
    * @param cursor opaker Cursor (null = erste Seite mit frischem asOf)
    * @param limit  Seitengroesse (default 50, geclampt auf [1, 100])
-   * @return 200 OK mit {@link KeysetPage} von {@link TaskSummaryModel}
+   * @return 200 OK mit {@link CursorCollectionModel} von {@link TaskSummaryModel}
    */
   @Operation(
       summary = "Aktive Aufgaben laden",
-      description = "Liefert eine Keyset-paginierte Seite aktiver (OPEN) Aufgaben des angemeldeten Benutzers."
-          + " Setzt das asOf-Wasserzeichen bei der ersten Seite (cursor=leer).")
+      description = "Liefert eine Keyset-paginierte HAL-Collection aktiver (OPEN) Aufgaben des angemeldeten Benutzers."
+          + " Setzt das asOf-Wasserzeichen bei der ersten Seite (cursor=leer)."
+          + " Items tragen per-Item-Affordance-Rels (via entityClass=Task).")
   @ApiResponses({
-      // Kein explizites 200-content: springdoc leitet das Schema aus dem parametrisierten
-      // Rueckgabetyp KeysetPage<TaskSummaryModel> ab (items dann korrekt TaskSummaryModel statt
-      // untypisiert - ein roher @Schema(implementation=KeysetPage.class) wuerde den Typparameter
-      // verlieren).
-      @ApiResponse(responseCode = "200", description = "Seite aktiver Aufgaben."),
+      @ApiResponse(responseCode = "200", description = "HAL-Collection aktiver Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(
@@ -122,7 +76,8 @@ public class InboxSnapshotController {
               + " Degradation).")
   })
   @GetMapping
-  public ResponseEntity<KeysetPage<TaskSummaryModel>> activeTasks(
+  @ApiFindCollectionResponse(TaskSummaryModel.class)
+  public ResponseEntity<CursorCollectionModel<TaskSummaryModel>> activeTasks(
       @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
       @RequestParam(required = false) final String cursor,
       @Parameter(description = "Seitengroesse, geclampt auf [1, 100]. Default: 50.")
@@ -132,21 +87,22 @@ public class InboxSnapshotController {
   }
 
   /**
-   * Liefert eine Keyset-Seite archivierter Aufgaben je Filter.
+   * Liefert eine HAL-Collection archivierter Aufgaben je Filter.
+   *
+   * <p>Slice 4: Return-Typ ist {@link CursorCollectionModel} analog zu {@link #activeTasks}.
    *
    * @param filter {@code all} (default) | {@code done} | {@code left}
    * @param cursor opaker Cursor (null = erste Seite mit frischem asOf)
    * @param limit  Seitengroesse (default 50, geclampt auf [1, 100])
-   * @return 200 OK mit {@link KeysetPage} von {@link TaskSummaryModel}
+   * @return 200 OK mit {@link CursorCollectionModel} von {@link TaskSummaryModel}
    */
   @Operation(
       summary = "Archivierte Aufgaben laden",
-      description = "Liefert eine Keyset-paginierte Seite archivierter Aufgaben des angemeldeten Benutzers."
-          + " filter=all (Standard): alle archivierten; filter=done: erledigte; filter=left: verlassene.")
+      description = "Liefert eine Keyset-paginierte HAL-Collection archivierter Aufgaben des angemeldeten Benutzers."
+          + " filter=all (Standard): alle archivierten; filter=done: erledigte; filter=left: verlassene."
+          + " Items tragen per-Item-Affordance-Rels (via entityClass=Task).")
   @ApiResponses({
-      // Kein explizites 200-content: springdoc leitet das Schema aus dem parametrisierten
-      // Rueckgabetyp KeysetPage<TaskSummaryModel> ab (siehe activeTasks).
-      @ApiResponse(responseCode = "200", description = "Seite archivierter Aufgaben."),
+      @ApiResponse(responseCode = "200", description = "HAL-Collection archivierter Aufgaben."),
       @ApiResponse(responseCode = "400", description = "Ungueltiger filter-Wert oder cursor."),
       @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
       @ApiResponse(
@@ -157,7 +113,8 @@ public class InboxSnapshotController {
               + " Degradation).")
   })
   @GetMapping("/archive")
-  public ResponseEntity<KeysetPage<TaskSummaryModel>> archiveTasks(
+  @ApiFindCollectionResponse(TaskSummaryModel.class)
+  public ResponseEntity<CursorCollectionModel<TaskSummaryModel>> archiveTasks(
       @Parameter(description = "Filter: 'all' (Standard), 'done' (erledigt) oder 'left' (verlassen).")
       @RequestParam(required = false) final String filter,
       @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")

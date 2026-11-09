@@ -512,7 +512,15 @@ class TagLifecycleIT {
         .andExpect(status().isNoContent());
   }
 
-  /** {@code true}, wenn GET /api/v1/tags den Tag mit der gegebenen id listet. */
+  /**
+   * {@code true}, wenn GET /api/v1/tags den Tag mit der gegebenen id listet.
+   *
+   * <p>PLAN #141 Slice 2: GET /tags liefert ein {@code CollectionModel}. Die Wire-Form haengt vom
+   * IT-Context ab: dieser Context importiert die KSF-HAL-Autoconfig NICHT, daher serialisiert plain
+   * Jackson {@code CollectionModel} als {@code {"links":[],"content":[...]}}; mit aktiver
+   * HAL-Autoconfig (Produktion) waere es {@code _embedded.tags} (so in {@code TagAffordanceIT}
+   * bewiesen). {@link #tagItems} toleriert beide Formen (plus flaches Array als Fallback).
+   */
   private static boolean tagInList(
       final MockMvc mvc, final ObjectMapper om, final String token, final UUID tagId)
       throws Exception {
@@ -522,13 +530,38 @@ class TagLifecycleIT {
             .andReturn()
             .getResponse()
             .getContentAsString();
-    final JsonNode arr = om.readValue(listResponse, JsonNode.class);
-    for (final JsonNode node : arr) {
-      if (tagId.toString().equals(node.get("id").asText())) {
+    for (final JsonNode node : tagItems(listResponse, om)) {
+      if (tagId.toString().equals(node.path("id").asText())) {
         return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten
+   * {@code CollectionModel}-Wire-Formen: HAL ({@code _embedded.tags}), plain {@code CollectionModel}
+   * ({@code content}) und flaches Array.
+   */
+  private static JsonNode tagItems(final String listResponse, final ObjectMapper om)
+      throws Exception {
+    final JsonNode root = om.readValue(listResponse, JsonNode.class);
+    if (root.isArray()) {
+      return root;
+    }
+    final JsonNode embedded = root.path("_embedded").path("tags");
+    if (embedded.isArray()) {
+      return embedded;
+    }
+    // plain CollectionModel (ohne HAL): {"links":[],"content":[...]}
+    if (root.path("content").isArray()) {
+      return root.path("content");
+    }
+    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte Wire-Form.
+    if (root.isObject() && (root.isEmpty() || root.has("links") || root.has("_links"))) {
+      return om.createArrayNode();
+    }
+    throw new AssertionError("Unbekannte Tag-Collection-Wire-Form: " + root);
   }
 
   /** {@code true}, wenn der Inbox-Snapshot den Tag im {@code tags}-Katalog listet. */

@@ -14,8 +14,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * Kapselt den Lebenszyklus der isolierten MSSQL-Wegwerf-Test-DB fuer den Security-Bootstrap-IT:
  * CREATE der eindeutig benannten Wegwerf-DB, Anlegen und Befuellen von PROD_FIRMA / PROD_BENUTZER
- * als Minimal-Referenz-Schema (keine vollstaendige Migration; nur das fuer die Filterchain/IT
- * benoetigte Minimum), DROP am Ende. TTL-basierter Stale-Cleanup verwaister Wegwerf-DBs.
+ * als Minimal-Referenz-Schema sowie der leeren Struktur-Kopie der System-Tabelle {@code
+ * system_controller_regel} (keine vollstaendige Migration; nur das fuer Filterchain/IT bzw. die
+ * KSF-HATEOAS-Engine benoetigte Minimum, das im realen Deploy als Struktur-Kopie der diamant-DB
+ * vorliegt), DROP am Ende. TTL-basierter Stale-Cleanup verwaister Wegwerf-DBs.
  *
  * <p>Spiegelt das production-Muster ({@code CaptureItDb}/{@code KassenbuchItDb}): strikte
  * Namensregel, SINGLE_USER-DROP, TTL-Cleanup. Zugangsdaten ausschliesslich aus {@link
@@ -201,10 +203,46 @@ public final class RefSchemaItDb {
   }
 
   /**
-   * Erstellt das Minimal-Referenz-Schema (PROD_FIRMA + PROD_BENUTZER) in der Wegwerf-DB. Nur die
-   * fuer die Filterchain-/Repository-Validierung benoetigten Spalten.
+   * Erstellt das Minimal-Referenz-Schema (PROD_FIRMA + PROD_BENUTZER + die leere Struktur-Kopie der
+   * System-Tabelle {@code system_controller_regel}) in der Wegwerf-DB. Nur die fuer die
+   * Filterchain-/Repository-Validierung bzw. die KSF-HATEOAS-Engine benoetigten Spalten.
+   *
+   * <p><b>FINDING 2 (Codex-IMPL-Gate) — {@code system_controller_regel}:</b> Diese System-Tabelle
+   * ist eine FRAMEWORK-/DEPLOY-verantwortete Tabelle, KEINE Consumer-Flyway-Tabelle. Im realen
+   * Deploy wird die task-management-DB als Struktur-Kopie der diamant-DB provisioniert (siehe
+   * Startkarte „Stammdaten-Basis: PROD_FIRMA und PROD_BENUTZER ... SYS_SEQUENCE und SYSTEM*-Tabellen
+   * als leere Struktur-Kopie"). Genau wie PROD_FIRMA/PROD_BENUTZER/SYS_SEQUENCE existiert
+   * {@code system_controller_regel} dort also bereits (leer) und wird vom Modul bewusst NICHT in V1-
+   * V9 angelegt; auch KSF 2.3.24 liefert keine Flyway-Migration dafuer (Referenz-Consumer
+   * spring-application indiziert sie in V5 nur per {@code IF OBJECT_ID(...) IS NOT NULL} als
+   * vorbestehend). In der isolierten Wegwerf-DB fehlt diese Struktur-Kopie -> wir legen sie hier
+   * EINMAL zentral (nicht ad-hoc im Affordance-IT) an und spiegeln damit das reale Deploy. Die
+   * Spalten folgen exakt dem Vertrag des KSF-{@code JdbcHateoasRuleStore} (SELECT/INSERT/UPDATE),
+   * inkl. {@code angelegt_von}/{@code aktualisiert_von}, die der fruehere IT-Ad-hoc-DDL fehlten
+   * (Insert/Update einer Regel waere dort gebrochen). Leer angelegt: die KSF-Engine liest nur aktive
+   * DB-Regeln (hier keine) und faellt auf die Annotation-Regeln zurueck -> der {@code self}-Link
+   * entsteht, ohne dass der Test still eine Tabelle vortaeuschen muss.
    */
   private static void createRefSchema(final JdbcTemplate jdbc) {
+    // Leere Struktur-Kopie der System-Tabelle (Spalten exakt nach KSF JdbcHateoasRuleStore).
+    jdbc.execute(
+        """
+        IF OBJECT_ID('dbo.system_controller_regel', 'U') IS NULL
+        CREATE TABLE [dbo].[system_controller_regel] (
+          [id]               bigint           NOT NULL IDENTITY(1,1) PRIMARY KEY,
+          [rule_schluessel]  nvarchar(255)    NULL,
+          [beschreibung]     nvarchar(1024)   NULL,
+          [entity_status]    nvarchar(255)    NOT NULL DEFAULT 'ACTIVE',
+          [gueltig_von]      date             NULL,
+          [gueltig_bis]      date             NULL,
+          [angelegt_von]     nvarchar(255)    NULL,
+          [aktualisiert_von] nvarchar(255)    NULL,
+          [externalid]       uniqueidentifier NOT NULL DEFAULT NEWID(),
+          [version]          int              NOT NULL DEFAULT 1,
+          [tenant_id]        bigint           NULL
+        )
+        """);
+
     jdbc.execute(
         """
         CREATE TABLE [dbo].[PROD_FIRMA] (

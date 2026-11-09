@@ -41,6 +41,13 @@ class HandlerSentinelIT {
       "de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController";
 
   /**
+   * Test-only Slice-0-Probe-/Fixture-Controller (praezise Paketgrenze mit Punkt-Suffix, wie in
+   * AffordanceSentinelsTest); liegen nur in target/test-classes, nie im Produktionscode.
+   */
+  private static final String AFFORDANCE_PROBE_PACKAGE =
+      "de.brasi.nova.taskmanagement.affordanceprobe";
+
+  /**
    * Handgeschriebene Facade-Controller (arch-v2 §7): explizit erlaubt, werden NICHT vom Scaffold
    * generiert. Jeder neue Facade-Controller muss hier eingetragen werden.
    */
@@ -105,6 +112,7 @@ class HandlerSentinelIT {
     List<String> forbidden =
         found.stream()
             .filter(name -> !ALLOWED_FACADE_CONTROLLERS.contains(name))
+            .filter(name -> !name.startsWith(AFFORDANCE_PROBE_PACKAGE + "."))
             .toList();
 
     assertThat(forbidden)

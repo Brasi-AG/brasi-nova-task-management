@@ -1,10 +1,18 @@
 package de.brasi.nova.taskmanagement.tag;
 
+import de.brasi.nova.taskmanagement.entity.TaskTag;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.tag.model.TagCreateInput;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
 import de.brasi.nova.taskmanagement.tag.model.TagUpdateInput;
 import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
+import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
+import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
+import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
+import io.keel.framework.api.hateoas.annotation.LinkParam;
+import io.keel.framework.api.hateoas.annotation.LinkRule;
+import io.keel.framework.api.hateoas.annotation.LinkRules;
+import io.keel.framework.api.openapi.annotation.ApiFindCollectionResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -14,9 +22,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.net.URI;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.hateoas.CollectionModel;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,9 +48,46 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>POST / + PUT /{id} = {@link TaskManagementPermissions#TAG_ADMIN} — nur Admins verwalten
  *       Tags.
  * </ul>
+ *
+ * <p>PLAN #141 Slice 2: dieser Controller ist Regel-Owner der Affordance-Links fuer {@link TaskTag}
+ * ({@code @EnableNovaHateoas}). Die {@code @LinkRules} deklarieren permission-gegatete HATEOAS-{@code
+ * _links} (ITEM: update/deactivate/delete am {@code _embedded}-Item; COLLECTION: create am
+ * Collection-Level). Alle Rels sind TAG_ADMIN-gegatet ({@link TagHateoas.Specs#TAG_ADMIN}); {@code
+ * deactivate} zusaetzlich nur bei aktivem Tag ({@link TagHateoas.Specs#IS_ACTIVE}). Die {@code
+ * _links} sind rein ADDITIV (FE-Anzeige) und veraendern die bestehende Enforcement NICHT - jeder
+ * Mutations-Handler traegt unveraendert sein {@code @RequiresPermission(TAG_ADMIN)}.
  */
 @RestController
 @RequestMapping("/api/v1/tags")
+@EnableNovaHateoas(entityClass = TaskTag.class)
+@LinkRules(
+    value = {
+      @LinkRule(
+          rel = TagHateoas.Rels.UPDATE,
+          linkTo = TagHateoas.Targets.UPDATE,
+          title = TagHateoas.Titles.UPDATE,
+          conditions = {TagHateoas.Specs.TAG_ADMIN},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TagHateoas.Rels.DEACTIVATE,
+          linkTo = TagHateoas.Targets.DEACTIVATE,
+          title = TagHateoas.Titles.DEACTIVATE,
+          conditions = {TagHateoas.Specs.TAG_ADMIN, TagHateoas.Specs.IS_ACTIVE},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TagHateoas.Rels.DELETE,
+          linkTo = TagHateoas.Targets.DELETE,
+          title = TagHateoas.Titles.DELETE,
+          conditions = {TagHateoas.Specs.TAG_ADMIN},
+          params = {@LinkParam(name = "id", source = "#dto.id")})
+    },
+    collectionRules = {
+      @CollectionLinkRule(
+          rel = TagHateoas.Rels.CREATE,
+          linkTo = TagHateoas.Targets.CREATE,
+          title = TagHateoas.Titles.CREATE,
+          conditions = {TagHateoas.Specs.TAG_ADMIN})
+    })
 public class TagController {
 
   private final TagCatalogService catalogService;
@@ -60,29 +105,24 @@ public class TagController {
   @Operation(
       summary = "Tags auflisten",
       description =
-          "Liefert alle aktiven Tags des globalen Katalogs (TENANT_ID=0). Jeder Tag traegt eine"
-              + " optionale UI-Farbe (color als Hex) und einen optionalen severityCode; ein"
-              + " color-only oder neutraler Tag liefert severityCode null.")
+          "Liefert alle aktiven Tags des globalen Katalogs (TENANT_ID=0) als HAL-CollectionModel."
+              + " Die Tag-Items liegen unter _embedded.tags; jedes Item traegt eine optionale"
+              + " UI-Farbe (color als Hex) und einen optionalen severityCode (null bei"
+              + " color-only/neutralem Tag) sowie - permission-gegatet (TAG_ADMIN) - additive"
+              + " Affordance-_links (update/deactivate/delete am Item, create am Collection-Level).")
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",
-        description = "Tag-Liste erfolgreich geladen.",
-        content =
-            @Content(
-                mediaType = "application/json",
-                examples =
-                    @ExampleObject(
-                        value =
-                            "["
-                                + "{\"id\": \"aa0e8400-e29b-41d4-a716-446655440010\","
-                                + "\"name\": \"Dringend\",\"severityCode\": \"DANGER\",\"color\": \"#F87171\"},"
-                                + "{\"id\": \"bb0e8400-e29b-41d4-a716-446655440011\","
-                                + "\"name\": \"Intern\",\"severityCode\": null,\"color\": \"#60A5FA\"}]"))),
+        // Bewusst OHNE explizites content: springdoc leitet das HAL-Collection-Schema
+        // (_embedded.tags + _links) nativ aus dem Rueckgabetyp ab. Ein explizites @Content ohne
+        // schema unterdrueckt dieses Schema im Default-Dokument (Regen-Quelle, #141 Slice 6).
+        description = "Tag-Liste erfolgreich geladen (HAL-CollectionModel, Items unter _embedded.tags)."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @GetMapping
-  public ResponseEntity<List<TagModel>> listTags() {
-    return ResponseEntity.ok(catalogService.list());
+  @ApiFindCollectionResponse(TagModel.class)
+  public ResponseEntity<CollectionModel<TagModel>> listTags() {
+    return ResponseEntity.ok(CollectionModel.of(catalogService.list()));
   }
 
   /**
@@ -119,6 +159,7 @@ public class TagController {
     @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung.")
   })
   @PostMapping
+  @HateoasLinkTarget(TagHateoas.Targets.CREATE)
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Map<String, UUID>> createTag(@RequestBody final TagCreateInput input) {
     final UUID id = catalogService.create(input);
@@ -156,6 +197,7 @@ public class TagController {
     @ApiResponse(responseCode = "404", description = "Tag nicht gefunden.")
   })
   @PutMapping("/{id}")
+  @HateoasLinkTarget(TagHateoas.Targets.UPDATE)
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Void> updateTag(
       @Parameter(description = "Externe UUID des Tags.", required = true) @PathVariable
@@ -196,6 +238,7 @@ public class TagController {
         description = "Tag nicht gefunden oder bereits deaktiviert (terminal, neutral maskiert).")
   })
   @PostMapping("/{id}/deactivate")
+  @HateoasLinkTarget(TagHateoas.Targets.DEACTIVATE)
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Void> deactivateTag(
       @Parameter(description = "Externe UUID des Tags.", required = true) @PathVariable
@@ -248,6 +291,7 @@ public class TagController {
                 schema = @Schema(implementation = io.keel.framework.web.exception.ApiError.class)))
   })
   @DeleteMapping("/{id}")
+  @HateoasLinkTarget(TagHateoas.Targets.DELETE)
   @RequiresPermission(TaskManagementPermissions.TAG_ADMIN)
   public ResponseEntity<Void> deleteTag(
       @Parameter(description = "Externe UUID des Tags.", required = true) @PathVariable

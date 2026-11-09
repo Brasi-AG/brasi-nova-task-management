@@ -7,9 +7,11 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveTotals;
 import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
+import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
+import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
@@ -202,9 +204,9 @@ public class InboxSnapshotService {
 
     // Stabiler requester-Stand -> aktive Seite bauen (Generation stempeln).
     final Instant asOfInstant = auditTimeConverter.toInstant(membership.asOf());
-    final KeysetPage<TaskSummaryModel> tasks =
+    final KeysetPage<TaskSummaryInfoModel> tasks =
         new KeysetPage<>(
-            enrichedSummaries(membership.pageTasks(), membership.enrichment()),
+            snapshotSummaries(membership.pageTasks(), membership.enrichment()),
             membership.hasMore()
                 ? encodeCursor(membership.asOf(), membership.generation(), membership.pageTasks())
                 : null,
@@ -236,14 +238,17 @@ public class InboxSnapshotService {
    * Liefert eine Keyset-Seite aktiver (OPEN) Aufgaben fuer den Benutzer (Fortsetzung des
    * Snapshots, {@code GET /api/v1/tasks}).
    *
+   * <p>Slice 4: Return-Typ ist {@link CursorCollectionModel} (HAL-Collection mit top-level
+   * Cursor-Feldern), damit die KSF-Enrichment-Pipeline Item-rels ergaenzen kann.
+   *
    * @param userRef UUID des Benutzers
    * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
    * @param limit   Seitengroesse (wird geclampt)
-   * @return Seite aktiver Aufgaben
+   * @return HAL-Collection aktiver Aufgaben
    * @throws SnapshotExpiredException (HTTP 410) wenn ein Folge-Read eine abgelaufene Generation
    *     traegt oder die First-Page unter Dauer-Mutation nicht konsistent erzeugbar war
    */
-  public KeysetPage<TaskSummaryModel> loadActivePage(
+  public CursorCollectionModel<TaskSummaryModel> loadActivePage(
       final UUID userRef, final String cursor, final int limit) {
     final int effLimit = clampLimit(limit);
     final Long openStatusId = resolver.resolveTaskStatusOpen();
@@ -264,11 +269,11 @@ public class InboxSnapshotService {
    * @param filter  {@code all} (Default/null) | {@code done} | {@code left}
    * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
    * @param limit   Seitengroesse (wird geclampt)
-   * @return Seite archivierter Aufgaben
+   * @return HAL-Collection archivierter Aufgaben
    * @throws EntityValidationException bei ungueltigem Filter (HTTP 400)
    * @throws SnapshotExpiredException (HTTP 410) wie {@link #loadActivePage}
    */
-  public KeysetPage<TaskSummaryModel> loadArchivePage(
+  public CursorCollectionModel<TaskSummaryModel> loadArchivePage(
       final UUID userRef, final String filter, final String cursor, final int limit) {
     final String resolvedFilter = (filter == null || filter.isBlank()) ? FILTER_ALL : filter;
     if (!FILTER_ALL.equals(resolvedFilter)
@@ -328,8 +333,10 @@ public class InboxSnapshotService {
    * Einheitlicher Seiten-Read: First-Page (kein Cursor) via Generation-Bracket mit Retry;
    * Folgeseite (Cursor) via check-AFTER -> 410 bei Generation-Mismatch. Die Batch-Anreicherung der
    * Seite laeuft in beiden Pfaden VOR dem abschliessenden Generation-Read.
+   *
+   * <p>Slice 4: Liefert {@link CursorCollectionModel} statt {@link KeysetPage}.
    */
-  private KeysetPage<TaskSummaryModel> readPage(
+  private CursorCollectionModel<TaskSummaryModel> readPage(
       final UUID userRef, final String cursor, final int effLimit, final PageFetch fetch) {
     if (cursor == null || cursor.isBlank()) {
       // First-Page: Generation-Bracket. Seiten-Query + Anreicherung, dann Generation-Re-Read.
@@ -404,15 +411,22 @@ public class InboxSnapshotService {
     }
   }
 
-  /** Baut die Seite (Mapping mit Anreicherung + hasMore + nextCursor) aus der FIXEN Seite. */
-  private KeysetPage<TaskSummaryModel> assemblePage(
+  /**
+   * Baut die HAL-Collection (Mapping mit Anreicherung + hasMore + nextCursor + asOf) aus der
+   * FIXEN Seite.
+   *
+   * <p>Slice 4: Liefert {@link CursorCollectionModel} (via {@code ofTasks}) statt {@link
+   * KeysetPage}. Der Snapshot-Pfad ({@link #loadSnapshot}) baut seinen {@link KeysetPage}-Block
+   * separat direkt inline.
+   */
+  private CursorCollectionModel<TaskSummaryModel> assemblePage(
       final List<Task> page,
       final boolean hasMore,
       final LocalDateTime asOf,
       final long generation,
       final Map<Long, TaskEnrichment> enrichment) {
     final String nextCursor = hasMore ? encodeCursor(asOf, generation, page) : null;
-    return new KeysetPage<>(
+    return CursorCollectionModel.ofTasks(
         enrichedSummaries(page, enrichment), nextCursor, hasMore, auditTimeConverter.toInstant(asOf));
   }
 
@@ -424,27 +438,29 @@ public class InboxSnapshotService {
         .toList();
   }
 
-  /** Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation. */
-  private String encodeCursor(
-      final LocalDateTime asOf, final long generation, final List<Task> page) {
-    final Task last = page.get(page.size() - 1);
-    return KeysetCursor.encode(
-        List.of(
-            asOf.toString(),
-            last.getLastActivityAt().toString(),
-            last.getUuid().toString(),
-            Long.toString(generation)));
+  /**
+   * Mappt die Seiten-Aufgaben mit ihrer Anreicherung auf {@link TaskSummaryInfoModel} fuer den
+   * Snapshot. Liefert InfoModel-Items, die der SelfLinkEnricher mit einem {@code self}-Link
+   * versieht (via {@code @SelfLinkTarget}). KEIN {@code setEntity}: InfoModel hat kein
+   * {@code setEntity}; der self-Link benoetigt nur {@code id}.
+   */
+  private List<TaskSummaryInfoModel> snapshotSummaries(
+      final List<Task> page, final Map<Long, TaskEnrichment> enrichment) {
+    return page.stream()
+        .map(t -> toSnapshotSummary(t, enrichment.getOrDefault(t.getId(), TaskEnrichment.EMPTY)))
+        .toList();
   }
 
   /**
-   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das angereicherte
-   * {@link TaskSummaryModel} (CODEs + Instant + Anreicherungsfelder).
+   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das {@link TaskSummaryInfoModel}
+   * fuer den Snapshot. Setzt {@code setId(uuid)}, damit der SelfLinkEnricher den self-Link
+   * erzeugt. Kein {@code setEntity}/{@code setModelState} (InfoModel-API hat beides nicht).
    */
-  private TaskSummaryModel toEnrichedSummary(final Task task, final TaskEnrichment e) {
+  private TaskSummaryInfoModel toSnapshotSummary(final Task task, final TaskEnrichment e) {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
     final ExitModel exit =
         e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
-    return new TaskSummaryModel(
+    return new TaskSummaryInfoModel(
         task.getUuid(),
         task.getTitle(),
         statusCode,
@@ -463,6 +479,56 @@ public class InboxSnapshotService {
         e.isMuted(),
         isDoneStatus(statusCode),
         exit);
+  }
+
+  /** Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation. */
+  private String encodeCursor(
+      final LocalDateTime asOf, final long generation, final List<Task> page) {
+    final Task last = page.get(page.size() - 1);
+    return KeysetCursor.encode(
+        List.of(
+            asOf.toString(),
+            last.getLastActivityAt().toString(),
+            last.getUuid().toString(),
+            Long.toString(generation)));
+  }
+
+  /**
+   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das angereicherte
+   * {@link TaskSummaryModel} (CODEs + Instant + Anreicherungsfelder).
+   *
+   * <p>Slice 4: {@code setEntity(task)} + {@code setModelState()} werden gesetzt, damit die
+   * KSF-Enrichment-Pipeline (Item-rels via entityClass=Task) fuer die Listen-Items greift.
+   */
+  private TaskSummaryModel toEnrichedSummary(final Task task, final TaskEnrichment e) {
+    final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
+    final ExitModel exit =
+        e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
+    final TaskSummaryModel model = new TaskSummaryModel(
+        task.getUuid(),
+        task.getTitle(),
+        statusCode,
+        resolver.resolveTaskPriorityCode(task.getPriorityId()),
+        task.getDueDate(),
+        auditTimeConverter.toInstant(task.getLastActivityAt()),
+        task.getCommentCount(),
+        e.createdById(),
+        auditTimeConverter.toInstant(task.getCreatedAt()),
+        task.getDescription(),
+        e.assigneeIds(),
+        e.participantIds(),
+        e.tagIds(),
+        e.isPinned(),
+        e.isFlagged(),
+        e.isMuted(),
+        isDoneStatus(statusCode),
+        exit);
+    model.setEntity(task);
+    if (task.getEntityState() != null) {
+      model.setModelState(
+          io.keel.framework.api.service.model.ModelState.fromString(task.getEntityState().name()));
+    }
+    return model;
   }
 
   /** {@code isDone} = Status DONE ODER CANCELLED (abgeschlossen; SPEC O-5). */

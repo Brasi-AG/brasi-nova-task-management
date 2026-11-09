@@ -350,7 +350,8 @@ class InboxSnapshotControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode page1 = new ObjectMapper().readTree(page1Json);
-    assertThat(page1.get("items")).hasSize(2);
+    // Slice 4: Items sind jetzt unter _embedded.tasks (HAL-Collection), Cursor-Felder top-level.
+    assertThat(taskItemsOf(page1)).hasSize(2);
     final String nextCursor = page1.get("nextCursor").asText();
 
     final String page2Json = mvc.perform(get("/api/v1/tasks?limit=2&cursor=" + nextCursor)
@@ -359,13 +360,13 @@ class InboxSnapshotControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode page2 = new ObjectMapper().readTree(page2Json);
-    assertThat(page2.get("items").size()).isGreaterThanOrEqualTo(1);
+    assertThat(taskItemsOf(page2).size()).isGreaterThanOrEqualTo(1);
 
     final java.util.Set<String> page1Ids = new java.util.HashSet<>();
-    for (final JsonNode item : page1.get("items")) {
+    for (final JsonNode item : taskItemsOf(page1)) {
       page1Ids.add(item.get("id").asText());
     }
-    for (final JsonNode item : page2.get("items")) {
+    for (final JsonNode item : taskItemsOf(page2)) {
       assertThat(page1Ids)
           .as("Seite 2 darf keine IDs aus Seite 1 enthalten (kein Dupe)")
           .doesNotContain(item.get("id").asText());
@@ -633,9 +634,10 @@ class InboxSnapshotControllerIT {
     // 2 aktive Tasks, patchUser als Creator-Assignee (darf patchen). limit=1 => hasMore => Cursor.
     // Der erste Task (patchTaskUuid) wird spaeter auf DONE gepatcht.
     final UUID patchTaskUuid = UUID.randomUUID();
+    final UUID stayActiveUuid = UUID.randomUUID();
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 810 + i;
-      final UUID uuid = (i == 0) ? patchTaskUuid : UUID.randomUUID();
+      final UUID uuid = (i == 0) ? patchTaskUuid : stayActiveUuid;
       seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
           LocalDateTime.now().minusMinutes(20 - i), "Patch410-Task-" + i);
       seedParticipant(jdbcTemplate, ID_BASE + 820 + i, taskId, patchUser, TENANT_A_ID,
@@ -675,6 +677,10 @@ class InboxSnapshotControllerIT {
                 .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(freshActive))
+        .as("der zweite (weiterhin OPEN) Task bleibt in der aktiven Seite - Abwesenheit unten ist"
+            + " damit nicht leer erfuellt")
+        .contains(stayActiveUuid.toString());
     assertThat(idsOf(freshActive))
         .as("der auf DONE gepatchte Task darf nicht mehr in der aktiven Seite erscheinen")
         .doesNotContain(patchTaskUuid.toString());
@@ -1224,6 +1230,16 @@ class InboxSnapshotControllerIT {
             + "VALUES (?, 'DEACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
         ID_BASE + 88, UUID.randomUUID(), TENANT_A_ID, openTaskId, USER_DEL_REF, TENANT_A_ID);
 
+    // (d) Referenz: aktiver OPEN-Task mit aktivem UserState -> MUSS in der aktiven Seite sein
+    // (die Abwesenheitspruefung fuer (c) darf nicht an einer leeren Seite scheitern/leer gelten).
+    final long visibleTaskId = ID_BASE + 89;
+    final UUID visibleUuid = UUID.randomUUID();
+    seedTask(jdbcTemplate, visibleTaskId, visibleUuid, TENANT_A_ID, openId, normalId, dir,
+        LocalDateTime.now().minusMinutes(12), "Open sichtbar");
+    seedParticipant(jdbcTemplate, ID_BASE + 90, visibleTaskId, USER_DEL_REF, TENANT_A_ID,
+        true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 91, visibleTaskId, USER_DEL_REF, TENANT_A_ID, null);
+
     final String token =
         jwt(TENANT_A_UUID, USER_DEL_REF, USER_DEL_LOGIN, "task-management:TASK_READ");
 
@@ -1250,6 +1266,7 @@ class InboxSnapshotControllerIT {
                 .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString());
+    assertThat(idsOf(active)).contains(visibleUuid.toString());
     assertThat(idsOf(active)).doesNotContain(openUuid.toString());
   }
 
@@ -1355,12 +1372,57 @@ class InboxSnapshotControllerIT {
         .build();
   }
 
+  /**
+   * Liefert die IDs der Items einer HAL-Collection-Seite (Slice-4-Migration: items unter
+   * {@code _embedded.tasks} statt top-level {@code items}).
+   *
+   * <p>Fuer Task-Seiten ({@code GET /api/v1/tasks}, {@code GET /api/v1/tasks/archive}), die als
+   * {@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel} zurueckkehren.
+   * Fuer Snapshot-Felder ({@code snapshot.tasks.items}) oder Snapshot-Notifications
+   * ({@code snapshot.notifications.items}) gilt dieses Muster NICHT (Snapshot-Wire unveraendert).
+   */
   private java.util.List<String> idsOf(final JsonNode page) {
     final java.util.List<String> ids = new java.util.ArrayList<>();
-    for (final JsonNode item : page.get("items")) {
+    for (final JsonNode item : taskItemsOf(page)) {
       ids.add(item.get("id").asText());
     }
     return ids;
+  }
+
+  /**
+   * Navigiert zu {@code _embedded.tasks} in einer HAL-Collection-Seite (Task-Standalone-Endpoints).
+   *
+   * <p>Leere Collection nur bei vorhandenen Cursor-Feldern; unbekannte Form -> AssertionError.
+   */
+  private JsonNode taskItemsOf(final JsonNode page) {
+    // Slice 4: Items liegen bei aktiver KSF-HAL-Autoconfig (Produktions-Wire + voller-Autoconfig-IT)
+    // unter _embedded.tasks; bei der handverlesenen IT-Autoconfig OHNE HAL serialisiert CollectionModel
+    // als content; legacy war es ein flaches items. Dieser Behavior-IT prueft Pagination/Cursor/Filter
+    // (wire-unabhaengig) -> tolerant alle Formen lesen. Der Produktions-HAL-Wire (_embedded.tasks)
+    // wird separat im voll-autoconfig Affordance-IT scharf bewiesen.
+    final JsonNode embedded = page.get("_embedded");
+    if (embedded != null && !embedded.isNull()) {
+      final JsonNode tasks = embedded.get("tasks");
+      if (tasks != null && tasks.isArray()) {
+        return tasks;
+      }
+    }
+    final JsonNode content = page.get("content");
+    if (content != null && content.isArray()) {
+      return content;
+    }
+    final JsonNode items = page.get("items");
+    if (items != null && items.isArray()) {
+      return items;
+    }
+    // Legitimer Leer-Fall: Cursor-Collection ohne Items ({@code {}} + Cursor-Felder). Alles andere
+    // ist eine unbekannte Wire-Form und darf nicht als "leer" durchgehen.
+    if (page.has("hasMore") || page.has("nextCursor")) {
+      return new com.fasterxml.jackson.databind.node.ArrayNode(
+          com.fasterxml.jackson.databind.node.JsonNodeFactory.instance);
+    }
+    throw new AssertionError("Unbekannte Collection-Wire-Form (weder _embedded.tasks noch content"
+        + " noch items, keine Cursor-Felder): " + page);
   }
 
   private long statusId(final String code) {

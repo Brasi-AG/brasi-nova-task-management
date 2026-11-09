@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * Unit-Tests fuer {@link TaskMembershipGuard} (gemocktes Repository, kein DB, kein Web). Deckt die
@@ -52,6 +56,7 @@ class TaskMembershipGuardTest {
   @AfterEach
   void tearDown() {
     TenantContextHolder.clear();
+    RequestContextHolder.resetRequestAttributes();
   }
 
   @Test
@@ -131,6 +136,21 @@ class TaskMembershipGuardTest {
     assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isFalse();
 
     verifyNoInteractions(participantQueryRepository);
+  }
+
+  @Test
+  @DisplayName("Sentinel: Guard bleibt ungecacht - Aufrufe MIT gebundenem Request -> je Repo-Call")
+  void guard_ist_ungecacht_auch_mit_gebundenem_request() {
+    RequestContextHolder.setRequestAttributes(
+        new ServletRequestAttributes(new MockHttpServletRequest()));
+    when(participantQueryRepository.existsWriteMember(TASK_ID, ACTOR)).thenReturn(true);
+
+    assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isTrue();
+    assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isTrue();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+
+    verify(participantQueryRepository, times(4)).existsWriteMember(TASK_ID, ACTOR);
   }
 
   @Test

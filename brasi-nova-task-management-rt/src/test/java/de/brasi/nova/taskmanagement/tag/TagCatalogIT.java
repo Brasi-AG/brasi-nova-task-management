@@ -294,11 +294,11 @@ class TagCatalogIT {
             .getResponse()
             .getContentAsString();
 
-    final JsonNode tagArray = om.readValue(listResponse, JsonNode.class);
-    assertThat(tagArray.isArray()).isTrue();
+    final JsonNode tagArray = tagItems(listResponse, om);
+    assertThat(tagArray.isArray()).as("GET /tags liefert _embedded.tags als Array").isTrue();
     boolean tenantBSeesTag = false;
     for (JsonNode node : tagArray) {
-      if (tagId.toString().equals(node.get("id").asText())) {
+      if (tagId.toString().equals(node.path("id").asText())) {
         tenantBSeesTag = true;
         break;
       }
@@ -399,13 +399,12 @@ class TagCatalogIT {
             .getResponse()
             .getContentAsString();
 
-    final com.fasterxml.jackson.databind.JsonNode tagArray =
-        om.readValue(listResponse, com.fasterxml.jackson.databind.JsonNode.class);
-    assertThat(tagArray.isArray()).isTrue();
+    final com.fasterxml.jackson.databind.JsonNode tagArray = tagItems(listResponse, om);
+    assertThat(tagArray.isArray()).as("GET /tags liefert _embedded.tags als Array").isTrue();
 
     boolean futureDatedTagVisible = false;
     for (com.fasterxml.jackson.databind.JsonNode node : tagArray) {
-      if (futureDatedTagUuid.toString().equals(node.get("id").asText())) {
+      if (futureDatedTagUuid.toString().equals(node.path("id").asText())) {
         futureDatedTagVisible = true;
         break;
       }
@@ -493,10 +492,10 @@ class TagCatalogIT {
             .andReturn()
             .getResponse()
             .getContentAsString();
-    final JsonNode arr = om.readValue(listResponse, JsonNode.class);
+    final JsonNode arr = tagItems(listResponse, om);
     JsonNode node = null;
     for (JsonNode n : arr) {
-      if (tagId.toString().equals(n.get("id").asText())) {
+      if (tagId.toString().equals(n.path("id").asText())) {
         node = n;
         break;
       }
@@ -583,11 +582,11 @@ class TagCatalogIT {
             .getResponse()
             .getContentAsString();
 
-    final JsonNode tagArray = om.readValue(listResponse, JsonNode.class);
-    assertThat(tagArray.isArray()).isTrue();
+    final JsonNode tagArray = tagItems(listResponse, om);
+    assertThat(tagArray.isArray()).as("GET /tags liefert _embedded.tags als Array").isTrue();
     JsonNode found = null;
     for (JsonNode node : tagArray) {
-      if (tagId.toString().equals(node.get("id").asText())) {
+      if (tagId.toString().equals(node.path("id").asText())) {
         found = node;
         break;
       }
@@ -626,10 +625,10 @@ class TagCatalogIT {
             .getResponse()
             .getContentAsString();
 
-    final JsonNode arr = om.readValue(listResponse, JsonNode.class);
+    final JsonNode arr = tagItems(listResponse, om);
     JsonNode found = null;
     for (JsonNode n : arr) {
-      if (tagId.toString().equals(n.get("id").asText())) {
+      if (tagId.toString().equals(n.path("id").asText())) {
         found = n;
         break;
       }
@@ -898,6 +897,60 @@ class TagCatalogIT {
             .getResponse()
             .getContentAsString();
     return om.readValue(response, JsonNode.class).get("id").traverse(om).readValueAs(UUID.class);
+  }
+
+  /**
+   * Extrahiert die Tag-Items aus einem GET /api/v1/tags-Response.
+   *
+   * <p>PLAN #141 Slice 2: GET /tags liefert ein HAL-CollectionModel; die Items liegen unter {@code
+   * _embedded.tags} (eine leere Collection traegt KEIN {@code _embedded} -&gt; {@code path(...)}
+   * liefert einen MissingNode, ueber den sich leer iterieren laesst).
+   *
+   * @param listResponse roher JSON-Body von GET /api/v1/tags
+   * @param om ObjectMapper
+   * @return die Tag-Items unter {@code _embedded.tags} (leer, wenn keine Tags)
+   */
+  private static JsonNode tagItems(final String listResponse, final ObjectMapper om)
+      throws Exception {
+    return extractTagItems(listResponse, om);
+  }
+
+  /**
+   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten
+   * {@code CollectionModel}-Wire-Formen (PLAN #141 Slice 2):
+   *
+   * <ul>
+   *   <li><b>HAL</b> ({@code _embedded.tags}) - wenn der KSF-HAL-Konverter aktiv ist (Produktion,
+   *       {@code NovaHalAutoConfiguration}; so bewiesen in {@code TagAffordanceIT}).
+   *   <li><b>plain {@code CollectionModel}</b> ({@code {"links":[],"content":[...]}}) - wenn der
+   *       IT-Context die HAL-Autoconfig NICHT importiert (dieser {@code TagCatalogIT}/
+   *       {@code TagLifecycleIT}-Context mit handverlesener Autoconfig-Liste).
+   *   <li><b>flaches Array</b> - defensiver Fallback.
+   * </ul>
+   *
+   * @param listResponse roher JSON-Body von GET /api/v1/tags
+   * @param om ObjectMapper
+   * @return die Tag-Items (leer, wenn keine Tags)
+   */
+  static JsonNode extractTagItems(final String listResponse, final ObjectMapper om)
+      throws Exception {
+    final JsonNode root = om.readValue(listResponse, JsonNode.class);
+    if (root.isArray()) {
+      return root;
+    }
+    final JsonNode embedded = root.path("_embedded").path("tags");
+    if (embedded.isArray()) {
+      return embedded;
+    }
+    // plain CollectionModel (ohne HAL): {"links":[],"content":[...]}
+    if (root.path("content").isArray()) {
+      return root.path("content");
+    }
+    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte Wire-Form.
+    if (root.isObject() && (root.isEmpty() || root.has("links") || root.has("_links"))) {
+      return om.createArrayNode();
+    }
+    throw new AssertionError("Unbekannte Tag-Collection-Wire-Form: " + root);
   }
 
   private MockMvc buildMvc() {

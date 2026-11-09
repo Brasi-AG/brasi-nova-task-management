@@ -211,28 +211,42 @@ public class TaskDetailService {
       source = null;
     }
 
-    return new TaskDetailModel(
-        task.getUuid(),
-        task.getTitle(),
-        task.getDescription(),
-        statusCode,
-        priorityCode,
-        directionCode,
-        task.getStartDate(),
-        task.getDueDate(),
-        auditTimeConverter.toInstant(task.getLastActivityAt()),
-        task.getCommentCount(),
-        history,
-        assignees,
-        tagIds,
-        tags,
-        enrichment.createdById(),
-        enrichment.participantIds(),
-        enrichment.isPinned(),
-        enrichment.isFlagged(),
-        enrichment.isMuted(),
-        exit,
-        source);
+    final TaskDetailModel model =
+        new TaskDetailModel(
+            task.getUuid(),
+            task.getTitle(),
+            task.getDescription(),
+            statusCode,
+            priorityCode,
+            directionCode,
+            task.getStartDate(),
+            task.getDueDate(),
+            auditTimeConverter.toInstant(task.getLastActivityAt()),
+            task.getCommentCount(),
+            history,
+            assignees,
+            tagIds,
+            tags,
+            enrichment.createdById(),
+            enrichment.participantIds(),
+            enrichment.isPinned(),
+            enrichment.isFlagged(),
+            enrichment.isMuted(),
+            exit,
+            source);
+
+    // PLAN #141 Slice 1: die KSF-Enrichment-Pipeline braucht die geladene Entity am Model
+    // (entityClass + refId werden daraus gesetzt) sowie einen expliziten modelState. Die daraus
+    // erzeugten _links (self) sind rein additiv und veraendern den fachlichen Wire NICHT; die
+    // objekt-level Enforcement (requireReadMember oben) bleibt die alleinige Autorisierung.
+    model.setEntity(task);
+    model.setModelState(
+        task.getEntityState() != null
+            ? io.keel.framework.api.service.model.ModelState.fromString(
+                task.getEntityState().name())
+            : null);
+
+    return model;
   }
 
   /**

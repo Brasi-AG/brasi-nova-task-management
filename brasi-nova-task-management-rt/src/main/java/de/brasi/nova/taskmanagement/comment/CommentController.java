@@ -2,6 +2,8 @@ package de.brasi.nova.taskmanagement.comment;
 
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
+import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -71,6 +73,7 @@ public class CommentController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @GetMapping("/{id}/comments")
+  @HateoasLinkTarget(TaskHateoas.Targets.GET_COMMENTS)
   public ResponseEntity<List<CommentModel>> getComments(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true)
           @PathVariable final UUID id) {
@@ -114,6 +117,7 @@ public class CommentController {
       @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PostMapping("/{id}/comments")
+  @HateoasLinkTarget(TaskHateoas.Targets.CREATE_COMMENT)
   public ResponseEntity<CommentModel> createComment(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
       @RequestBody final CommentCreateInput input) {

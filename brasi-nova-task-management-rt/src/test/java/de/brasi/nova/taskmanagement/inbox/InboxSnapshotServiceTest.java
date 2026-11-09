@@ -21,8 +21,8 @@ import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.NotificationQueryService;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
+import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
-import de.brasi.nova.taskmanagement.paging.KeysetPage;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
@@ -37,7 +37,6 @@ import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.tag.TagCatalogService;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.validation.EntityValidationException;
-import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -170,11 +169,13 @@ class InboxSnapshotServiceTest {
     final LocalDateTime asOfLdt = LocalDateTime.ofInstant(asOfInstant, auditTimeConverter.zone());
     verify(taskQueryRepository).countArchiveAll(USER_REF, DONE_ID, CANCELLED_ID, asOfLdt);
 
-    final List<String> components =
-        Arrays.stream(InboxSnapshotModel.class.getRecordComponents())
-            .map(RecordComponent::getName)
+    // Slice 5: InboxSnapshotModel ist jetzt eine Klasse (nicht mehr Record) -> Felder statt
+    // Record-Components pruefen. Invariante: kein Sequence-/Delta-Feld im Wire-Vertrag.
+    final List<String> fieldNames =
+        Arrays.stream(InboxSnapshotModel.class.getDeclaredFields())
+            .map(java.lang.reflect.Field::getName)
             .toList();
-    assertThat(components).doesNotContain("sequence", "seq", "delta", "nextSequence");
+    assertThat(fieldNames).doesNotContain("sequence", "seq", "delta", "nextSequence");
   }
 
   // ---- leere aktive Seite: keine IN()-Leermenge, participantSummaries leer --------------------
@@ -251,14 +252,14 @@ class InboxSnapshotServiceTest {
             eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
         .thenReturn(buildTasks(3));
 
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, null, limit);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_REF, null, limit);
 
-    assertThat(page.items()).hasSize(2);
-    assertThat(page.hasMore()).isTrue();
-    assertThat(page.nextCursor()).isNotBlank();
-    assertThat(page.asOf()).isNotNull();
+    assertThat(items(page)).hasSize(2);
+    assertThat(page.isHasMore()).isTrue();
+    assertThat(page.getNextCursor()).isNotBlank();
+    assertThat(page.getAsOf()).isNotNull();
     // nextCursor ist ein 4-Token-Cursor (asOf, lastActivityAt, externalId, generation)
-    final List<String> tokens = KeysetCursor.decode(page.nextCursor(), 4);
+    final List<String> tokens = KeysetCursor.decode(page.getNextCursor(), 4);
     assertThat(tokens).hasSize(4);
     assertThat(tokens.get(3)).as("4. Token = Generation (stabil 0)").isEqualTo("0");
   }
@@ -278,12 +279,12 @@ class InboxSnapshotServiceTest {
             eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
         .thenReturn(buildTasks(1));
 
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, cursor, limit);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_REF, cursor, limit);
 
-    assertThat(page.items()).hasSize(1);
-    assertThat(page.hasMore()).isFalse();
-    assertThat(page.nextCursor()).isNull();
-    assertThat(page.asOf()).isEqualTo(auditTimeConverter.toInstant(asOf));
+    assertThat(items(page)).hasSize(1);
+    assertThat(page.isHasMore()).isFalse();
+    assertThat(page.getNextCursor()).isNull();
+    assertThat(page.getAsOf()).isEqualTo(auditTimeConverter.toInstant(asOf));
     verify(taskQueryRepository)
         .findActivePage(USER_REF, OPEN_ID, asOf, lastActivity, lastExternal, limit + 1);
   }
@@ -349,12 +350,12 @@ class InboxSnapshotServiceTest {
             eq(USER_REF), eq(OPEN_ID), eq(asOf), eq(lastActivity), eq(lastExternal), eq(limit + 1)))
         .thenReturn(buildTasks(3));
 
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, cursor, limit);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_REF, cursor, limit);
 
-    assertThat(page.items()).hasSize(2);
-    assertThat(page.hasMore()).isTrue();
+    assertThat(items(page)).hasSize(2);
+    assertThat(page.isHasMore()).isTrue();
     // nextCursor traegt die unveraenderte Snapshot-Generation (5) weiter.
-    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("5");
+    assertThat(KeysetCursor.decode(page.getNextCursor(), 4).get(3)).isEqualTo("5");
   }
 
   @Test
@@ -389,11 +390,11 @@ class InboxSnapshotServiceTest {
             eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
         .thenReturn(buildTasks(3));
 
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_REF, null, limit);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_REF, null, limit);
 
-    assertThat(page.hasMore()).isTrue();
+    assertThat(page.isHasMore()).isTrue();
     // Gestempelte Generation = stabiler Wert 1.
-    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("1");
+    assertThat(KeysetCursor.decode(page.getNextCursor(), 4).get(3)).isEqualTo("1");
     // Zwei Versuche -> Seite zweimal abgefragt.
     verify(taskQueryRepository, times(2))
         .findActivePage(eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(limit + 1));
@@ -423,10 +424,10 @@ class InboxSnapshotServiceTest {
             eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(limit + 1)))
         .thenReturn(buildTasks(3));
 
-    final KeysetPage<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "all", null, limit);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "all", null, limit);
 
-    assertThat(page.hasMore()).isTrue();
-    assertThat(KeysetCursor.decode(page.nextCursor(), 4).get(3)).isEqualTo("4");
+    assertThat(page.isHasMore()).isTrue();
+    assertThat(KeysetCursor.decode(page.getNextCursor(), 4).get(3)).isEqualTo("4");
   }
 
   @Test
@@ -536,8 +537,8 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.findArchiveDonePage(
             eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(11)))
         .thenReturn(buildTasks(1));
-    final KeysetPage<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "done", null, 10);
-    assertThat(page.items()).hasSize(1);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "done", null, 10);
+    assertThat(items(page)).hasSize(1);
     verify(taskQueryRepository)
         .findArchiveDonePage(
             eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(11));
@@ -549,8 +550,8 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.findArchiveLeftPage(
             eq(USER_REF), any(), any(), eq(MAX_UUID), eq(11)))
         .thenReturn(buildTasks(1));
-    final KeysetPage<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "left", null, 10);
-    assertThat(page.items()).hasSize(1);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadArchivePage(USER_REF, "left", null, 10);
+    assertThat(items(page)).hasSize(1);
     verify(taskQueryRepository).findArchiveLeftPage(eq(USER_REF), any(), any(), eq(MAX_UUID), eq(11));
   }
 
@@ -560,8 +561,8 @@ class InboxSnapshotServiceTest {
     when(taskQueryRepository.findArchiveAllPage(
             eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(11)))
         .thenReturn(buildTasks(1));
-    final KeysetPage<TaskSummaryModel> page = service.loadArchivePage(USER_REF, null, null, 10);
-    assertThat(page.items()).hasSize(1);
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadArchivePage(USER_REF, null, null, 10);
+    assertThat(items(page)).hasSize(1);
     verify(taskQueryRepository)
         .findArchiveAllPage(
             eq(USER_REF), eq(DONE_ID), eq(CANCELLED_ID), any(), any(), eq(MAX_UUID), eq(11));
@@ -614,7 +615,7 @@ class InboxSnapshotServiceTest {
     when(userStateQueryRepository.findByTaskIdsAndUserRef(any(), eq(USER_REF)))
         .thenReturn(List.of(userState(taskId, USER_REF, true, false, true, null)));
 
-    final TaskSummaryModel s = service.loadActivePage(USER_REF, null, 10).items().get(0);
+    final TaskSummaryModel s = items(service.loadActivePage(USER_REF, null, 10)).get(0);
 
     assertThat(s.createdById()).isEqualTo(USER_REF);
     assertThat(s.assigneeIds()).containsExactly(assignee);
@@ -635,13 +636,13 @@ class InboxSnapshotServiceTest {
         .thenReturn(buildTasks(1));
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("DONE");
-    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isTrue();
+    assertThat(items(service.loadActivePage(USER_REF, null, 10)).get(0).isDone()).isTrue();
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("CANCELLED");
-    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isTrue();
+    assertThat(items(service.loadActivePage(USER_REF, null, 10)).get(0).isDone()).isTrue();
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("OPEN");
-    assertThat(service.loadActivePage(USER_REF, null, 10).items().get(0).isDone()).isFalse();
+    assertThat(items(service.loadActivePage(USER_REF, null, 10)).get(0).isDone()).isFalse();
   }
 
   @Test
@@ -663,7 +664,7 @@ class InboxSnapshotServiceTest {
         .thenReturn(
             List.of(new HandoverTargetRow(taskId, targetHi), new HandoverTargetRow(taskId, targetLo)));
 
-    final TaskSummaryModel s = service.loadArchivePage(USER_REF, "left", null, 10).items().get(0);
+    final TaskSummaryModel s = items(service.loadArchivePage(USER_REF, "left", null, 10)).get(0);
 
     assertThat(s.exit()).isNotNull();
     assertThat(s.exit().kind()).isEqualTo("handover");
@@ -742,6 +743,17 @@ class InboxSnapshotServiceTest {
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------------------
+
+  /**
+   * Wandelt {@link CursorCollectionModel#getContent()} in eine geordnete {@link List} um.
+   *
+   * <p>Slice 4: {@link CursorCollectionModel} erbt von {@link org.springframework.hateoas.CollectionModel}
+   * (kein {@code items()}-Accessor wie das alte {@link de.brasi.nova.taskmanagement.paging.KeysetPage}-Record).
+   * Diese Hilfsmethode haelt die Test-Lesbarkeit analog zum alten Record-Stil.
+   */
+  private static List<TaskSummaryModel> items(final CursorCollectionModel<TaskSummaryModel> page) {
+    return new ArrayList<>(page.getContent());
+  }
 
   private static TaskParticipant participant(
       final long taskId,

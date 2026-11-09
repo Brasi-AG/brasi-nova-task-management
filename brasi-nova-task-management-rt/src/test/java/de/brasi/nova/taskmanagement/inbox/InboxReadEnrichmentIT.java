@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
-import de.brasi.nova.taskmanagement.paging.KeysetPage;
+import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
@@ -366,23 +366,26 @@ class InboxReadEnrichmentIT {
   @Test
   @DisplayName("0 Zeilen: leere aktive Seite ohne Fehler")
   void zero_rows_empty_page() {
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_EMPTY, null, 50);
-    assertThat(page.items()).isEmpty();
-    assertThat(page.hasMore()).isFalse();
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_EMPTY, null, 50);
+    // Slice 4: items via CollectionModel.getContent()
+    assertThat(page.getContent()).isEmpty();
+    assertThat(page.isHasMore()).isFalse();
   }
 
   @Test
   @DisplayName("100 Zeilen: alle angereichert (createdById gesetzt), Korrektheit bei Volumen")
   void hundred_rows_enriched() {
-    final KeysetPage<TaskSummaryModel> page = service.loadActivePage(USER_VOL, null, 100);
-    assertThat(page.items()).hasSize(100);
-    assertThat(page.items()).allSatisfy(s -> assertThat(s.createdById()).isEqualTo(USER_VOL));
+    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_VOL, null, 100);
+    // Slice 4: items via CollectionModel.getContent()
+    assertThat(page.getContent()).hasSize(100);
+    assertThat(page.getContent()).allSatisfy(s -> assertThat(s.createdById()).isEqualTo(USER_VOL));
   }
 
   // ---- Hilfen --------------------------------------------------------------------------------
 
-  private static Map<UUID, TaskSummaryModel> byId(final KeysetPage<TaskSummaryModel> page) {
-    return page.items().stream().collect(Collectors.toMap(TaskSummaryModel::id, s -> s));
+  private static Map<UUID, TaskSummaryModel> byId(final CursorCollectionModel<TaskSummaryModel> page) {
+    // Slice 4: items via CollectionModel.getContent()
+    return page.getContent().stream().collect(Collectors.toMap(TaskSummaryModel::id, s -> s));
   }
 
   private static void seedFirma(final JdbcTemplate jt, final long id, final UUID externalId) {

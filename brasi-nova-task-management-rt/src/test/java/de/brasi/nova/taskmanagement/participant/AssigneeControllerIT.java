@@ -1684,7 +1684,15 @@ class AssigneeControllerIT {
             .andReturn()
             .getResponse()
             .getContentAsString();
-    final com.fasterxml.jackson.databind.JsonNode items = om.readTree(archiveJson).get("items");
+    // Behavior-IT ohne KSF-HAL: wire-tolerant (Slice 4: _embedded.tasks | content | items).
+    final com.fasterxml.jackson.databind.JsonNode archivePage = om.readTree(archiveJson);
+    com.fasterxml.jackson.databind.JsonNode items = archivePage.path("_embedded").path("tasks");
+    if (!items.isArray()) {
+      items = archivePage.path("content");
+    }
+    if (!items.isArray()) {
+      items = archivePage.path("items");
+    }
     com.fasterxml.jackson.databind.JsonNode archivedTask = null;
     for (final com.fasterxml.jackson.databind.JsonNode item : items) {
       if (taskId.toString().equals(item.get("id").asText())) {

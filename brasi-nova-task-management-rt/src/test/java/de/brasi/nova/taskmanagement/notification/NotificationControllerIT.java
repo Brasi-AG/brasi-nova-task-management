@@ -251,11 +251,12 @@ class NotificationControllerIT {
     final String json = mvc.perform(get("/api/v1/notifications")
             .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.items").isArray())
+        // Slice 4: Items liegen HAL unter _embedded.notifications bzw. ohne HAL unter content;
+        // wire-tolerant ueber notificationItemsOf gelesen (Behavior-Test, Produktions-HAL separat).
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
-    final JsonNode items = root.get("items");
+    final JsonNode items = notificationItemsOf(root);
 
     // USER_A sieht nur eigene Notification
     boolean foundA = false;
@@ -297,7 +298,8 @@ class NotificationControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
-    final JsonNode items = root.get("items");
+    // Slice 4: Items unter _embedded.notifications
+    final JsonNode items = notificationItemsOf(root);
 
     boolean foundUnread = false;
     boolean foundRead = false;
@@ -345,7 +347,8 @@ class NotificationControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode page1 = new ObjectMapper().readTree(page1Json);
-    assertThat(page1.get("items")).hasSize(2);
+    // Slice 4: Items unter _embedded.notifications (HAL-Collection), Cursor-Felder top-level.
+    assertThat(notificationItemsOf(page1)).hasSize(2);
     final String nextCursor = page1.get("nextCursor").asText();
     assertThat(nextCursor).isNotBlank();
 
@@ -357,14 +360,14 @@ class NotificationControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode page2 = new ObjectMapper().readTree(page2Json);
-    assertThat(page2.get("items").size()).isGreaterThanOrEqualTo(1);
+    assertThat(notificationItemsOf(page2).size()).isGreaterThanOrEqualTo(1);
 
     // Kein Skip/Dupe: IDs aus Seite 1 und 2 muessen disjunkt sein
     final java.util.Set<String> page1Ids = new java.util.HashSet<>();
-    for (final JsonNode item : page1.get("items")) {
+    for (final JsonNode item : notificationItemsOf(page1)) {
       page1Ids.add(item.get("id").asText());
     }
-    for (final JsonNode item : page2.get("items")) {
+    for (final JsonNode item : notificationItemsOf(page2)) {
       assertThat(page1Ids).as("Seite 2 darf keine IDs aus Seite 1 enthalten (kein Dupe)")
           .doesNotContain(item.get("id").asText());
     }
@@ -465,8 +468,11 @@ class NotificationControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
-    for (final JsonNode item : root.get("items")) {
+    // Slice 4: Items unter _embedded.notifications
+    boolean found = false;
+    for (final JsonNode item : notificationItemsOf(root)) {
       if (notifId.toString().equals(item.get("id").asText())) {
+        found = true;
         assertThat(item.get("createdAt")).as("createdAt darf nicht null sein").isNotNull();
         assertThat(item.get("createdAt").asText()).isNotBlank();
         // Muss parsierbar sein (ISO-8601 Instant)
@@ -474,6 +480,7 @@ class NotificationControllerIT {
         break;
       }
     }
+    assertThat(found).as("Referenz-Notification muss in der Liste vorkommen").isTrue();
   }
 
   // ---- F-P1: base64-gueltiger Cursor mit semantisch kaputten Tokens -> HTTP 400 ----------
@@ -530,9 +537,10 @@ class NotificationControllerIT {
         .andReturn().getResponse().getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
+    // Slice 4: Items unter _embedded.notifications
     boolean foundActive = false;
     boolean foundDeactivated = false;
-    for (final JsonNode item : root.get("items")) {
+    for (final JsonNode item : notificationItemsOf(root)) {
       final String id = item.get("id").asText();
       if (activeId.toString().equals(id)) {
         foundActive = true;
@@ -733,6 +741,43 @@ class NotificationControllerIT {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
         .build();
+  }
+
+  /**
+   * Navigiert zu {@code _embedded.notifications} in einer HAL-Collection-Seite.
+   *
+   * <p>Slice 4: {@code GET /api/v1/notifications} liefert jetzt {@link
+   * de.brasi.nova.taskmanagement.paging.CursorCollectionModel} mit Items unter
+   * {@code _embedded.notifications}. Leere Collection nur bei vorhandenen Cursor-Feldern;
+   * unbekannte Form -> AssertionError.
+   */
+  private com.fasterxml.jackson.databind.JsonNode notificationItemsOf(
+      final com.fasterxml.jackson.databind.JsonNode page) {
+    // Slice 4: HAL-Autoconfig (Produktions-Wire + voll-autoconfig-IT) -> _embedded.notifications;
+    // ohne HAL (handverlesene IT-Autoconfig) -> CollectionModel.content; legacy -> flaches items.
+    // Behavior-IT prueft Pagination/Filter wire-unabhaengig -> tolerant; Produktions-HAL separat.
+    final com.fasterxml.jackson.databind.JsonNode embedded = page.get("_embedded");
+    if (embedded != null && !embedded.isNull()) {
+      final com.fasterxml.jackson.databind.JsonNode notifications = embedded.get("notifications");
+      if (notifications != null && notifications.isArray()) {
+        return notifications;
+      }
+    }
+    final com.fasterxml.jackson.databind.JsonNode content = page.get("content");
+    if (content != null && content.isArray()) {
+      return content;
+    }
+    final com.fasterxml.jackson.databind.JsonNode items = page.get("items");
+    if (items != null && items.isArray()) {
+      return items;
+    }
+    // Legitimer Leer-Fall: Cursor-Collection ohne Items; sonst unbekannte Wire-Form -> Fehlschlag.
+    if (page.has("hasMore") || page.has("nextCursor")) {
+      return new com.fasterxml.jackson.databind.node.ArrayNode(
+          com.fasterxml.jackson.databind.node.JsonNodeFactory.instance);
+    }
+    throw new AssertionError("Unbekannte Collection-Wire-Form (weder _embedded.notifications noch"
+        + " content noch items, keine Cursor-Felder): " + page);
   }
 
   private String tokenAReadWrite() {

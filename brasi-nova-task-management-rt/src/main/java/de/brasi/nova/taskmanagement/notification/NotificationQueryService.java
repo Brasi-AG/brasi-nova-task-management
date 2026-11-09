@@ -4,6 +4,7 @@ import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskNotification;
 import de.brasi.nova.taskmanagement.notification.model.NotificationModel;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
+import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.repository.BaseTaskNotificationRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
@@ -296,7 +297,7 @@ public class NotificationQueryService {
         ? taskUuidMap.get(entity.getTaskId())
         : null;
 
-    return new NotificationModel(
+    final NotificationModel model = new NotificationModel(
         entity.getUuid(),
         typeCode,
         taskUuid,
@@ -306,5 +307,40 @@ public class NotificationQueryService {
         severityCode,
         entity.isRead(),
         auditTimeConverter.toInstant(entity.getCreatedAt())); // R7
+
+    // Slice 4: Entity-Referenz setzen damit die KSF-Enrichment-Pipeline (entityClass=TaskNotification)
+    // fuer Item-rels greifen kann. ModelState aus EntityState (null-safe).
+    model.setEntity(entity);
+    if (entity.getEntityState() != null) {
+      model.setModelState(
+          io.keel.framework.api.service.model.ModelState.fromString(
+              entity.getEntityState().name()));
+    }
+    return model;
+  }
+
+  /**
+   * Liefert eine HAL-Collection von Benachrichtigungen fuer den Controller (Slice 4).
+   *
+   * <p>Ruft intern {@link #listFor} auf und konvertiert das {@link NotificationPage}-Ergebnis
+   * in ein {@link CursorCollectionModel}. {@link #listFor} bleibt erhalten, damit
+   * {@link de.brasi.nova.taskmanagement.inbox.InboxSnapshotService#loadSnapshot} weiterhin
+   * ein {@link NotificationPage} fuer das {@code InboxSnapshotModel} erhaelt.
+   *
+   * @param userRef  UUID des Empfaengers
+   * @param tenantId interne Mandanten-ID (aus Security-Context)
+   * @param filter   "all" | "unread" | null
+   * @param cursor   opaker Paginierungs-Cursor (null/blank = erste Seite)
+   * @param limit    Seitengroesse (wird geclampt)
+   * @return HAL-Collection der Benachrichtigungen
+   */
+  public CursorCollectionModel<NotificationModel> listForCollection(
+      final UUID userRef,
+      final long tenantId,
+      final String filter,
+      final String cursor,
+      final int limit) {
+    final NotificationPage page = listFor(userRef, tenantId, filter, cursor, limit);
+    return CursorCollectionModel.ofNotifications(page.items(), page.nextCursor(), page.hasMore());
   }
 }

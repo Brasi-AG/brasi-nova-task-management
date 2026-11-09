@@ -576,10 +576,17 @@ class TaskWebSocketHandlerIT {
               .toEntity(String.class);
       assertThat(resp.getStatusCode().value()).isEqualTo(200);
       final JsonNode page = readJson(resp.getBody());
-      for (final JsonNode item : page.get("items")) {
+      // Slice 4: Items unter _embedded.tasks (HAL) bzw. content (ohne HAL); leere Liste = keines von beiden.
+      // Dieser IT bootet ohne KSF-HAL-Converter: CollectionModel serialisiert dann als content.
+      JsonNode embeddedTasks = page.path("_embedded").path("tasks");
+      if (!embeddedTasks.isArray()) {
+        embeddedTasks = page.path("content");
+      }
+      for (final JsonNode item : embeddedTasks) {
         ids.add(UUID.fromString(item.get("id").asText()));
       }
-      if (!page.get("hasMore").asBoolean() || page.get("nextCursor").isNull()) {
+      if (!page.path("hasMore").asBoolean(false) || page.path("nextCursor").isMissingNode()
+          || page.path("nextCursor").isNull()) {
         return ids;
       }
       cursor = page.get("nextCursor").asText();

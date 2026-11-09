@@ -1,5 +1,10 @@
 package de.brasi.nova.taskmanagement.task;
 
+import de.brasi.nova.taskmanagement.comment.CommentController;
+import de.brasi.nova.taskmanagement.inbox.InboxSnapshotService;
+import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
+import de.brasi.nova.taskmanagement.participant.AssigneeController;
+import de.brasi.nova.taskmanagement.participant.UserStateController;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
@@ -7,7 +12,16 @@ import de.brasi.nova.taskmanagement.task.model.TaskCreateFromSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
+import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
+import io.keel.framework.api.security.PermissionEvaluator;
+import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
+import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
+import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
+import io.keel.framework.api.hateoas.annotation.LinkParam;
+import io.keel.framework.api.hateoas.annotation.LinkRule;
+import io.keel.framework.api.hateoas.annotation.LinkRules;
+import io.keel.framework.api.openapi.annotation.ApiFindResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,6 +59,88 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
+@EnableNovaHateoas(entityClass = Task.class)
+@LinkRules(
+    value = {
+      @LinkRule(
+          rel = TaskHateoas.Rels.SELF,
+          linkTo = TaskHateoas.Targets.GET_DETAIL,
+          title = TaskHateoas.Titles.SELF,
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.UPDATE,
+          linkTo = TaskHateoas.Targets.PATCH,
+          title = TaskHateoas.Titles.UPDATE,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.COMMENTS,
+          linkTo = TaskHateoas.Targets.GET_COMMENTS,
+          controller = CommentController.class,
+          title = TaskHateoas.Titles.COMMENTS,
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.ADD_COMMENT,
+          linkTo = TaskHateoas.Targets.CREATE_COMMENT,
+          controller = CommentController.class,
+          title = TaskHateoas.Titles.ADD_COMMENT,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.ASSIGNEES,
+          linkTo = TaskHateoas.Targets.UPDATE_ASSIGNEES,
+          controller = AssigneeController.class,
+          title = TaskHateoas.Titles.ASSIGNEES,
+          conditions = {TaskHateoas.Specs.HAS_WRITE_AUTHORITY_AND_IS_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.PARTICIPANTS,
+          linkTo = TaskHateoas.Targets.ADD_PARTICIPANTS,
+          controller = AssigneeController.class,
+          title = TaskHateoas.Titles.PARTICIPANTS,
+          conditions = {TaskHateoas.Specs.HAS_WRITE_AUTHORITY_AND_IS_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.EXIT,
+          linkTo = TaskHateoas.Targets.EXIT,
+          controller = AssigneeController.class,
+          title = TaskHateoas.Titles.EXIT,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.PIN,
+          linkTo = TaskHateoas.Targets.PIN,
+          controller = UserStateController.class,
+          title = TaskHateoas.Titles.PIN,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.FLAG,
+          linkTo = TaskHateoas.Targets.FLAG,
+          controller = UserStateController.class,
+          title = TaskHateoas.Titles.FLAG,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.MUTE,
+          linkTo = TaskHateoas.Targets.MUTE,
+          controller = UserStateController.class,
+          title = TaskHateoas.Titles.MUTE,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")})
+    },
+    collectionRules = {
+      @CollectionLinkRule(
+          rel = TaskHateoas.Rels.CREATE,
+          linkTo = TaskHateoas.Targets.CREATE,
+          title = TaskHateoas.Titles.CREATE,
+          conditions = {TaskHateoas.Specs.HAS_WRITE_AUTHORITY}),
+      @CollectionLinkRule(
+          rel = TaskHateoas.Rels.CREATE_FROM_SOURCE,
+          linkTo = TaskHateoas.Targets.CREATE_FROM_SOURCE,
+          title = TaskHateoas.Titles.CREATE_FROM_SOURCE,
+          conditions = {TaskHateoas.Specs.HAS_CREATE_AUTHORITY})
+    })
 public class TaskFacadeController {
 
   private final TaskCommandService commandService;
@@ -52,6 +148,8 @@ public class TaskFacadeController {
   private final TaskDetailService detailService;
   private final UserStateService userStateService;
   private final UserAccessor userAccessor;
+  private final InboxSnapshotService snapshotService;
+  private final PermissionEvaluator permissionEvaluator;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskFacadeController(
@@ -59,12 +157,16 @@ public class TaskFacadeController {
       final TaskSourceCreateService sourceCreateService,
       final TaskDetailService detailService,
       final UserStateService userStateService,
-      final UserAccessor userAccessor) {
+      final UserAccessor userAccessor,
+      final InboxSnapshotService snapshotService,
+      final PermissionEvaluator permissionEvaluator) {
     this.commandService = commandService;
     this.sourceCreateService = sourceCreateService;
     this.detailService = detailService;
     this.userStateService = userStateService;
     this.userAccessor = userAccessor;
+    this.snapshotService = snapshotService;
+    this.permissionEvaluator = permissionEvaluator;
   }
 
   /**
@@ -104,6 +206,7 @@ public class TaskFacadeController {
     @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung.")
   })
   @PostMapping
+  @HateoasLinkTarget(TaskHateoas.Targets.CREATE)
   @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
   public ResponseEntity<Map<String, UUID>> create(@RequestBody final TaskCreateInput input) {
     if (input.source() != null) {
@@ -159,6 +262,7 @@ public class TaskFacadeController {
         content = @Content)
   })
   @PostMapping("/from-source")
+  @HateoasLinkTarget(TaskHateoas.Targets.CREATE_FROM_SOURCE)
   @RequiresPermission(TaskManagementPermissions.TASK_CREATE)
   public ResponseEntity<Map<String, UUID>> createFromSource(
       @Parameter(
@@ -215,12 +319,70 @@ public class TaskFacadeController {
             "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PatchMapping("/{id}")
+  @HateoasLinkTarget(TaskHateoas.Targets.PATCH)
   public ResponseEntity<Void> patch(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
       @RequestBody final TaskPatchInput input) {
     commandService.patch(id, input);
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Liefert den Bootstrap-Snapshot der Inbox fuer den angemeldeten Benutzer.
+   *
+   * <p>PLAN #141 Slice 5 (Teil B): Handler wandert vom {@code InboxSnapshotController} hierher,
+   * damit der SelfLinkEnricher fuer die verschachtelten {@link
+   * de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel}-Items greift. Der Enricher
+   * laueft NUR, wenn (a) der Response-Body ein {@code InfoModel} ist UND (b) der ausliefernde
+   * Controller ein {@code @EnableNovaHateoas}-Rule-Owner ist (= dieser Controller via Task).
+   *
+   * <p>AUTHENTICATED-ONLY (kein {@code @RequiresPermission}): das Lesen der EIGENEN Inbox ist eine
+   * Basis-Faehigkeit jedes angemeldeten Nutzers. NOTIFICATION_READ steuert nur die
+   * Notification-Sichtbarkeit.
+   *
+   * @return 200 OK mit {@link de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel}
+   */
+  // tags: haelt den springdoc-Tag des frueheren InboxSnapshotController stabil (Owner 2026-11-09),
+  // damit die generierte api-client-Methode im bisherigen Service bleibt (#141 Slice 5 Handler-Move).
+  @Operation(
+      tags = "inbox-snapshot-controller",
+      summary = "Inbox-Snapshot laden",
+      description =
+          "Liefert den vollstaendigen Bootstrap-Snapshot der Inbox:"
+              + " aktive Aufgaben (erste Seite mit self-Links), Benachrichtigungen, Tag-Katalog,"
+              + " Teilnehmer-Zusammenfassungen und Archiv-Gesamtzahlen."
+              + " Erzeugt ein asOf-Wasserzeichen fuer konsistente Keyset-Paginierung."
+              + " Die Benachrichtigungs-Seite (notifications) wird NUR befuellt, wenn der Benutzer"
+              + " die Permission NOTIFICATION_READ besitzt; andernfalls ist sie eine leere Seite.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Inbox-Snapshot erfolgreich geladen.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema =
+                    @Schema(
+                        implementation =
+                            de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel.class))),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "410",
+        description =
+            "Snapshot konnte unter anhaltender Membership-Aenderung nicht konsistent"
+                + " erzeugt werden (seltene Degradation); Client wiederholt die Anfrage.")
+  })
+  @GetMapping("/snapshot")
+  @ApiFindResponse(InboxSnapshotModel.class)
+  public ResponseEntity<InboxSnapshotModel> snapshot() {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    // Autz-Grenze: NOTIFICATION_READ exakt + fail-closed auswerten (aspekt-treu zu
+    // @RequiresPermission). Der Service bleibt framework-neutral und erhaelt nur die Capability.
+    final boolean notificationsVisible =
+        permissionEvaluator.hasExactAuthority(TaskManagementPermissions.NOTIFICATION_READ);
+    return ResponseEntity.ok(
+        snapshotService.loadSnapshot(actor.user().id(), actor.tenant().id(), notificationsVisible));
   }
 
   /**
@@ -265,6 +427,8 @@ public class TaskFacadeController {
             "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @GetMapping("/{id}")
+  @HateoasLinkTarget(TaskHateoas.Targets.GET_DETAIL)
+  @ApiFindResponse(TaskDetailModel.class)
   public ResponseEntity<TaskDetailModel> detail(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id) {
