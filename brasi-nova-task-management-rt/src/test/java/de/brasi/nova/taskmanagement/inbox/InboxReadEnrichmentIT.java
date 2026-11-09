@@ -14,7 +14,6 @@ import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
-import de.brasi.nova.taskmanagement.tag.TagCatalogService;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.security.AuditorProvider;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
@@ -23,7 +22,6 @@ import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfigurati
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -63,8 +61,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * {@code exit=null}); fremder Mandant erscheint nicht; katalog-inaktiver Tag bleibt sichtbar.
  *
  * <p>Die N+1-/Query-Zahl-Invariante ist auf Invocation-Ebene in {@code InboxSnapshotServiceTest}
- * (Mockito-Sentinel: je Batch-Repo genau 1 Aufruf pro Versuch, 0 bei leerer Seite) verankert; dieser
- * IT beweist die Korrektheit der Anreicherung bei 1 UND 100 Zeilen gegen echtes MSSQL.
+ * (Mockito-Sentinel: je Batch-Repo genau 1 Aufruf pro Versuch, 0 bei leerer Seite) verankert;
+ * dieser IT beweist die Korrektheit der Anreicherung bei 1 UND 100 Zeilen gegen echtes MSSQL.
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -90,8 +88,7 @@ class InboxReadEnrichmentIT {
 
   private static final long TENANT_ID = 590L;
   private static final long FOREIGN_TENANT_ID = 591L;
-  private static final UUID TENANT_UUID =
-      UUID.fromString("00000059-0000-0059-0000-000000000590");
+  private static final UUID TENANT_UUID = UUID.fromString("00000059-0000-0059-0000-000000000590");
   private static final UUID FOREIGN_TENANT_UUID =
       UUID.fromString("00000059-0000-0059-0000-000000000591");
 
@@ -119,13 +116,17 @@ class InboxReadEnrichmentIT {
   private static final long AF_FOREIGN = 591501L;
 
   private static final UUID AE_FULL_UUID = UUID.fromString("00000059-0501-0059-0000-000000590501");
-  private static final UUID AE_FUTURE_UUID = UUID.fromString("00000059-0502-0059-0000-000000590502");
+  private static final UUID AE_FUTURE_UUID =
+      UUID.fromString("00000059-0502-0059-0000-000000590502");
   private static final UUID AL_UNSUB_UUID = UUID.fromString("00000059-0511-0059-0000-000000590511");
-  private static final UUID AL_HANDOVER_UUID = UUID.fromString("00000059-0512-0059-0000-000000590512");
+  private static final UUID AL_HANDOVER_UUID =
+      UUID.fromString("00000059-0512-0059-0000-000000590512");
   private static final UUID AL_BOTH_UUID = UUID.fromString("00000059-0513-0059-0000-000000590513");
   private static final UUID AD_DONE_UUID = UUID.fromString("00000059-0521-0059-0000-000000590521");
-  private static final UUID AD_CANCELLED_UUID = UUID.fromString("00000059-0522-0059-0000-000000590522");
-  private static final UUID AF_FOREIGN_UUID = UUID.fromString("00000059-1501-0059-0000-000000591501");
+  private static final UUID AD_CANCELLED_UUID =
+      UUID.fromString("00000059-0522-0059-0000-000000590522");
+  private static final UUID AF_FOREIGN_UUID =
+      UUID.fromString("00000059-1501-0059-0000-000000591501");
 
   private static final LocalDateTime PAST = LocalDateTime.of(2026, 1, 1, 8, 0, 0);
   private static final LocalDateTime FUTURE = LocalDateTime.of(2099, 1, 1, 8, 0, 0);
@@ -177,14 +178,16 @@ class InboxReadEnrichmentIT {
     participant(jt, 591001L, AE_FULL, TENANT_ID, USER_A, "PERSON", true, false, false, null, null);
     participant(jt, 591002L, AE_FULL, TENANT_ID, USER_B, "PERSON", false, true, false, null, null);
     participant(jt, 591003L, AE_FULL, TENANT_ID, USER_C, "PERSON", false, false, true, null, null);
-    participant(jt, 591004L, AE_FULL, TENANT_ID, USER_D, "PERSON", false, false, true, "HANDOVER", PAST);
+    participant(
+        jt, 591004L, AE_FULL, TENANT_ID, USER_D, "PERSON", false, false, true, "HANDOVER", PAST);
     userState(jt, 591005L, AE_FULL, TENANT_ID, USER_A, true, true, true, null);
     tagAssignment(jt, 591006L, AE_FULL, TENANT_ID, 9501L, "ACTIVE");
     tagAssignment(jt, 591007L, AE_FULL, TENANT_ID, 9502L, "ACTIVE");
 
     // AE_FUTURE_UNSUB: A aktiv, aber UNSUBSCRIBED_AT in der Zukunft -> bleibt aktiv, exit=null.
     insertTask(jt, AE_FUTURE_UNSUB, AE_FUTURE_UUID, TENANT_ID, STATUS_OPEN, "AE-Future", null);
-    participant(jt, 591011L, AE_FUTURE_UNSUB, TENANT_ID, USER_A, "PERSON", true, false, false, null, null);
+    participant(
+        jt, 591011L, AE_FUTURE_UNSUB, TENANT_ID, USER_A, "PERSON", true, false, false, null, null);
     userStateUnsub(jt, 591012L, AE_FUTURE_UNSUB, TENANT_ID, USER_A, FUTURE);
 
     // --- Archiv-left (USER_A) ---
@@ -196,34 +199,66 @@ class InboxReadEnrichmentIT {
     participant(jt, 591102L, AL_UNSUB, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
     // AL_HANDOVER: A per Participant-HANDOVER ausgetreten (Vergangenheit), keine aktive UserState.
     insertTask(jt, AL_HANDOVER, AL_HANDOVER_UUID, TENANT_ID, STATUS_OPEN, "AL-Handover", null);
-    participant(jt, 591111L, AL_HANDOVER, TENANT_ID, USER_A, "PERSON", false, false, true, "HANDOVER", PAST);
+    participant(
+        jt,
+        591111L,
+        AL_HANDOVER,
+        TENANT_ID,
+        USER_A,
+        "PERSON",
+        false,
+        false,
+        true,
+        "HANDOVER",
+        PAST);
     // AL_BOTH: beide Signale -> Praezedenz handover.
     insertTask(jt, AL_BOTH, AL_BOTH_UUID, TENANT_ID, STATUS_OPEN, "AL-Both", null);
-    participant(jt, 591121L, AL_BOTH, TENANT_ID, USER_A, "PERSON", false, false, true, "HANDOVER", PAST);
+    participant(
+        jt, 591121L, AL_BOTH, TENANT_ID, USER_A, "PERSON", false, false, true, "HANDOVER", PAST);
     userStateUnsub(jt, 591122L, AL_BOTH, TENANT_ID, USER_A, PAST);
 
     // --- Archiv-done (USER_A, aktive UserState) ---
     // Slice 6 (Membership-Konjunkt): die Archiv-done-Sicht verlangt zusaetzlich einen aktiven
-    // PERSON-Participant (READ-Member); State und Participant koexistieren fuer legitime Mitglieder.
+    // PERSON-Participant (READ-Member); State und Participant koexistieren fuer legitime
+    // Mitglieder.
     insertTask(jt, AD_DONE, AD_DONE_UUID, TENANT_ID, STATUS_DONE, "AD-Done", null);
     userState(jt, 591201L, AD_DONE, TENANT_ID, USER_A, false, false, false, null);
     participant(jt, 591203L, AD_DONE, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
-    insertTask(jt, AD_CANCELLED, AD_CANCELLED_UUID, TENANT_ID, STATUS_CANCELLED, "AD-Cancelled", null);
+    insertTask(
+        jt, AD_CANCELLED, AD_CANCELLED_UUID, TENANT_ID, STATUS_CANCELLED, "AD-Cancelled", null);
     userState(jt, 591202L, AD_CANCELLED, TENANT_ID, USER_A, false, false, false, null);
-    participant(jt, 591204L, AD_CANCELLED, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
+    participant(
+        jt, 591204L, AD_CANCELLED, TENANT_ID, USER_A, "PERSON", false, false, true, null, null);
 
     // --- Fremder Mandant (591) ---
     insertTask(jt, AF_FOREIGN, AF_FOREIGN_UUID, FOREIGN_TENANT_ID, STATUS_OPEN, "AF-Foreign", null);
-    participant(jt, 591301L, AF_FOREIGN, FOREIGN_TENANT_ID, USER_A, "PERSON", true, false, false, null, null);
+    participant(
+        jt,
+        591301L,
+        AF_FOREIGN,
+        FOREIGN_TENANT_ID,
+        USER_A,
+        "PERSON",
+        true,
+        false,
+        false,
+        null,
+        null);
     userState(jt, 591302L, AF_FOREIGN, FOREIGN_TENANT_ID, USER_A, false, false, false, null);
 
     // --- 100 aktive Aufgaben (USER_VOL) fuer den Volumen-Fall ---
     for (int i = 0; i < 100; i++) {
       final long taskId = 590700L + i;
       insertTask(
-          jt, taskId, new UUID(0x0000005907000000L, taskId), TENANT_ID, STATUS_OPEN,
-          "AV-" + i, null);
-      participant(jt, 592000L + i, taskId, TENANT_ID, USER_VOL, "PERSON", true, false, false, null, null);
+          jt,
+          taskId,
+          new UUID(0x0000005907000000L, taskId),
+          TENANT_ID,
+          STATUS_OPEN,
+          "AV-" + i,
+          null);
+      participant(
+          jt, 592000L + i, taskId, TENANT_ID, USER_VOL, "PERSON", true, false, false, null, null);
       userState(jt, 593000L + i, taskId, TENANT_ID, USER_VOL, false, false, false, null);
     }
   }
@@ -234,7 +269,8 @@ class InboxReadEnrichmentIT {
       @Autowired TaskParticipantQueryRepository participantQueryRepository,
       @Autowired TaskTagAssignmentQueryRepository tagAssignmentQueryRepository,
       @Autowired TaskUserStateQueryRepository userStateQueryRepository,
-      @Autowired de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository
+      @Autowired
+          de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository
               handoverQueryRepository) {
     TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
 
@@ -309,7 +345,8 @@ class InboxReadEnrichmentIT {
   // ---- Tests ---------------------------------------------------------------------------------
 
   @Test
-  @DisplayName("aktive Seite: AE_FULL vollstaendig angereichert; Future-Unsub bleibt aktiv (exit=null)")
+  @DisplayName(
+      "aktive Seite: AE_FULL vollstaendig angereichert; Future-Unsub bleibt aktiv (exit=null)")
   void active_page_enrichment() {
     final Map<UUID, TaskSummaryModel> byId = byId(service.loadActivePage(USER_A, null, 50));
 
@@ -337,7 +374,8 @@ class InboxReadEnrichmentIT {
   @Test
   @DisplayName("Archiv-left: exit-Mapping handover/unsubscribed + Praezedenz handover")
   void archive_left_exit_mapping() {
-    final Map<UUID, TaskSummaryModel> byId = byId(service.loadArchivePage(USER_A, "left", null, 50));
+    final Map<UUID, TaskSummaryModel> byId =
+        byId(service.loadArchivePage(USER_A, "left", null, 50));
 
     assertThat(byId.get(AL_UNSUB_UUID)).isNotNull();
     assertThat(byId.get(AL_UNSUB_UUID).exit().kind()).isEqualTo("unsubscribed");
@@ -350,7 +388,8 @@ class InboxReadEnrichmentIT {
   @Test
   @DisplayName("Archiv-done: isDone=true fuer DONE und CANCELLED")
   void archive_done_isDone() {
-    final Map<UUID, TaskSummaryModel> byId = byId(service.loadArchivePage(USER_A, "done", null, 50));
+    final Map<UUID, TaskSummaryModel> byId =
+        byId(service.loadArchivePage(USER_A, "done", null, 50));
     assertThat(byId.get(AD_DONE_UUID).isDone()).isTrue();
     assertThat(byId.get(AD_CANCELLED_UUID).isDone()).isTrue();
     assertThat(byId.get(AD_DONE_UUID).exit()).isNull();
@@ -366,7 +405,8 @@ class InboxReadEnrichmentIT {
   @Test
   @DisplayName("0 Zeilen: leere aktive Seite ohne Fehler")
   void zero_rows_empty_page() {
-    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_EMPTY, null, 50);
+    final CursorCollectionModel<TaskSummaryModel> page =
+        service.loadActivePage(USER_EMPTY, null, 50);
     // Slice 4: items via CollectionModel.getContent()
     assertThat(page.getContent()).isEmpty();
     assertThat(page.isHasMore()).isFalse();
@@ -375,7 +415,8 @@ class InboxReadEnrichmentIT {
   @Test
   @DisplayName("100 Zeilen: alle angereichert (createdById gesetzt), Korrektheit bei Volumen")
   void hundred_rows_enriched() {
-    final CursorCollectionModel<TaskSummaryModel> page = service.loadActivePage(USER_VOL, null, 100);
+    final CursorCollectionModel<TaskSummaryModel> page =
+        service.loadActivePage(USER_VOL, null, 100);
     // Slice 4: items via CollectionModel.getContent()
     assertThat(page.getContent()).hasSize(100);
     assertThat(page.getContent()).allSatisfy(s -> assertThat(s.createdById()).isEqualTo(USER_VOL));
@@ -383,7 +424,8 @@ class InboxReadEnrichmentIT {
 
   // ---- Hilfen --------------------------------------------------------------------------------
 
-  private static Map<UUID, TaskSummaryModel> byId(final CursorCollectionModel<TaskSummaryModel> page) {
+  private static Map<UUID, TaskSummaryModel> byId(
+      final CursorCollectionModel<TaskSummaryModel> page) {
     // Slice 4: items via CollectionModel.getContent()
     return page.getContent().stream().collect(Collectors.toMap(TaskSummaryModel::id, s -> s));
   }
@@ -394,7 +436,10 @@ class InboxReadEnrichmentIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static UUID seedGlobalTag(
@@ -406,8 +451,13 @@ class InboxReadEnrichmentIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, BEZEICHNUNG, ENTRY_TYPE,"
             + " GUELTIG_VON, SEVERITY_ID) "
             + "VALUES (?, ?, ?, 1, 0, ?, 'SYSTEM_PUBLIC', CAST(GETDATE() AS DATE), 601)",
-        id, id, status, externalId, bezeichnung);
-    return jt.queryForObject("SELECT EXTERNALID FROM [dbo].[TASK_TAG] WHERE ID = ?", UUID.class, id);
+        id,
+        id,
+        status,
+        externalId,
+        bezeichnung);
+    return jt.queryForObject(
+        "SELECT EXTERNALID FROM [dbo].[TASK_TAG] WHERE ID = ?", UUID.class, id);
   }
 
   private static void insertTask(
@@ -425,8 +475,18 @@ class InboxReadEnrichmentIT {
             + " PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID, LAST_ACTIVITY_AT, COMMENT_COUNT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'it-seed', ?)",
-        id, id, externalId, tenantId, title, description, statusId,
-        PRIORITY_LOW, DIRECTION_BRASI_CUSTOMER, tenantId, PAST, PAST);
+        id,
+        id,
+        externalId,
+        tenantId,
+        title,
+        description,
+        statusId,
+        PRIORITY_LOW,
+        DIRECTION_BRASI_CUSTOMER,
+        tenantId,
+        PAST,
+        PAST);
   }
 
   private static void participant(
@@ -448,8 +508,19 @@ class InboxReadEnrichmentIT {
             + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'it-seed', ?)",
-        id, id, tenantId, taskId, ref, kind, tenantId,
-        creator ? 1 : 0, assignee ? 1 : 0, participant ? 1 : 0, exitKind, exitAt, PAST);
+        id,
+        id,
+        tenantId,
+        taskId,
+        ref,
+        kind,
+        tenantId,
+        creator ? 1 : 0,
+        assignee ? 1 : 0,
+        participant ? 1 : 0,
+        exitKind,
+        exitAt,
+        PAST);
   }
 
   private static void userState(
@@ -469,8 +540,17 @@ class InboxReadEnrichmentIT {
             + " USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, ?, ?, ?, ?, 'it-seed', ?)",
-        id, id, tenantId, taskId, userRef, tenantId,
-        pinned ? 1 : 0, flagged ? 1 : 0, muted ? 1 : 0, unsubscribedAt, PAST);
+        id,
+        id,
+        tenantId,
+        taskId,
+        userRef,
+        tenantId,
+        pinned ? 1 : 0,
+        flagged ? 1 : 0,
+        muted ? 1 : 0,
+        unsubscribedAt,
+        PAST);
   }
 
   private static void userStateUnsub(
@@ -496,7 +576,12 @@ class InboxReadEnrichmentIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, TASK_ID, TAG_ID, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, ?, NEWID(), 1, ?, ?, ?, 'it-seed', GETDATE())",
-        id, id, status, tenantId, taskId, tagId);
+        id,
+        id,
+        status,
+        tenantId,
+        taskId,
+        tagId);
   }
 
   // ---- IT-Konfigurations-Context -------------------------------------------------------------

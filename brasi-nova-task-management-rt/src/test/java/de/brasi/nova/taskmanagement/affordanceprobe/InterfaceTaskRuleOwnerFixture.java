@@ -1,8 +1,8 @@
 package de.brasi.nova.taskmanagement.affordanceprobe;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import de.brasi.nova.taskmanagement.entity.Task;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,9 +23,13 @@ public final class InterfaceTaskRuleOwnerFixture {
 
   private InterfaceTaskRuleOwnerFixture() {}
 
-  /** {@code @EnableNovaHateoas(Task)} auf dem INTERFACE - zweiter, via Interface deklarierter Owner. */
+  /**
+   * {@code @EnableNovaHateoas(Task)} auf dem INTERFACE - zweiter, via Interface deklarierter Owner.
+   */
   @Controller
-  @ConditionalOnProperty(name = "task-management.test.affordance-probe.enabled", havingValue = "true")
+  @ConditionalOnProperty(
+      name = "task-management.test.affordance-probe.enabled",
+      havingValue = "true")
   @RequestMapping("/probe/second-task-owner")
   @EnableNovaHateoas(entityClass = Task.class)
   public interface SecondTaskOwnerApi {

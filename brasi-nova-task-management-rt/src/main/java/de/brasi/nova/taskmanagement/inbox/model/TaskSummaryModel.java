@@ -19,34 +19,36 @@ import org.springframework.hateoas.server.core.Relation;
  * Kompakte Listenzeilen-Repraesentation einer Aufgabe fuer Snapshot/Inbox/Archiv (arch-v2 §2.1,
  * FE-Proof §B.4), BE-1 additiv angereichert.
  *
- * <p>PLAN #141 Slice 4: migriert vom {@code record} auf eine {@link BaseModel}-Subklasse,
- * damit {@code GET /api/v1/tasks} (activeTasks) und {@code GET /api/v1/tasks/archive} ueber
- * die KSF-Enrichment-Pipeline als HAL-{@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel}
- * ausgeliefert werden koennen. Items tragen per-Item-Affordance-Rels (via entityClass=Task),
- * die Collection traegt create/create-from-source (via TASK_CREATE-Authority).
+ * <p>PLAN #141 Slice 4: migriert vom {@code record} auf eine {@link BaseModel}-Subklasse, damit
+ * {@code GET /api/v1/tasks} (activeTasks) und {@code GET /api/v1/tasks/archive} ueber die
+ * KSF-Enrichment-Pipeline als HAL-{@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel}
+ * ausgeliefert werden koennen. Items tragen per-Item-Affordance-Rels (via entityClass=Task), die
+ * Collection traegt create/create-from-source (via TASK_CREATE-Authority).
  *
- * <p><b>R8-createdAt-Kollision:</b> {@code createdAt:Instant} kollidiert mit dem geerbten
- * {@code getCreatedAt():LocalDateTime} von {@link BaseModel}. Neutralisierung:
+ * <p><b>R8-createdAt-Kollision:</b> {@code createdAt:Instant} kollidiert mit dem geerbten {@code
+ * getCreatedAt():LocalDateTime} von {@link BaseModel}. Neutralisierung:
+ *
  * <ul>
  *   <li>Feld heisst intern {@code createdInstant} (Typ {@code Instant}), traegt
  *       {@code @JsonProperty("createdAt")} und serialisiert als "createdAt".
- *   <li>Das geerbte {@code getCreatedAt():LocalDateTime} wird per {@code @JsonIgnore} aus dem
- *       Wire genommen (sonst doppeltes/falsches createdAt).
+ *   <li>Das geerbte {@code getCreatedAt():LocalDateTime} wird per {@code @JsonIgnore} aus dem Wire
+ *       genommen (sonst doppeltes/falsches createdAt).
  *   <li>Fluent-Alias {@code createdAt()} liefert {@code createdInstant} fuer Alt-Konsumenten
  *       (record-Accessor-Kompat).
  * </ul>
+ *
  * Ergebnis: genau EIN {@code createdAt} im Wire, ISO-8601-Instant mit Z (unveraenderter Vertrag).
  *
  * <p>Wire-Vertrag: alle bisherigen Felder behalten identischen JSON-Namen und Typ. Einziges
- * additives Wire-Feld aus {@link BaseModel}: {@code modelState} (Lebenszyklus-Zustand).
- * {@code version} wird via {@link JsonIgnoreProperties} aus dem Wire genommen (kein fachlicher
- * Grund, das Lese-DTO mit dem Version-Feld des OCC zu belasten).
+ * additives Wire-Feld aus {@link BaseModel}: {@code modelState} (Lebenszyklus-Zustand). {@code
+ * version} wird via {@link JsonIgnoreProperties} aus dem Wire genommen (kein fachlicher Grund, das
+ * Lese-DTO mit dem Version-Feld des OCC zu belasten).
  *
- * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige
- * Lese-API fuer bestehende Java-Konsumenten.
+ * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
+ * fuer bestehende Java-Konsumenten.
  *
- * <p>{@code @Relation} pinnt die HAL-Namen: ein einzelnes Item als {@code task}, die Collection
- * als {@code tasks} (= Schluessel unter {@code _embedded}).
+ * <p>{@code @Relation} pinnt die HAL-Namen: ein einzelnes Item als {@code task}, die Collection als
+ * {@code tasks} (= Schluessel unter {@code _embedded}).
  */
 @Getter
 @Setter
@@ -86,10 +88,10 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
   private UUID createdById;
 
   /**
-   * R8-Neutralisierung: Feld traegt den Erstellzeitpunkt als Instant, heisst intern
-   * {@code createdInstant} und serialisiert via {@code @JsonProperty("createdAt")} als "createdAt".
-   * Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird per
-   * {@link JsonIgnore} unterdrueckt.
+   * R8-Neutralisierung: Feld traegt den Erstellzeitpunkt als Instant, heisst intern {@code
+   * createdInstant} und serialisiert via {@code @JsonProperty("createdAt")} als "createdAt". Das
+   * geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird per {@link JsonIgnore}
+   * unterdrueckt.
    */
   @JsonProperty("createdAt")
   @Schema(description = "Erstellzeitpunkt der Aufgabe (UTC).", example = "2026-10-01T06:30:00Z")
@@ -186,10 +188,11 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
   }
 
   /**
-   * R8-Neutralisierung: Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel}
-   * wird aus dem Wire genommen (kein fachliches createdAt:LocalDateTime im TaskSummaryModel-Vertrag;
-   * stattdessen {@code createdInstant} als {@code @JsonProperty("createdAt")}). Liefert {@code null},
-   * damit keine {@code null}-Serialisierung erfolgt (BaseModel-{@code @JsonInclude(NON_NULL)}).
+   * R8-Neutralisierung: Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird
+   * aus dem Wire genommen (kein fachliches createdAt:LocalDateTime im TaskSummaryModel-Vertrag;
+   * stattdessen {@code createdInstant} als {@code @JsonProperty("createdAt")}). Liefert {@code
+   * null}, damit keine {@code null}-Serialisierung erfolgt
+   * (BaseModel-{@code @JsonInclude(NON_NULL)}).
    *
    * @return immer {@code null} (nicht im Wire)
    */

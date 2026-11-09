@@ -29,9 +29,9 @@ import org.springframework.asm.Opcodes;
  * #141 Slice 6).
  *
  * <p>task-management ist KSF-nativ: Entities erben von {@code NovaEntity}, Repositories erben von
- * KSF {@code Base*Repository}/{@code NovaRepository}. Direkte {@code jakarta.persistence.*},
- * {@code javax.persistence.*}, {@code org.springframework.data.jpa.*}, {@code org.hibernate.*},
- * {@code org.springframework.data.jdbc.*}/{@code relational.*} sowie die Spring-Data-Repository-
+ * KSF {@code Base*Repository}/{@code NovaRepository}. Direkte {@code jakarta.persistence.*}, {@code
+ * javax.persistence.*}, {@code org.springframework.data.jpa.*}, {@code org.hibernate.*}, {@code
+ * org.springframework.data.jdbc.*}/{@code relational.*} sowie die Spring-Data-Repository-
  * Basistypen sind VERBOTEN.
  *
  * <h2>ERLAUBT (darf NICHT false-positiv schlagen - kalibriert gegen IST-Code)</h2>
@@ -44,9 +44,9 @@ import org.springframework.asm.Opcodes;
  *
  * <h2>Scan-Design</h2>
  *
- * <p>Constant-Pool-Scan der kompilierten PRODUKTIONS-Klassen ({@code target/classes}). Jeder
- * {@code CONSTANT_Utf8}-Eintrag (Klassennamen, Feld-/Methoden-Deskriptoren, Annotations-
- * Deskriptoren, Signaturen) wird gegen die Verbotsliste geprueft. Damit werden auch Feld- und
+ * <p>Constant-Pool-Scan der kompilierten PRODUKTIONS-Klassen ({@code target/classes}). Jeder {@code
+ * CONSTANT_Utf8}-Eintrag (Klassennamen, Feld-/Methoden-Deskriptoren, Annotations- Deskriptoren,
+ * Signaturen) wird gegen die Verbotsliste geprueft. Damit werden auch Feld- und
  * Methoden-Annotationen sowie injizierte Typen (z. B. {@code EntityManager}) erkannt, nicht nur
  * Klassen-Annotationen und direkte Supertypen. Es wird bewusst der VOLLE Bestand gescannt (nicht
  * diff-basiert): strenger und unabhaengig vom Git-Stand.
@@ -123,7 +123,9 @@ class KsfConsumerContractArchitectureCheckTest {
     requireNonEmpty(result);
 
     System.out.println(
-        "[ARCH-CHECK] gescannte Produktionsklassen=" + result.classCount() + " Verletzungen="
+        "[ARCH-CHECK] gescannte Produktionsklassen="
+            + result.classCount()
+            + " Verletzungen="
             + result.violations());
     assertThat(result.violations())
         .as(
@@ -186,8 +188,16 @@ class KsfConsumerContractArchitectureCheckTest {
   @DisplayName("invertierbar_feldtyp: Feld vom Typ jakarta.persistence.EntityManager")
   void invertierbar_feldtyp() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/FieldType", cw -> cw.visitField(
-            Opcodes.ACC_PRIVATE, "em", "Ljakarta/persistence/EntityManager;", null, null).visitEnd(),
+        synthetic(
+            "synthetic/FieldType",
+            cw ->
+                cw.visitField(
+                        Opcodes.ACC_PRIVATE,
+                        "em",
+                        "Ljakarta/persistence/EntityManager;",
+                        null,
+                        null)
+                    .visitEnd(),
             null);
     assertThat(scanBytes("FieldType", bytes)).anyMatch(v -> v.contains("jakarta/persistence/"));
   }
@@ -196,11 +206,15 @@ class KsfConsumerContractArchitectureCheckTest {
   @DisplayName("invertierbar_feld_annotation: Feld-Annotation @PersistenceContext")
   void invertierbar_feld_annotation() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/FieldAnn", cw -> {
-          final var fv = cw.visitField(Opcodes.ACC_PRIVATE, "x", "Ljava/lang/Object;", null, null);
-          fv.visitAnnotation("Ljakarta/persistence/PersistenceContext;", true).visitEnd();
-          fv.visitEnd();
-        }, null);
+        synthetic(
+            "synthetic/FieldAnn",
+            cw -> {
+              final var fv =
+                  cw.visitField(Opcodes.ACC_PRIVATE, "x", "Ljava/lang/Object;", null, null);
+              fv.visitAnnotation("Ljakarta/persistence/PersistenceContext;", true).visitEnd();
+              fv.visitEnd();
+            },
+            null);
     assertThat(scanBytes("FieldAnn", bytes)).anyMatch(v -> v.contains("PersistenceContext"));
   }
 
@@ -208,22 +222,25 @@ class KsfConsumerContractArchitectureCheckTest {
   @DisplayName("invertierbar_methoden_annotation: Methoden-Annotation @PersistenceContext")
   void invertierbar_methoden_annotation() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/MethodAnn", null, cw -> {
-          final MethodVisitor mv =
-              cw.visitMethod(Opcodes.ACC_PUBLIC, "m", "()V", null, null);
-          mv.visitAnnotation("Ljakarta/persistence/PersistenceContext;", true).visitEnd();
-          mv.visitCode();
-          mv.visitInsn(Opcodes.RETURN);
-          mv.visitMaxs(0, 1);
-          mv.visitEnd();
-        });
+        synthetic(
+            "synthetic/MethodAnn",
+            null,
+            cw -> {
+              final MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "m", "()V", null, null);
+              mv.visitAnnotation("Ljakarta/persistence/PersistenceContext;", true).visitEnd();
+              mv.visitCode();
+              mv.visitInsn(Opcodes.RETURN);
+              mv.visitMaxs(0, 1);
+              mv.visitEnd();
+            });
     assertThat(scanBytes("MethodAnn", bytes)).anyMatch(v -> v.contains("PersistenceContext"));
   }
 
   @Test
   @DisplayName("invertierbar_klassen_annotation: Klassen-Annotation aus org.hibernate")
   void invertierbar_klassen_annotation() throws Exception {
-    final byte[] bytes = syntheticWithClassAnnotation("synthetic/ClassAnn", "Lorg/hibernate/annotations/Immutable;");
+    final byte[] bytes =
+        syntheticWithClassAnnotation("synthetic/ClassAnn", "Lorg/hibernate/annotations/Immutable;");
     assertThat(scanBytes("ClassAnn", bytes)).anyMatch(v -> v.contains("org/hibernate/"));
   }
 
@@ -231,15 +248,17 @@ class KsfConsumerContractArchitectureCheckTest {
   @DisplayName("invertierbar_methodenaufruf: Methodenaufruf auf org.hibernate.Session")
   void invertierbar_methodenaufruf() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/Call", null, cw -> {
-          final MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "m", "()V", null, null);
-          mv.visitCode();
-          mv.visitMethodInsn(
-              Opcodes.INVOKESTATIC, "org/hibernate/Session", "x", "()V", true);
-          mv.visitInsn(Opcodes.RETURN);
-          mv.visitMaxs(0, 1);
-          mv.visitEnd();
-        });
+        synthetic(
+            "synthetic/Call",
+            null,
+            cw -> {
+              final MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "m", "()V", null, null);
+              mv.visitCode();
+              mv.visitMethodInsn(Opcodes.INVOKESTATIC, "org/hibernate/Session", "x", "()V", true);
+              mv.visitInsn(Opcodes.RETURN);
+              mv.visitMaxs(0, 1);
+              mv.visitEnd();
+            });
     assertThat(scanBytes("Call", bytes)).anyMatch(v -> v.contains("org/hibernate/"));
   }
 
@@ -249,13 +268,17 @@ class KsfConsumerContractArchitectureCheckTest {
     for (final String pkg : FORBIDDEN_PACKAGES) {
       final String desc = "L" + pkg + "Anything;";
       final byte[] bytes =
-          synthetic("synthetic/Pkg", cw -> cw.visitField(Opcodes.ACC_PRIVATE, "f", desc, null, null).visitEnd(), null);
+          synthetic(
+              "synthetic/Pkg",
+              cw -> cw.visitField(Opcodes.ACC_PRIVATE, "f", desc, null, null).visitEnd(),
+              null);
       assertThat(scanBytes("Pkg", bytes)).as("Paket %s", pkg).isNotEmpty();
     }
   }
 
   @Test
-  @DisplayName("invertierbar_verbotene_supertypen: jeder verbotene Supertyp schlaegt als Super/Interface an")
+  @DisplayName(
+      "invertierbar_verbotene_supertypen: jeder verbotene Supertyp schlaegt als Super/Interface an")
   void invertierbar_verbotene_supertypen() throws Exception {
     for (final String type : FORBIDDEN_TYPES) {
       final byte[] asSuper = syntheticWithSuper("synthetic/Sup", type, null);
@@ -275,11 +298,20 @@ class KsfConsumerContractArchitectureCheckTest {
   }
 
   @Test
-  @DisplayName("invertierbar_generische_signatur: Typargument aus Verbotsliste in Signature-Attribut")
+  @DisplayName(
+      "invertierbar_generische_signatur: Typargument aus Verbotsliste in Signature-Attribut")
   void invertierbar_generische_signatur() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/Sig", cw -> cw.visitField(Opcodes.ACC_PRIVATE, "l", "Ljava/util/List;",
-                "Ljava/util/List<Ljakarta/persistence/EntityManager;>;", null).visitEnd(),
+        synthetic(
+            "synthetic/Sig",
+            cw ->
+                cw.visitField(
+                        Opcodes.ACC_PRIVATE,
+                        "l",
+                        "Ljava/util/List;",
+                        "Ljava/util/List<Ljakarta/persistence/EntityManager;>;",
+                        null)
+                    .visitEnd(),
             null);
     assertThat(scanBytes("Sig", bytes)).isNotEmpty();
   }
@@ -290,16 +322,27 @@ class KsfConsumerContractArchitectureCheckTest {
           + " Namensgrenze, schlagen NICHT an")
   void erlaubt_param_und_namensgrenze() throws Exception {
     final byte[] bytes =
-        synthetic("synthetic/Allowed", cw -> {
-              final var fv = cw.visitField(Opcodes.ACC_PRIVATE, "x", "Ljava/lang/Object;", null, null);
+        synthetic(
+            "synthetic/Allowed",
+            cw -> {
+              final var fv =
+                  cw.visitField(Opcodes.ACC_PRIVATE, "x", "Ljava/lang/Object;", null, null);
               fv.visitAnnotation("L" + ALLOWED_PARAM + ";", true).visitEnd();
               fv.visitEnd();
               // Namensgrenze: RepositoryDefinitionX ist weder Repository noch RepositoryDefinition
-              cw.visitField(Opcodes.ACC_PRIVATE, "d",
-                  "Lorg/springframework/data/repository/RepositoryDefinitionX;", null, null)
+              cw.visitField(
+                      Opcodes.ACC_PRIVATE,
+                      "d",
+                      "Lorg/springframework/data/repository/RepositoryDefinitionX;",
+                      null,
+                      null)
                   .visitEnd();
-              cw.visitField(Opcodes.ACC_PRIVATE, "n",
-                  "Lorg/springframework/data/repository/NoRepositoryBean;", null, null)
+              cw.visitField(
+                      Opcodes.ACC_PRIVATE,
+                      "n",
+                      "Lorg/springframework/data/repository/NoRepositoryBean;",
+                      null,
+                      null)
                   .visitEnd();
             },
             cw -> {
@@ -315,7 +358,8 @@ class KsfConsumerContractArchitectureCheckTest {
   }
 
   @Test
-  @DisplayName("invertierbar_javac_fixture: echte javac-Ausgabe (CrudRepository-Supertyp) wird erkannt")
+  @DisplayName(
+      "invertierbar_javac_fixture: echte javac-Ausgabe (CrudRepository-Supertyp) wird erkannt")
   void invertierbar_javac_fixture() throws Exception {
     try (InputStream in =
         JpaArchitectureViolationFixture.class.getResourceAsStream(
@@ -368,7 +412,9 @@ class KsfConsumerContractArchitectureCheckTest {
     return new ScanResult(count, application, violations);
   }
 
-  /** Scannt die Utf8-Eintraege des Constant Pools einer Klasse; Formatfehler fuehren zum Abbruch. */
+  /**
+   * Scannt die Utf8-Eintraege des Constant Pools einer Klasse; Formatfehler fuehren zum Abbruch.
+   */
   private static List<String> scanBytes(final String label, final byte[] bytes) {
     final List<String> violations = new ArrayList<>();
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {

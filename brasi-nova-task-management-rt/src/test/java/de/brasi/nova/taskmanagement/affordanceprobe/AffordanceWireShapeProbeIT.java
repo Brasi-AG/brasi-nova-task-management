@@ -31,8 +31,8 @@ import org.springframework.test.context.DynamicPropertySource;
  * <ul>
  *   <li>P4-mech: {@code createdAt} erscheint genau EINMAL als ISO-8601-Instant (Z/Offset), nie als
  *       LocalDateTime.
- *   <li>P5-mech: Wire-Form von {@code CollectionModel} / {@code PagedModel} /
- *       {@code KeysetCollectionModel} (Items unter {@code _embedded.<rel>} vs. flach; wo die
+ *   <li>P5-mech: Wire-Form von {@code CollectionModel} / {@code PagedModel} / {@code
+ *       KeysetCollectionModel} (Items unter {@code _embedded.<rel>} vs. flach; wo die
  *       Cursor-Properties landen; wo {@code _links} liegt).
  * </ul>
  *
@@ -95,7 +95,8 @@ class AffordanceWireShapeProbeIT {
   // ---- P4-mech: createdAt genau einmal als Instant --------------------------------------------
 
   @Test
-  @DisplayName("P4-mech: createdAt genau EINMAL als ISO-8601-Instant (Z/Offset), kein LocalDateTime")
+  @DisplayName(
+      "P4-mech: createdAt genau EINMAL als ISO-8601-Instant (Z/Offset), kein LocalDateTime")
   void p4_created_at_is_single_instant() throws Exception {
     final Instant now = Instant.parse("2026-11-05T09:30:00Z");
     final ProbeTimestampModel model = new ProbeTimestampModel(UUID.randomUUID(), now);
@@ -104,11 +105,9 @@ class AffordanceWireShapeProbeIT {
 
     // Genau ein createdAt-Vorkommen (regex zaehlt die JSON-Property).
     final long occurrences =
-        java.util.regex.Pattern.compile("\"createdAt\"")
-            .matcher(json)
-            .results()
-            .count();
-    Assertions.assertEquals(1L, occurrences, "createdAt muss genau EINMAL im Draht stehen: " + json);
+        java.util.regex.Pattern.compile("\"createdAt\"").matcher(json).results().count();
+    Assertions.assertEquals(
+        1L, occurrences, "createdAt muss genau EINMAL im Draht stehen: " + json);
 
     final JsonNode root = objectMapper.readTree(json);
     final String createdAt = root.path("createdAt").asText();
@@ -136,8 +135,7 @@ class AffordanceWireShapeProbeIT {
 
     // (ii) PagedModel
     final PagedModel<ProbeModel> paged =
-        PagedModel.of(
-            List.of(a, b), new PagedModel.PageMetadata(2, 0, 2, 1));
+        PagedModel.of(List.of(a, b), new PagedModel.PageMetadata(2, 0, 2, 1));
     final String pagedJson = objectMapper.writeValueAsString(paged);
     System.out.println("[P5-ii] PagedModel<ProbeModel> -> " + pagedJson);
 

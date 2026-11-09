@@ -28,21 +28,23 @@ import lombok.experimental.Accessors;
  * Die externe UUID {@code id} wird auf {@code BaseModel.id} abgebildet (via {@code super(id)}). Die
  * booleschen Marker tragen bewusst den {@code is}-Praefix im Wire ({@code isPinned}/{@code
  * isFlagged}/{@code isMuted}, NICHT bean-gestripptes {@code pinned}/...); {@code @JsonProperty}
- * pinnt die Namen, da fluent Lombok-Accessoren von Jackson nicht als Bean-Properties erkannt werden.
- * Einziges additives Wire-Feld aus {@code BaseModel}: {@code modelState} (Lebenszyklus-Zustand). Das
- * ebenfalls geerbte {@code createdAt} traegt {@code @JsonInclude(NON_NULL)} und bleibt hier
- * ungesetzt -> faellt aus dem Wire (kein fachliches {@code createdAt}-Feld, keine Kollision).
+ * pinnt die Namen, da fluent Lombok-Accessoren von Jackson nicht als Bean-Properties erkannt
+ * werden. Einziges additives Wire-Feld aus {@code BaseModel}: {@code modelState}
+ * (Lebenszyklus-Zustand). Das ebenfalls geerbte {@code createdAt} traegt
+ * {@code @JsonInclude(NON_NULL)} und bleibt hier ungesetzt -> faellt aus dem Wire (kein fachliches
+ * {@code createdAt}-Feld, keine Kollision).
  *
- * <p>FINDING 3 (Codex-IMPL-Gate): das von {@code BaseModel} geerbte {@code version} wird bewusst via
- * {@link JsonIgnoreProperties} aus dem Wire genommen. Der Detail-Vertrag kannte nie ein {@code
+ * <p>FINDING 3 (Codex-IMPL-Gate): das von {@code BaseModel} geerbte {@code version} wird bewusst
+ * via {@link JsonIgnoreProperties} aus dem Wire genommen. Der Detail-Vertrag kannte nie ein {@code
  * version}-Feld (vormals ein {@code record} mit genau 21 Komponenten); der Detail-Service setzt es
- * nicht, sodass es als unbeabsichtigtes {@code version:null} serialisiert wuerde. Optimistic-Locking
- * laeuft entity-seitig (nicht ueber dieses Lese-DTO), daher gibt es keinen fachlichen Grund, {@code
- * version} am Detail zu exponieren -> minimaler, zum Alt-Vertrag deckungsgleicher Wire.
+ * nicht, sodass es als unbeabsichtigtes {@code version:null} serialisiert wuerde.
+ * Optimistic-Locking laeuft entity-seitig (nicht ueber dieses Lese-DTO), daher gibt es keinen
+ * fachlichen Grund, {@code version} am Detail zu exponieren -> minimaler, zum Alt-Vertrag
+ * deckungsgleicher Wire.
  *
- * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige
- * Lese-API ({@code title()}, {@code isPinned()}, {@code source()}, ...), sodass bestehende
- * Java-Konsumenten (z.B. {@code TaskDetailServiceTest}) unveraendert weiterlaufen.
+ * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
+ * ({@code title()}, {@code isPinned()}, {@code source()}, ...), sodass bestehende Java-Konsumenten
+ * (z.B. {@code TaskDetailServiceTest}) unveraendert weiterlaufen.
  */
 @Getter
 @Setter

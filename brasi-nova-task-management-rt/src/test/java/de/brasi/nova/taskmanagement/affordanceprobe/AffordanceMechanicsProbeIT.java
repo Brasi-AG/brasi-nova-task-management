@@ -33,10 +33,10 @@ import org.springframework.web.context.WebApplicationContext;
  * SPIKE-WEGWERF-IT (PLAN #141 Slice 0). KEIN Produktionscode.
  *
  * <p>Empirischer Nachweis der KSF-2.3.24-Affordance-Mechanik P1/P2/P3 ueber den ECHTEN
- * Web-/HATEOAS-Enrichment-Pfad (globaler {@code NovaFindResponseAdvice} + {@code @EnableNovaHateoas}
- * -Scan + {@code SelfLinkEnricher}), serviert via MockMvc. P1 ist die Kanarienvogel-Probe: erscheint
- * kein {@code _links.self}, ist die Enrichment-Pipeline nicht aktiv und die uebrigen Proben sind
- * nicht aussagekraeftig.
+ * Web-/HATEOAS-Enrichment-Pfad (globaler {@code NovaFindResponseAdvice} +
+ * {@code @EnableNovaHateoas} -Scan + {@code SelfLinkEnricher}), serviert via MockMvc. P1 ist die
+ * Kanarienvogel-Probe: erscheint kein {@code _links.self}, ist die Enrichment-Pipeline nicht aktiv
+ * und die uebrigen Proben sind nicht aussagekraeftig.
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@code @RefSchemaItEnabled}); die reale Persistenz-Autoconfig
  * speist die Enrichment-Infrastruktur, die Proben lesen aber keine Tabellen.
@@ -96,9 +96,9 @@ class AffordanceMechanicsProbeIT {
   /**
    * Die KSF-Laufzeit-Regelablage liest beim Link-Aufbau die Tabelle {@code system_controller_regel}
    * (annotations-Regeln werden mit optionalen DB-Regeln gemischt). Die minimale Wegwerf-DB enthaelt
-   * nur PROD_FIRMA/PROD_BENUTZER -> die (leere) Tabelle wird hier angelegt, damit die Link-Erzeugung
-   * nicht fail-safe mit "Ungueltiger Objektname" abbricht. Leer genuegt: dann greifen nur die
-   * Annotation-Regeln.
+   * nur PROD_FIRMA/PROD_BENUTZER -> die (leere) Tabelle wird hier angelegt, damit die
+   * Link-Erzeugung nicht fail-safe mit "Ungueltiger Objektname" abbricht. Leer genuegt: dann
+   * greifen nur die Annotation-Regeln.
    */
   @BeforeAll
   static void createRuntimeRuleTable(@Autowired JdbcTemplate jt) {
@@ -149,7 +149,8 @@ class AffordanceMechanicsProbeIT {
   // ---- P1: Option-1 self-Link am PLAIN @RestController -----------------------------------------
 
   @Test
-  @DisplayName("P1 (Kanarienvogel): self-Link erscheint am plain @RestController via @EnableNovaHateoas")
+  @DisplayName(
+      "P1 (Kanarienvogel): self-Link erscheint am plain @RestController via @EnableNovaHateoas")
   void p1_self_link_present_on_plain_controller() throws Exception {
     final UUID id = UUID.randomUUID();
     final String body =
@@ -168,7 +169,8 @@ class AffordanceMechanicsProbeIT {
   // ---- P2: Item-Rels + Collection-Rels vom NICHT-Owner-Controller ------------------------------
 
   @Test
-  @DisplayName("P2: Item-Rels + create-Collection-Rel am Nicht-Owner-Controller (nicht-leer + leer)")
+  @DisplayName(
+      "P2: Item-Rels + create-Collection-Rel am Nicht-Owner-Controller (nicht-leer + leer)")
   void p2_collection_from_non_owner_controller() throws Exception {
     final String listBody =
         mvc.perform(get("/probe/nonowner/list"))
@@ -195,8 +197,7 @@ class AffordanceMechanicsProbeIT {
         firstItem != null && firstItem.path("_links").path("self").path("href").isTextual();
     final boolean itemHasEdit =
         firstItem != null && firstItem.path("_links").path("edit").path("href").isTextual();
-    final boolean collectionHasCreate =
-        list.path("_links").path("create").path("href").isTextual();
+    final boolean collectionHasCreate = list.path("_links").path("create").path("href").isTextual();
     final boolean emptyCollectionHasCreate =
         empty.path("_links").path("create").path("href").isTextual();
 
@@ -247,7 +248,8 @@ class AffordanceMechanicsProbeIT {
   // ---- P5 (HAL-Wire ueber MVC): CollectionModel / PagedModel / KeysetCollectionModel -----------
 
   @Test
-  @DisplayName("P5 (MVC-HAL-Wire): _embedded-Shape fuer Collection/Paged/Keyset ueber echten HTTP-Pfad")
+  @DisplayName(
+      "P5 (MVC-HAL-Wire): _embedded-Shape fuer Collection/Paged/Keyset ueber echten HTTP-Pfad")
   void p5_hal_wire_shapes_over_http() throws Exception {
     final String collJson =
         mvc.perform(get("/probe/nonowner/list"))

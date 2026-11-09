@@ -10,11 +10,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
-import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
-import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
+import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.push.NoOpNotificationPushConfig;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.security.SecurityContextUserAccessor;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -84,13 +84,18 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer {@link InboxSnapshotController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist (arch-v2 §2.1/§3, plan-v3 Task 14):
+ *
  * <ul>
- *   <li>GET /tasks/snapshot -> user-scoped aktive Tasks + Notifications + Tags + participantSummaries
- *       + archiveTotals; fremde Tasks NICHT sichtbar; asOf gesetzt + ISO-parsebar.
+ *   <li>GET /tasks/snapshot -> user-scoped aktive Tasks + Notifications + Tags +
+ *       participantSummaries + archiveTotals; fremde Tasks NICHT sichtbar; asOf gesetzt +
+ *       ISO-parsebar.
  *   <li>GET /tasks?cursor=&limit= -> Keyset-Fortsetzung Seite1+nextCursor->Seite2 kein Skip/Dupe.
- *   <li>GET /tasks/archive?filter=all|done|left -> user-spezifische Archiv-Semantik; Totals korrekt.
- *   <li>Creator-Invariante-Endpoint-IT (T8-IMPL-Auflage): POST /tasks -> GET /snapshot zeigt den Task.
- *   <li>Zugang: anonym 401, authentifiziert-ohne-Grant 200 (self-scoped Reads authenticated-only); malformed Cursor 400.
+ *   <li>GET /tasks/archive?filter=all|done|left -> user-spezifische Archiv-Semantik; Totals
+ *       korrekt.
+ *   <li>Creator-Invariante-Endpoint-IT (T8-IMPL-Auflage): POST /tasks -> GET /snapshot zeigt den
+ *       Task.
+ *   <li>Zugang: anonym 401, authentifiziert-ohne-Grant 200 (self-scoped Reads authenticated-only);
+ *       malformed Cursor 400.
  * </ul>
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
@@ -133,35 +138,42 @@ class InboxSnapshotControllerIT {
 
   /** USER_A: Snapshot + aktive Pagination. */
   private static final UUID USER_A_REF = UUID.randomUUID();
+
   private static final String USER_A_LOGIN = "user-a-inbox@brasi.de";
   private static final long USER_A_DB_ID = 561L;
 
   /** USER_B: fremder Benutzer (Tasks NICHT sichtbar fuer A). */
   private static final UUID USER_B_REF = UUID.randomUUID();
+
   private static final String USER_B_LOGIN = "user-b-inbox@brasi.de";
   private static final long USER_B_DB_ID = 562L;
 
   /** USER_ARCH: isolierte Archiv-Totals. */
   private static final UUID USER_ARCH_REF = UUID.randomUUID();
+
   private static final String USER_ARCH_LOGIN = "user-arch-inbox@brasi.de";
   private static final long USER_ARCH_DB_ID = 565L;
 
   /** USER_POST: Creator-Invariante (POST -> snapshot). */
   private static final UUID USER_POST_REF = UUID.randomUUID();
+
   private static final String USER_POST_LOGIN = "user-post-inbox@brasi.de";
   private static final long USER_POST_DB_ID = 566L;
 
   /** USER_DEL: Nachweis Entity-Status-Filter (deaktivierte Tasks/Memberships). */
   private static final UUID USER_DEL_REF = UUID.randomUUID();
+
   private static final String USER_DEL_LOGIN = "user-del-inbox@brasi.de";
   private static final long USER_DEL_DB_ID = 568L;
 
   /** Nutzer ohne task-management-Grant (fuer den authenticated-only-Zugangsbeweis). */
   private static final UUID USER_RO_REF = UUID.randomUUID();
+
   private static final String USER_RO_LOGIN = "user-ro-inbox@brasi.de";
 
   /** USER_NOTIF: Snapshot-Notification-Gating (NOTIFICATION_READ). */
   private static final UUID USER_NOTIF_REF = UUID.randomUUID();
+
   private static final String USER_NOTIF_LOGIN = "user-notif-inbox@brasi.de";
   private static final long USER_NOTIF_DB_ID = 569L;
 
@@ -259,31 +271,51 @@ class InboxSnapshotControllerIT {
     // Aktiver Task fuer A (sichtbar) + Creator-Participant A + aktiver UserState A
     final long taskAId = ID_BASE + 1;
     final UUID taskAUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, taskAId, taskAUuid, TENANT_A_ID, openId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(5), "Sichtbarer A-Task");
-    seedParticipant(jdbcTemplate, ID_BASE + 2, taskAId, USER_A_REF, TENANT_A_ID, true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        taskAId,
+        taskAUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(5),
+        "Sichtbarer A-Task");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 2, taskAId, USER_A_REF, TENANT_A_ID, true, true, true, null);
     seedUserState(jdbcTemplate, ID_BASE + 3, taskAId, USER_A_REF, TENANT_A_ID, null);
 
     // Aktiver Task fuer B (NICHT sichtbar fuer A)
     final long taskBId = ID_BASE + 4;
     final UUID taskBUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, taskBId, taskBUuid, TENANT_A_ID, openId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(4), "Fremder B-Task");
-    seedParticipant(jdbcTemplate, ID_BASE + 5, taskBId, USER_B_REF, TENANT_A_ID, true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        taskBId,
+        taskBUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(4),
+        "Fremder B-Task");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 5, taskBId, USER_B_REF, TENANT_A_ID, true, true, true, null);
     seedUserState(jdbcTemplate, ID_BASE + 6, taskBId, USER_B_REF, TENANT_A_ID, null);
 
     final String token = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
-    final String json = mvc.perform(get("/api/v1/tasks/snapshot")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.asOf").isNotEmpty())
-        .andExpect(jsonPath("$.tasks.items").isArray())
-        .andExpect(jsonPath("$.notifications.items").isArray())
-        .andExpect(jsonPath("$.tags").isArray())
-        .andExpect(jsonPath("$.participantSummaries").isArray())
-        .andExpect(jsonPath("$.archiveTotals.all").exists())
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.asOf").isNotEmpty())
+            .andExpect(jsonPath("$.tasks.items").isArray())
+            .andExpect(jsonPath("$.notifications.items").isArray())
+            .andExpect(jsonPath("$.tags").isArray())
+            .andExpect(jsonPath("$.participantSummaries").isArray())
+            .andExpect(jsonPath("$.archiveTotals.all").exists())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
     // asOf ISO-8601-parsebar
@@ -333,31 +365,45 @@ class InboxSnapshotControllerIT {
     for (int i = 0; i < 3; i++) {
       final long taskId = ID_BASE + 20 + i;
       final UUID uuid = UUID.randomUUID();
-      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(30 - i), "Pag-Task-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 30 + i, taskId, USER_A_REF, TENANT_A_ID,
-          true, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(30 - i),
+          "Pag-Task-" + i);
+      seedParticipant(
+          jdbcTemplate, ID_BASE + 30 + i, taskId, USER_A_REF, TENANT_A_ID, true, true, true, null);
       seedUserState(jdbcTemplate, ID_BASE + 40 + i, taskId, USER_A_REF, TENANT_A_ID, null);
     }
 
     final String token = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=2")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=2").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode page1 = new ObjectMapper().readTree(page1Json);
     // Slice 4: Items sind jetzt unter _embedded.tasks (HAL-Collection), Cursor-Felder top-level.
     assertThat(taskItemsOf(page1)).hasSize(2);
     final String nextCursor = page1.get("nextCursor").asText();
 
-    final String page2Json = mvc.perform(get("/api/v1/tasks?limit=2&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String page2Json =
+        mvc.perform(
+                get("/api/v1/tasks?limit=2&cursor=" + nextCursor)
+                    .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode page2 = new ObjectMapper().readTree(page2Json);
     assertThat(taskItemsOf(page2).size()).isGreaterThanOrEqualTo(1);
@@ -377,9 +423,9 @@ class InboxSnapshotControllerIT {
 
   /**
    * Beweist die VOLLSTAENDIGE Kette end-to-end gegen echtes MSSQL: First-Page stempelt Generation 0
-   * in den Cursor; eine ECHTE Membership-Mutation ueber {@code POST /tasks/{id}/exit}
-   * ({@code AssigneeService.exit}) bumpt die Generation ATOMAR in derselben Transaktion (0 -> 1);
-   * der alte Cursor liefert daraufhin HTTP 410 (ResponseStatusException-Pfad durch den
+   * in den Cursor; eine ECHTE Membership-Mutation ueber {@code POST /tasks/{id}/exit} ({@code
+   * AssigneeService.exit}) bumpt die Generation ATOMAR in derselben Transaktion (0 -> 1); der alte
+   * Cursor liefert daraufhin HTTP 410 (ResponseStatusException-Pfad durch den
    * KSF-GlobalApiExceptionHandler); ein frischer Bootstrap (ohne Cursor) liefert wieder 200.
    */
   @Test
@@ -399,57 +445,74 @@ class InboxSnapshotControllerIT {
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 700 + i;
       final UUID uuid = (i == 0) ? exitTaskUuid : UUID.randomUUID();
-      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(20 - i), "Gen410-Task-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 710 + i, taskId, genUser, TENANT_A_ID,
-          false, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(20 - i),
+          "Gen410-Task-" + i);
+      seedParticipant(
+          jdbcTemplate, ID_BASE + 710 + i, taskId, genUser, TENANT_A_ID, false, true, true, null);
       seedUserState(jdbcTemplate, ID_BASE + 720 + i, taskId, genUser, TENANT_A_ID, null);
     }
 
-    final String token = jwt(TENANT_A_UUID, genUser, genLogin,
-        "task-management:TASK_READ", "task-management:TASK_WRITE");
+    final String token =
+        jwt(
+            TENANT_A_UUID,
+            genUser,
+            genLogin,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
 
     // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // ECHTE destruktive Membership-Mutation: genUser verlaesst einen Task -> AssigneeService.exit
     // bumpt die Generation ATOMAR in derselben Transaktion (0 -> 1).
-    mvc.perform(post("/api/v1/tasks/" + exitTaskUuid + "/exit")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+    mvc.perform(
+            post("/api/v1/tasks/" + exitTaskUuid + "/exit")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
         .andExpect(status().isNoContent());
 
     // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+                .header("Authorization", "Bearer " + token))
         .andExpect(status().isGone());
 
     // Frischer Bootstrap ohne Cursor -> 200 (neuer Snapshot mit aktueller Generation).
-    mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
         .andExpect(status().isOk());
   }
 
-  // ---- IT: createComment bumpt Generation ALLER aktiven Teilnehmer -> alter Cursor 410 (Codex #6) -
+  // ---- IT: createComment bumpt Generation ALLER aktiven Teilnehmer -> alter Cursor 410 (Codex #6)
+  // -
 
   /**
    * Codex #6 (Cursor-Invalidierung durch {@code createComment}). Beweist end-to-end gegen echtes
-   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER
-   * {@code POST /tasks/{id}/comments} ({@code CommentService.createComment}) setzt
-   * {@code LAST_ACTIVITY_AT = now()} und bumpt die Generation JEDES aktiven Teilnehmers ATOMAR in
-   * derselben Transaktion (0 -&gt; 1); der alte Cursor liefert daraufhin HTTP 410 (SnapshotExpired),
-   * ein frischer Bootstrap wieder 200.
+   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER {@code POST
+   * /tasks/{id}/comments} ({@code CommentService.createComment}) setzt {@code LAST_ACTIVITY_AT =
+   * now()} und bumpt die Generation JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion (0
+   * -&gt; 1); der alte Cursor liefert daraufhin HTTP 410 (SnapshotExpired), ein frischer Bootstrap
+   * wieder 200.
    *
-   * <p>TDD-Rigor: OHNE den Generation-Bump in {@code createComment} bleibt der Folge-Read 200 (stale
-   * pagination trotz LAST_ACTIVITY_AT-Verschiebung) - dieser Test faellt dann an {@code isGone()}.
-   * MIT dem Bump -&gt; 410 (gruen).
+   * <p>TDD-Rigor: OHNE den Generation-Bump in {@code createComment} bleibt der Folge-Read 200
+   * (stale pagination trotz LAST_ACTIVITY_AT-Verschiebung) - dieser Test faellt dann an {@code
+   * isGone()}. MIT dem Bump -&gt; 410 (gruen).
    */
   @Test
   @DisplayName("comment_mutation_bumpt_generation_dann_alter_cursor_410_und_frischer_bootstrap_200")
@@ -470,45 +533,70 @@ class InboxSnapshotControllerIT {
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 745 + i;
       final UUID uuid = (i == 0) ? commentTaskUuid : UUID.randomUUID();
-      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(20 - i), "Comment410-Task-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 750 + i, taskId, commentUser, TENANT_A_ID,
-          true, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(20 - i),
+          "Comment410-Task-" + i);
+      seedParticipant(
+          jdbcTemplate,
+          ID_BASE + 750 + i,
+          taskId,
+          commentUser,
+          TENANT_A_ID,
+          true,
+          true,
+          true,
+          null);
       seedUserState(jdbcTemplate, ID_BASE + 755 + i, taskId, commentUser, TENANT_A_ID, null);
     }
 
-    final String token = jwt(TENANT_A_UUID, commentUser, commentLogin,
-        "task-management:TASK_READ", "task-management:TASK_WRITE");
+    final String token =
+        jwt(
+            TENANT_A_UUID,
+            commentUser,
+            commentLogin,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
 
     // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // ECHTE Aktivitaets-Mutation: Kommentar -> CommentService.createComment setzt LAST_ACTIVITY_AT
     // und bumpt die Generation JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion (0 -> 1).
-    mvc.perform(post("/api/v1/tasks/" + commentTaskUuid + "/comments")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"text\":\"Ein neuer Kommentar.\"}"))
+    mvc.perform(
+            post("/api/v1/tasks/" + commentTaskUuid + "/comments")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"Ein neuer Kommentar.\"}"))
         .andExpect(status().isCreated());
 
     // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+                .header("Authorization", "Bearer " + token))
         .andExpect(status().isGone());
 
     // Frischer Bootstrap ohne Cursor -> 200 (neuer Snapshot mit aktueller Generation).
-    mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
         .andExpect(status().isOk());
   }
 
-  // ---- IT: exit bumpt Generation VERBLEIBENDER aktiver Teilnehmer (nicht nur Akteur) (Codex #6) ---
+  // ---- IT: exit bumpt Generation VERBLEIBENDER aktiver Teilnehmer (nicht nur Akteur) (Codex #6)
+  // ---
 
   /**
    * Codex #6 (die eigentliche Luecke): {@code AssigneeService.exit} bumpte frueher nur den Akteur
@@ -521,8 +609,8 @@ class InboxSnapshotControllerIT {
    * haben je einen zweiten eigenen Task -&gt; {@code limit=1 => hasMore => Cursor}. REMAINING_USER
    * holt seine First-Page (Generation 0). Dann tritt EXITING_USER aus (UNSUBSCRIBED). Der Exit
    * verschiebt {@code LAST_ACTIVITY_AT} des Exit-Tasks (an dem REMAINING_USER aktiv BLEIBT) und
-   * bumpt mit diesem Fix die Generation ALLER verbleibenden aktiven Teilnehmer -&gt; REMAINING_USERs
-   * alter Cursor wird mit 410 abgelehnt.
+   * bumpt mit diesem Fix die Generation ALLER verbleibenden aktiven Teilnehmer -&gt;
+   * REMAINING_USERs alter Cursor wird mit 410 abgelehnt.
    *
    * <p>TDD-Rigor: OHNE den erweiterten Bump (nur Akteur/Ziele) bleibt REMAINING_USERs Folge-Read
    * 200 - der Test faellt dann an {@code isGone()}. MIT dem Fix -&gt; 410 (gruen).
@@ -540,8 +628,8 @@ class InboxSnapshotControllerIT {
     final UUID remainingUser = UUID.fromString("00000050-0aaa-0050-0aaa-000000000762");
     final String exitingLogin = "exit-rem-exiting@brasi.de";
     final String remainingLogin = "exit-rem-remaining@brasi.de";
-    seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 760, creatorUser, "exit-rem-creator@brasi.de",
-        TENANT_A_ID);
+    seedBenutzerIfAbsent(
+        jdbcTemplate, ID_BASE + 760, creatorUser, "exit-rem-creator@brasi.de", TENANT_A_ID);
     seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 761, exitingUser, exitingLogin, TENANT_A_ID);
     seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 762, remainingUser, remainingLogin, TENANT_A_ID);
 
@@ -549,71 +637,130 @@ class InboxSnapshotControllerIT {
     // Assignee. REMAINING_USER bleibt nach dem Exit aktiver Teilnehmer dieses Tasks.
     final long sharedTaskId = ID_BASE + 765;
     final UUID sharedTaskUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, sharedTaskId, sharedTaskUuid, TENANT_A_ID, openId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(20), "ExitRem-Shared-Task");
-    seedParticipant(jdbcTemplate, ID_BASE + 766, sharedTaskId, creatorUser, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        sharedTaskId,
+        sharedTaskUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(20),
+        "ExitRem-Shared-Task");
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 766,
+        sharedTaskId,
+        creatorUser,
+        TENANT_A_ID,
+        true,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 767, sharedTaskId, creatorUser, TENANT_A_ID, null);
-    seedParticipant(jdbcTemplate, ID_BASE + 768, sharedTaskId, exitingUser, TENANT_A_ID,
-        false, true, true, null);
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 768,
+        sharedTaskId,
+        exitingUser,
+        TENANT_A_ID,
+        false,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 769, sharedTaskId, exitingUser, TENANT_A_ID, null);
-    seedParticipant(jdbcTemplate, ID_BASE + 770, sharedTaskId, remainingUser, TENANT_A_ID,
-        false, true, true, null);
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 770,
+        sharedTaskId,
+        remainingUser,
+        TENANT_A_ID,
+        false,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 771, sharedTaskId, remainingUser, TENANT_A_ID, null);
 
     // Je ein zweiter eigener Task fuer exiting + remaining -> limit=1 => hasMore => Cursor.
     final long remSecondTaskId = ID_BASE + 772;
-    seedTask(jdbcTemplate, remSecondTaskId, UUID.randomUUID(), TENANT_A_ID, openId, normalId,
-        directionId, LocalDateTime.now().minusMinutes(10), "ExitRem-Remaining-Second");
-    seedParticipant(jdbcTemplate, ID_BASE + 773, remSecondTaskId, remainingUser, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        remSecondTaskId,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(10),
+        "ExitRem-Remaining-Second");
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 773,
+        remSecondTaskId,
+        remainingUser,
+        TENANT_A_ID,
+        true,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 774, remSecondTaskId, remainingUser, TENANT_A_ID, null);
 
-    final String exitingToken = jwt(TENANT_A_UUID, exitingUser, exitingLogin,
-        "task-management:TASK_READ", "task-management:TASK_WRITE");
-    final String remainingToken = jwt(TENANT_A_UUID, remainingUser, remainingLogin,
-        "task-management:TASK_READ");
+    final String exitingToken =
+        jwt(
+            TENANT_A_UUID,
+            exitingUser,
+            exitingLogin,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
+    final String remainingToken =
+        jwt(TENANT_A_UUID, remainingUser, remainingLogin, "task-management:TASK_READ");
 
     // REMAINING_USER holt seine First-Page: Generation 0 im Cursor.
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + remainingToken))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(
+                get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + remainingToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String remainingCursor =
         new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // EXITING_USER tritt aus dem gemeinsamen Task aus (UNSUBSCRIBED). Der Exit verschiebt
     // LAST_ACTIVITY_AT des Tasks (REMAINING_USER bleibt aktiv) und bumpt mit diesem Fix die
     // Generation ALLER verbleibenden aktiven Teilnehmer (inkl. REMAINING_USER) 0 -> 1.
-    mvc.perform(post("/api/v1/tasks/" + sharedTaskUuid + "/exit")
-            .header("Authorization", "Bearer " + exitingToken)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+    mvc.perform(
+            post("/api/v1/tasks/" + sharedTaskUuid + "/exit")
+                .header("Authorization", "Bearer " + exitingToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
         .andExpect(status().isNoContent());
 
     // REMAINING_USER war NICHT der Akteur, bleibt aber aktiver Teilnehmer: sein alter Cursor
-    // (Generation 0) muss jetzt mit 410 abgelehnt werden (Beweis des Bumps verbleibender Teilnehmer).
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + remainingCursor)
-            .header("Authorization", "Bearer " + remainingToken))
+    // (Generation 0) muss jetzt mit 410 abgelehnt werden (Beweis des Bumps verbleibender
+    // Teilnehmer).
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + remainingCursor)
+                .header("Authorization", "Bearer " + remainingToken))
         .andExpect(status().isGone());
 
     // Frischer Bootstrap ohne Cursor -> 200.
-    mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + remainingToken))
+    mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + remainingToken))
         .andExpect(status().isOk());
   }
 
-  // ---- IT: PATCH statusCode=DONE bumpt Generation -> alter aktiver Cursor 410 + wandert ins Archiv -
+  // ---- IT: PATCH statusCode=DONE bumpt Generation -> alter aktiver Cursor 410 + wandert ins
+  // Archiv -
 
   /**
    * Codex-Auflage #5 (Cursor-Invalidierung durch statusCode-PATCH). Beweist end-to-end gegen echtes
-   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER
-   * {@code PATCH {id} {"statusCode":"DONE"}} ({@code TaskCommandService.patch}) bumpt die Generation
-   * JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion; der alte Cursor liefert daraufhin
-   * HTTP 410 (SnapshotExpired). Zusaetzlich wandert der Task aus der frischen aktiven Seite heraus
-   * und wird in {@code archiveTotals.done} gezaehlt (Status-Change OPEN -&gt; DONE).
+   * MSSQL: Eine aktive Keyset-Seite stempelt die Generation in den Cursor; ein ECHTER {@code PATCH
+   * {id} {"statusCode":"DONE"}} ({@code TaskCommandService.patch}) bumpt die Generation JEDES
+   * aktiven Teilnehmers ATOMAR in derselben Transaktion; der alte Cursor liefert daraufhin HTTP 410
+   * (SnapshotExpired). Zusaetzlich wandert der Task aus der frischen aktiven Seite heraus und wird
+   * in {@code archiveTotals.done} gezaehlt (Status-Change OPEN -&gt; DONE).
    *
    * <p>TDD-Rigor: OHNE den Generation-Bump in {@code patch} ist der Folge-Read weiterhin 200 (stale
    * pagination) - dieser Test faellt dann an {@code isGone()}. MIT dem Bump -> 410 (gruen).
@@ -638,68 +785,99 @@ class InboxSnapshotControllerIT {
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 810 + i;
       final UUID uuid = (i == 0) ? patchTaskUuid : stayActiveUuid;
-      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(20 - i), "Patch410-Task-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 820 + i, taskId, patchUser, TENANT_A_ID,
-          true, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(20 - i),
+          "Patch410-Task-" + i);
+      seedParticipant(
+          jdbcTemplate, ID_BASE + 820 + i, taskId, patchUser, TENANT_A_ID, true, true, true, null);
       seedUserState(jdbcTemplate, ID_BASE + 830 + i, taskId, patchUser, TENANT_A_ID, null);
     }
 
-    final String token = jwt(TENANT_A_UUID, patchUser, patchLogin,
-        "task-management:TASK_READ", "task-management:TASK_WRITE");
+    final String token =
+        jwt(
+            TENANT_A_UUID,
+            patchUser,
+            patchLogin,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
 
     // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // ECHTE Status-Mutation: PATCH statusCode=DONE -> TaskCommandService.patch bumpt die Generation
     // JEDES aktiven Teilnehmers ATOMAR in derselben Transaktion (0 -> 1).
-    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-            .patch("/api/v1/tasks/" + patchTaskUuid)
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"statusCode\":\"DONE\"}"))
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
+                    "/api/v1/tasks/" + patchTaskUuid)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"statusCode\":\"DONE\"}"))
         .andExpect(status().isNoContent());
 
     // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+                .header("Authorization", "Bearer " + token))
         .andExpect(status().isGone());
 
     // Frischer Bootstrap ohne Cursor -> 200; der DONE-Task ist NICHT mehr in der aktiven Seite.
-    final JsonNode freshActive = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks?limit=50")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode freshActive =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks?limit=50").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(freshActive))
-        .as("der zweite (weiterhin OPEN) Task bleibt in der aktiven Seite - Abwesenheit unten ist"
-            + " damit nicht leer erfuellt")
+        .as(
+            "der zweite (weiterhin OPEN) Task bleibt in der aktiven Seite - Abwesenheit unten ist"
+                + " damit nicht leer erfuellt")
         .contains(stayActiveUuid.toString());
     assertThat(idsOf(freshActive))
         .as("der auf DONE gepatchte Task darf nicht mehr in der aktiven Seite erscheinen")
         .doesNotContain(patchTaskUuid.toString());
 
     // archiveTotals.done zaehlt den gepatchten Task jetzt (OPEN -> DONE).
-    final JsonNode snapshot = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode snapshot =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(snapshot.get("archiveTotals").get("done").asLong())
         .as("der DONE-Task muss in archiveTotals.done gezaehlt werden")
         .isGreaterThanOrEqualTo(1L);
     boolean doneInArchive = false;
-    final JsonNode donePage = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/archive?filter=done")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode donePage =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=done")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     for (final String id : idsOf(donePage)) {
       if (patchTaskUuid.toString().equals(id)) {
         doneInArchive = true;
@@ -708,27 +886,28 @@ class InboxSnapshotControllerIT {
     assertThat(doneInArchive).as("der DONE-Task muss im done-Archiv erscheinen").isTrue();
   }
 
-  // ---- IT: Marker-Neuanlage (pin) etabliert Membership -> alter aktiver Cursor 410 (Codex #6) ----
+  // ---- IT: Marker-Neuanlage (pin) etabliert Membership -> alter aktiver Cursor 410 (Codex #6)
+  // ----
 
   /**
-   * Codex #6 (dritter Membership-Fall): {@code MarkerService.setPinned} ruft
-   * {@code UserStateService.ensure}, das erstmals einen aktiven {@code TASK_USER_STATE} ANLEGEN
-   * kann. Genau dieser State begruendet die Membership in der aktiven Keyset-Query
-   * ({@code TaskKeysetQueryRepository.findActivePage}, EXISTS TASK_USER_STATE). Bei NEUANLAGE sendete
-   * der MarkerService frueher nur ein Invalidate, KEINEN Generation-Bump - ein aktiver Cursor, dessen
+   * Codex #6 (dritter Membership-Fall): {@code MarkerService.setPinned} ruft {@code
+   * UserStateService.ensure}, das erstmals einen aktiven {@code TASK_USER_STATE} ANLEGEN kann.
+   * Genau dieser State begruendet die Membership in der aktiven Keyset-Query ({@code
+   * TaskKeysetQueryRepository.findActivePage}, EXISTS TASK_USER_STATE). Bei NEUANLAGE sendete der
+   * MarkerService frueher nur ein Invalidate, KEINEN Generation-Bump - ein aktiver Cursor, dessen
    * First-Page VOR der (uncommitteten) Anlage entstand, lieferte nach Commit weiter stale 200 (der
    * neu sichtbare Task fehlt) statt 410.
    *
    * <p>Aufbau: {@code markerUser} ist bereits aktiver Teilnehmer zweier OPEN-Tasks ({@code limit=1
    * => hasMore => Cursor}); ein dritter OPEN-Task ({@code pinTaskUuid}) hat fuer ihn NOCH KEINEN
-   * {@code TASK_USER_STATE} (nicht in seiner aktiven Liste). Er holt seine First-Page (Generation 0)
-   * und setzt dann ERSTMALS einen Pin auf {@code pinTaskUuid} -> {@code ensure} legt einen aktiven
-   * State an (created) -> mit dem Fix wird seine Generation ATOMAR 0 -> 1 gebumpt -> sein alter
-   * Cursor wird mit 410 abgelehnt; der neu sichtbare Task erscheint im frischen Bootstrap.
+   * {@code TASK_USER_STATE} (nicht in seiner aktiven Liste). Er holt seine First-Page (Generation
+   * 0) und setzt dann ERSTMALS einen Pin auf {@code pinTaskUuid} -> {@code ensure} legt einen
+   * aktiven State an (created) -> mit dem Fix wird seine Generation ATOMAR 0 -> 1 gebumpt -> sein
+   * alter Cursor wird mit 410 abgelehnt; der neu sichtbare Task erscheint im frischen Bootstrap.
    *
    * <p>TDD-Rigor: OHNE den Bump in {@code MarkerService} (nur Invalidate) bleibt der Folge-Read 200
-   * (stale pagination, der neu sichtbare Task fehlt) - der Test faellt dann an {@code isGone()}. MIT
-   * dem Bump -&gt; 410 (gruen).
+   * (stale pagination, der neu sichtbare Task fehlt) - der Test faellt dann an {@code isGone()}.
+   * MIT dem Bump -&gt; 410 (gruen).
    */
   @Test
   @DisplayName("pin_neuanlage_etabliert_membership_dann_alter_cursor_410_und_bootstrap_zeigt_task")
@@ -746,10 +925,18 @@ class InboxSnapshotControllerIT {
     // limit=1 => hasMore => Cursor.
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 845 + i;
-      seedTask(jdbcTemplate, taskId, UUID.randomUUID(), TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(20 - i), "Marker410-Existing-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 850 + i, taskId, markerUser, TENANT_A_ID,
-          true, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          UUID.randomUUID(),
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(20 - i),
+          "Marker410-Existing-" + i);
+      seedParticipant(
+          jdbcTemplate, ID_BASE + 850 + i, taskId, markerUser, TENANT_A_ID, true, true, true, null);
       seedUserState(jdbcTemplate, ID_BASE + 855 + i, taskId, markerUser, TENANT_A_ID, null);
     }
 
@@ -758,63 +945,86 @@ class InboxSnapshotControllerIT {
     // bestehenden, damit der neu sichtbare Task im frischen Bootstrap vorn erscheint.
     // Slice 4 (Guard-vor-ensure): markerUser MUSS aktiver WRITE-Member des pinTask sein, damit der
     // pin ueberhaupt den State anlegen darf (ein Non-Member-pin wuerde jetzt 404 liefern und keinen
-    // Orphan-State erzeugen). Es wird bewusst nur die Participant-Zeile, aber KEIN UserState geseedet
+    // Orphan-State erzeugen). Es wird bewusst nur die Participant-Zeile, aber KEIN UserState
+    // geseedet
     // -> der pin ist die erste State-Neuanlage (Generationsbump), die Membership besteht schon.
     final long pinTaskId = ID_BASE + 847;
     final UUID pinTaskUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, pinTaskId, pinTaskUuid, TENANT_A_ID, openId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(5), "Marker410-Pin-Target");
-    seedParticipant(jdbcTemplate, ID_BASE + 858, pinTaskId, markerUser, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        pinTaskId,
+        pinTaskUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(5),
+        "Marker410-Pin-Target");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 858, pinTaskId, markerUser, TENANT_A_ID, true, true, true, null);
 
     final String token = jwt(TENANT_A_UUID, markerUser, markerLogin, "task-management:TASK_READ");
 
     // First-Page: Generation 0 im Cursor (noch keine Generationszeile fuer den Benutzer).
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // Der pinTask darf vor dem Pin NICHT in der aktiven Liste erscheinen (Membership besteht, aber
     // noch KEINE TASK_USER_STATE-Zeile -> die aktive Liste verlangt beides).
-    final JsonNode preActive = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks?limit=50")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode preActive =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks?limit=50").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(preActive))
         .as("der pinTask darf VOR dem Pin nicht in der aktiven Liste erscheinen (noch kein State)")
         .doesNotContain(pinTaskUuid.toString());
 
     // ECHTE Marker-Mutation: markerUser pinnt ERSTMALS pinTask -> ensure legt aktiven UserState an
-    // (created) -> MarkerService bumpt mit dem Fix seine Generation ATOMAR in derselben Tx (0 -> 1).
-    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-            .put("/api/v1/tasks/" + pinTaskUuid + "/pin")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"value\":true}"))
+    // (created) -> MarkerService bumpt mit dem Fix seine Generation ATOMAR in derselben Tx (0 ->
+    // 1).
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                    "/api/v1/tasks/" + pinTaskUuid + "/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
 
     // Folge-Read mit altem Cursor (Generation 0) -> Mismatch mit aktueller Generation 1 -> 410.
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+                .header("Authorization", "Bearer " + token))
         .andExpect(status().isGone());
 
     // Frischer Bootstrap ohne Cursor -> 200; der neu gepinnte Task ist jetzt in der aktiven Liste.
-    final JsonNode freshActive = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks?limit=50")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode freshActive =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks?limit=50").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(freshActive))
         .as("der neu gepinnte Task muss nach der Membership-Etablierung in der aktiven Liste sein")
         .contains(pinTaskUuid.toString());
   }
 
-  // ---- IT: Marker-UPDATE (pin auf bestehendem State) bumpt NICHT -> alter Cursor bleibt 200 ------
+  // ---- IT: Marker-UPDATE (pin auf bestehendem State) bumpt NICHT -> alter Cursor bleibt 200
+  // ------
 
   /**
    * Codex #6 (Negativ-Gegenprobe): Ein reines State-UPDATE (pin auf einem BEREITS bestehenden
@@ -841,35 +1051,47 @@ class InboxSnapshotControllerIT {
     for (int i = 0; i < 2; i++) {
       final long taskId = ID_BASE + 865 + i;
       final UUID uuid = (i == 0) ? pinTaskUuid : UUID.randomUUID();
-      seedTask(jdbcTemplate, taskId, uuid, TENANT_A_ID, openId, normalId, directionId,
-          LocalDateTime.now().minusMinutes(20 - i), "Marker200-Existing-" + i);
-      seedParticipant(jdbcTemplate, ID_BASE + 870 + i, taskId, markerUser, TENANT_A_ID,
-          true, true, true, null);
+      seedTask(
+          jdbcTemplate,
+          taskId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          directionId,
+          LocalDateTime.now().minusMinutes(20 - i),
+          "Marker200-Existing-" + i);
+      seedParticipant(
+          jdbcTemplate, ID_BASE + 870 + i, taskId, markerUser, TENANT_A_ID, true, true, true, null);
       seedUserState(jdbcTemplate, ID_BASE + 875 + i, taskId, markerUser, TENANT_A_ID, null);
     }
 
     final String token = jwt(TENANT_A_UUID, markerUser, markerLogin, "task-management:TASK_READ");
 
     // First-Page: Generation 0 im Cursor.
-    final String page1Json = mvc.perform(get("/api/v1/tasks?limit=1")
-            .header("Authorization", "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(get("/api/v1/tasks?limit=1").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     final String nextCursor = new ObjectMapper().readTree(page1Json).get("nextCursor").asText();
 
     // Pin auf einem BESTEHENDEN aktiven State -> reines UPDATE, created=false -> KEIN Bump.
-    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-            .put("/api/v1/tasks/" + pinTaskUuid + "/pin")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"value\":true}"))
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                    "/api/v1/tasks/" + pinTaskUuid + "/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
 
     // Folge-Read mit altem Cursor (Generation 0) -> Generation unveraendert (0) -> weiterhin 200.
-    mvc.perform(get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(
+            get("/api/v1/tasks?limit=1&cursor=" + nextCursor)
+                .header("Authorization", "Bearer " + token))
         .andExpect(status().isOk());
   }
 
@@ -887,55 +1109,95 @@ class InboxSnapshotControllerIT {
     // DONE-Task (Status DONE + aktiver UserState) -> done + all
     final long doneTaskId = ID_BASE + 60;
     final UUID doneUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, doneTaskId, doneUuid, TENANT_A_ID, doneId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(20), "Erledigter Task");
-    seedParticipant(jdbcTemplate, ID_BASE + 61, doneTaskId, USER_ARCH_REF, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        doneTaskId,
+        doneUuid,
+        TENANT_A_ID,
+        doneId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(20),
+        "Erledigter Task");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 61, doneTaskId, USER_ARCH_REF, TENANT_A_ID, true, true, true, null);
     seedUserState(jdbcTemplate, ID_BASE + 62, doneTaskId, USER_ARCH_REF, TENANT_A_ID, null);
 
     // LEFT-Task via UserState UNSUBSCRIBED_AT (Status OPEN) -> left + all
     final long leftTaskId = ID_BASE + 63;
     final UUID leftUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, leftTaskId, leftUuid, TENANT_A_ID, openId, normalId, directionId,
-        LocalDateTime.now().minusMinutes(19), "Verlassener Task (unsub)");
-    seedParticipant(jdbcTemplate, ID_BASE + 64, leftTaskId, USER_ARCH_REF, TENANT_A_ID,
-        true, true, true, null);
-    seedUserState(jdbcTemplate, ID_BASE + 65, leftTaskId, USER_ARCH_REF, TENANT_A_ID,
+    seedTask(
+        jdbcTemplate,
+        leftTaskId,
+        leftUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        directionId,
+        LocalDateTime.now().minusMinutes(19),
+        "Verlassener Task (unsub)");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 64, leftTaskId, USER_ARCH_REF, TENANT_A_ID, true, true, true, null);
+    seedUserState(
+        jdbcTemplate,
+        ID_BASE + 65,
+        leftTaskId,
+        USER_ARCH_REF,
+        TENANT_A_ID,
         LocalDateTime.now().minusMinutes(10));
 
     final String token =
         jwt(TENANT_A_UUID, USER_ARCH_REF, USER_ARCH_LOGIN, "task-management:TASK_READ");
 
     // done
-    final JsonNode donePage = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/archive?filter=done")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode donePage =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=done")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(donePage)).contains(doneUuid.toString()).doesNotContain(leftUuid.toString());
 
     // left
-    final JsonNode leftPage = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/archive?filter=left")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode leftPage =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=left")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(leftPage)).contains(leftUuid.toString()).doesNotContain(doneUuid.toString());
 
     // all (Vereinigung)
-    final JsonNode allPage = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/archive?filter=all")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode allPage =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=all")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(allPage)).contains(doneUuid.toString(), leftUuid.toString());
 
     // Totals via Snapshot (asOf-gebunden, user-scoped): done=1, left=1, all=2
-    final JsonNode snapshot = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode snapshot =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(snapshot.get("archiveTotals").get("done").asLong()).isEqualTo(1L);
     assertThat(snapshot.get("archiveTotals").get("left").asLong()).isEqualTo(1L);
     assertThat(snapshot.get("archiveTotals").get("all").asLong()).isEqualTo(2L);
@@ -949,8 +1211,8 @@ class InboxSnapshotControllerIT {
     final long openId = statusId("OPEN");
     final long normalId = priorityId("NORMAL");
     final long directionId = directionId("CUSTOMER_INTERNAL");
-    final String writer = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE");
+    final String writer =
+        jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
     final Map<String, Integer> oldCursorStatuses = new java.util.LinkedHashMap<>();
 
     // Pro Sichtbarkeitsweg ein eigener Leser und zwei alte LEFT-Tasks: limit=1 muss einen
@@ -959,68 +1221,114 @@ class InboxSnapshotControllerIT {
       final String mode = modeIndex == 0 ? "STATE" : "EXIT";
       final UUID readerRef = UUID.randomUUID();
       final String readerLogin = "archive-cursor-" + mode.toLowerCase() + "@brasi.de";
-      seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 1090 + modeIndex * 100,
-          readerRef, readerLogin, TENANT_A_ID);
+      seedBenutzerIfAbsent(
+          jdbcTemplate, ID_BASE + 1090 + modeIndex * 100, readerRef, readerLogin, TENANT_A_ID);
       final String reader = jwt(TENANT_A_UUID, readerRef, readerLogin);
       final UUID targetUuid = UUID.randomUUID();
       final LocalDateTime oldActivity = LocalDateTime.of(2020, 1, 1, 12, 0);
 
       for (int i = 0; i < 2; i++) {
         final long taskId = ID_BASE + 1000 + modeIndex * 100 + i;
-        seedTask(jdbcTemplate, taskId, i == 0 ? targetUuid : UUID.randomUUID(), TENANT_A_ID,
-            openId, normalId, directionId, oldActivity.plusMinutes(i),
+        seedTask(
+            jdbcTemplate,
+            taskId,
+            i == 0 ? targetUuid : UUID.randomUUID(),
+            TENANT_A_ID,
+            openId,
+            normalId,
+            directionId,
+            oldActivity.plusMinutes(i),
             "Archiv-Cursor-" + mode + "-" + i);
-        seedParticipant(jdbcTemplate, ID_BASE + 1010 + modeIndex * 100 + i,
-            taskId, readerRef, TENANT_A_ID, false, true, true,
+        seedParticipant(
+            jdbcTemplate,
+            ID_BASE + 1010 + modeIndex * 100 + i,
+            taskId,
+            readerRef,
+            TENANT_A_ID,
+            false,
+            true,
+            true,
             modeIndex == 0 ? null : "HANDOVER");
         if (modeIndex == 0) {
           final long stateId = ID_BASE + 1030 + modeIndex * 100 + i;
           seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
           // Der Austritt folgt auf die State-Anlage; die Task-Aktivitaet bleibt bewusst alt.
-          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
-              + " WHERE ID = ? AND TENANT_ID = ?", stateId, TENANT_A_ID);
+          jdbcTemplate.update(
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+                  + " WHERE ID = ? AND TENANT_ID = ?",
+              stateId,
+              TENANT_A_ID);
         }
-        seedParticipant(jdbcTemplate, ID_BASE + 1020 + modeIndex * 100 + i,
-            taskId, USER_A_REF, TENANT_A_ID, true, true, true, null);
-        seedUserState(jdbcTemplate, ID_BASE + 1040 + modeIndex * 100 + i,
-            taskId, USER_A_REF, TENANT_A_ID, null);
+        seedParticipant(
+            jdbcTemplate,
+            ID_BASE + 1020 + modeIndex * 100 + i,
+            taskId,
+            USER_A_REF,
+            TENANT_A_ID,
+            true,
+            true,
+            true,
+            null);
+        seedUserState(
+            jdbcTemplate,
+            ID_BASE + 1040 + modeIndex * 100 + i,
+            taskId,
+            USER_A_REF,
+            TENANT_A_ID,
+            null);
         if (i == 0) {
           // Aktiver State ohne READ-PERSON ist kein Archiv-Leser und darf nicht gebumpt werden.
           final long orphanStateId = ID_BASE + 1050 + modeIndex * 100;
           seedUserState(jdbcTemplate, orphanStateId, taskId, USER_B_REF, TENANT_A_ID, null);
-          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
-              + " WHERE ID = ? AND TENANT_ID = ?", orphanStateId, TENANT_A_ID);
-          final List<UUID> archiveRefs = TenantContextHolder.runWithTenant(
-              new TenantInfo(TENANT_A_UUID, TENANT_A_ID),
-              () -> participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
-                  .map(TaskParticipant::getParticipantRef).toList());
+          jdbcTemplate.update(
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+                  + " WHERE ID = ? AND TENANT_ID = ?",
+              orphanStateId,
+              TENANT_A_ID);
+          final List<UUID> archiveRefs =
+              TenantContextHolder.runWithTenant(
+                  new TenantInfo(TENANT_A_UUID, TENANT_A_ID),
+                  () ->
+                      participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+                          .map(TaskParticipant::getParticipantRef)
+                          .toList());
           assertThat(archiveRefs).containsExactly(readerRef);
         }
       }
 
       final Map<String, String> cursors = new java.util.LinkedHashMap<>();
       for (String filter : List.of("left", "all")) {
-        final JsonNode first = om.readTree(
-            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
-                    .header("Authorization", "Bearer " + reader))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.hasMore").value(true))
-                .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-                .andReturn().getResponse().getContentAsString());
+        final JsonNode first =
+            om.readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
+                            .header("Authorization", "Bearer " + reader))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.hasMore").value(true))
+                    .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
         assertThat(idsOf(first)).doesNotContain(targetUuid.toString());
         final String cursor = first.get("nextCursor").asText();
         assertThat(KeysetCursor.decode(cursor, 4).get(3)).isEqualTo("0");
         cursors.put(filter, cursor);
       }
 
-      mvc.perform(patch("/api/v1/tasks/" + targetUuid)
-              .header("Authorization", "Bearer " + writer)
-              .contentType(MediaType.APPLICATION_JSON)
-              .content(om.writeValueAsString(Map.of("title", "Archiv-Cursor-geaendert-" + mode))))
+      mvc.perform(
+              patch("/api/v1/tasks/" + targetUuid)
+                  .header("Authorization", "Bearer " + writer)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      om.writeValueAsString(Map.of("title", "Archiv-Cursor-geaendert-" + mode))))
           .andExpect(status().isNoContent());
-      final LocalDateTime movedActivity = jdbcTemplate.queryForObject(
-          "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
-          Timestamp.class, targetUuid).toLocalDateTime();
+      final LocalDateTime movedActivity =
+          jdbcTemplate
+              .queryForObject(
+                  "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                  Timestamp.class,
+                  targetUuid)
+              .toLocalDateTime();
       for (String cursor : cursors.values()) {
         assertThat(movedActivity)
             .as("PATCH muss die Seite-2-Task hinter das alte asOf verschieben")
@@ -1028,22 +1336,32 @@ class InboxSnapshotControllerIT {
       }
 
       for (String filter : List.of("left", "all")) {
-        oldCursorStatuses.put(mode + "/" + filter,
-            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter
-                    + "&limit=1&cursor=" + cursors.get(filter))
-                    .header("Authorization", "Bearer " + reader))
-                .andReturn().getResponse().getStatus());
-        final JsonNode fresh = om.readTree(
-            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
-                    .header("Authorization", "Bearer " + reader))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString());
+        oldCursorStatuses.put(
+            mode + "/" + filter,
+            mvc.perform(
+                    get("/api/v1/tasks/archive?filter="
+                            + filter
+                            + "&limit=1&cursor="
+                            + cursors.get(filter))
+                        .header("Authorization", "Bearer " + reader))
+                .andReturn()
+                .getResponse()
+                .getStatus());
+        final JsonNode fresh =
+            om.readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
+                            .header("Authorization", "Bearer " + reader))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
         assertThat(idsOf(fresh)).contains(targetUuid.toString());
       }
     }
 
-    assertThat(oldCursorStatuses).isEqualTo(Map.of(
-        "STATE/left", 410, "STATE/all", 410, "EXIT/left", 410, "EXIT/all", 410));
+    assertThat(oldCursorStatuses)
+        .isEqualTo(Map.of("STATE/left", 410, "STATE/all", 410, "EXIT/left", 410, "EXIT/all", 410));
   }
 
   @Test
@@ -1060,81 +1378,138 @@ class InboxSnapshotControllerIT {
       final boolean comment = operation == 0;
       final UUID readerRef = UUID.randomUUID();
       final String readerLogin = "archive-activity-" + operation + "@brasi.de";
-      seedBenutzerIfAbsent(jdbcTemplate, ID_BASE + 1490 + operation * 100,
-          readerRef, readerLogin, TENANT_A_ID);
+      seedBenutzerIfAbsent(
+          jdbcTemplate, ID_BASE + 1490 + operation * 100, readerRef, readerLogin, TENANT_A_ID);
       final String reader = jwt(TENANT_A_UUID, readerRef, readerLogin);
       final UUID targetUuid = UUID.randomUUID();
       final LocalDateTime oldActivity = LocalDateTime.of(2020, 2, 1, 12, 0);
 
       for (int i = 0; i < 2; i++) {
         final long taskId = ID_BASE + 1400 + operation * 100 + i;
-        seedTask(jdbcTemplate, taskId, i == 0 ? targetUuid : UUID.randomUUID(), TENANT_A_ID,
-            openId, normalId, directionId, oldActivity.plusMinutes(i),
+        seedTask(
+            jdbcTemplate,
+            taskId,
+            i == 0 ? targetUuid : UUID.randomUUID(),
+            TENANT_A_ID,
+            openId,
+            normalId,
+            directionId,
+            oldActivity.plusMinutes(i),
             "Archiv-Aktivitaet-" + operation + "-" + i);
-        seedParticipant(jdbcTemplate, ID_BASE + 1410 + operation * 100 + i,
-            taskId, readerRef, TENANT_A_ID, false, true, true,
+        seedParticipant(
+            jdbcTemplate,
+            ID_BASE + 1410 + operation * 100 + i,
+            taskId,
+            readerRef,
+            TENANT_A_ID,
+            false,
+            true,
+            true,
             comment ? null : "HANDOVER");
         if (comment) {
           final long stateId = ID_BASE + 1420 + operation * 100 + i;
           seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
-          jdbcTemplate.update("UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
-              + " WHERE ID = ? AND TENANT_ID = ?", stateId, TENANT_A_ID);
+          jdbcTemplate.update(
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+                  + " WHERE ID = ? AND TENANT_ID = ?",
+              stateId,
+              TENANT_A_ID);
         }
-        seedParticipant(jdbcTemplate, ID_BASE + 1430 + operation * 100 + i,
-            taskId, USER_A_REF, TENANT_A_ID, comment, true, true, null);
-        seedUserState(jdbcTemplate, ID_BASE + 1440 + operation * 100 + i,
-            taskId, USER_A_REF, TENANT_A_ID, null);
+        seedParticipant(
+            jdbcTemplate,
+            ID_BASE + 1430 + operation * 100 + i,
+            taskId,
+            USER_A_REF,
+            TENANT_A_ID,
+            comment,
+            true,
+            true,
+            null);
+        seedUserState(
+            jdbcTemplate,
+            ID_BASE + 1440 + operation * 100 + i,
+            taskId,
+            USER_A_REF,
+            TENANT_A_ID,
+            null);
         if (!comment) {
-          seedParticipant(jdbcTemplate, ID_BASE + 1450 + operation * 100 + i,
-              taskId, USER_B_REF, TENANT_A_ID, true, true, true, null);
-          seedUserState(jdbcTemplate, ID_BASE + 1460 + operation * 100 + i,
-              taskId, USER_B_REF, TENANT_A_ID, null);
+          seedParticipant(
+              jdbcTemplate,
+              ID_BASE + 1450 + operation * 100 + i,
+              taskId,
+              USER_B_REF,
+              TENANT_A_ID,
+              true,
+              true,
+              true,
+              null);
+          seedUserState(
+              jdbcTemplate,
+              ID_BASE + 1460 + operation * 100 + i,
+              taskId,
+              USER_B_REF,
+              TENANT_A_ID,
+              null);
         }
       }
 
       final Map<String, String> cursors = new java.util.LinkedHashMap<>();
       for (String filter : List.of("left", "all")) {
-        final JsonNode first = om.readTree(
-            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
-                    .header("Authorization", "Bearer " + reader))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.hasMore").value(true))
-                .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-                .andReturn().getResponse().getContentAsString());
+        final JsonNode first =
+            om.readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=" + filter + "&limit=1")
+                            .header("Authorization", "Bearer " + reader))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.hasMore").value(true))
+                    .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
         assertThat(idsOf(first)).doesNotContain(targetUuid.toString());
         cursors.put(filter, first.get("nextCursor").asText());
       }
 
       if (comment) {
-        mvc.perform(post("/api/v1/tasks/" + targetUuid + "/comments")
-                .header("Authorization", "Bearer " + writer)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"text\":\"Archiv-Aktivitaet\"}"))
+        mvc.perform(
+                post("/api/v1/tasks/" + targetUuid + "/comments")
+                    .header("Authorization", "Bearer " + writer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"text\":\"Archiv-Aktivitaet\"}"))
             .andExpect(status().isCreated());
       } else {
-        mvc.perform(post("/api/v1/tasks/" + targetUuid + "/exit")
-                .header("Authorization", "Bearer " + writer)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        mvc.perform(
+                post("/api/v1/tasks/" + targetUuid + "/exit")
+                    .header("Authorization", "Bearer " + writer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
             .andExpect(status().isNoContent());
       }
 
-      final LocalDateTime movedActivity = jdbcTemplate.queryForObject(
-          "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
-          Timestamp.class, targetUuid).toLocalDateTime();
+      final LocalDateTime movedActivity =
+          jdbcTemplate
+              .queryForObject(
+                  "SELECT LAST_ACTIVITY_AT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                  Timestamp.class,
+                  targetUuid)
+              .toLocalDateTime();
       for (String filter : List.of("left", "all")) {
         final String cursor = cursors.get(filter);
-        assertThat(movedActivity).isAfter(
-            LocalDateTime.parse(KeysetCursor.decode(cursor, 4).get(0)));
-        mvc.perform(get("/api/v1/tasks/archive?filter=" + filter
-                + "&limit=1&cursor=" + cursor)
-                .header("Authorization", "Bearer " + reader))
-            .andExpect(status().isGone());
-        final JsonNode fresh = om.readTree(
-            mvc.perform(get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
+        assertThat(movedActivity)
+            .isAfter(LocalDateTime.parse(KeysetCursor.decode(cursor, 4).get(0)));
+        mvc.perform(
+                get("/api/v1/tasks/archive?filter=" + filter + "&limit=1&cursor=" + cursor)
                     .header("Authorization", "Bearer " + reader))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString());
+            .andExpect(status().isGone());
+        final JsonNode fresh =
+            om.readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=" + filter + "&limit=10")
+                            .header("Authorization", "Bearer " + reader))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
         assertThat(idsOf(fresh)).contains(targetUuid.toString());
       }
     }
@@ -1147,22 +1522,32 @@ class InboxSnapshotControllerIT {
   void post_dann_snapshot_zeigt_creator_task() throws Exception {
     final MockMvc mvc = buildMvc();
 
-    final String token = jwt(TENANT_A_UUID, USER_POST_REF, USER_POST_LOGIN,
-        "task-management:TASK_READ", "task-management:TASK_WRITE");
+    final String token =
+        jwt(
+            TENANT_A_UUID,
+            USER_POST_REF,
+            USER_POST_LOGIN,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
 
     // POST /tasks -> legt Task + Creator-Participant + aktiven UserState in DERSELBEN Tx an
-    mvc.perform(post("/api/v1/tasks")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"title\":\"Creator-Invariante-Task\"}"))
+    mvc.perform(
+            post("/api/v1/tasks")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Creator-Invariante-Task\"}"))
         .andExpect(status().is2xxSuccessful());
 
     // GET /snapshot als Creator -> Task erscheint in der aktiven Seite + Creator als Teilnehmer
-    final JsonNode snapshot = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode snapshot =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
 
     boolean foundTitle = false;
     for (final JsonNode item : snapshot.get("tasks").get("items")) {
@@ -1195,10 +1580,26 @@ class InboxSnapshotControllerIT {
     // (a) aktiver erledigter Task + aktiver UserState -> in done-Archiv + Totals
     final long activeDoneId = ID_BASE + 80;
     final UUID activeDoneUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, activeDoneId, activeDoneUuid, TENANT_A_ID, doneId, normalId, dir,
-        LocalDateTime.now().minusMinutes(15), "Aktiv erledigt");
-    seedParticipant(jdbcTemplate, ID_BASE + 81, activeDoneId, USER_DEL_REF, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        activeDoneId,
+        activeDoneUuid,
+        TENANT_A_ID,
+        doneId,
+        normalId,
+        dir,
+        LocalDateTime.now().minusMinutes(15),
+        "Aktiv erledigt");
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 81,
+        activeDoneId,
+        USER_DEL_REF,
+        TENANT_A_ID,
+        true,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 82, activeDoneId, USER_DEL_REF, TENANT_A_ID, null);
 
     // (b) DEAKTIVIERTER erledigter Task (ENTITY_STATUS='DEACTIVE') -> NICHT sichtbar/gezaehlt
@@ -1210,62 +1611,112 @@ class InboxSnapshotControllerIT {
             + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'DEACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
-        deadTaskId, deadUuid, TENANT_A_ID, "Deaktiviert erledigt", doneId, normalId, dir,
-        TENANT_A_ID, Timestamp.valueOf(LocalDateTime.now().minusMinutes(14)));
-    seedParticipant(jdbcTemplate, ID_BASE + 84, deadTaskId, USER_DEL_REF, TENANT_A_ID,
-        true, true, true, null);
+        deadTaskId,
+        deadUuid,
+        TENANT_A_ID,
+        "Deaktiviert erledigt",
+        doneId,
+        normalId,
+        dir,
+        TENANT_A_ID,
+        Timestamp.valueOf(LocalDateTime.now().minusMinutes(14)));
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 84, deadTaskId, USER_DEL_REF, TENANT_A_ID, true, true, true, null);
     seedUserState(jdbcTemplate, ID_BASE + 85, deadTaskId, USER_DEL_REF, TENANT_A_ID, null);
 
-    // (c) aktiver OPEN-Task mit DEAKTIVIERTEM UserState -> NICHT in aktiver Seite (Membership-Filter)
+    // (c) aktiver OPEN-Task mit DEAKTIVIERTEM UserState -> NICHT in aktiver Seite
+    // (Membership-Filter)
     final long openTaskId = ID_BASE + 86;
     final UUID openUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, openTaskId, openUuid, TENANT_A_ID, openId, normalId, dir,
-        LocalDateTime.now().minusMinutes(13), "Open mit totem UserState");
-    seedParticipant(jdbcTemplate, ID_BASE + 87, openTaskId, USER_DEL_REF, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        openTaskId,
+        openUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        dir,
+        LocalDateTime.now().minusMinutes(13),
+        "Open mit totem UserState");
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 87, openTaskId, USER_DEL_REF, TENANT_A_ID, true, true, true, null);
     jdbcTemplate.update(
         "INSERT INTO [dbo].[TASK_USER_STATE] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'DEACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
-        ID_BASE + 88, UUID.randomUUID(), TENANT_A_ID, openTaskId, USER_DEL_REF, TENANT_A_ID);
+        ID_BASE + 88,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        openTaskId,
+        USER_DEL_REF,
+        TENANT_A_ID);
 
     // (d) Referenz: aktiver OPEN-Task mit aktivem UserState -> MUSS in der aktiven Seite sein
     // (die Abwesenheitspruefung fuer (c) darf nicht an einer leeren Seite scheitern/leer gelten).
     final long visibleTaskId = ID_BASE + 89;
     final UUID visibleUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, visibleTaskId, visibleUuid, TENANT_A_ID, openId, normalId, dir,
-        LocalDateTime.now().minusMinutes(12), "Open sichtbar");
-    seedParticipant(jdbcTemplate, ID_BASE + 90, visibleTaskId, USER_DEL_REF, TENANT_A_ID,
-        true, true, true, null);
+    seedTask(
+        jdbcTemplate,
+        visibleTaskId,
+        visibleUuid,
+        TENANT_A_ID,
+        openId,
+        normalId,
+        dir,
+        LocalDateTime.now().minusMinutes(12),
+        "Open sichtbar");
+    seedParticipant(
+        jdbcTemplate,
+        ID_BASE + 90,
+        visibleTaskId,
+        USER_DEL_REF,
+        TENANT_A_ID,
+        true,
+        true,
+        true,
+        null);
     seedUserState(jdbcTemplate, ID_BASE + 91, visibleTaskId, USER_DEL_REF, TENANT_A_ID, null);
 
     final String token =
         jwt(TENANT_A_UUID, USER_DEL_REF, USER_DEL_LOGIN, "task-management:TASK_READ");
 
     // Archiv done: nur aktiver erledigter Task, NICHT der deaktivierte
-    final JsonNode donePage = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/archive?filter=done")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
-    assertThat(idsOf(donePage)).contains(activeDoneUuid.toString())
+    final JsonNode donePage =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/archive?filter=done")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
+    assertThat(idsOf(donePage))
+        .contains(activeDoneUuid.toString())
         .doesNotContain(deadUuid.toString());
 
     // Totals: done == 1 (deaktivierter Task NICHT mitgezaehlt)
-    final JsonNode snapshot = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode snapshot =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(snapshot.get("archiveTotals").get("done").asLong()).isEqualTo(1L);
 
     // Aktive Seite: OPEN-Task mit deaktiviertem UserState erscheint NICHT (Membership-Filter)
-    final JsonNode active = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode active =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(get("/api/v1/tasks").header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(idsOf(active)).contains(visibleUuid.toString());
     assertThat(idsOf(active)).doesNotContain(openUuid.toString());
   }
@@ -1275,10 +1726,10 @@ class InboxSnapshotControllerIT {
   /**
    * Beweist Auflage 1 des SPEC-Gates mit ECHTEM Datenbestand: fuer USER_NOTIF existiert eine echte
    * Notification. Nur mit {@code NOTIFICATION_READ} erscheint sie im Bootstrap-Snapshot; mit allein
-   * {@code TASK_READ} ist die Notification-Seite LEER (konsistent zum dedizierten
-   * {@code GET /api/v1/notifications}, das denselben Benutzer mit 403 ablehnt). Near-Miss-Authorities
-   * (falsche Grossschreibung, {@code _COMPANY_<uuid>}-Suffix) gelten als FEHLEND (exakte Pruefung,
-   * kein Stripping/Case - aspekt-treu zu {@code @RequiresPermission}).
+   * {@code TASK_READ} ist die Notification-Seite LEER (konsistent zum dedizierten {@code GET
+   * /api/v1/notifications}, das denselben Benutzer mit 403 ablehnt). Near-Miss-Authorities (falsche
+   * Grossschreibung, {@code _COMPANY_<uuid>}-Suffix) gelten als FEHLEND (exakte Pruefung, kein
+   * Stripping/Case - aspekt-treu zu {@code @RequiresPermission}).
    */
   @Test
   @DisplayName("snapshot_notifications_nur_mit_notification_read_sonst_leer_echte_daten")
@@ -1286,17 +1737,27 @@ class InboxSnapshotControllerIT {
     final MockMvc mvc = buildMvc();
 
     // Echte Notification seeden (leerer Bestand waere kein Sicherheitsnachweis).
-    seedNotification(jdbcTemplate, ID_BASE + 900, USER_NOTIF_REF, TENANT_A_ID, TYPE_ID_ASSIGN,
+    seedNotification(
+        jdbcTemplate,
+        ID_BASE + 900,
+        USER_NOTIF_REF,
+        TENANT_A_ID,
+        TYPE_ID_ASSIGN,
         "Snapshot-Notif-Gate");
 
     // (1) Nur TASK_READ -> Snapshot 200, notifications LEER; dedizierter Endpunkt -> 403.
     final String tokenReadOnly =
         jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN, "task-management:TASK_READ");
-    final JsonNode roSnap = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + tokenReadOnly))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final JsonNode roSnap =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot")
+                            .header("Authorization", "Bearer " + tokenReadOnly))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(roSnap.get("notifications").get("items")).isEmpty();
     assertThat(roSnap.get("notifications").get("hasMore").asBoolean()).isFalse();
     assertThat(roSnap.get("notifications").get("nextCursor").isNull()).isTrue();
@@ -1304,25 +1765,44 @@ class InboxSnapshotControllerIT {
         .andExpect(status().isForbidden());
 
     // (2) Near-Miss-Authorities gelten als FEHLEND (exakt, kein Stripping/Case) -> weiter leer.
-    final String tokenNearMiss = jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN,
-        "task-management:TASK_READ",
-        "task-management:notification_read",
-        "task-management:NOTIFICATION_READ_COMPANY_" + UUID.randomUUID());
-    final JsonNode nmSnap = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + tokenNearMiss))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final String tokenNearMiss =
+        jwt(
+            TENANT_A_UUID,
+            USER_NOTIF_REF,
+            USER_NOTIF_LOGIN,
+            "task-management:TASK_READ",
+            "task-management:notification_read",
+            "task-management:NOTIFICATION_READ_COMPANY_" + UUID.randomUUID());
+    final JsonNode nmSnap =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot")
+                            .header("Authorization", "Bearer " + tokenNearMiss))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     assertThat(nmSnap.get("notifications").get("items")).isEmpty();
 
     // (3) Mit NOTIFICATION_READ -> Notification sichtbar.
-    final String tokenFull = jwt(TENANT_A_UUID, USER_NOTIF_REF, USER_NOTIF_LOGIN,
-        "task-management:TASK_READ", "task-management:NOTIFICATION_READ");
-    final JsonNode fullSnap = new ObjectMapper().readTree(
-        mvc.perform(get("/api/v1/tasks/snapshot")
-                .header("Authorization", "Bearer " + tokenFull))
-            .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString());
+    final String tokenFull =
+        jwt(
+            TENANT_A_UUID,
+            USER_NOTIF_REF,
+            USER_NOTIF_LOGIN,
+            "task-management:TASK_READ",
+            "task-management:NOTIFICATION_READ");
+    final JsonNode fullSnap =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get("/api/v1/tasks/snapshot")
+                            .header("Authorization", "Bearer " + tokenFull))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
     boolean foundNotif = false;
     for (final JsonNode n : fullSnap.get("notifications").get("items")) {
       if ("Snapshot-Notif-Gate".equals(n.get("text").asText())) {
@@ -1359,8 +1839,7 @@ class InboxSnapshotControllerIT {
     final String token = jwt(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
     final String badCursor =
         KeysetCursor.encode(List.of(LocalDateTime.now().toString(), UUID.randomUUID().toString()));
-    mvc.perform(get("/api/v1/tasks?cursor=" + badCursor)
-            .header("Authorization", "Bearer " + token))
+    mvc.perform(get("/api/v1/tasks?cursor=" + badCursor).header("Authorization", "Bearer " + token))
         .andExpect(status().isBadRequest());
   }
 
@@ -1373,13 +1852,13 @@ class InboxSnapshotControllerIT {
   }
 
   /**
-   * Liefert die IDs der Items einer HAL-Collection-Seite (Slice-4-Migration: items unter
-   * {@code _embedded.tasks} statt top-level {@code items}).
+   * Liefert die IDs der Items einer HAL-Collection-Seite (Slice-4-Migration: items unter {@code
+   * _embedded.tasks} statt top-level {@code items}).
    *
    * <p>Fuer Task-Seiten ({@code GET /api/v1/tasks}, {@code GET /api/v1/tasks/archive}), die als
-   * {@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel} zurueckkehren.
-   * Fuer Snapshot-Felder ({@code snapshot.tasks.items}) oder Snapshot-Notifications
-   * ({@code snapshot.notifications.items}) gilt dieses Muster NICHT (Snapshot-Wire unveraendert).
+   * {@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel} zurueckkehren. Fuer
+   * Snapshot-Felder ({@code snapshot.tasks.items}) oder Snapshot-Notifications ({@code
+   * snapshot.notifications.items}) gilt dieses Muster NICHT (Snapshot-Wire unveraendert).
    */
   private java.util.List<String> idsOf(final JsonNode page) {
     final java.util.List<String> ids = new java.util.ArrayList<>();
@@ -1395,9 +1874,12 @@ class InboxSnapshotControllerIT {
    * <p>Leere Collection nur bei vorhandenen Cursor-Feldern; unbekannte Form -> AssertionError.
    */
   private JsonNode taskItemsOf(final JsonNode page) {
-    // Slice 4: Items liegen bei aktiver KSF-HAL-Autoconfig (Produktions-Wire + voller-Autoconfig-IT)
-    // unter _embedded.tasks; bei der handverlesenen IT-Autoconfig OHNE HAL serialisiert CollectionModel
-    // als content; legacy war es ein flaches items. Dieser Behavior-IT prueft Pagination/Cursor/Filter
+    // Slice 4: Items liegen bei aktiver KSF-HAL-Autoconfig (Produktions-Wire +
+    // voller-Autoconfig-IT)
+    // unter _embedded.tasks; bei der handverlesenen IT-Autoconfig OHNE HAL serialisiert
+    // CollectionModel
+    // als content; legacy war es ein flaches items. Dieser Behavior-IT prueft
+    // Pagination/Cursor/Filter
     // (wire-unabhaengig) -> tolerant alle Formen lesen. Der Produktions-HAL-Wire (_embedded.tasks)
     // wird separat im voll-autoconfig Affordance-IT scharf bewiesen.
     final JsonNode embedded = page.get("_embedded");
@@ -1421,8 +1903,10 @@ class InboxSnapshotControllerIT {
       return new com.fasterxml.jackson.databind.node.ArrayNode(
           com.fasterxml.jackson.databind.node.JsonNodeFactory.instance);
     }
-    throw new AssertionError("Unbekannte Collection-Wire-Form (weder _embedded.tasks noch content"
-        + " noch items, keine Cursor-Felder): " + page);
+    throw new AssertionError(
+        "Unbekannte Collection-Wire-Form (weder _embedded.tasks noch content"
+            + " noch items, keine Cursor-Felder): "
+            + page);
   }
 
   private long statusId(final String code) {
@@ -1457,8 +1941,17 @@ class InboxSnapshotControllerIT {
             + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'inbox-it', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
-        id, id, Timestamp.valueOf(lastActivityAt), externalId, tenantId, title,
-        statusId, priorityId, directionId, tenantId, Timestamp.valueOf(lastActivityAt));
+        id,
+        id,
+        Timestamp.valueOf(lastActivityAt),
+        externalId,
+        tenantId,
+        title,
+        statusId,
+        priorityId,
+        directionId,
+        tenantId,
+        Timestamp.valueOf(lastActivityAt));
   }
 
   private static void seedParticipant(
@@ -1478,8 +1971,17 @@ class InboxSnapshotControllerIT {
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
             + "VALUES (?, 'ACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, ?, ?, ?, ?)",
-        id, id, UUID.randomUUID(), tenantId, taskId, participantRef, tenantId,
-        creator ? 1 : 0, assignee ? 1 : 0, participant ? 1 : 0, exitKind);
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        participantRef,
+        tenantId,
+        creator ? 1 : 0,
+        assignee ? 1 : 0,
+        participant ? 1 : 0,
+        exitKind);
   }
 
   private static void seedNotification(
@@ -1495,7 +1997,13 @@ class InboxSnapshotControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
             + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, 0, ?, getdate())",
-        id, id, UUID.randomUUID(), tenantId, recipientRef, typeId, text);
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        recipientRef,
+        typeId,
+        text);
   }
 
   private static void seedUserState(
@@ -1511,7 +2019,13 @@ class InboxSnapshotControllerIT {
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'ACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, ?)",
-        id, id, UUID.randomUUID(), tenantId, taskId, userRef, tenantId,
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        userRef,
+        tenantId,
         unsubscribedAt == null ? null : Timestamp.valueOf(unsubscribedAt));
   }
 
@@ -1552,7 +2066,10 @@ class InboxSnapshotControllerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -1566,7 +2083,11 @@ class InboxSnapshotControllerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {

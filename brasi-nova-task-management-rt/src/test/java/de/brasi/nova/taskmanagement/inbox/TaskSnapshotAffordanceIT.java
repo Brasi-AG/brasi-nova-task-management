@@ -52,16 +52,17 @@ import org.springframework.web.context.WebApplicationContext;
 
 /**
  * Affordance-Integration-Test (PLAN #141 Slice 5, Teil B): {@code GET /api/v1/tasks/snapshot}
- * liefert verschachtelte Task-Items mit {@code _links.self} nach
- * {@code /api/v1/tasks/{id}} - OHNE weitere Action-Rels am Snapshot-Item-Level.
+ * liefert verschachtelte Task-Items mit {@code _links.self} nach {@code /api/v1/tasks/{id}} - OHNE
+ * weitere Action-Rels am Snapshot-Item-Level.
  *
- * <p>Technischer Hintergrund (Codex-BLOCKER-1-Fix): Der Snapshot-Handler wurde von
- * {@code InboxSnapshotController} in den {@code TaskFacadeController} verschoben, damit er
- * im Kontext des {@code @EnableNovaHateoas(Task.class)}-Rule-Owners laeuft. Der
- * {@link io.keel.framework.web.hateoas.internal.SelfLinkEnricher} traversiert via reflektiven
- * Feldzugriff, benoetigt aber (a) {@code InfoModel}-Body UND (b) laufenden Rule-Owner-Controller.
+ * <p>Technischer Hintergrund (Codex-BLOCKER-1-Fix): Der Snapshot-Handler wurde von {@code
+ * InboxSnapshotController} in den {@code TaskFacadeController} verschoben, damit er im Kontext des
+ * {@code @EnableNovaHateoas(Task.class)}-Rule-Owners laeuft. Der {@link
+ * io.keel.framework.web.hateoas.internal.SelfLinkEnricher} traversiert via reflektiven Feldzugriff,
+ * benoetigt aber (a) {@code InfoModel}-Body UND (b) laufenden Rule-Owner-Controller.
  *
  * <p>Wire-Vertrag-Beweis:
+ *
  * <ul>
  *   <li>Response-Body ist ein {@code InfoModel} ({@code InboxSnapshotModel extends InfoModel}).
  *   <li>Verschachtelte Items ({@code tasks.items[]}) tragen je ein {@code _links.self}.
@@ -70,8 +71,8 @@ import org.springframework.web.context.WebApplicationContext;
  *   <li>Top-level des Snapshots: kein self-Link (InboxSnapshotModel.getId() @JsonIgnore).
  * </ul>
  *
- * <p>Bootet - wie {@code TagAffordanceIT} - den VOLLEN Spring-Boot-Autoconfig-Graph.
- * Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
+ * <p>Bootet - wie {@code TagAffordanceIT} - den VOLLEN Spring-Boot-Autoconfig-Graph. Uebersprungen
+ * ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
 @SpringBootTest(
     classes = TaskSnapshotAffordanceIT.ItConfig.class,
@@ -113,8 +114,8 @@ class TaskSnapshotAffordanceIT {
   private static final String TEST_KID = "snapshot-aff-it-key";
 
   /**
-   * Mandant fuer Affordance-Tests (593er-Block, kein Konflikt mit
-   * InboxSnapshotControllerIT 560-569 oder NotificationAffordanceIT 590-592).
+   * Mandant fuer Affordance-Tests (593er-Block, kein Konflikt mit InboxSnapshotControllerIT 560-569
+   * oder NotificationAffordanceIT 590-592).
    */
   private static final long TENANT_ID = 593L;
 
@@ -225,15 +226,22 @@ class TaskSnapshotAffordanceIT {
 
     final long taskId = ID_BASE + 1;
     final UUID taskUuid = UUID.randomUUID();
-    seedTask(jdbcTemplate, taskId, taskUuid, TENANT_ID, statusId, priorityId, directionId,
-        LocalDateTime.now().minusMinutes(10), "Snapshot-Affordance-Task");
+    seedTask(
+        jdbcTemplate,
+        taskId,
+        taskUuid,
+        TENANT_ID,
+        statusId,
+        priorityId,
+        directionId,
+        LocalDateTime.now().minusMinutes(10),
+        "Snapshot-Affordance-Task");
     seedParticipant(jdbcTemplate, ID_BASE + 2, taskId, USER_REF, TENANT_ID, true, true, true, null);
     seedUserState(jdbcTemplate, ID_BASE + 3, taskId, USER_REF, TENANT_ID, null);
 
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String token =
-        buildJwt(USER_REF, USER_LOGIN, "task-management:TASK_READ");
+    final String token = buildJwt(USER_REF, USER_LOGIN, "task-management:TASK_READ");
 
     final String body =
         mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
@@ -270,7 +278,8 @@ class TaskSnapshotAffordanceIT {
     assertThat(selfHref.isTextual())
         .as(
             "BLOCKER (Codex-BLOCKER-1-Fix): _links.self fehlt am Snapshot-Task-Item."
-                + " Item=" + targetItem)
+                + " Item="
+                + targetItem)
         .isTrue();
 
     // self.href zielt auf /api/v1/tasks/{taskId} (nicht /snapshot).
@@ -357,8 +366,7 @@ class TaskSnapshotAffordanceIT {
   void snapshot_toplevel_kein_self() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
-    final String token =
-        buildJwt(USER_REF, USER_LOGIN, "task-management:TASK_READ");
+    final String token = buildJwt(USER_REF, USER_LOGIN, "task-management:TASK_READ");
 
     final String body =
         mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
@@ -442,7 +450,10 @@ class TaskSnapshotAffordanceIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -456,7 +467,11 @@ class TaskSnapshotAffordanceIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static void seedTask(
@@ -476,8 +491,17 @@ class TaskSnapshotAffordanceIT {
             + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'snapshot-aff-it', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
-        id, id, Timestamp.valueOf(lastActivityAt), externalId, tenantId, title,
-        statusId, priorityId, directionId, tenantId, Timestamp.valueOf(lastActivityAt));
+        id,
+        id,
+        Timestamp.valueOf(lastActivityAt),
+        externalId,
+        tenantId,
+        title,
+        statusId,
+        priorityId,
+        directionId,
+        tenantId,
+        Timestamp.valueOf(lastActivityAt));
   }
 
   private static void seedParticipant(
@@ -497,8 +521,17 @@ class TaskSnapshotAffordanceIT {
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
             + "VALUES (?, 'ACTIVE', 'snapshot-aff-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, ?, ?, ?, ?)",
-        id, id, UUID.randomUUID(), tenantId, taskId, participantRef, tenantId,
-        creator ? 1 : 0, assignee ? 1 : 0, participant ? 1 : 0, exitKind);
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        participantRef,
+        tenantId,
+        creator ? 1 : 0,
+        assignee ? 1 : 0,
+        participant ? 1 : 0,
+        exitKind);
   }
 
   private static void seedUserState(
@@ -514,7 +547,13 @@ class TaskSnapshotAffordanceIT {
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'ACTIVE', 'snapshot-aff-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, ?)",
-        id, id, UUID.randomUUID(), tenantId, taskId, userRef, tenantId,
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        userRef,
+        tenantId,
         unsubscribedAt == null ? null : Timestamp.valueOf(unsubscribedAt));
   }
 
@@ -552,7 +591,9 @@ class TaskSnapshotAffordanceIT {
         "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class),
+        @ComponentScan.Filter(
+            type = FilterType.ANNOTATION,
+            classes = SpringBootConfiguration.class),
         @ComponentScan.Filter(
             type = FilterType.REGEX,
             pattern = "de\\.brasi\\.nova\\.taskmanagement\\.security\\.it\\..*")

@@ -13,10 +13,11 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * SPIKE-WEGWERF-ARTEFAKT (PLAN #141 Slice 0). KEIN Produktionscode.
  *
  * <p>Gemeinsamer Test-Context fuer die Affordance-Proben P1/P2/P3/P5. Bootet denselben vollen
- * Web-/HATEOAS-/Jackson-Stack wie die reale {@code BrasiNovaApplication} ueber Boot-{@code
- * @EnableAutoConfiguration} (statt einer handgepflegten Autoconfig-Liste — der KSF-Web-Graph ist
- * eng verzahnt). Dadurch sind der globale {@code NovaFindResponseAdvice} (ResponseBodyAdvice), der
- * {@code @EnableNovaHateoas}-Scan und der {@code SelfLinkEnricher} genauso live wie in Produktion.
+ * Web-/HATEOAS-/Jackson-Stack wie die reale {@code BrasiNovaApplication} ueber
+ * Boot-{@code @EnableAutoConfiguration} (statt einer handgepflegten Autoconfig-Liste — der
+ * KSF-Web-Graph ist eng verzahnt). Dadurch sind der globale {@code NovaFindResponseAdvice}
+ * (ResponseBodyAdvice), der {@code @EnableNovaHateoas}-Scan und der {@code SelfLinkEnricher}
+ * genauso live wie in Produktion.
  *
  * <p>Der {@code @ComponentScan} ist auf das Probe-Paket beschraenkt; die reale Repository-Schicht
  * wird NICHT gescannt (nur {@code @EnableNovaRepositories} auf die Entity-/Repo-Pakete, damit die

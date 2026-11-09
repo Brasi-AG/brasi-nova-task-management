@@ -16,15 +16,16 @@ import org.springframework.hateoas.server.core.Relation;
 /**
  * Read-Modell fuer eine Benachrichtigung (plan-v4 DTO-Register).
  *
- * <p>PLAN #141 Slice 4: migriert vom {@code record} auf eine {@link BaseModel}-Subklasse,
- * damit {@code GET /api/v1/notifications} ueber die KSF-Enrichment-Pipeline als HAL-
- * {@link de.brasi.nova.taskmanagement.paging.CursorCollectionModel} ausgeliefert werden kann.
- * Item-rels und Collection-rels sind Slice 5 vorbehalten (mark-read/mark-all-read). In Slice 4
- * wird nur der Return-Typ umgebaut + die Enrichment-Faehigkeit (setEntity) hergestellt.
+ * <p>PLAN #141 Slice 4: migriert vom {@code record} auf eine {@link BaseModel}-Subklasse, damit
+ * {@code GET /api/v1/notifications} ueber die KSF-Enrichment-Pipeline als HAL- {@link
+ * de.brasi.nova.taskmanagement.paging.CursorCollectionModel} ausgeliefert werden kann. Item-rels
+ * und Collection-rels sind Slice 5 vorbehalten (mark-read/mark-all-read). In Slice 4 wird nur der
+ * Return-Typ umgebaut + die Enrichment-Faehigkeit (setEntity) hergestellt.
  *
- * <p><b>R8-createdAt-Kollision:</b> {@code createdAt:Instant} kollidiert mit dem geerbten
- * {@code getCreatedAt():LocalDateTime} von {@link BaseModel}. Neutralisierung identisch zu
- * {@code TaskSummaryModel}:
+ * <p><b>R8-createdAt-Kollision:</b> {@code createdAt:Instant} kollidiert mit dem geerbten {@code
+ * getCreatedAt():LocalDateTime} von {@link BaseModel}. Neutralisierung identisch zu {@code
+ * TaskSummaryModel}:
+ *
  * <ul>
  *   <li>Feld heisst intern {@code createdInstant} (Typ {@code Instant}), traegt
  *       {@code @JsonProperty("createdAt")}.
@@ -32,11 +33,11 @@ import org.springframework.hateoas.server.core.Relation;
  *   <li>Fluent-Alias {@code createdAt()} fuer Alt-Konsumenten (record-Accessor-Kompat).
  * </ul>
  *
- * <p>Wire-Vertrag: alle bisherigen Felder behalten identischen JSON-Namen und Typ.
- * {@code version} wird via {@link JsonIgnoreProperties} aus dem Wire genommen.
+ * <p>Wire-Vertrag: alle bisherigen Felder behalten identischen JSON-Namen und Typ. {@code version}
+ * wird via {@link JsonIgnoreProperties} aus dem Wire genommen.
  *
- * <p>{@code @Relation} pinnt die HAL-Namen: ein einzelnes Item als {@code notification},
- * die Collection als {@code notifications} (= Schluessel unter {@code _embedded}).
+ * <p>{@code @Relation} pinnt die HAL-Namen: ein einzelnes Item als {@code notification}, die
+ * Collection als {@code notifications} (= Schluessel unter {@code _embedded}).
  */
 @Getter
 @Setter
@@ -46,30 +47,40 @@ import org.springframework.hateoas.server.core.Relation;
 public class NotificationModel extends BaseModel<NotificationModel> {
 
   @JsonProperty("typeCode")
-  @Schema(description = "Technischer CODE des Benachrichtigungs-Typs (z.B. ASSIGN, REPLY, MENTION, HANDOVER).",
+  @Schema(
+      description =
+          "Technischer CODE des Benachrichtigungs-Typs (z.B. ASSIGN, REPLY, MENTION, HANDOVER).",
       example = "ASSIGN")
   private String typeCode;
 
   @JsonProperty("taskId")
-  @Schema(description = "Externe UUID der betroffenen Aufgabe (null bei System-Benachrichtigungen).",
+  @Schema(
+      description = "Externe UUID der betroffenen Aufgabe (null bei System-Benachrichtigungen).",
       example = "550e8400-e29b-41d4-a716-446655440000")
   private UUID taskId;
 
   @JsonProperty("actorRef")
-  @Schema(description = "UUID des Akteurs, der die Benachrichtigung ausgeloest hat.",
+  @Schema(
+      description = "UUID des Akteurs, der die Benachrichtigung ausgeloest hat.",
       example = "770e8400-e29b-41d4-a716-446655440002")
   private UUID actorRef;
 
   @JsonProperty("text")
-  @Schema(description = "Anzeigetext der Benachrichtigung.", example = "Du wurdest der Aufgabe zugewiesen.")
+  @Schema(
+      description = "Anzeigetext der Benachrichtigung.",
+      example = "Du wurdest der Aufgabe zugewiesen.")
   private String text;
 
   @JsonProperty("preview")
-  @Schema(description = "Optionale Vorschau (z.B. Aufgabentitel).", example = "Jahresabschluss vorbereiten")
+  @Schema(
+      description = "Optionale Vorschau (z.B. Aufgabentitel).",
+      example = "Jahresabschluss vorbereiten")
   private String preview;
 
   @JsonProperty("severityCode")
-  @Schema(description = "Technischer CODE des Schweregrads (z.B. INFO, WARNING; null wenn nicht gesetzt).",
+  @Schema(
+      description =
+          "Technischer CODE des Schweregrads (z.B. INFO, WARNING; null wenn nicht gesetzt).",
       example = "INFO")
   private String severityCode;
 
@@ -78,10 +89,10 @@ public class NotificationModel extends BaseModel<NotificationModel> {
   private boolean read;
 
   /**
-   * R8-Neutralisierung: Feld traegt den Erstellzeitpunkt als Instant, heisst intern
-   * {@code createdInstant} und serialisiert via {@code @JsonProperty("createdAt")} als "createdAt".
-   * Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird per
-   * {@link JsonIgnore} unterdrueckt.
+   * R8-Neutralisierung: Feld traegt den Erstellzeitpunkt als Instant, heisst intern {@code
+   * createdInstant} und serialisiert via {@code @JsonProperty("createdAt")} als "createdAt". Das
+   * geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird per {@link JsonIgnore}
+   * unterdrueckt.
    */
   @JsonProperty("createdAt")
   @Schema(description = "Erstellungszeitpunkt (UTC).", example = "2026-10-18T08:00:00Z")
@@ -119,8 +130,8 @@ public class NotificationModel extends BaseModel<NotificationModel> {
   }
 
   /**
-   * R8-Neutralisierung: Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel}
-   * wird aus dem Wire genommen. Liefert {@code null}.
+   * R8-Neutralisierung: Das geerbte {@code getCreatedAt():LocalDateTime} von {@link BaseModel} wird
+   * aus dem Wire genommen. Liefert {@code null}.
    *
    * @return immer {@code null} (nicht im Wire)
    */

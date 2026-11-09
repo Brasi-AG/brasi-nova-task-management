@@ -1,11 +1,11 @@
 package de.brasi.nova.taskmanagement.affordanceprobe;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.keel.framework.api.openapi.annotation.ApiFindResponse;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,8 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * SPIKE-WEGWERF-ARTEFAKTE (PLAN #141 Slice 0). KEIN Produktionscode.
  *
- * <p>Zwei P3-Snapshot-Controller, die dieselbe {@link ProbeInfoModel}-Struktur (mit
- * verschachtelten {@link ProbeNestedInfoModel}) servieren:
+ * <p>Zwei P3-Snapshot-Controller, die dieselbe {@link ProbeInfoModel}-Struktur (mit verschachtelten
+ * {@link ProbeNestedInfoModel}) servieren:
  *
  * <ul>
  *   <li>{@link WithoutOwner}: PLAIN {@code @RestController} OHNE {@code @EnableNovaHateoas}.
@@ -41,7 +41,9 @@ public final class ProbeSnapshotControllers {
 
   /** P3a: Snapshot-Handler OHNE {@code @EnableNovaHateoas}. */
   @RestController
-  @ConditionalOnProperty(name = "task-management.test.affordance-probe.enabled", havingValue = "true")
+  @ConditionalOnProperty(
+      name = "task-management.test.affordance-probe.enabled",
+      havingValue = "true")
   @RequestMapping("/probe/snapshot-noowner")
   public static class WithoutOwner {
 
@@ -54,7 +56,9 @@ public final class ProbeSnapshotControllers {
 
   /** P3b: Snapshot-Handler MIT {@code @EnableNovaHateoas} (eigener Regel-Owner). */
   @RestController
-  @ConditionalOnProperty(name = "task-management.test.affordance-probe.enabled", havingValue = "true")
+  @ConditionalOnProperty(
+      name = "task-management.test.affordance-probe.enabled",
+      havingValue = "true")
   @RequestMapping("/probe/snapshot-owner")
   @EnableNovaHateoas(entityClass = ProbeSnapshotEntity.class)
   public static class WithOwner {

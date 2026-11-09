@@ -7,9 +7,9 @@ import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.hateoas.specification.LinkSpecification;
 import io.keel.framework.api.model.NovaEntity;
 import io.keel.framework.api.security.PermissionEvaluator;
-import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
+import io.keel.framework.api.security.user.UserAccessor;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,16 +22,16 @@ import org.springframework.web.context.request.RequestContextHolder;
 /**
  * {@link LinkSpecification}-Beans fuer die Task-Affordance (PLAN #141 Slice 3). Analog zum
  * TagLinkSpecifications-Muster (Slice 2): statische Inner-{@code @Component}-Klassen je Bedingung,
- * fail-safe (Cast-Guard + Exception -&gt; false), {@code getName()} liefert stabile Namen, die exakt
- * den {@link TaskHateoas.Specs}-Konstanten entsprechen.
+ * fail-safe (Cast-Guard + Exception -&gt; false), {@code getName()} liefert stabile Namen, die
+ * exakt den {@link TaskHateoas.Specs}-Konstanten entsprechen.
  *
  * <p>Die {@code _links} sind rein ADDITIV (FE-Anzeige); die Enforcement bleibt UNVERAENDERT an den
  * Handler-Methoden ({@code requireWriteMember} im Service / {@code @RequiresPermission} am
  * Controller).
  *
- * <p><b>Sicherheitskern:</b> alle {@code isSatisfiedBy}-Implementierungen sind fail-safe
- * ({@code try/catch(RuntimeException) -> false}): ein fehlender Security-Context, ein fehlendes
- * entityOpt oder ein Guard-/Evaluator-Fehler emittiert KEINEN Link (fail-closed). Kein Fail-open.
+ * <p><b>Sicherheitskern:</b> alle {@code isSatisfiedBy}-Implementierungen sind fail-safe ({@code
+ * try/catch(RuntimeException) -> false}): ein fehlender Security-Context, ein fehlendes entityOpt
+ * oder ein Guard-/Evaluator-Fehler emittiert KEINEN Link (fail-closed). Kein Fail-open.
  */
 public final class TaskLinkSpecifications {
 
@@ -42,21 +42,21 @@ public final class TaskLinkSpecifications {
    * aktives WRITE-Member der Aufgabe. Spiegelt EXAKT die Guard-Pruefung - genutzt wird die
    * non-throwing Variante {@code TaskMembershipGuard.isWriteMember(taskId, actorRef,
    * task.getTenantId())} (identische Pruefung {@code matchesContextTenant && existsWriteMember} wie
-   * das werfende {@code requireWriteMember}), wie es die Enforcement-Pfade
-   * {@code TaskCommandService.patch}, {@code MarkerService.applyMarker},
-   * {@code CommentService.createComment} und {@code AssigneeService.exit} enforcen.
+   * das werfende {@code requireWriteMember}), wie es die Enforcement-Pfade {@code
+   * TaskCommandService.patch}, {@code MarkerService.applyMarker}, {@code
+   * CommentService.createComment} und {@code AssigneeService.exit} enforcen.
    *
-   * <p>Die Membership-Pruefung liest Actor und Tenant-Kontext aus dem Security-Context
-   * ({@link UserAccessor}/{@link CurrentActor}), NIEMALS aus dem DTO oder externen Parametern.
-   * Als Task-Entity-ID und Tenant-ID werden die Werte aus dem {@code entityOpt} genutzt
-   * ({@link Task#getId()} und {@link Task#getTenantId()}), die vom {@code TaskDetailService} via
-   * {@code setEntity} in den BaseModel-Kontext gestellt wurden (Slice 1).
+   * <p>Die Membership-Pruefung liest Actor und Tenant-Kontext aus dem Security-Context ({@link
+   * UserAccessor}/{@link CurrentActor}), NIEMALS aus dem DTO oder externen Parametern. Als
+   * Task-Entity-ID und Tenant-ID werden die Werte aus dem {@code entityOpt} genutzt ({@link
+   * Task#getId()} und {@link Task#getTenantId()}), die vom {@code TaskDetailService} via {@code
+   * setEntity} in den BaseModel-Kontext gestellt wurden (Slice 1).
    *
    * <p><b>Request-scoped Memoization (N+1-Fix):</b> KSF wertet die Spec je Listen-Item und je
-   * {@code @LinkRule} aus (6 {@code IS_WRITE_MEMBER}-Rels plus 2
-   * {@code HAS_WRITE_AUTHORITY_AND_IS_MEMBER}, die nach der Authority-Pruefung an diese Spec
-   * delegieren) - ohne Cache also 6-8 identische DB-Abfragen je Item. Das Ergebnis wird deshalb je
-   * HTTP-Request im Request-Attribut {@value #RESULT_CACHE_ATTRIBUTE} (Scope REQUEST) gehalten.
+   * {@code @LinkRule} aus (6 {@code IS_WRITE_MEMBER}-Rels plus 2 {@code
+   * HAS_WRITE_AUTHORITY_AND_IS_MEMBER}, die nach der Authority-Pruefung an diese Spec delegieren) -
+   * ohne Cache also 6-8 identische DB-Abfragen je Item. Das Ergebnis wird deshalb je HTTP-Request
+   * im Request-Attribut {@value #RESULT_CACHE_ATTRIBUTE} (Scope REQUEST) gehalten.
    *
    * <ul>
    *   <li><b>Schluessel:</b> (taskId, actorRef, taskTenant, Kontext-Tenant aus dem {@code
@@ -161,9 +161,9 @@ public final class TaskLinkSpecifications {
 
   /**
    * Bedingung {@link TaskHateoas.Specs#HAS_WRITE_AUTHORITY}: der Anfrager traegt die exakte
-   * Authority {@code task-management:TASK_WRITE}. Spiegelt das {@code @RequiresPermission(TASK_WRITE)}
-   * an {@code TaskFacadeController.create}, {@code AssigneeController.updateAssignees} und
-   * {@code AssigneeController.addParticipants}.
+   * Authority {@code task-management:TASK_WRITE}. Spiegelt das
+   * {@code @RequiresPermission(TASK_WRITE)} an {@code TaskFacadeController.create}, {@code
+   * AssigneeController.updateAssignees} und {@code AssigneeController.addParticipants}.
    */
   @Component
   public static final class TaskWriteAuthoritySpec implements LinkSpecification {
@@ -188,8 +188,8 @@ public final class TaskLinkSpecifications {
 
   /**
    * Bedingung {@link TaskHateoas.Specs#HAS_CREATE_AUTHORITY}: der Anfrager traegt die exakte
-   * Authority {@code task-management:TASK_CREATE}. Spiegelt das {@code @RequiresPermission(TASK_CREATE)}
-   * an {@code TaskFacadeController.createFromSource}.
+   * Authority {@code task-management:TASK_CREATE}. Spiegelt das
+   * {@code @RequiresPermission(TASK_CREATE)} an {@code TaskFacadeController.createFromSource}.
    */
   @Component
   public static final class TaskCreateAuthoritySpec implements LinkSpecification {
@@ -214,13 +214,13 @@ public final class TaskLinkSpecifications {
 
   /**
    * Bedingung {@link TaskHateoas.Specs#HAS_WRITE_AUTHORITY_AND_IS_MEMBER}: TASK_WRITE-Authority UND
-   * WRITE-Member (Konjunktion). Spiegelt die kombinierte Enforcement an
-   * {@code AssigneeController.updateAssignees} und {@code AssigneeController.addParticipants}:
-   * beide tragen {@code @RequiresPermission(TASK_WRITE)} UND der {@link AssigneeService} ruft intern
+   * WRITE-Member (Konjunktion). Spiegelt die kombinierte Enforcement an {@code
+   * AssigneeController.updateAssignees} und {@code AssigneeController.addParticipants}: beide
+   * tragen {@code @RequiresPermission(TASK_WRITE)} UND der {@link AssigneeService} ruft intern
    * {@code requireWriteMember} auf.
    *
-   * <p>Implementiert durch Delegation an {@link TaskWriteAuthoritySpec} und
-   * {@link TaskWriteMembershipSpec} (injiziert), damit die Fail-safe-Logik nicht dupliziert wird.
+   * <p>Implementiert durch Delegation an {@link TaskWriteAuthoritySpec} und {@link
+   * TaskWriteMembershipSpec} (injiziert), damit die Fail-safe-Logik nicht dupliziert wird.
    */
   @Component
   public static final class TaskWriteAuthorityAndMembershipSpec implements LinkSpecification {
@@ -230,8 +230,7 @@ public final class TaskLinkSpecifications {
 
     /** Konstruktor-Injektion der Teilbedingungen. */
     public TaskWriteAuthorityAndMembershipSpec(
-        final TaskWriteAuthoritySpec authoritySpec,
-        final TaskWriteMembershipSpec membershipSpec) {
+        final TaskWriteAuthoritySpec authoritySpec, final TaskWriteMembershipSpec membershipSpec) {
       this.authoritySpec = authoritySpec;
       this.membershipSpec = membershipSpec;
     }

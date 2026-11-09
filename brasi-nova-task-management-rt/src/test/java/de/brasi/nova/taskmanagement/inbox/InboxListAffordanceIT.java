@@ -27,10 +27,10 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
-import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,10 +59,11 @@ import org.springframework.web.context.WebApplicationContext;
  * (entityClass nur aus Items ableitbar).
  *
  * <p>Bootet - wie {@link de.brasi.nova.taskmanagement.task.TaskDetailAffordanceIT} - den VOLLEN
- * Spring-Boot-Autoconfig-Graph (globaler {@code NovaFindResponseAdvice} + {@code @EnableNovaHateoas}-
- * Scan + {@code SelfLinkEnricher} + KSF-HAL-Converter), damit der Produktions-HAL-Wire real ist. Die
- * Behavior-ITs ({@code InboxSnapshotControllerIT}) booten bewusst OHNE HAL (dort serialisiert
- * {@code CollectionModel} als {@code content}); dieser IT beweist den Produktions-Wire scharf.
+ * Spring-Boot-Autoconfig-Graph (globaler {@code NovaFindResponseAdvice} +
+ * {@code @EnableNovaHateoas}- Scan + {@code SelfLinkEnricher} + KSF-HAL-Converter), damit der
+ * Produktions-HAL-Wire real ist. Die Behavior-ITs ({@code InboxSnapshotControllerIT}) booten
+ * bewusst OHNE HAL (dort serialisiert {@code CollectionModel} als {@code content}); dieser IT
+ * beweist den Produktions-Wire scharf.
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
@@ -132,19 +133,22 @@ class InboxListAffordanceIT {
 
   private static final long ARCH_ID_BASE = 5240L;
 
-  /** Golden-Rel-Menge eines Listen-Items fuer einen Write-Member mit TASK_WRITE (wie Produktion). */
+  /**
+   * Golden-Rel-Menge eines Listen-Items fuer einen Write-Member mit TASK_WRITE (wie Produktion).
+   */
   private static final java.util.Set<String> EXPECTED_WRITE_MEMBER_ITEM_RELS =
-      new java.util.TreeSet<>(java.util.List.of(
+      new java.util.TreeSet<>(
+          java.util.List.of(
               "add-comment",
-                  "assignees",
-                  "comments",
-                  "exit",
-                  "flag",
-                  "mute",
-                  "participants",
-                  "pin",
-                  "self",
-                  "update"));
+              "assignees",
+              "comments",
+              "exit",
+              "flag",
+              "mute",
+              "participants",
+              "pin",
+              "self",
+              "update"));
 
   private static final KeyPair RSA_KEY_PAIR;
 
@@ -212,7 +216,8 @@ class InboxListAffordanceIT {
                 + " WHERE object_id = OBJECT_ID('dbo.system_controller_regel') AND type = 'U'",
             Integer.class);
     assertThat(tableExists)
-        .as("system_controller_regel muss als leere Struktur-Kopie existieren (Deploy-Provisioning)")
+        .as(
+            "system_controller_regel muss als leere Struktur-Kopie existieren (Deploy-Provisioning)")
         .isEqualTo(1);
   }
 
@@ -236,7 +241,8 @@ class InboxListAffordanceIT {
     }
   }
 
-  // ---- B1-Edge: LEERE /tasks -> {} kein _embedded, keine Collection-rels (ZUERST, vor Create) ----
+  // ---- B1-Edge: LEERE /tasks -> {} kein _embedded, keine Collection-rels (ZUERST, vor Create)
+  // ----
 
   @Test
   @Order(1)
@@ -279,7 +285,8 @@ class InboxListAffordanceIT {
         .isFalse();
   }
 
-  // ---- Write-Member: HAL _embedded.tasks + Item-write-rels + Collection create/create-from-source -
+  // ---- Write-Member: HAL _embedded.tasks + Item-write-rels + Collection create/create-from-source
+  // -
 
   @Test
   @Order(2)
@@ -335,10 +342,13 @@ class InboxListAffordanceIT {
         .as("P2: nicht-leere /tasks-Collection traegt create (TASK_WRITE). Body=" + body)
         .isTrue();
     assertThat(root.path("_links").path("create-from-source").path("href").isTextual())
-        .as("P2: nicht-leere /tasks-Collection traegt create-from-source (TASK_CREATE). Body=" + body)
+        .as(
+            "P2: nicht-leere /tasks-Collection traegt create-from-source (TASK_CREATE). Body="
+                + body)
         .isTrue();
 
-    // (e) R8-Wire-Regression ueber HTTP-HAL: GENAU EIN createdAt, ISO-8601-Instant (mit 'T' und 'Z'),
+    // (e) R8-Wire-Regression ueber HTTP-HAL: GENAU EIN createdAt, ISO-8601-Instant (mit 'T' und
+    // 'Z'),
     // kein LocalDateTime-Leak; modelState additiv; kein geerbtes version.
     final JsonNode createdAt = item.path("createdAt");
     assertThat(createdAt.isTextual())
@@ -347,7 +357,9 @@ class InboxListAffordanceIT {
     final String createdAtStr = createdAt.asText();
     assertThat(createdAtStr).contains("T");
     assertThat(createdAtStr.endsWith("Z"))
-        .as("R8: createdAt ist ein UTC-Instant mit 'Z' (kein nackter LocalDateTime). Wert=" + createdAtStr)
+        .as(
+            "R8: createdAt ist ein UTC-Instant mit 'Z' (kein nackter LocalDateTime). Wert="
+                + createdAtStr)
         .isTrue();
     assertThat(item.has("lastActivityAt"))
         .as("lastActivityAt (Instant, KEINE BaseModel-Kollision) bleibt erhalten")
@@ -374,7 +386,8 @@ class InboxListAffordanceIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    // TASK_WRITE erlaubt die manuelle Anlage (POST /tasks); der Ersteller wird Write-Member und sieht
+    // TASK_WRITE erlaubt die manuelle Anlage (POST /tasks); der Ersteller wird Write-Member und
+    // sieht
     // die Aufgabe in seiner /tasks-Liste (kein roher Participant-Insert noetig). TASK_CREATE fehlt
     // bewusst -> create-from-source muss unterdrueckt sein, create aber nicht.
     final String writeOnly =
@@ -453,14 +466,16 @@ class InboxListAffordanceIT {
             "task-management:TASK_WRITE");
     org.mockito.Mockito.clearInvocations(membershipGuardSpy);
     final String body =
-        mvc.perform(get("/api/v1/tasks/archive?filter=all").header("Authorization", "Bearer " + token))
+        mvc.perform(
+                get("/api/v1/tasks/archive?filter=all").header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
             .getContentAsString();
     System.out.println("[INBOX-AFF-archive] GET /tasks/archive?filter=all -> " + body);
     final JsonNode tasks = om.readTree(body).path("_embedded").path("tasks");
-    // N+1-Fix (Pflicht-Test 7): je Item genau EINE DB-wirksame Membership-Pruefung in EINEM Request,
+    // N+1-Fix (Pflicht-Test 7): je Item genau EINE DB-wirksame Membership-Pruefung in EINEM
+    // Request,
     // und der Schluessel trennt die Tasks (DONE-Item update ja, LEFT-Item nein).
     org.mockito.Mockito.verify(membershipGuardSpy, org.mockito.Mockito.times(tasks.size()))
         .isWriteMember(
@@ -612,7 +627,15 @@ class InboxListAffordanceIT {
             + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'inbox-aff-it', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
-        id, now, externalId, TENANT_A_ID, title, statusId, priorityId, directionId, TENANT_A_ID,
+        id,
+        now,
+        externalId,
+        TENANT_A_ID,
+        title,
+        statusId,
+        priorityId,
+        directionId,
+        TENANT_A_ID,
         now);
   }
 
@@ -624,7 +647,13 @@ class InboxListAffordanceIT {
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
             + "VALUES (?, 'ACTIVE', 'inbox-aff-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, 1, 1, 1, ?)",
-        id, UUID.randomUUID(), TENANT_A_ID, taskId, participantRef, TENANT_A_ID, exitKind);
+        id,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        taskId,
+        participantRef,
+        TENANT_A_ID,
+        exitKind);
   }
 
   private void seedUserState(final long id, final long taskId, final UUID userRef) {
@@ -633,7 +662,12 @@ class InboxListAffordanceIT {
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'ACTIVE', 'inbox-aff-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
-        id, UUID.randomUUID(), TENANT_A_ID, taskId, userRef, TENANT_A_ID);
+        id,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        taskId,
+        userRef,
+        TENANT_A_ID);
   }
 
   private MockMvc buildMvc() {
@@ -733,7 +767,8 @@ class InboxListAffordanceIT {
     return "-----BEGIN PUBLIC KEY-----\n" + base64 + "\n-----END PUBLIC KEY-----";
   }
 
-  // ---- IT-Context: identisch zu TaskDetailAffordanceIT.ItConfig (voller Autoconfig + HATEOAS) -----
+  // ---- IT-Context: identisch zu TaskDetailAffordanceIT.ItConfig (voller Autoconfig + HATEOAS)
+  // -----
 
   @SpringBootConfiguration
   @org.springframework.boot.autoconfigure.EnableAutoConfiguration(
@@ -762,7 +797,9 @@ class InboxListAffordanceIT {
         "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class),
+        @ComponentScan.Filter(
+            type = FilterType.ANNOTATION,
+            classes = SpringBootConfiguration.class),
         @ComponentScan.Filter(
             type = FilterType.REGEX,
             pattern = "de\\.brasi\\.nova\\.taskmanagement\\.security\\.it\\..*")

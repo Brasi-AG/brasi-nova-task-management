@@ -10,13 +10,13 @@ import org.springframework.stereotype.Component;
 
 /**
  * {@link LinkSpecification}-Beans fuer die Notification-Affordance (PLAN #141 Slice 5, Teil A).
- * Analog zum Tag-Muster: statische Inner-{@code @Component}-Klassen, fail-safe
- * (Exception -> false), {@code getName()} liefert stabile Namen, die exakt den
- * {@link NotificationHateoas.Specs}-Konstanten entsprechen.
+ * Analog zum Tag-Muster: statische Inner-{@code @Component}-Klassen, fail-safe (Exception ->
+ * false), {@code getName()} liefert stabile Namen, die exakt den {@link
+ * NotificationHateoas.Specs}-Konstanten entsprechen.
  *
  * <p>Die {@code _links} sind rein ADDITIV (FE-Anzeige); die Enforcement bleibt
- * {@code @RequiresPermission(NOTIFICATION_WRITE)} an jedem Mutations-Handler des
- * {@code NotificationController}.
+ * {@code @RequiresPermission(NOTIFICATION_WRITE)} an jedem Mutations-Handler des {@code
+ * NotificationController}.
  */
 public final class NotificationLinkSpecifications {
 

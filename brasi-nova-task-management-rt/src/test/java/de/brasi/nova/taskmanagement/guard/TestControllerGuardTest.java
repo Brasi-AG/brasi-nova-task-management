@@ -17,9 +17,9 @@ import org.springframework.util.ClassUtils;
 
 /**
  * Waechter: Test-only Controller unter {@code src/test} im Produktions-Basispaket duerfen bei einem
- * vollen ComponentScan nicht still registriert werden. Jede {@code @Controller}/{@code
- * @RestController}-Klasse aus den Test-Klassen muss {@code @ConditionalOnProperty} tragen oder in
- * der begruendeten Allowlist stehen.
+ * vollen ComponentScan nicht still registriert werden. Jede
+ * {@code @Controller}/{@code @RestController}-Klasse aus den Test-Klassen muss
+ * {@code @ConditionalOnProperty} tragen oder in der begruendeten Allowlist stehen.
  */
 class TestControllerGuardTest {
 
@@ -27,7 +27,8 @@ class TestControllerGuardTest {
 
   /**
    * Begruendete Allowlist: {@code WhoAmIProbeController} wird von den Security-ITs explizit per
-   * {@code @Import} geladen und ist in den Produktions-Scans der ITs per Regex-Filter ausgeschlossen.
+   * {@code @Import} geladen und ist in den Produktions-Scans der ITs per Regex-Filter
+   * ausgeschlossen.
    */
   private static final Set<String> ALLOWLIST =
       Set.of("de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController");
@@ -65,7 +66,8 @@ class TestControllerGuardTest {
     for (final BeanDefinition bd : scanner.findCandidateComponents(BASE_PACKAGE)) {
       final String name = bd.getBeanClassName();
       final Class<?> type = ClassUtils.forName(name, getClass().getClassLoader());
-      final String location = type.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+      final String location =
+          type.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
       if (!location.equals(testClasses)) {
         continue; // Produktionsklasse
       }
@@ -74,7 +76,8 @@ class TestControllerGuardTest {
         violations.add(name);
       }
     }
-    // Nicht-blind-Beweis ueber bekannte, dauerhaft vorhandene Test-Controller statt einer Zaehlschwelle
+    // Nicht-blind-Beweis ueber bekannte, dauerhaft vorhandene Test-Controller statt einer
+    // Zaehlschwelle
     // (die Slice-0-Probes sind separat entfernbar und duerfen den Waechter nicht tragen).
     assertThat(found)
         .as("Scan findet bekannte Test-Controller (Waechter nicht blind)")

@@ -79,11 +79,13 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link TagController} und {@link TagCatalogService} gegen echtes MSSQL.
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>Global-Tag-Sichtbarkeit: Tag aus Tenant A ist ueber GET /tags fuer Tenant B sichtbar
  *       (R-TAG: TENANT_ID=0, ENTRY_TYPE='SYSTEM_PUBLIC').
  *   <li>PATCH-Tags: TASK_TAG_ASSIGNMENT mit TENANT_ID=A (Tenant-scoped, globaler Tag-Katalog).
- *   <li>Tenant-Isolation: Zuordnungen sind Tenant-scoped (Tenant B sieht Tenant-A-Zuordnungen nicht).
+ *   <li>Tenant-Isolation: Zuordnungen sind Tenant-scoped (Tenant B sieht Tenant-A-Zuordnungen
+ *       nicht).
  *   <li>R-CHECK: Ablehnung von TENANT_ID!=0 per CHECK-Constraint auf TASK_TAG.
  *   <li>Negativ: anonym 401, TASK_READ ohne TAG_ADMIN bei POST 403, GET mit TASK_READ 200.
  * </ul>
@@ -137,6 +139,7 @@ class TagCatalogIT {
 
   /** User mit nur TASK_READ (kein TAG_ADMIN) -> 403 bei POST /tags. */
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
+
   private static final String USER_READ_ONLY_LOGIN = "read-only-tagcat@brasi.de";
 
   private static final KeyPair RSA_KEY_PAIR;
@@ -176,8 +179,7 @@ class TagCatalogIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -225,13 +227,16 @@ class TagCatalogIT {
 
     final String tokenA =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
             "task-management:TASK_WRITE",
             "task-management:TASK_READ",
             "task-management:TAG_ADMIN");
 
     // 1. Tag anlegen (Tenant A, TAG_ADMIN)
-    final String tagCreateBody = om.writeValueAsString(Map.of("name", "Bug-IT", "severityCode", "DANGER"));
+    final String tagCreateBody =
+        om.writeValueAsString(Map.of("name", "Bug-IT", "severityCode", "DANGER"));
     final String tagCreateResponse =
         mvc.perform(
                 post("/api/v1/tags")
@@ -258,9 +263,7 @@ class TagCatalogIT {
                 + " AND ENTITY_STATUS = 'ACTIVE'",
             Integer.class,
             tagId);
-    assertThat(tagRowCount)
-        .as("TASK_TAG-Zeile muss TENANT_ID=0 haben (global)")
-        .isEqualTo(1);
+    assertThat(tagRowCount).as("TASK_TAG-Zeile muss TENANT_ID=0 haben (global)").isEqualTo(1);
 
     // R-CHECK: TENANT_ID!=0 wird durch CHECK-Constraint auf TASK_TAG abgelehnt
     // (CHECK([TENANT_ID]=0) existiert in V1-DDL -> Direktinsert mit TENANT_ID!=0 muss fehlschlagen)
@@ -282,13 +285,9 @@ class TagCatalogIT {
 
     // 2. Tenant B sieht den globalen Tag via GET /tags (R-TAG: SYSTEM_PUBLIC + TENANT_ID=0)
     final String tokenB =
-        buildJwtWithAuthority(
-            TENANT_B_UUID, USER_B_REF, USER_B_LOGIN,
-            "task-management:TASK_READ");
+        buildJwtWithAuthority(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
     final String listResponse =
-        mvc.perform(
-                get("/api/v1/tags")
-                    .header("Authorization", "Bearer " + tokenB))
+        mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenB))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -386,14 +385,10 @@ class TagCatalogIT {
         futureDatedTagUuid);
 
     final String tokenA =
-        buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-            "task-management:TASK_READ");
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
     final String listResponse =
-        mvc.perform(
-                get("/api/v1/tags")
-                    .header("Authorization", "Bearer " + tokenA))
+        mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenA))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -432,8 +427,7 @@ class TagCatalogIT {
     // 2. TASK_READ (kein TAG_ADMIN) -> 403 bei POST /tags
     final String tokenReadOnly =
         buildJwtWithAuthority(
-            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-            "task-management:TASK_READ");
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
     mvc.perform(
             post("/api/v1/tags")
                 .header("Authorization", "Bearer " + tokenReadOnly)
@@ -442,16 +436,15 @@ class TagCatalogIT {
         .andExpect(status().isForbidden());
 
     // 3. GET /tags mit TASK_READ -> 200 (jeder Task-Nutzer darf Tags lesen, R-TAGLIST-PERM)
-    mvc.perform(
-            get("/api/v1/tags").header("Authorization", "Bearer " + tokenReadOnly))
+    mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenReadOnly))
         .andExpect(status().isOk());
 
     // 4. Slice 4: GET /tags ist authenticated-only. Ein angemeldeter Nutzer OHNE jede Authority
-    // (grant-frei) darf den Katalog lesen -> 200. POST /tags bleibt davon unberuehrt TAG_ADMIN-gated.
+    // (grant-frei) darf den Katalog lesen -> 200. POST /tags bleibt davon unberuehrt
+    // TAG_ADMIN-gated.
     final String tokenGrantFree =
         buildJwtWithAuthority(TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN);
-    mvc.perform(
-            get("/api/v1/tags").header("Authorization", "Bearer " + tokenGrantFree))
+    mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenGrantFree))
         .andExpect(status().isOk());
   }
 
@@ -519,7 +512,8 @@ class TagCatalogIT {
     final UUID tagId =
         createTag(mvc, tokenA, "{\"name\":\"AC2-SeverityDerive-Tag\",\"severityCode\":\"DANGER\"}");
 
-    // DB: COLOR aus DANGER abgeleitet (#F87171); SEVERITY_ID gesetzt und zeigt via JOIN auf CODE=DANGER
+    // DB: COLOR aus DANGER abgeleitet (#F87171); SEVERITY_ID gesetzt und zeigt via JOIN auf
+    // CODE=DANGER
     final Integer rowCount =
         jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[TASK_TAG] t"
@@ -552,9 +546,7 @@ class TagCatalogIT {
                 + " AND COLOR IS NULL AND SEVERITY_ID IS NULL",
             Integer.class,
             tagId);
-    assertThat(rowCount)
-        .as("neutraler Tag: COLOR NULL, SEVERITY_ID NULL")
-        .isEqualTo(1);
+    assertThat(rowCount).as("neutraler Tag: COLOR NULL, SEVERITY_ID NULL").isEqualTo(1);
   }
 
   @Test
@@ -573,8 +565,7 @@ class TagCatalogIT {
 
     // GET mit reinem TASK_READ -> 200 (kein 500 trotz null-severity)
     final String tokenRead =
-        buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
     final String listResponse =
         mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenRead))
             .andExpect(status().isOk())
@@ -616,8 +607,7 @@ class TagCatalogIT {
         createTag(mvc, tokenA, "{\"name\":\"AC8-SeverityRead\",\"severityCode\":\"DANGER\"}");
 
     final String tokenRead =
-        buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
     final String listResponse =
         mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + tokenRead))
             .andExpect(status().isOk())
@@ -744,7 +734,8 @@ class TagCatalogIT {
             tagId,
             TagSeverityColors.WARN);
     assertThat(rowCount)
-        .as("severity-Patch auf COLOR-NULL-Tag: SEVERITY_ID=WARN, COLOR aus WARN abgeleitet '#FBBF24'")
+        .as(
+            "severity-Patch auf COLOR-NULL-Tag: SEVERITY_ID=WARN, COLOR aus WARN abgeleitet '#FBBF24'")
         .isEqualTo(1);
   }
 
@@ -832,8 +823,7 @@ class TagCatalogIT {
 
     // Inbox-Snapshot abrufen (authenticated-only, TASK_READ reicht; kein 500 trotz null-severity)
     final String snapshotResponse =
-        mvc.perform(
-                get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + tokenA))
+        mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + tokenA))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -867,7 +857,9 @@ class TagCatalogIT {
   /** Admin-Token (Tenant A) mit TASK_WRITE/TASK_READ/TAG_ADMIN fuer Create/PUT/Task-Operationen. */
   private static String adminTokenA() {
     return buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
+        TENANT_A_UUID,
+        USER_A_REF,
+        USER_A_LOGIN,
         "task-management:TASK_WRITE",
         "task-management:TASK_READ",
         "task-management:TAG_ADMIN");
@@ -877,9 +869,9 @@ class TagCatalogIT {
    * Legt per POST /api/v1/tags (roher JSON-Body) einen Tag an, erwartet 201 und liefert die UUID
    * aus {@code $.id} zurueck. Roher JSON-String erlaubt explizites {@code null} und absente Felder.
    *
-   * @param mvc       MockMvc-Instanz
-   * @param token     Bearer-Token (muss TAG_ADMIN tragen)
-   * @param jsonBody  roher JSON-Request-Body
+   * @param mvc MockMvc-Instanz
+   * @param token Bearer-Token (muss TAG_ADMIN tragen)
+   * @param jsonBody roher JSON-Request-Body
    * @return externe UUID des angelegten Tags
    */
   private static UUID createTag(final MockMvc mvc, final String token, final String jsonBody)
@@ -916,15 +908,15 @@ class TagCatalogIT {
   }
 
   /**
-   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten
-   * {@code CollectionModel}-Wire-Formen (PLAN #141 Slice 2):
+   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten {@code
+   * CollectionModel}-Wire-Formen (PLAN #141 Slice 2):
    *
    * <ul>
    *   <li><b>HAL</b> ({@code _embedded.tags}) - wenn der KSF-HAL-Konverter aktiv ist (Produktion,
    *       {@code NovaHalAutoConfiguration}; so bewiesen in {@code TagAffordanceIT}).
    *   <li><b>plain {@code CollectionModel}</b> ({@code {"links":[],"content":[...]}}) - wenn der
-   *       IT-Context die HAL-Autoconfig NICHT importiert (dieser {@code TagCatalogIT}/
-   *       {@code TagLifecycleIT}-Context mit handverlesener Autoconfig-Liste).
+   *       IT-Context die HAL-Autoconfig NICHT importiert (dieser {@code TagCatalogIT}/ {@code
+   *       TagLifecycleIT}-Context mit handverlesener Autoconfig-Liste).
    *   <li><b>flaches Array</b> - defensiver Fallback.
    * </ul>
    *
@@ -946,7 +938,8 @@ class TagCatalogIT {
     if (root.path("content").isArray()) {
       return root.path("content");
     }
-    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte Wire-Form.
+    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte
+    // Wire-Form.
     if (root.isObject() && (root.isEmpty() || root.has("links") || root.has("_links"))) {
       return om.createArrayNode();
     }
@@ -996,7 +989,10 @@ class TagCatalogIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -1010,7 +1006,11 @@ class TagCatalogIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {

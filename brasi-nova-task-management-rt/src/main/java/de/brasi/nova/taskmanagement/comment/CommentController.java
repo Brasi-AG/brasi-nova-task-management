@@ -30,9 +30,9 @@ import org.springframework.web.bind.annotation.RestController;
  * Autorisierung erfolgt objekt-level ueber den {@code TaskMembershipGuard} in den delegierten
  * Services: {@code getComments} (GET) verlangt READ-Member, {@code createComment} (POST)
  * WRITE-Member (Non-/Ex-Member -> neutrale 404 bzw. kein Comment-Write). Actor-UUID kommt
- * ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten. Der Controller enthaelt
- * keine Fachlogik — er delegiert an {@link CommentService} (Schreiben) und
- * {@link CommentQueryService} (Lesen).
+ * ausschliesslich aus dem Security-Context, NIEMALS aus Client-Eingabedaten. Der Controller
+ * enthaelt keine Fachlogik — er delegiert an {@link CommentService} (Schreiben) und {@link
+ * CommentQueryService} (Lesen).
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -60,23 +60,28 @@ public class CommentController {
    */
   @Operation(
       summary = "Kommentare einer Aufgabe lesen",
-      description = "Liefert die flache, chronologische Kommentarliste einer Aufgabe."
-          + " Der Client rekonstruiert den Antwort-Baum ueber parentCommentId.")
+      description =
+          "Liefert die flache, chronologische Kommentarliste einer Aufgabe."
+              + " Der Client rekonstruiert den Antwort-Baum ueber parentCommentId.")
   @ApiResponses({
-      @ApiResponse(
-          responseCode = "200",
-          description = "Kommentare chronologisch aufsteigend.",
-          content = @Content(
-              mediaType = "application/json",
-              array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)))),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+    @ApiResponse(
+        responseCode = "200",
+        description = "Kommentare chronologisch aufsteigend.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)))),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @GetMapping("/{id}/comments")
   @HateoasLinkTarget(TaskHateoas.Targets.GET_COMMENTS)
   public ResponseEntity<List<CommentModel>> getComments(
-      @Parameter(description = "Externe UUID der Aufgabe.", required = true)
-          @PathVariable final UUID id) {
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id) {
     return ResponseEntity.ok(commentQueryService.getComments(id));
   }
 
@@ -84,42 +89,53 @@ public class CommentController {
    * Erstellt einen neuen Kommentar fuer eine Aufgabe.
    *
    * <p>Optional als Antwort auf einen anderen Kommentar ({@code parentCommentId} im Body).
-   * @handle-Mentions im Text loesen MENTION-Benachrichtigungen aus;
-   * ein Eltern-Kommentar loest eine REPLY-Benachrichtigung an den Autor des Eltern-Kommentars aus.
    *
-   * @param id    externe UUID der Aufgabe
+   * @handle-Mentions im Text loesen MENTION-Benachrichtigungen aus; ein Eltern-Kommentar loest eine
+   *     REPLY-Benachrichtigung an den Autor des Eltern-Kommentars aus.
+   * @param id externe UUID der Aufgabe
    * @param input Kommentar-Eingabe
    * @return 201 Created mit {@link CommentModel} des neuen Kommentars
    */
   @Operation(
       summary = "Kommentar erstellen",
-      description = "Erstellt einen neuen Kommentar fuer eine Aufgabe."
-          + " Unterstuetzt Antwort-Kommentare (parentCommentId) und @handle-Mentions."
-          + " REPLY- und MENTION-Benachrichtigungen werden automatisch emittiert.")
+      description =
+          "Erstellt einen neuen Kommentar fuer eine Aufgabe."
+              + " Unterstuetzt Antwort-Kommentare (parentCommentId) und @handle-Mentions."
+              + " REPLY- und MENTION-Benachrichtigungen werden automatisch emittiert.")
   @ApiResponses({
-      @ApiResponse(
-          responseCode = "201",
-          description = "Kommentar erfolgreich erstellt.",
-          content = @Content(
-              mediaType = "application/json",
-              schema = @Schema(implementation = CommentModel.class),
-              examples = @ExampleObject(value = "{"
-                  + "\"id\": \"660e8400-e29b-41d4-a716-446655440001\","
-                  + "\"taskId\": \"550e8400-e29b-41d4-a716-446655440000\","
-                  + "\"authorRef\": \"770e8400-e29b-41d4-a716-446655440002\","
-                  + "\"parentCommentId\": null,"
-                  + "\"text\": \"Bitte bis Ende der Woche erledigen.\","
-                  + "\"edited\": false,"
-                  + "\"createdAt\": \"2026-10-18T08:00:00Z\""
-                  + "}"))),
-      @ApiResponse(responseCode = "400", description = "Ungueltige Eingabe (leerer Text, ungueltiger Eltern-Kommentar)."),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+    @ApiResponse(
+        responseCode = "201",
+        description = "Kommentar erfolgreich erstellt.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = CommentModel.class),
+                examples =
+                    @ExampleObject(
+                        value =
+                            "{"
+                                + "\"id\": \"660e8400-e29b-41d4-a716-446655440001\","
+                                + "\"taskId\": \"550e8400-e29b-41d4-a716-446655440000\","
+                                + "\"authorRef\": \"770e8400-e29b-41d4-a716-446655440002\","
+                                + "\"parentCommentId\": null,"
+                                + "\"text\": \"Bitte bis Ende der Woche erledigen.\","
+                                + "\"edited\": false,"
+                                + "\"createdAt\": \"2026-10-18T08:00:00Z\""
+                                + "}"))),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Ungueltige Eingabe (leerer Text, ungueltiger Eltern-Kommentar)."),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PostMapping("/{id}/comments")
   @HateoasLinkTarget(TaskHateoas.Targets.CREATE_COMMENT)
   public ResponseEntity<CommentModel> createComment(
-      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
       @RequestBody final CommentCreateInput input) {
     final CommentModel model = commentService.createComment(id, input);
     return ResponseEntity.status(HttpStatus.CREATED).body(model);

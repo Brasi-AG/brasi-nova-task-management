@@ -29,14 +29,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Lese-seitiger Service fuer Benachrichtigungen (separiert von {@link NotificationService}
- * der fuer Emit/Push zustaendig ist).
+ * Lese-seitiger Service fuer Benachrichtigungen (separiert von {@link NotificationService} der fuer
+ * Emit/Push zustaendig ist).
  *
- * <p>Implementiert Keyset-Paginierung (R1/R2/R12), Filter (R10), Limit-Clamp (R9)
- * und markRead/markAllRead (R4/R5).
+ * <p>Implementiert Keyset-Paginierung (R1/R2/R12), Filter (R10), Limit-Clamp (R9) und
+ * markRead/markAllRead (R4/R5).
  *
- * <p>Der {@code TenantContextHolder} wird vom KSF-Filter beim HTTP-Request gesetzt;
- * die Repository-Calls nutzen den bereits vorhandenen Kontext.
+ * <p>Der {@code TenantContextHolder} wird vom KSF-Filter beim HTTP-Request gesetzt; die
+ * Repository-Calls nutzen den bereits vorhandenen Kontext.
  */
 @Service
 public class NotificationQueryService {
@@ -78,21 +78,20 @@ public class NotificationQueryService {
   /**
    * Liefert eine Seite von Benachrichtigungen fuer den angegebenen Benutzer.
    *
-   * <p>Filter (R10): {@code all} (default/null) liefert alle; {@code unread} nur IS_READ=0;
-   * anderer Wert loest {@link EntityValidationException} (HTTP 400) aus.
-   * Limit (R9): Default 50, geclampt auf [1, 100].
-   * hasMore-Logik: limit+1 abfragen; wenn size &gt; limit, letztes Element abschneiden
-   * und nextCursor generieren.
+   * <p>Filter (R10): {@code all} (default/null) liefert alle; {@code unread} nur IS_READ=0; anderer
+   * Wert loest {@link EntityValidationException} (HTTP 400) aus. Limit (R9): Default 50, geclampt
+   * auf [1, 100]. hasMore-Logik: limit+1 abfragen; wenn size &gt; limit, letztes Element
+   * abschneiden und nextCursor generieren.
    *
-   * <p>Der {@code TenantContextHolder} muss beim Aufruf bereits gesetzt sein
-   * (wird vom KSF-Filterchain gesetzt). Der {@code tenantId}-Parameter wird nur fuer die
-   * Tenantpruefung benutzt (gemaess Security-Anforderungen), nicht fuer das Setzen des Kontexts.
+   * <p>Der {@code TenantContextHolder} muss beim Aufruf bereits gesetzt sein (wird vom
+   * KSF-Filterchain gesetzt). Der {@code tenantId}-Parameter wird nur fuer die Tenantpruefung
+   * benutzt (gemaess Security-Anforderungen), nicht fuer das Setzen des Kontexts.
    *
-   * @param userRef  UUID des Empfaengers
+   * @param userRef UUID des Empfaengers
    * @param tenantId interne Mandanten-ID (aus Security-Context)
-   * @param filter   "all" | "unread" | null
-   * @param cursor   opaker Paginierungs-Cursor (null/blank = erste Seite)
-   * @param limit    Seitengroesse (wird geclampt)
+   * @param filter "all" | "unread" | null
+   * @param cursor opaker Paginierungs-Cursor (null/blank = erste Seite)
+   * @param limit Seitengroesse (wird geclampt)
    * @return Seite der Benachrichtigungen
    */
   public NotificationPage listFor(
@@ -135,27 +134,25 @@ public class NotificationQueryService {
       }
 
       if (FILTER_UNREAD.equals(resolvedFilter)) {
-        raw = queryRepository.findUnreadPage(
-            userRef, afterCreatedAt, afterExternalId, effectiveLimit + 1);
+        raw =
+            queryRepository.findUnreadPage(
+                userRef, afterCreatedAt, afterExternalId, effectiveLimit + 1);
       } else {
-        raw = queryRepository.findPage(
-            userRef, afterCreatedAt, afterExternalId, effectiveLimit + 1);
+        raw =
+            queryRepository.findPage(userRef, afterCreatedAt, afterExternalId, effectiveLimit + 1);
       }
     }
 
     // hasMore-Logik: wenn mehr als effectiveLimit Ergebnisse vorhanden
     final boolean hasMore = raw.size() > effectiveLimit;
-    final List<TaskNotification> page =
-        hasMore ? raw.subList(0, effectiveLimit) : raw;
+    final List<TaskNotification> page = hasMore ? raw.subList(0, effectiveLimit) : raw;
 
     // nextCursor aus dem letzten Element der Seite (R12: rohes LocalDateTime + EXTERNALID)
     final String nextCursor;
     if (hasMore) {
       final TaskNotification last = page.get(page.size() - 1);
-      nextCursor = KeysetCursor.encode(
-          List.of(
-              last.getCreatedAt().toString(),
-              last.getUuid().toString()));
+      nextCursor =
+          KeysetCursor.encode(List.of(last.getCreatedAt().toString(), last.getUuid().toString()));
     } else {
       nextCursor = null;
     }
@@ -180,15 +177,14 @@ public class NotificationQueryService {
    * identische neutrale {@link EntityNotFoundException} — kein Hinweis auf Existenz, keine
    * Zustandsaenderung. Kein Invalidate/Notification nach dem Setzen (R5).
    *
-   * <p>Der Lookup ueber {@code queryRepository.findActiveByUuid} scopet auf
-   * {@code ENTITY_STATUS='ACTIVE'}, damit deaktivierte Benachrichtigungen konsistent
-   * dieselbe neutrale 404 erhalten wie List- und markAllRead-Queries (P2).
+   * <p>Der Lookup ueber {@code queryRepository.findActiveByUuid} scopet auf {@code
+   * ENTITY_STATUS='ACTIVE'}, damit deaktivierte Benachrichtigungen konsistent dieselbe neutrale 404
+   * erhalten wie List- und markAllRead-Queries (P2).
    *
    * @param notificationExternalId externe UUID der Benachrichtigung
-   * @param actorRef               UUID des aktuellen Benutzers (aus Security-Context)
-   * @param tenantId               interne Mandanten-ID
-   * @param read                   gewuenschter Lese-Zielzustand ({@code true}=gelesen,
-   *     {@code false}=ungelesen)
+   * @param actorRef UUID des aktuellen Benutzers (aus Security-Context)
+   * @param tenantId interne Mandanten-ID
+   * @param read gewuenschter Lese-Zielzustand ({@code true}=gelesen, {@code false}=ungelesen)
    */
   @Transactional
   public void setReadState(
@@ -220,9 +216,9 @@ public class NotificationQueryService {
   /**
    * Markiert alle eigenen ungelesenen Benachrichtigungen als gelesen (R4).
    *
-   * <p>Laeuft in EINER Transaktion; iteriert und speichert jeden Eintrag (kein DML-{@code @NovaQuery}).
-   * Scope strikt {@code RECIPIENT_REF = actorRef} + {@code TENANT_ID = tenantId}.
-   * Kein Invalidate/Notification nach dem Lesen (R5).
+   * <p>Laeuft in EINER Transaktion; iteriert und speichert jeden Eintrag (kein
+   * DML-{@code @NovaQuery}). Scope strikt {@code RECIPIENT_REF = actorRef} + {@code TENANT_ID =
+   * tenantId}. Kein Invalidate/Notification nach dem Lesen (R5).
    *
    * @param actorRef UUID des aktuellen Benutzers (aus Security-Context)
    * @param tenantId interne Mandanten-ID
@@ -250,17 +246,18 @@ public class NotificationQueryService {
    * Laedt alle Task-UUIDs fuer die gegebene Seite in EINEM Batch-Aufruf vor (F-P2b-Fix).
    *
    * <p>Ermittelt die distinct nicht-null {@code taskId}s der Seite, laedt die {@link Task}-Entities
-   * per {@code findAllById} (batch) und baut eine ID-zu-UUID-Map auf.
-   * Null-safe: fehlt ein Task in der DB, fehlt sein Eintrag in der Map (toModel liefert null).
+   * per {@code findAllById} (batch) und baut eine ID-zu-UUID-Map auf. Null-safe: fehlt ein Task in
+   * der DB, fehlt sein Eintrag in der Map (toModel liefert null).
    *
    * @param page die Notification-Entities der aktuellen Seite
    * @return Map von interner Task-ID zu externer Task-UUID
    */
   private Map<Long, UUID> batchLoadTaskUuids(final List<TaskNotification> page) {
-    final Set<Long> taskIds = page.stream()
-        .map(TaskNotification::getTaskId)
-        .filter(id -> id != null)
-        .collect(Collectors.toSet());
+    final Set<Long> taskIds =
+        page.stream()
+            .map(TaskNotification::getTaskId)
+            .filter(id -> id != null)
+            .collect(Collectors.toSet());
 
     if (taskIds.isEmpty()) {
       return Map.of();
@@ -278,37 +275,38 @@ public class NotificationQueryService {
    * Mappt eine {@link TaskNotification} auf ein {@link NotificationModel}.
    *
    * <p>taskId (R6): wird null-safe aus der vorgeladenen {@code taskUuidMap} aufgeloest (F-P2b).
-   * createdAt (R7): AuditTimeConverter-Instant (PFLICHT).
-   * typeCode/severityCode: ueber DictionaryCodeResolver aufgeloest (gecacht, F-P2b).
+   * createdAt (R7): AuditTimeConverter-Instant (PFLICHT). typeCode/severityCode: ueber
+   * DictionaryCodeResolver aufgeloest (gecacht, F-P2b).
    *
-   * @param entity      die Notification-Entity
+   * @param entity die Notification-Entity
    * @param taskUuidMap vorgeladene Map von interner Task-ID zu externer UUID
    * @return gemapptes Model
    */
   private NotificationModel toModel(
       final TaskNotification entity, final Map<Long, UUID> taskUuidMap) {
     final String typeCode = resolver.resolveNotificationTypeCode(entity.getTypeId());
-    final String severityCode = entity.getSeverityId() != null
-        ? resolver.resolveNotificationSeverityCode(entity.getSeverityId())
-        : null;
+    final String severityCode =
+        entity.getSeverityId() != null
+            ? resolver.resolveNotificationSeverityCode(entity.getSeverityId())
+            : null;
 
     // R6: externe Task-UUID aus der Batch-Map (null-safe; defensiv wenn Task nicht gefunden)
-    final UUID taskUuid = entity.getTaskId() != null
-        ? taskUuidMap.get(entity.getTaskId())
-        : null;
+    final UUID taskUuid = entity.getTaskId() != null ? taskUuidMap.get(entity.getTaskId()) : null;
 
-    final NotificationModel model = new NotificationModel(
-        entity.getUuid(),
-        typeCode,
-        taskUuid,
-        entity.getActorRef(),
-        entity.getText(),
-        entity.getPreview(),
-        severityCode,
-        entity.isRead(),
-        auditTimeConverter.toInstant(entity.getCreatedAt())); // R7
+    final NotificationModel model =
+        new NotificationModel(
+            entity.getUuid(),
+            typeCode,
+            taskUuid,
+            entity.getActorRef(),
+            entity.getText(),
+            entity.getPreview(),
+            severityCode,
+            entity.isRead(),
+            auditTimeConverter.toInstant(entity.getCreatedAt())); // R7
 
-    // Slice 4: Entity-Referenz setzen damit die KSF-Enrichment-Pipeline (entityClass=TaskNotification)
+    // Slice 4: Entity-Referenz setzen damit die KSF-Enrichment-Pipeline
+    // (entityClass=TaskNotification)
     // fuer Item-rels greifen kann. ModelState aus EntityState (null-safe).
     model.setEntity(entity);
     if (entity.getEntityState() != null) {
@@ -322,16 +320,16 @@ public class NotificationQueryService {
   /**
    * Liefert eine HAL-Collection von Benachrichtigungen fuer den Controller (Slice 4).
    *
-   * <p>Ruft intern {@link #listFor} auf und konvertiert das {@link NotificationPage}-Ergebnis
-   * in ein {@link CursorCollectionModel}. {@link #listFor} bleibt erhalten, damit
-   * {@link de.brasi.nova.taskmanagement.inbox.InboxSnapshotService#loadSnapshot} weiterhin
-   * ein {@link NotificationPage} fuer das {@code InboxSnapshotModel} erhaelt.
+   * <p>Ruft intern {@link #listFor} auf und konvertiert das {@link NotificationPage}-Ergebnis in
+   * ein {@link CursorCollectionModel}. {@link #listFor} bleibt erhalten, damit {@link
+   * de.brasi.nova.taskmanagement.inbox.InboxSnapshotService#loadSnapshot} weiterhin ein {@link
+   * NotificationPage} fuer das {@code InboxSnapshotModel} erhaelt.
    *
-   * @param userRef  UUID des Empfaengers
+   * @param userRef UUID des Empfaengers
    * @param tenantId interne Mandanten-ID (aus Security-Context)
-   * @param filter   "all" | "unread" | null
-   * @param cursor   opaker Paginierungs-Cursor (null/blank = erste Seite)
-   * @param limit    Seitengroesse (wird geclampt)
+   * @param filter "all" | "unread" | null
+   * @param cursor opaker Paginierungs-Cursor (null/blank = erste Seite)
+   * @param limit Seitengroesse (wird geclampt)
    * @return HAL-Collection der Benachrichtigungen
    */
   public CursorCollectionModel<NotificationModel> listForCollection(

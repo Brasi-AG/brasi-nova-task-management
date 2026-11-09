@@ -39,23 +39,28 @@ public class UserStateController {
   /**
    * Setzt den Pinned-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * @param id    externe UUID der Aufgabe
+   * @param id externe UUID der Aufgabe
    * @param input gewuenschter Zielwert ({@code true} = angepinnt, {@code false} = nicht angepinnt)
    * @return 204 No Content
    */
   @Operation(
       summary = "Pin-Marker setzen",
-      description = "Setzt den persoenlichen Pin-Marker des angemeldeten Benutzers fuer eine Aufgabe."
-          + " true = angepinnt, false = nicht angepinnt.")
+      description =
+          "Setzt den persoenlichen Pin-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+              + " true = angepinnt, false = nicht angepinnt.")
   @ApiResponses({
-      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+    @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/pin")
   @HateoasLinkTarget(TaskHateoas.Targets.PIN)
   public ResponseEntity<Void> pin(
-      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
       @RequestBody final MarkerInput input) {
     markerService.setPinned(id, input.value());
     return ResponseEntity.noContent().build();
@@ -64,23 +69,28 @@ public class UserStateController {
   /**
    * Setzt den Flagged-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * @param id    externe UUID der Aufgabe
+   * @param id externe UUID der Aufgabe
    * @param input gewuenschter Zielwert ({@code true} = markiert, {@code false} = nicht markiert)
    * @return 204 No Content
    */
   @Operation(
       summary = "Flag-Marker setzen",
-      description = "Setzt den persoenlichen Flag-Marker des angemeldeten Benutzers fuer eine Aufgabe."
-          + " true = markiert, false = nicht markiert.")
+      description =
+          "Setzt den persoenlichen Flag-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+              + " true = markiert, false = nicht markiert.")
   @ApiResponses({
-      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+    @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/flag")
   @HateoasLinkTarget(TaskHateoas.Targets.FLAG)
   public ResponseEntity<Void> flag(
-      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
       @RequestBody final MarkerInput input) {
     markerService.setFlagged(id, input.value());
     return ResponseEntity.noContent().build();
@@ -89,23 +99,29 @@ public class UserStateController {
   /**
    * Setzt den Muted-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * @param id    externe UUID der Aufgabe
-   * @param input gewuenschter Zielwert ({@code true} = stummgeschaltet, {@code false} = nicht stumm)
+   * @param id externe UUID der Aufgabe
+   * @param input gewuenschter Zielwert ({@code true} = stummgeschaltet, {@code false} = nicht
+   *     stumm)
    * @return 204 No Content
    */
   @Operation(
       summary = "Mute-Marker setzen",
-      description = "Setzt den persoenlichen Mute-Marker des angemeldeten Benutzers fuer eine Aufgabe."
-          + " true = stummgeschaltet, false = nicht stumm.")
+      description =
+          "Setzt den persoenlichen Mute-Marker des angemeldeten Benutzers fuer eine Aufgabe."
+              + " true = stummgeschaltet, false = nicht stumm.")
   @ApiResponses({
-      @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
-      @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-      @ApiResponse(responseCode = "404", description = "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+    @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
   })
   @PutMapping("/{id}/mute")
   @HateoasLinkTarget(TaskHateoas.Targets.MUTE)
   public ResponseEntity<Void> mute(
-      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable final UUID id,
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
       @RequestBody final MarkerInput input) {
     markerService.setMuted(id, input.value());
     return ResponseEntity.noContent().build();

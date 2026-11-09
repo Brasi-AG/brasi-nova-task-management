@@ -159,9 +159,10 @@ class AffordanceSentinelsTest {
   private static final String BASE_PACKAGE = "de.brasi.nova.taskmanagement";
 
   /**
-   * Scan-Basispakete deckungsgleich zum Produktions-Boot: reflektiv aus {@link BrasiNovaApplication}
-   * {@code @SpringBootApplication(scanBasePackages = ...)} abgeleitet (Fallback: das Paket der
-   * Application-Klasse). Verhindert, dass der Sentinel enger scannt als die Anwendung registriert.
+   * Scan-Basispakete deckungsgleich zum Produktions-Boot: reflektiv aus {@link
+   * BrasiNovaApplication} {@code @SpringBootApplication(scanBasePackages = ...)} abgeleitet
+   * (Fallback: das Paket der Application-Klasse). Verhindert, dass der Sentinel enger scannt als
+   * die Anwendung registriert.
    */
   private static final String[] SCAN_BASE_PACKAGES = resolveScanBasePackages();
 
@@ -172,8 +173,8 @@ class AffordanceSentinelsTest {
   /**
    * Handler-Erkennung deckungsgleich mit Springs {@code RequestMappingHandlerMapping#isHandler}
    * (das {@code AnnotatedElementUtils.hasAnnotation} nutzt und damit die GESAMTE Typhierarchie
-   * durchsucht): ein hierarchie-durchlaufender Filter ({@code considerInheritance=true},
-   * {@code considerInterfaces=true}), der auf JEDER Ebene (Klasse, Superklassen, Interfaces) {@link
+   * durchsucht): ein hierarchie-durchlaufender Filter ({@code considerInheritance=true}, {@code
+   * considerInterfaces=true}), der auf JEDER Ebene (Klasse, Superklassen, Interfaces) {@link
    * Controller} (direkt oder meta -> erfasst auch {@code @RestController}) ODER type-level {@link
    * RequestMapping} matcht. Damit wird auch ein KONKRETER Controller erfasst, dessen Controller-/
    * Mapping-Annotation auf einem Interface oder einer Superklasse liegt (Codex-Re-Gate-BLOCKER R5).
@@ -193,8 +194,8 @@ class AffordanceSentinelsTest {
   /**
    * Gepflegte Delegationsmap: Mutations-Handler OHNE {@code @RequiresPermission}, deren
    * Autorisierung objekt-level ueber den {@code TaskMembershipGuard} im jeweiligen Service erfolgt
-   * (neutrale 404 fuer Non-/Ex-Member). Schluessel {@code <SimpleControllerName>#<method>} -> Wert =
-   * der Name des Controller-Felds (Service), dessen Quelle den Guard-Aufruf traegt. Jeder Eintrag
+   * (neutrale 404 fuer Non-/Ex-Member). Schluessel {@code <SimpleControllerName>#<method>} -> Wert
+   * = der Name des Controller-Felds (Service), dessen Quelle den Guard-Aufruf traegt. Jeder Eintrag
    * ist zusaetzlich durch die in der Klassen-Javadoc namentlich genannten Membership-ITs belegt.
    */
   private static final Map<String, String> MEMBERSHIP_GUARD_DELEGATED =
@@ -239,7 +240,8 @@ class AffordanceSentinelsTest {
         .containsExactly(TaskFacadeController.class.getName());
 
     // Slice 2: genau EIN TaskTag-Regel-Owner, und das ist der TagController (ausliefernder
-    // Controller ist Rule-Owner; ein zweiter @EnableNovaHateoas(TaskTag)-Owner laesst den Test rot).
+    // Controller ist Rule-Owner; ein zweiter @EnableNovaHateoas(TaskTag)-Owner laesst den Test
+    // rot).
     final List<String> tagOwners =
         ownersByEntity.getOrDefault("de.brasi.nova.taskmanagement.entity.TaskTag", List.of());
     assertThat(tagOwners)
@@ -247,7 +249,8 @@ class AffordanceSentinelsTest {
         .containsExactly(de.brasi.nova.taskmanagement.tag.TagController.class.getName());
 
     // Slice 5: genau EIN TaskNotification-Regel-Owner, und das ist der NotificationController
-    // (ausliefernder Controller ist Rule-Owner; mark-read/mark-all-read sind NOTIFICATION_WRITE-gegatet).
+    // (ausliefernder Controller ist Rule-Owner; mark-read/mark-all-read sind
+    // NOTIFICATION_WRITE-gegatet).
     final List<String> notificationOwners =
         ownersByEntity.getOrDefault(
             "de.brasi.nova.taskmanagement.entity.TaskNotification", List.of());
@@ -282,8 +285,9 @@ class AffordanceSentinelsTest {
   /**
    * Zaehlt je {@code entityClass} die {@code @EnableNovaHateoas}-Regel-Owner. Liest die Annotation
    * HIERARCHISCH ({@link AnnotatedElementUtils#findMergedAnnotation} - Interfaces + Superklassen +
-   * meta), deckungsgleich mit der KSF-Regelregistrierung; ein Owner, dessen {@code @EnableNovaHateoas}
-   * auf einem Interface/einer Superklasse liegt, wird damit ebenfalls erfasst (Codex-Re-Gate R6).
+   * meta), deckungsgleich mit der KSF-Regelregistrierung; ein Owner, dessen
+   * {@code @EnableNovaHateoas} auf einem Interface/einer Superklasse liegt, wird damit ebenfalls
+   * erfasst (Codex-Re-Gate R6).
    */
   private static Map<String, List<String>> ownersByEntity(final Collection<Class<?>> controllers) {
     final Map<String, List<String>> ownersByEntity = new TreeMap<>();
@@ -419,7 +423,8 @@ class AffordanceSentinelsTest {
           + " bei im Test unerfuellter Bedingung (findCandidateComponents-@Conditional-Luecke zu)")
   void ac4_scan_ignoriert_conditional_registrierung() {
     final String probePackage = BASE_PACKAGE + ".affordanceprobe";
-    // Die Property 'task-management.test.affordance-probe.enabled' ist im Testlauf NICHT gesetzt -> die
+    // Die Property 'task-management.test.affordance-probe.enabled' ist im Testlauf NICHT gesetzt ->
+    // die
     // @ConditionalOnProperty-Bedingung der Fixture ist UNERFUELLT. Ein Spring-Standard-Scan (mit
     // @Conditional-Auswertung via findCandidateComponents) wuerde den Typ verwerfen; der
     // unconditional Scanner MUSS ihn dennoch finden.
@@ -443,14 +448,15 @@ class AffordanceSentinelsTest {
   void ac4_scan_erfasst_non_static_inner_controller() {
     final String innerName =
         de.brasi.nova.taskmanagement.affordanceprobe.NonStaticInnerControllerFixture
-                .InnerUngatedController.class
+            .InnerUngatedController.class
             .getName();
     // Ein non-static inner Controller hat isIndependent()==false und wuerde vom Spring-Standard-
     // isCandidateComponent(AnnotatedBeanDefinition) verworfen; der uebersteuerte Scanner MUSS ihn
     // dennoch finden (sonst bliebe ein @Bean-registrierter innerer MVC-Handler unsichtbar).
     final boolean found =
         unconditionalControllerScanner()
-            .findCandidateComponents(BASE_PACKAGE + ".affordanceprobe").stream()
+            .findCandidateComponents(BASE_PACKAGE + ".affordanceprobe")
+            .stream()
             .map(bd -> bd.getBeanClassName())
             .anyMatch(innerName::equals);
 
@@ -472,18 +478,21 @@ class AffordanceSentinelsTest {
     // (a) der hierarchie-durchlaufende Scanner findet die KONKRETE Impl (Annotation via Interface).
     final boolean scanned =
         unconditionalControllerScanner()
-            .findCandidateComponents(BASE_PACKAGE + ".affordanceprobe").stream()
+            .findCandidateComponents(BASE_PACKAGE + ".affordanceprobe")
+            .stream()
             .map(bd -> bd.getBeanClassName())
             .anyMatch(impl.getName()::equals);
     assertThat(scanned)
         .as("konkrete Interface-annotierte Impl MUSS im Scan liegen: %s", impl.getName())
         .isTrue();
 
-    // (b) end-to-end: discoverMutationHandlers (ueber das reale RequestMappingHandlerMapping) findet
+    // (b) end-to-end: discoverMutationHandlers (ueber das reale RequestMappingHandlerMapping)
+    // findet
     //     den Interface-gemappten POST der konkreten Impl, und categorize flaggt ihn als ungegatet.
     final List<MutationHandler> handlers = discoverMutationHandlers(List.of(impl));
     assertThat(handlers)
-        .as("Interface-gemappter @PostMapping der konkreten Impl wird als Mutations-Handler entdeckt")
+        .as(
+            "Interface-gemappter @PostMapping der konkreten Impl wird als Mutations-Handler entdeckt")
         .anyMatch(mh -> mh.key().equals("AnnotatedInterfaceControllerImpl#write"));
 
     final CategoryProblems problems = categorize(handlers);
@@ -497,9 +506,9 @@ class AffordanceSentinelsTest {
   }
 
   /**
-   * Kategorisiert eine Menge entdeckter Mutations-Handler in die AC4-Befundlisten. Reine
-   * Berechnung (kein Assert), damit sowohl der Vollstaendigkeits- als auch der Invertierbarkeits-
-   * Test denselben Kern treffen.
+   * Kategorisiert eine Menge entdeckter Mutations-Handler in die AC4-Befundlisten. Reine Berechnung
+   * (kein Assert), damit sowohl der Vollstaendigkeits- als auch der Invertierbarkeits- Test
+   * denselben Kern treffen.
    */
   private static CategoryProblems categorize(final List<MutationHandler> mutationHandlers) {
     // 0) Eindeutigkeit der Handler-Schluessel: ein <Controller#method>-Schluessel darf GENAU EINEN
@@ -526,7 +535,8 @@ class AffordanceSentinelsTest {
       // @RequiresPermission GENAU so lesen wie KSF 2.3.24 es ENFORCED (PermissionEnforcementAspect
       // .resolveRequiredPermission): method.getAnnotation (direkt, Vorrang) + Klassenhierarchie
       // (Klasse + Basisklassen), KEINE Interface-Vererbung. Wuerde der Sentinel hier hierarchisch
-      // (AnnotatedElementUtils) lesen, zaehlte er ein @RequiresPermission auf einer INTERFACE-Methode
+      // (AnnotatedElementUtils) lesen, zaehlte er ein @RequiresPermission auf einer
+      // INTERFACE-Methode
       // als Gatung - KSF liest es unter CGLIB-Proxys aber NICHT von der konkreten Methode und
       // enforced es NICHT -> False-Negative (Sentinel gruen, Laufzeit ungegatet).
       final boolean annotated = ksfReadsRequiresPermission(mh.method(), mh.controller());
@@ -622,7 +632,11 @@ class AffordanceSentinelsTest {
     final Class<?> serviceType = field.getType();
     if (!serviceType.isAnnotationPresent(Service.class)) {
       problems.add(
-          mh.key() + ": Feld '" + serviceFieldName + "' Typ " + serviceType.getSimpleName()
+          mh.key()
+              + ": Feld '"
+              + serviceFieldName
+              + "' Typ "
+              + serviceType.getSimpleName()
               + " ist kein @Service");
       return;
     }
@@ -657,11 +671,7 @@ class AffordanceSentinelsTest {
   /** Versucht, die {@code .java}-Quelle eines Service im {@code src/main/java}-Baum zu finden. */
   private static Path serviceSourcePath(final Class<?> serviceType) {
     final Path candidate =
-        Path.of(
-            "src",
-            "main",
-            "java",
-            (serviceType.getName().replace('.', '/') + ".java"));
+        Path.of("src", "main", "java", (serviceType.getName().replace('.', '/') + ".java"));
     return Files.exists(candidate) ? candidate : null;
   }
 
@@ -673,10 +683,10 @@ class AffordanceSentinelsTest {
   /**
    * Entdeckt ALLE Mutations-Endpunkte (POST/PUT/PATCH/DELETE) der uebergebenen Controller-Typen
    * strukturell ueber ein Laufzeit-{@link RequestMappingHandlerMapping}, das ueber die Bean-TYPEN
-   * aufgebaut wird (keine Bean-Instanziierung, kein DB-Zugang). So wird auch {@code
-   * @RequestMapping(method=...)} erfasst, nicht nur die Kurzform-Annotationen. Die uebergebene
-   * Menge ist bereits die zu pruefende Flaeche (keine weitere Paket-Filterung hier) - so kann der
-   * Invertierbarkeits-Test eine ausgeschlossene Negativ-Fixture explizit einspeisen.
+   * aufgebaut wird (keine Bean-Instanziierung, kein DB-Zugang). So wird auch
+   * {@code @RequestMapping(method=...)} erfasst, nicht nur die Kurzform-Annotationen. Die
+   * uebergebene Menge ist bereits die zu pruefende Flaeche (keine weitere Paket-Filterung hier) -
+   * so kann der Invertierbarkeits-Test eine ausgeschlossene Negativ-Fixture explizit einspeisen.
    */
   private static List<MutationHandler> discoverMutationHandlers(
       final Collection<Class<?>> controllers) {
@@ -736,9 +746,10 @@ class AffordanceSentinelsTest {
    * {@link #SCAN_BASE_PACKAGES} (ohne Test-only Probe-Pakete), via {@link
    * #unconditionalControllerScanner()} (Classpath-Scan OHNE {@code @Conditional}-Auswertung -> auch
    * conditional-registrierte Controller werden erfasst). Erkennung ueber {@link
-   * #HANDLER_TYPE_FILTER} (hierarchie-durchlaufend: {@link Controller} inkl. {@code @RestController}
-   * via Meta-Annotation UND type-level {@link RequestMapping}, auf Klasse/Superklassen/Interfaces) -
-   * deckungsgleich mit {@code RequestMappingHandlerMapping#isHandler}.
+   * #HANDLER_TYPE_FILTER} (hierarchie-durchlaufend: {@link Controller} inkl.
+   * {@code @RestController} via Meta-Annotation UND type-level {@link RequestMapping}, auf
+   * Klasse/Superklassen/Interfaces) - deckungsgleich mit {@code
+   * RequestMappingHandlerMapping#isHandler}.
    */
   private static List<Class<?>> productionControllers() {
     final ClassPathScanningCandidateComponentProvider provider = unconditionalControllerScanner();
@@ -773,19 +784,22 @@ class AffordanceSentinelsTest {
    * (Codex-Re-Gate-BLOCKER-2): Spring-Standard-{@code findCandidateComponents} wertet
    * {@code @Conditional}/{@code @ConditionalOnProperty} aus und VERWIRFT einen Controller, dessen
    * Bedingung im Testlauf gerade nicht erfuellt ist - obwohl ihn das Produktionsprofil registrieren
-   * wuerde. Durch Ueberschreiben von {@link ClassPathScanningCandidateComponentProvider#isCandidateComponent(MetadataReader)}
-   * entfaellt die Bedingungs-Auswertung: der Scan erfasst JEDEN Controller-{@code .class}-Typ unter
-   * der App-Wurzel, unabhaengig von Registrierungs-Bedingungen (stehende Invariante ueber ALLE
+   * wuerde. Durch Ueberschreiben von {@link
+   * ClassPathScanningCandidateComponentProvider#isCandidateComponent(MetadataReader)} entfaellt die
+   * Bedingungs-Auswertung: der Scan erfasst JEDEN Controller-{@code .class}-Typ unter der
+   * App-Wurzel, unabhaengig von Registrierungs-Bedingungen (stehende Invariante ueber ALLE
    * potentiell registrierbaren Controller, nicht nur die im Test aktiven).
    *
-   * <p>Zusaetzlich wird {@link ClassPathScanningCandidateComponentProvider#isCandidateComponent(org.springframework.beans.factory.annotation.AnnotatedBeanDefinition)}
-   * uebersteuert: der Spring-Standard verwirft NICHT-UNABHAENGIGE Typen ({@code isIndependent()==false},
-   * z.B. non-static inner Controller), obwohl ein solcher Typ per {@code @Bean} als MVC-Handler
-   * registriert werden kann (Codex-Re-Gate-BLOCKER R4). Hier werden daher ALLE KONKRETEN
-   * Controller-Typen akzeptiert (inkl. non-static inner); nur nicht-instanziierbare (abstrakt/
-   * Interface) fallen raus. Die verbleibende, statisch grundsaetzlich unerreichbare Grenze sind
-   * zur LAUFZEIT synthetisierte Controller ohne {@code .class} auf dem Classpath (kein App-Muster;
-   * zusaetzlich durch den menuegetriebenen Live-GET-Smoke + Membership-ITs + Code-Review abgedeckt).
+   * <p>Zusaetzlich wird {@link
+   * ClassPathScanningCandidateComponentProvider#isCandidateComponent(org.springframework.beans.factory.annotation.AnnotatedBeanDefinition)}
+   * uebersteuert: der Spring-Standard verwirft NICHT-UNABHAENGIGE Typen ({@code
+   * isIndependent()==false}, z.B. non-static inner Controller), obwohl ein solcher Typ per
+   * {@code @Bean} als MVC-Handler registriert werden kann (Codex-Re-Gate-BLOCKER R4). Hier werden
+   * daher ALLE KONKRETEN Controller-Typen akzeptiert (inkl. non-static inner); nur
+   * nicht-instanziierbare (abstrakt/ Interface) fallen raus. Die verbleibende, statisch
+   * grundsaetzlich unerreichbare Grenze sind zur LAUFZEIT synthetisierte Controller ohne {@code
+   * .class} auf dem Classpath (kein App-Muster; zusaetzlich durch den menuegetriebenen
+   * Live-GET-Smoke + Membership-ITs + Code-Review abgedeckt).
    */
   private static ClassPathScanningCandidateComponentProvider unconditionalControllerScanner() {
     return new ClassPathScanningCandidateComponentProvider(false) {
@@ -797,7 +811,8 @@ class AffordanceSentinelsTest {
 
       @Override
       protected boolean isCandidateComponent(
-          final org.springframework.beans.factory.annotation.AnnotatedBeanDefinition beanDefinition) {
+          final org.springframework.beans.factory.annotation.AnnotatedBeanDefinition
+              beanDefinition) {
         // KONKRET reicht (kein isIndependent()-Filter): auch non-static inner Controller-Typen
         // werden erfasst. Abstrakte/Interface-Typen sind nicht instanziierbar -> raus.
         return beanDefinition.getMetadata().isConcrete();
@@ -812,12 +827,14 @@ class AffordanceSentinelsTest {
    * ergaenzter ungegateter Controller lautlos aus dem Scan fallen).
    */
   private static boolean isInExcludedProbePackage(final String className) {
-    return EXCLUDED_PACKAGE_PREFIXES.stream().anyMatch(prefix -> className.startsWith(prefix + "."));
+    return EXCLUDED_PACKAGE_PREFIXES.stream()
+        .anyMatch(prefix -> className.startsWith(prefix + "."));
   }
 
   /**
-   * Leitet die Scan-Basispakete reflektiv aus {@link BrasiNovaApplication} {@code
-   * @SpringBootApplication(scanBasePackages = ...)} ab (Fallback: Paket der Application-Klasse).
+   * Leitet die Scan-Basispakete reflektiv aus {@link BrasiNovaApplication}
+   * {@code @SpringBootApplication(scanBasePackages = ...)} ab (Fallback: Paket der
+   * Application-Klasse).
    */
   private static String[] resolveScanBasePackages() {
     final SpringBootApplication ann =
@@ -829,7 +846,9 @@ class AffordanceSentinelsTest {
     return declared;
   }
 
-  /** Ein entdeckter Mutations-Endpunkt: Controller-Klasse, Handler-Methode, Schluessel, HTTP-Set. */
+  /**
+   * Ein entdeckter Mutations-Endpunkt: Controller-Klasse, Handler-Methode, Schluessel, HTTP-Set.
+   */
   private record MutationHandler(
       Class<?> controller, Method method, String key, String httpMethods) {}
 

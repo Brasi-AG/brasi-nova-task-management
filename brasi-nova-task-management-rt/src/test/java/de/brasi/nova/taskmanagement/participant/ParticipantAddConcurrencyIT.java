@@ -58,41 +58,43 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 /**
- * Real-MSSQL-Nebenlaeufigkeits-IT fuer {@code AssigneeService.addParticipants} (BE-6, D8). Belegt den
- * in-Tx Re-Read-Translate (Pfad A) auf ZWEI getrennten Wegen gegen echtes MSSQL - die Beweisarten sind
- * BEWUSST getrennt (Codex-Gate-Auflage), weil zwei echt-gleichzeitige Erst-Adds unter der
- * KSF-SequenzGenerator-Contention NICHT beide erfolgreich zurueckkehren (siehe Klassendoku unten):
+ * Real-MSSQL-Nebenlaeufigkeits-IT fuer {@code AssigneeService.addParticipants} (BE-6, D8). Belegt
+ * den in-Tx Re-Read-Translate (Pfad A) auf ZWEI getrennten Wegen gegen echtes MSSQL - die
+ * Beweisarten sind BEWUSST getrennt (Codex-Gate-Auflage), weil zwei echt-gleichzeitige Erst-Adds
+ * unter der KSF-SequenzGenerator-Contention NICHT beide erfolgreich zurueckkehren (siehe
+ * Klassendoku unten):
  *
  * <ol>
  *   <li><b>{@link #reactivate_race_zwei_threads_beide_committen}</b> - ECHTER 2-Thread-Beweis
- *       (VERSION-Pfad): zwei Threads reaktivieren dieselbe exited Zeile, latch-synchronisiert zwischen
- *       Vorab-Read und save. Die Verliererin bekommt den Participant-VERSION-Optimistic-Lock
- *       (OptimisticLockingFailureException) -> Re-Read-Translate -> SKIP. Assert: beide 204 (beide
- *       aeusseren Tx committen, keine UnexpectedRollbackException), genau 1 Catch, {@code
- *       XACT_STATE()=1} (committable), 1 aktive Zeile, 1 UserState, Generation +1, TASK-VERSION
- *       unveraendert.
+ *       (VERSION-Pfad): zwei Threads reaktivieren dieselbe exited Zeile, latch-synchronisiert
+ *       zwischen Vorab-Read und save. Die Verliererin bekommt den
+ *       Participant-VERSION-Optimistic-Lock (OptimisticLockingFailureException) ->
+ *       Re-Read-Translate -> SKIP. Assert: beide 204 (beide aeusseren Tx committen, keine
+ *       UnexpectedRollbackException), genau 1 Catch, {@code XACT_STATE()=1} (committable), 1 aktive
+ *       Zeile, 1 UserState, Generation +1, TASK-VERSION unveraendert.
  *   <li><b>{@link #insert_unique_recovery_via_seam_injection}</b> - EINTHREADIGER Beweis der
- *       UNIQUE-Insert-Recovery (DuplicateKeyException-Pfad): der Test-Seam injiziert zwischen Vorab-Read
- *       und save EINMALIG eine bereits committete Konflikt-Zeile ueber eine WIRKLICH UNABHAENGIGE
- *       Verbindung (autocommit). Der Service-save trifft dann die reale
- *       {@code UQ_TASK_PARTICIPANT_TASK_USER(TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)}-UNIQUE
- *       -> DuplicateKeyException -> Catch -> {@code XACT_STATE()=1} -> Re-Read findet die injizierte
- *       Gewinner-Zeile -> SKIP -> erfolgreicher aeusserer Commit. Assert zusaetzlich: KEINE Effekte der
- *       verlierenden Operation (kein zweiter Participant, kein UserState, kein Generation-Bump).
+ *       UNIQUE-Insert-Recovery (DuplicateKeyException-Pfad): der Test-Seam injiziert zwischen
+ *       Vorab-Read und save EINMALIG eine bereits committete Konflikt-Zeile ueber eine WIRKLICH
+ *       UNABHAENGIGE Verbindung (autocommit). Der Service-save trifft dann die reale {@code
+ *       UQ_TASK_PARTICIPANT_TASK_USER(TASK_ID, PARTICIPANT_TENANT_ID, PARTICIPANT_REF)}-UNIQUE ->
+ *       DuplicateKeyException -> Catch -> {@code XACT_STATE()=1} -> Re-Read findet die injizierte
+ *       Gewinner-Zeile -> SKIP -> erfolgreicher aeusserer Commit. Assert zusaetzlich: KEINE Effekte
+ *       der verlierenden Operation (kein zweiter Participant, kein UserState, kein
+ *       Generation-Bump).
  * </ol>
  *
  * <p><b>Nicht bewiesen (bewusst, Codex-Gate):</b> dass zwei echt-gleichzeitige Erst-Adds desselben
  * neuen Ref STETS beide 204 liefern. Unter maximaler Simultaneitaet kollidieren zwei KSF-Inserts
  * ZUERST an der Allokation DERSELBEN benannten Sequenz ({@code SequenceGenerator.nextIds} ->
- * SYS_SEQUENCE-Optimistic-Lock), bevor die TASK_PARTICIPANT-UNIQUE greift; die Verliererin bekommt eine
- * transiente {@code BusinessRuleException} OHNE DAO-Ursache. Das ist ein KSF-WEITES Verhalten ALLER
- * Insert-Pfade (nicht BE-6-spezifisch) und wird bewusst NICHT als 204-SKIP geschluckt (enger
- * Ursachen-Guard) -> KSF-Follow-up / dokumentierter Client-Retry-Vertrag. addParticipants bleibt aus
- * Client-Sicht idempotent (Retry findet die Gewinner-Zeile oder allokiert sauber).
+ * SYS_SEQUENCE-Optimistic-Lock), bevor die TASK_PARTICIPANT-UNIQUE greift; die Verliererin bekommt
+ * eine transiente {@code BusinessRuleException} OHNE DAO-Ursache. Das ist ein KSF-WEITES Verhalten
+ * ALLER Insert-Pfade (nicht BE-6-spezifisch) und wird bewusst NICHT als 204-SKIP geschluckt (enger
+ * Ursachen-Guard) -> KSF-Follow-up / dokumentierter Client-Retry-Vertrag. addParticipants bleibt
+ * aus Client-Sicht idempotent (Retry findet die Gewinner-Zeile oder allokiert sauber).
  *
- * <p>Service-Ebene (NICHT MockMvc): ein 2-Thread-HTTP-IT waere wegen Security-/Tenant-Kontext je Thread
- * flaky (vgl. {@code TaskOptimisticLockIT}-Javadoc). Uebersprungen ohne MSSQL-Zugang
- * ({@link RefSchemaItEnabled}).
+ * <p>Service-Ebene (NICHT MockMvc): ein 2-Thread-HTTP-IT waere wegen Security-/Tenant-Kontext je
+ * Thread flaky (vgl. {@code TaskOptimisticLockIT}-Javadoc). Uebersprungen ohne MSSQL-Zugang ({@link
+ * RefSchemaItEnabled}).
  */
 @SpringBootTest(
     classes = ParticipantAddConcurrencyIT.ItConfig.class,
@@ -144,10 +146,8 @@ class ParticipantAddConcurrencyIT {
   private static final long TASK_ORDER_ID = 593103L;
   private static final UUID TASK_ORDER_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000593103");
-  private static final UUID ORDER_REF_A =
-      UUID.fromString("00000059-0003-0059-0000-000000000593");
-  private static final UUID ORDER_REF_B =
-      UUID.fromString("00000059-0004-0059-0000-000000000593");
+  private static final UUID ORDER_REF_A = UUID.fromString("00000059-0003-0059-0000-000000000593");
+  private static final UUID ORDER_REF_B = UUID.fromString("00000059-0004-0059-0000-000000000593");
 
   private static HikariDataSource master;
   private static String dbName;
@@ -244,7 +244,8 @@ class ParticipantAddConcurrencyIT {
     assertThat(activeParticipantRows(TASK_INSERT_ID, INSERT_REF))
         .as("genau 1 aktive Participant-Zeile (injizierter Gewinner, kein Duplikat)")
         .isEqualTo(1);
-    // Ausbleibende Effekte der verlierenden (Service-)Operation: kein UserState, kein Generation-Bump.
+    // Ausbleibende Effekte der verlierenden (Service-)Operation: kein UserState, kein
+    // Generation-Bump.
     assertThat(userStateRows(TASK_INSERT_ID, INSERT_REF))
         .as("Verliererin legt KEINEN UserState an (reiner SKIP)")
         .isZero();
@@ -277,7 +278,8 @@ class ParticipantAddConcurrencyIT {
     t1.join(TimeUnit.SECONDS.toMillis(30));
     t2.join(TimeUnit.SECONDS.toMillis(30));
 
-    // Beide Threads ohne Exception -> beide aeusseren Tx committen (keine UnexpectedRollbackException).
+    // Beide Threads ohne Exception -> beide aeusseren Tx committen (keine
+    // UnexpectedRollbackException).
     assertThat(err1.get()).as("Thread 1 ohne Exception (Commit)").isNull();
     assertThat(err2.get()).as("Thread 2 ohne Exception (Commit)").isNull();
     assertThat(service.catchCount()).as("genau eine Verliererin im Konfliktzweig").isEqualTo(1);
@@ -351,17 +353,19 @@ class ParticipantAddConcurrencyIT {
 
   private Thread inverseOrderThread(
       final List<UUID> refs, final CountDownLatch start, final AtomicReference<Throwable> err) {
-    final Thread thread = new Thread(() -> {
-      try {
-        start.await(20, TimeUnit.SECONDS);
-        TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
-        service.addParticipants(TASK_ORDER_UUID, new ParticipantAddInput(refs));
-      } catch (final Throwable t) {
-        err.set(t);
-      } finally {
-        TenantContextHolder.clear();
-      }
-    });
+    final Thread thread =
+        new Thread(
+            () -> {
+              try {
+                start.await(20, TimeUnit.SECONDS);
+                TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+                service.addParticipants(TASK_ORDER_UUID, new ParticipantAddInput(refs));
+              } catch (final Throwable t) {
+                err.set(t);
+              } finally {
+                TenantContextHolder.clear();
+              }
+            });
     thread.setDaemon(true);
     return thread;
   }
@@ -371,16 +375,20 @@ class ParticipantAddConcurrencyIT {
         "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE]"
             + " WHERE TASK_ID = ? AND USER_REF = ? AND TENANT_ID = ?"
             + " AND ENTITY_STATUS = 'ACTIVE' AND UNSUBSCRIBED_AT IS NULL",
-        Integer.class, taskId, ref, TENANT_ID);
+        Integer.class,
+        taskId,
+        ref,
+        TENANT_ID);
   }
 
   private int notificationRows(final long taskId) {
     return jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?",
-        Integer.class, taskId);
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?", Integer.class, taskId);
   }
 
-  /** Legt eine bereits committete Konflikt-Zeile ueber eine UNABHAENGIGE Verbindung (autocommit) an. */
+  /**
+   * Legt eine bereits committete Konflikt-Zeile ueber eine UNABHAENGIGE Verbindung (autocommit) an.
+   */
   private static void injectCommittedParticipant(
       final DataSource ds, final long id, final long taskId, final UUID ref, final long tenantId) {
     final String sql =
@@ -409,20 +417,28 @@ class ParticipantAddConcurrencyIT {
         "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT]"
             + " WHERE TASK_ID = ? AND PARTICIPANT_REF = ? AND TENANT_ID = ?"
             + " AND ENTITY_STATUS = 'ACTIVE' AND EXIT_KIND IS NULL",
-        Integer.class, taskId, ref, TENANT_ID);
+        Integer.class,
+        taskId,
+        ref,
+        TENANT_ID);
   }
 
   private int userStateRows(final long taskId, final UUID ref) {
     return jdbcTemplate.queryForObject(
         "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE]"
             + " WHERE TASK_ID = ? AND USER_REF = ? AND TENANT_ID = ?",
-        Integer.class, taskId, ref, TENANT_ID);
+        Integer.class,
+        taskId,
+        ref,
+        TENANT_ID);
   }
 
   private int generationRowCount(final UUID ref) {
     return jdbcTemplate.queryForObject(
         "SELECT COUNT(*) FROM [dbo].[TASK_INBOX_GENERATION] WHERE USER_REF = ? AND TENANT_ID = ?",
-        Integer.class, ref, TENANT_ID);
+        Integer.class,
+        ref,
+        TENANT_ID);
   }
 
   private long generation(final UUID ref) {
@@ -430,7 +446,9 @@ class ParticipantAddConcurrencyIT {
         jdbcTemplate.queryForObject(
             "SELECT GENERATION FROM [dbo].[TASK_INBOX_GENERATION]"
                 + " WHERE USER_REF = ? AND TENANT_ID = ?",
-            Long.class, ref, TENANT_ID);
+            Long.class,
+            ref,
+            TENANT_ID);
     return gen == null ? 0L : gen;
   }
 
@@ -447,7 +465,10 @@ class ParticipantAddConcurrencyIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzer(
@@ -461,7 +482,11 @@ class ParticipantAddConcurrencyIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static void insertTask(
@@ -477,7 +502,15 @@ class ParticipantAddConcurrencyIT {
             + " PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID, LAST_ACTIVITY_AT, COMMENT_COUNT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, ?, ?, ?, GETDATE(), 0, 'it-seed', GETDATE())",
-        id, id, externalId, tenantId, title, STATUS_OPEN, PRIORITY_NORMAL, DIRECTION, tenantId);
+        id,
+        id,
+        externalId,
+        tenantId,
+        title,
+        STATUS_OPEN,
+        PRIORITY_NORMAL,
+        DIRECTION,
+        tenantId);
   }
 
   /**
@@ -499,7 +532,12 @@ class ParticipantAddConcurrencyIT {
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 1, 0, 0, NULL, NULL, "
             + " 'it-seed', GETDATE())",
-        id, id, tenantId, taskId, ref, tenantId);
+        id,
+        id,
+        tenantId,
+        taskId,
+        ref,
+        tenantId);
   }
 
   private static void insertExitedParticipant(
@@ -516,7 +554,12 @@ class ParticipantAddConcurrencyIT {
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, 'UNSUBSCRIBED', "
             + " GETDATE(), 'it-seed', GETDATE())",
-        id, id, tenantId, taskId, ref, tenantId);
+        id,
+        id,
+        tenantId,
+        taskId,
+        ref,
+        tenantId);
   }
 
   private static void insertExitedUserState(
@@ -528,7 +571,11 @@ class ParticipantAddConcurrencyIT {
             + " ANGELEGT_VON, ANGELEGT_AM)"
             + " VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, 0, 0, 0,"
             + " DATEADD(MINUTE, -1, GETDATE()), 'it-seed', DATEADD(MINUTE, -2, GETDATE()))",
-        id, TENANT_ID, taskId, ref, TENANT_ID);
+        id,
+        TENANT_ID,
+        taskId,
+        ref,
+        TENANT_ID);
   }
 
   private static void insertGeneration(final JdbcTemplate jt, final long id, final UUID ref) {
@@ -537,16 +584,18 @@ class ParticipantAddConcurrencyIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, USER_REF, GENERATION,"
             + " ANGELEGT_VON, ANGELEGT_AM)"
             + " VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, 0, 'it-seed', GETDATE())",
-        id, TENANT_ID, ref);
+        id,
+        TENANT_ID,
+        ref);
   }
 
   // ---- IT-Konfigurations-Context ---------------------------------------------------------------
 
   /**
    * Test-Subklasse von {@link AssigneeService}: synchronisiert zwei Threads deterministisch
-   * (Barrier-Modus, Reaktivierungs-Race) ODER injiziert einmalig eine Konflikt-Zeile (Injector-Modus,
-   * Insert-UNIQUE) am Seam zwischen Vorab-Read und save, und erfasst Catch-Zaehler +
-   * Committability-Sonde im Catch-Seam.
+   * (Barrier-Modus, Reaktivierungs-Race) ODER injiziert einmalig eine Konflikt-Zeile
+   * (Injector-Modus, Insert-UNIQUE) am Seam zwischen Vorab-Read und save, und erfasst Catch-Zaehler
+   * + Committability-Sonde im Catch-Seam.
    */
   static class TestAssigneeService extends AssigneeService {
 
@@ -568,9 +617,10 @@ class ParticipantAddConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final InboxGenerationService inboxGenerationService,
-        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository handoverRepository,
+        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository
+            handoverRepository,
         final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
-                handoverTargetRepository,
+            handoverTargetRepository,
         final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
         final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
         final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator,
@@ -732,8 +782,7 @@ class ParticipantAddConcurrencyIT {
     @Bean
     UserAccessor userAccessor() {
       final UserAccessor accessor = mock(UserAccessor.class);
-      when(accessor.requireCurrentUser())
-          .thenReturn(new AuthUser(CREATOR_REF, "creator@brasi.de"));
+      when(accessor.requireCurrentUser()).thenReturn(new AuthUser(CREATOR_REF, "creator@brasi.de"));
       return accessor;
     }
 
@@ -796,9 +845,10 @@ class ParticipantAddConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final InboxGenerationService inboxGenerationService,
-        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository handoverRepository,
+        final de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository
+            handoverRepository,
         final de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository
-                handoverTargetRepository,
+            handoverTargetRepository,
         final de.brasi.nova.taskmanagement.task.TaskHistoryService taskHistoryService,
         final de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard,
         final io.keel.framework.api.security.PermissionEvaluator permissionEvaluator,

@@ -7,9 +7,9 @@ import org.springframework.hateoas.CollectionModel;
 /**
  * SPIKE-WEGWERF-ARTEFAKT (PLAN #141 Slice 0, P5-mech). KEIN Produktionscode.
  *
- * <p>{@link CollectionModel}-Subklasse, die Keyset-Cursor-Eigenschaften ({@code nextCursor},
- * {@code hasMore}, {@code asOf}) traegt. P5 beobachtet, wo diese Properties im Draht landen und wo
- * die Items ({@code _embedded.<rel>} vs. flaches {@code items}) und {@code _links} erscheinen.
+ * <p>{@link CollectionModel}-Subklasse, die Keyset-Cursor-Eigenschaften ({@code nextCursor}, {@code
+ * hasMore}, {@code asOf}) traegt. P5 beobachtet, wo diese Properties im Draht landen und wo die
+ * Items ({@code _embedded.<rel>} vs. flaches {@code items}) und {@code _links} erscheinen.
  */
 public class KeysetCollectionModel extends CollectionModel<ProbeModel> {
 

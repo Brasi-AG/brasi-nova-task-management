@@ -5,9 +5,9 @@ import org.springframework.data.repository.CrudRepository;
 /**
  * Test-only Negativ-Fixture fuer den KSF-Consumer-Contract-Architektur-Check (PLAN #141 Slice 6).
  *
- * <p>Zaehlt zu den Verboten: Erweiterung eines verbotenen Spring-Data-Repository-Basistyps
- * ({@link CrudRepository}). Die Fixture beweist, dass der Scan-Kern eine solche Verletzung
- * als Problem erkennt (Invertierbarkeits-Beweis).
+ * <p>Zaehlt zu den Verboten: Erweiterung eines verbotenen Spring-Data-Repository-Basistyps ({@link
+ * CrudRepository}). Die Fixture beweist, dass der Scan-Kern eine solche Verletzung als Problem
+ * erkennt (Invertierbarkeits-Beweis).
  *
  * <p>{@code CrudRepository} ist in {@code spring-data-commons} vorhanden (transitiv auf dem
  * Classpath). Da das Modul keinen {@code jakarta.persistence}-Classpath hat, wird die

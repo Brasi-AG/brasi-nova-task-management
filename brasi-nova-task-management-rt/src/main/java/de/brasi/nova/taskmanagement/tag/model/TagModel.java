@@ -17,8 +17,9 @@ import org.springframework.hateoas.server.core.Relation;
  * {@code GET /api/v1/tags} ueber die KSF-Enrichment-Pipeline ({@code NovaFindResponseAdvice} +
  * {@code @EnableNovaHateoas}-Scan am {@code TagController}) permission-gegatete HATEOAS-{@code
  * _links} (create/update/deactivate/delete) tragen kann. Die {@code _links} sind rein ADDITIV
- * (FE-Anzeige) und veraendern WEDER die bestehende Enforcement ({@code @RequiresPermission(TAG_ADMIN)}
- * an jedem Mutations-Handler) NOCH den Wire-Vertrag der fachlichen Felder.
+ * (FE-Anzeige) und veraendern WEDER die bestehende Enforcement
+ * ({@code @RequiresPermission(TAG_ADMIN)} an jedem Mutations-Handler) NOCH den Wire-Vertrag der
+ * fachlichen Felder.
  *
  * <p>Wire-Vertrag: alle bisherigen Felder ({@code id}, {@code name}, {@code severityCode}, {@code
  * color}) behalten identischen JSON-Namen und Typ; {@code id} wird auf {@code BaseModel.id}
@@ -30,8 +31,8 @@ import org.springframework.hateoas.server.core.Relation;
  *
  * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
  * ({@code name()}, {@code severityCode()}, {@code color()}); {@code id()} ist ein Alias auf {@code
- * BaseModel.getId()}, sodass bestehende Java-Konsumenten ({@code TagCatalogServiceTest}) unveraendert
- * weiterlaufen.
+ * BaseModel.getId()}, sodass bestehende Java-Konsumenten ({@code TagCatalogServiceTest})
+ * unveraendert weiterlaufen.
  *
  * <p>{@code @Relation} pinnt die HAL-Namen der Ressource: ein einzelnes Item als {@code tag}, die
  * Collection als {@code tags} (= Schluessel unter {@code _embedded}).
@@ -80,8 +81,7 @@ public class TagModel extends BaseModel<TagModel> {
    * @param severityCode Anzeigeschwere (CODE aus DIC_TAG_SEVERITY) oder {@code null}
    * @param color UI-Farbe als Hex-String ({@code #RRGGBB}/{@code #RGB}) oder {@code null}
    */
-  public TagModel(
-      final UUID id, final String name, final String severityCode, final String color) {
+  public TagModel(final UUID id, final String name, final String severityCode, final String color) {
     super(id);
     this.name = name;
     this.severityCode = severityCode;

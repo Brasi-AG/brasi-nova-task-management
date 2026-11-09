@@ -539,8 +539,8 @@ class TagLifecycleIT {
   }
 
   /**
-   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten
-   * {@code CollectionModel}-Wire-Formen: HAL ({@code _embedded.tags}), plain {@code CollectionModel}
+   * Extrahiert die Tag-Items aus GET /api/v1/tags, robust gegen die drei beobachteten {@code
+   * CollectionModel}-Wire-Formen: HAL ({@code _embedded.tags}), plain {@code CollectionModel}
    * ({@code content}) und flaches Array.
    */
   private static JsonNode tagItems(final String listResponse, final ObjectMapper om)
@@ -557,7 +557,8 @@ class TagLifecycleIT {
     if (root.path("content").isArray()) {
       return root.path("content");
     }
-    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte Wire-Form.
+    // Legitimer Leer-Fall: leeres Objekt bzw. nur Links; alles andere ist eine unbekannte
+    // Wire-Form.
     if (root.isObject() && (root.isEmpty() || root.has("links") || root.has("_links"))) {
       return om.createArrayNode();
     }

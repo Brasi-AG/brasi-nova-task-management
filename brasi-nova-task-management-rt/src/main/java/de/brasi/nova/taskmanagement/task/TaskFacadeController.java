@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.task;
 
 import de.brasi.nova.taskmanagement.comment.CommentController;
+import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.inbox.InboxSnapshotService;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
 import de.brasi.nova.taskmanagement.participant.AssigneeController;
@@ -12,9 +13,7 @@ import de.brasi.nova.taskmanagement.task.model.TaskCreateFromSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
-import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
-import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
@@ -22,6 +21,7 @@ import io.keel.framework.api.hateoas.annotation.LinkParam;
 import io.keel.framework.api.hateoas.annotation.LinkRule;
 import io.keel.framework.api.hateoas.annotation.LinkRules;
 import io.keel.framework.api.openapi.annotation.ApiFindResponse;
+import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -344,7 +344,8 @@ public class TaskFacadeController {
    * @return 200 OK mit {@link de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel}
    */
   // tags: haelt den springdoc-Tag des frueheren InboxSnapshotController stabil (Owner 2026-11-09),
-  // damit die generierte api-client-Methode im bisherigen Service bleibt (#141 Slice 5 Handler-Move).
+  // damit die generierte api-client-Methode im bisherigen Service bleibt (#141 Slice 5
+  // Handler-Move).
   @Operation(
       tags = "inbox-snapshot-controller",
       summary = "Inbox-Snapshot laden",

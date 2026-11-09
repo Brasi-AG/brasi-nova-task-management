@@ -14,12 +14,12 @@ import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import io.keel.framework.api.hateoas.specification.LinkSpecification;
 import io.keel.framework.api.security.PermissionEvaluator;
+import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import java.util.Optional;
 import java.util.UUID;
-import io.keel.framework.api.security.tenant.TenantContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,9 +32,9 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
- * Unit-Tests der vier {@link LinkSpecification}-Implementierungen fuer die Task-Affordance
- * (PLAN #141 Slice 3). Reine Logik, kein Spring-Context: beweist pos/neg/fail-safe-Verhalten sowie
- * dass {@code getName()} exakt den {@link TaskHateoas.Specs}-Konstanten entspricht.
+ * Unit-Tests der vier {@link LinkSpecification}-Implementierungen fuer die Task-Affordance (PLAN
+ * #141 Slice 3). Reine Logik, kein Spring-Context: beweist pos/neg/fail-safe-Verhalten sowie dass
+ * {@code getName()} exakt den {@link TaskHateoas.Specs}-Konstanten entspricht.
  */
 @ExtendWith(MockitoExtension.class)
 class TaskLinkSpecificationsTest {
@@ -64,7 +64,8 @@ class TaskLinkSpecificationsTest {
 
   @AfterEach
   void tearDown() {
-    // ThreadLocal-Kontext nach jedem Test bereinigen, damit keine Tests sich gegenseitig beeinflussen.
+    // ThreadLocal-Kontext nach jedem Test bereinigen, damit keine Tests sich gegenseitig
+    // beeinflussen.
     TenantContextHolder.clear();
     RequestContextHolder.resetRequestAttributes();
   }
@@ -72,7 +73,8 @@ class TaskLinkSpecificationsTest {
   // ---- TaskWriteAuthoritySpec -----------------------------------------------------------------
 
   @Test
-  @DisplayName("TaskWriteAuthoritySpec.getName entspricht exakt TaskHateoas.Specs.HAS_WRITE_AUTHORITY")
+  @DisplayName(
+      "TaskWriteAuthoritySpec.getName entspricht exakt TaskHateoas.Specs.HAS_WRITE_AUTHORITY")
   void write_authority_spec_name_matcht_konstante() {
     final LinkSpecification spec = new TaskLinkSpecifications.TaskWriteAuthoritySpec();
     assertThat(spec.getName()).isEqualTo(TaskHateoas.Specs.HAS_WRITE_AUTHORITY);
@@ -106,7 +108,8 @@ class TaskLinkSpecificationsTest {
   // ---- TaskCreateAuthoritySpec ----------------------------------------------------------------
 
   @Test
-  @DisplayName("TaskCreateAuthoritySpec.getName entspricht exakt TaskHateoas.Specs.HAS_CREATE_AUTHORITY")
+  @DisplayName(
+      "TaskCreateAuthoritySpec.getName entspricht exakt TaskHateoas.Specs.HAS_CREATE_AUTHORITY")
   void create_authority_spec_name_matcht_konstante() {
     final LinkSpecification spec = new TaskLinkSpecifications.TaskCreateAuthoritySpec();
     assertThat(spec.getName()).isEqualTo(TaskHateoas.Specs.HAS_CREATE_AUTHORITY);
@@ -199,7 +202,8 @@ class TaskLinkSpecificationsTest {
   }
 
   @Test
-  @DisplayName("TaskWriteMembershipSpec: kein Tenant-Context (BusinessRuleException) -> fail-safe false")
+  @DisplayName(
+      "TaskWriteMembershipSpec: kein Tenant-Context (BusinessRuleException) -> fail-safe false")
   void membership_spec_fehlender_tenant_context_fail_safe() {
     // TenantContextHolder ist leer (setUp bereinigt) -> CurrentActor.require() wirft
     // BusinessRuleException (RuntimeException) -> fail-safe catch -> false.
@@ -212,7 +216,8 @@ class TaskLinkSpecificationsTest {
   // ---- TaskWriteAuthorityAndMembershipSpec ----------------------------------------------------
 
   @Test
-  @DisplayName("TaskWriteAuthorityAndMembershipSpec.getName entspricht exakt Specs.HAS_WRITE_AUTHORITY_AND_IS_MEMBER")
+  @DisplayName(
+      "TaskWriteAuthorityAndMembershipSpec.getName entspricht exakt Specs.HAS_WRITE_AUTHORITY_AND_IS_MEMBER")
   void authority_and_membership_spec_name_matcht_konstante() {
     final TaskLinkSpecifications.TaskWriteAuthoritySpec authoritySpec =
         new TaskLinkSpecifications.TaskWriteAuthoritySpec();
@@ -230,27 +235,35 @@ class TaskLinkSpecificationsTest {
     stubActor(ACTOR_REF, TASK_TENANT_ID);
     when(evaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)).thenReturn(true);
     when(membershipGuard.isWriteMember(TASK_ID, ACTOR_REF, TASK_TENANT_ID)).thenReturn(true);
-    assertThat(buildAuthorityAndMembershipSpec()
-        .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator)).isTrue();
+    assertThat(
+            buildAuthorityAndMembershipSpec()
+                .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator))
+        .isTrue();
   }
 
   @Test
-  @DisplayName("TaskWriteAuthorityAndMembershipSpec: TASK_WRITE vorhanden, aber KEIN Member -> nicht satisfied")
+  @DisplayName(
+      "TaskWriteAuthorityAndMembershipSpec: TASK_WRITE vorhanden, aber KEIN Member -> nicht satisfied")
   void authority_and_membership_spec_authority_ohne_membership_false() {
     stubActor(ACTOR_REF, TASK_TENANT_ID);
     when(evaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)).thenReturn(true);
     when(membershipGuard.isWriteMember(TASK_ID, ACTOR_REF, TASK_TENANT_ID)).thenReturn(false);
-    assertThat(buildAuthorityAndMembershipSpec()
-        .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator)).isFalse();
+    assertThat(
+            buildAuthorityAndMembershipSpec()
+                .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator))
+        .isFalse();
   }
 
   @Test
-  @DisplayName("TaskWriteAuthorityAndMembershipSpec: Member, aber kein TASK_WRITE -> nicht satisfied")
+  @DisplayName(
+      "TaskWriteAuthorityAndMembershipSpec: Member, aber kein TASK_WRITE -> nicht satisfied")
   void authority_and_membership_spec_membership_ohne_authority_false() {
     when(evaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)).thenReturn(false);
     // membershipGuard wird wegen Short-Circuit (authority=false) nicht gecallt.
-    assertThat(buildAuthorityAndMembershipSpec()
-        .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator)).isFalse();
+    assertThat(
+            buildAuthorityAndMembershipSpec()
+                .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator))
+        .isFalse();
   }
 
   @Test
@@ -258,8 +271,10 @@ class TaskLinkSpecificationsTest {
   void authority_and_membership_spec_leeres_entity_false() {
     when(evaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)).thenReturn(true);
     // Membership-Spec gibt false (Cast-Guard auf leeres entityOpt).
-    assertThat(buildAuthorityAndMembershipSpec()
-        .isSatisfiedBy(taskDetailModel, Optional.empty(), evaluator)).isFalse();
+    assertThat(
+            buildAuthorityAndMembershipSpec()
+                .isSatisfiedBy(taskDetailModel, Optional.empty(), evaluator))
+        .isFalse();
   }
 
   // ---- Request-scoped Memoization (N+1-Fix) ----------------------------------------------------
@@ -288,7 +303,8 @@ class TaskLinkSpecificationsTest {
   }
 
   @Test
-  @DisplayName("Memoization: 8 Rule-Auswertungen (6x Membership + 2x AND) je Task -> Guard genau 1x")
+  @DisplayName(
+      "Memoization: 8 Rule-Auswertungen (6x Membership + 2x AND) je Task -> Guard genau 1x")
   void memoization_acht_auswertungen_ein_guard_call_je_task() {
     bindRequest();
     bindContextTenant(TASK_TENANT_ID);
@@ -333,7 +349,8 @@ class TaskLinkSpecificationsTest {
   }
 
   @Test
-  @DisplayName("Memoization: Schluessel-Isolation (Actor, Kontext-Tenant, Task-Tenant) ohne Cross-Hit")
+  @DisplayName(
+      "Memoization: Schluessel-Isolation (Actor, Kontext-Tenant, Task-Tenant) ohne Cross-Hit")
   void memoization_schluessel_isolation() {
     bindRequest();
     final UUID otherActor = UUID.randomUUID();
@@ -366,7 +383,8 @@ class TaskLinkSpecificationsTest {
   }
 
   @Test
-  @DisplayName("Memoization: Guard-Exception -> false, NICHT gecacht; Folgeaufruf liefert echtes Ergebnis")
+  @DisplayName(
+      "Memoization: Guard-Exception -> false, NICHT gecacht; Folgeaufruf liefert echtes Ergebnis")
   void memoization_exception_wird_nicht_gecacht() {
     bindRequest();
     bindContextTenant(TASK_TENANT_ID);
@@ -387,8 +405,10 @@ class TaskLinkSpecificationsTest {
   void memoization_and_spec_ohne_authority_kein_guard_call() {
     bindRequest();
     when(evaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)).thenReturn(false);
-    assertThat(buildAuthorityAndMembershipSpec()
-        .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator)).isFalse();
+    assertThat(
+            buildAuthorityAndMembershipSpec()
+                .isSatisfiedBy(taskDetailModel, Optional.of(taskEntity), evaluator))
+        .isFalse();
     verify(membershipGuard, never()).isWriteMember(anyLong(), any(UUID.class), anyLong());
   }
 
@@ -411,7 +431,8 @@ class TaskLinkSpecificationsTest {
     TenantContextHolder.setTenant(tenantInfo);
   }
 
-  private TaskLinkSpecifications.TaskWriteAuthorityAndMembershipSpec buildAuthorityAndMembershipSpec() {
+  private TaskLinkSpecifications.TaskWriteAuthorityAndMembershipSpec
+      buildAuthorityAndMembershipSpec() {
     final TaskLinkSpecifications.TaskWriteAuthoritySpec authoritySpec =
         new TaskLinkSpecifications.TaskWriteAuthoritySpec();
     final TaskLinkSpecifications.TaskWriteMembershipSpec membershipSpecBean =
@@ -419,5 +440,4 @@ class TaskLinkSpecificationsTest {
     return new TaskLinkSpecifications.TaskWriteAuthorityAndMembershipSpec(
         authoritySpec, membershipSpecBean);
   }
-
 }

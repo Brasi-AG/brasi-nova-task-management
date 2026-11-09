@@ -16,8 +16,8 @@ import org.springframework.stereotype.Component;
  * (Cast-Guard + Exception -&gt; false), {@code getName()} liefert einen stabilen Namen, der exakt
  * den {@link TagHateoas.Specs}-Konstanten entspricht (Referenz in {@code @LinkRule.conditions}).
  *
- * <p>Die {@code _links} sind rein ADDITIV (FE-Anzeige); die eigentliche Enforcement bleibt {@code
- * @RequiresPermission(TAG_ADMIN)} an jedem Mutations-Handler des {@code TagController}.
+ * <p>Die {@code _links} sind rein ADDITIV (FE-Anzeige); die eigentliche Enforcement bleibt
+ * {@code @RequiresPermission(TAG_ADMIN)} an jedem Mutations-Handler des {@code TagController}.
  */
 public final class TagLinkSpecifications {
 
@@ -51,9 +51,9 @@ public final class TagLinkSpecifications {
   }
 
   /**
-   * Bedingung {@link TagHateoas.Specs#IS_ACTIVE}: der Tag ist aktiv ({@code modelState=ACTIVE}). Fuer
-   * {@code deactivate} zusaetzlich zu {@link TagHateoas.Specs#TAG_ADMIN} gefordert, damit ein bereits
-   * deaktivierter Tag keinen (fachlich sinnlosen) deactivate-Link traegt.
+   * Bedingung {@link TagHateoas.Specs#IS_ACTIVE}: der Tag ist aktiv ({@code modelState=ACTIVE}).
+   * Fuer {@code deactivate} zusaetzlich zu {@link TagHateoas.Specs#TAG_ADMIN} gefordert, damit ein
+   * bereits deaktivierter Tag keinen (fachlich sinnlosen) deactivate-Link traegt.
    */
   @Component
   public static final class TagActiveStateSpec implements LinkSpecification {

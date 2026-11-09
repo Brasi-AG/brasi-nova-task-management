@@ -31,12 +31,13 @@ public final class RefSchemaItDb {
   private static final String NAME_PREFIX = "TASK_MGMT_IT_";
 
   /** Strikte Namensregel: verhindert dynamischen DROP ausserhalb der Wegwerf-Namensfamilie. */
-  private static final Pattern NAME_PATTERN =
-      Pattern.compile("^TASK_MGMT_IT_[0-9a-f]{32}$");
+  private static final Pattern NAME_PATTERN = Pattern.compile("^TASK_MGMT_IT_[0-9a-f]{32}$");
 
   private static final int STALE_TTL_HOURS = 2;
 
-  /** Maximale Anzahl Versuche beim DROP einer Wegwerf-DB (SQL-Fehlercode 3702: "currently in use"). */
+  /**
+   * Maximale Anzahl Versuche beim DROP einer Wegwerf-DB (SQL-Fehlercode 3702: "currently in use").
+   */
   private static final int DROP_MAX_RETRIES = 5;
 
   /** Wartezeit zwischen DROP-Versuchen in Millisekunden. */
@@ -81,8 +82,7 @@ public final class RefSchemaItDb {
   }
 
   /** DataSource auf die Wegwerf-DB. */
-  public static HikariDataSource throwawayDataSource(
-      final String dbName, final int maxPoolSize) {
+  public static HikariDataSource throwawayDataSource(final String dbName, final int maxPoolSize) {
     ensureSafeName(dbName);
     return hikari(swapDatabaseName(RefSchemaItEnv.masterUrl(), dbName), maxPoolSize);
   }
@@ -103,9 +103,9 @@ public final class RefSchemaItDb {
    *
    * <p>Sind die Versuche erschoepft, wird NICHT geworfen (sonst wuerde die IT-Klasse im
    * {@code @AfterAll} rot, obwohl alle Tests gruen waren), sondern gewarnt: die Wegwerf-DB ist
-   * isoliert, beeinflusst keinen Testlauf und wird vom TTL-Stale-Cleanup ({@link
-   * #cleanupStaleDbs}, {@value #STALE_TTL_HOURS} h) eingesammelt. Bewusst KEIN {@code SET OFFLINE}:
-   * dabei wuerden die Dateien beim DROP nicht geloescht. Andere SQL-Fehler werden weiter geworfen.
+   * isoliert, beeinflusst keinen Testlauf und wird vom TTL-Stale-Cleanup ({@link #cleanupStaleDbs},
+   * {@value #STALE_TTL_HOURS} h) eingesammelt. Bewusst KEIN {@code SET OFFLINE}: dabei wuerden die
+   * Dateien beim DROP nicht geloescht. Andere SQL-Fehler werden weiter geworfen.
    *
    * @param master DataSource auf master-DB
    * @param dbName Name der Wegwerf-DB (strikt validiert)
@@ -115,8 +115,7 @@ public final class RefSchemaItDb {
     final JdbcTemplate jdbc = new JdbcTemplate(master);
     for (int attempt = 1; attempt <= DROP_MAX_RETRIES; attempt++) {
       try {
-        jdbc.execute(
-            "ALTER DATABASE [" + dbName + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE");
+        jdbc.execute("ALTER DATABASE [" + dbName + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE");
         jdbc.execute("DROP DATABASE [" + dbName + "]");
         log.info("Task-Mgmt-IT Wegwerf-DB gedroppt: {} (Versuch {})", dbName, attempt);
         return;
@@ -172,9 +171,7 @@ public final class RefSchemaItDb {
     return false;
   }
 
-  /**
-   * Best-effort: droppt verwaiste Wegwerf-DBs aelter als die TTL. Fehler werden geschluckt.
-   */
+  /** Best-effort: droppt verwaiste Wegwerf-DBs aelter als die TTL. Fehler werden geschluckt. */
   public static void cleanupStaleDbs(final DataSource master) {
     try {
       final JdbcTemplate jdbc = new JdbcTemplate(master);
@@ -183,17 +180,13 @@ public final class RefSchemaItDb {
               "SELECT name FROM sys.databases "
                   + "WHERE name LIKE 'TASK[_]MGMT[_]IT[_]%' "
                   + "AND create_date < DATEADD(hour, -?, SYSUTCDATETIME())",
-              String.class,
-              STALE_TTL_HOURS);
+              String.class, STALE_TTL_HOURS);
       for (final String name : names) {
         if (NAME_PATTERN.matcher(name).matches()) {
           try {
             dropThrowawayDb(master, name);
           } catch (final RuntimeException e) {
-            log.warn(
-                "Stale-Cleanup: DROP {} fehlgeschlagen (ignoriert): {}",
-                name,
-                e.getMessage());
+            log.warn("Stale-Cleanup: DROP {} fehlgeschlagen (ignoriert): {}", name, e.getMessage());
           }
         }
       }
@@ -210,18 +203,18 @@ public final class RefSchemaItDb {
    * <p><b>FINDING 2 (Codex-IMPL-Gate) — {@code system_controller_regel}:</b> Diese System-Tabelle
    * ist eine FRAMEWORK-/DEPLOY-verantwortete Tabelle, KEINE Consumer-Flyway-Tabelle. Im realen
    * Deploy wird die task-management-DB als Struktur-Kopie der diamant-DB provisioniert (siehe
-   * Startkarte „Stammdaten-Basis: PROD_FIRMA und PROD_BENUTZER ... SYS_SEQUENCE und SYSTEM*-Tabellen
-   * als leere Struktur-Kopie"). Genau wie PROD_FIRMA/PROD_BENUTZER/SYS_SEQUENCE existiert
-   * {@code system_controller_regel} dort also bereits (leer) und wird vom Modul bewusst NICHT in V1-
-   * V9 angelegt; auch KSF 2.3.24 liefert keine Flyway-Migration dafuer (Referenz-Consumer
-   * spring-application indiziert sie in V5 nur per {@code IF OBJECT_ID(...) IS NOT NULL} als
-   * vorbestehend). In der isolierten Wegwerf-DB fehlt diese Struktur-Kopie -> wir legen sie hier
-   * EINMAL zentral (nicht ad-hoc im Affordance-IT) an und spiegeln damit das reale Deploy. Die
-   * Spalten folgen exakt dem Vertrag des KSF-{@code JdbcHateoasRuleStore} (SELECT/INSERT/UPDATE),
-   * inkl. {@code angelegt_von}/{@code aktualisiert_von}, die der fruehere IT-Ad-hoc-DDL fehlten
-   * (Insert/Update einer Regel waere dort gebrochen). Leer angelegt: die KSF-Engine liest nur aktive
-   * DB-Regeln (hier keine) und faellt auf die Annotation-Regeln zurueck -> der {@code self}-Link
-   * entsteht, ohne dass der Test still eine Tabelle vortaeuschen muss.
+   * Startkarte „Stammdaten-Basis: PROD_FIRMA und PROD_BENUTZER ... SYS_SEQUENCE und
+   * SYSTEM*-Tabellen als leere Struktur-Kopie"). Genau wie PROD_FIRMA/PROD_BENUTZER/SYS_SEQUENCE
+   * existiert {@code system_controller_regel} dort also bereits (leer) und wird vom Modul bewusst
+   * NICHT in V1- V9 angelegt; auch KSF 2.3.24 liefert keine Flyway-Migration dafuer
+   * (Referenz-Consumer spring-application indiziert sie in V5 nur per {@code IF OBJECT_ID(...) IS
+   * NOT NULL} als vorbestehend). In der isolierten Wegwerf-DB fehlt diese Struktur-Kopie -> wir
+   * legen sie hier EINMAL zentral (nicht ad-hoc im Affordance-IT) an und spiegeln damit das reale
+   * Deploy. Die Spalten folgen exakt dem Vertrag des KSF-{@code JdbcHateoasRuleStore}
+   * (SELECT/INSERT/UPDATE), inkl. {@code angelegt_von}/{@code aktualisiert_von}, die der fruehere
+   * IT-Ad-hoc-DDL fehlten (Insert/Update einer Regel waere dort gebrochen). Leer angelegt: die
+   * KSF-Engine liest nur aktive DB-Regeln (hier keine) und faellt auf die Annotation-Regeln zurueck
+   * -> der {@code self}-Link entsteht, ohne dass der Test still eine Tabelle vortaeuschen muss.
    */
   private static void createRefSchema(final JdbcTemplate jdbc) {
     // Leere Struktur-Kopie der System-Tabelle (Spalten exakt nach KSF JdbcHateoasRuleStore).
@@ -296,8 +289,7 @@ public final class RefSchemaItDb {
     }
   }
 
-  private static HikariDataSource hikari(
-      final String jdbcUrl, final int maxPoolSize) {
+  private static HikariDataSource hikari(final String jdbcUrl, final int maxPoolSize) {
     final HikariConfig config = new HikariConfig();
     config.setJdbcUrl(jdbcUrl);
     config.setUsername(RefSchemaItEnv.user());
@@ -308,8 +300,7 @@ public final class RefSchemaItDb {
     return new HikariDataSource(config);
   }
 
-  private static String swapDatabaseName(
-      final String url, final String dbName) {
+  private static String swapDatabaseName(final String url, final String dbName) {
     if (Pattern.compile("(?i)databaseName=").matcher(url).find()) {
       return url.replaceAll("(?i)databaseName=[^;]*", "databaseName=" + dbName);
     }

@@ -49,17 +49,17 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * Affordance-Integration-Test (PLAN #141 Slice 5, Teil A): {@code GET /api/v1/notifications}
- * traegt permission-gegatete HATEOAS-{@code _links} - OHNE die bestehende Enforcement
+ * Affordance-Integration-Test (PLAN #141 Slice 5, Teil A): {@code GET /api/v1/notifications} traegt
+ * permission-gegatete HATEOAS-{@code _links} - OHNE die bestehende Enforcement
  * ({@code @RequiresPermission(NOTIFICATION_WRITE)}) oder den fachlichen Wire-Vertrag zu aendern.
  *
  * <p>Rel-Matrix (SPEC #141 Slice 5): Item {@code mark-read}, Collection {@code mark-all-read};
  * beide NOTIFICATION_WRITE-gegatet. Cross-User-Sicherheitsnetz: ohne NOTIFICATION_WRITE keine
- * Affordance-Rels. Leere-Liste-Edge (B1): ohne Eintraege emittiert die Collection kein
- * {@code mark-all-read} (tatsaechliches Verhalten bei leerer Rule-Owner-Collection).
+ * Affordance-Rels. Leere-Liste-Edge (B1): ohne Eintraege emittiert die Collection kein {@code
+ * mark-all-read} (tatsaechliches Verhalten bei leerer Rule-Owner-Collection).
  *
- * <p>Bootet - wie {@code TagAffordanceIT} - den VOLLEN Spring-Boot-Autoconfig-Graph,
- * damit die reale KSF-Web-Security-Filterchain (JWT, Tenant-Binding) scharf laeuft.
+ * <p>Bootet - wie {@code TagAffordanceIT} - den VOLLEN Spring-Boot-Autoconfig-Graph, damit die
+ * reale KSF-Web-Security-Filterchain (JWT, Tenant-Binding) scharf laeuft.
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
@@ -100,7 +100,10 @@ class NotificationAffordanceIT {
 
   private static final String TEST_KID = "notif-affordance-it-key";
 
-  /** Mandant fuer Affordance-Tests (590er-Block, kein Konflikt mit NotificationControllerIT 570-574). */
+  /**
+   * Mandant fuer Affordance-Tests (590er-Block, kein Konflikt mit NotificationControllerIT
+   * 570-574).
+   */
   private static final long TENANT_A_ID = 590L;
 
   private static final UUID TENANT_A_UUID = UUID.randomUUID();
@@ -318,8 +321,7 @@ class NotificationAffordanceIT {
     final JsonNode item = items.get(0);
     final JsonNode itemLinks = item.path("_links");
     assertThat(itemLinks.path("mark-read").path("href").isTextual())
-        .as(
-            "BLOCKER: Item-_links.mark-read fehlt (NOTIFICATION_WRITE-gegatet). Item=" + item)
+        .as("BLOCKER: Item-_links.mark-read fehlt (NOTIFICATION_WRITE-gegatet). Item=" + item)
         .isTrue();
     // mark-read-href enthaelt /read (PUT .../notifications/{id}/read).
     assertThat(itemLinks.path("mark-read").path("href").asText())
@@ -376,8 +378,7 @@ class NotificationAffordanceIT {
 
     // Collection: KEIN mark-all-read (kein NOTIFICATION_WRITE).
     assertThat(root.path("_links").has("mark-all-read"))
-        .as(
-            "ohne NOTIFICATION_WRITE darf die Collection KEIN mark-all-read tragen. Body=" + body)
+        .as("ohne NOTIFICATION_WRITE darf die Collection KEIN mark-all-read tragen. Body=" + body)
         .isFalse();
 
     // Item: KEIN mark-read.
@@ -459,15 +460,15 @@ class NotificationAffordanceIT {
   /**
    * Seedet eine TASK_NOTIFICATION-Zeile direkt per JdbcTemplate.
    *
-   * @param jt         JdbcTemplate
-   * @param id         interne ID (deterministisch im eigenen Block)
+   * @param jt JdbcTemplate
+   * @param id interne ID (deterministisch im eigenen Block)
    * @param externalId externe UUID (EXTERNALID)
-   * @param tenantId   Mandanten-ID
-   * @param recipient  RECIPIENT_REF (UUID des Empfaengers, analog NotificationControllerIT)
-   * @param typeId     FK auf DIC_NOTIFICATION_TYPE (401=ASSIGN)
-   * @param isRead     IS_READ-Flag
-   * @param text       TEXT
-   * @param createdAt  ANGELEGT_AM
+   * @param tenantId Mandanten-ID
+   * @param recipient RECIPIENT_REF (UUID des Empfaengers, analog NotificationControllerIT)
+   * @param typeId FK auf DIC_NOTIFICATION_TYPE (401=ASSIGN)
+   * @param isRead IS_READ-Flag
+   * @param text TEXT
+   * @param createdAt ANGELEGT_AM
    */
   private static void seedNotification(
       final JdbcTemplate jt,
@@ -530,7 +531,9 @@ class NotificationAffordanceIT {
         "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class),
+        @ComponentScan.Filter(
+            type = FilterType.ANNOTATION,
+            classes = SpringBootConfiguration.class),
         @ComponentScan.Filter(
             type = FilterType.REGEX,
             pattern = "de\\.brasi\\.nova\\.taskmanagement\\.security\\.it\\..*")

@@ -6,11 +6,11 @@ package de.brasi.nova.taskmanagement.notification;
  *
  * <p>Handgepflegtes Gegenstueck zu {@code TagHateoas} und {@code TaskHateoas}. Die Konstanten
  * binden die deklarativen Affordance-Regeln ({@code @LinkRule}/{@code @CollectionLinkRule}/
- * {@code @HateoasLinkTarget} am {@code NotificationController}) an stabile Namen, damit Regel,
- * Ziel und Bedingung nicht via loser String-Literale auseinanderlaufen koennen.
+ * {@code @HateoasLinkTarget} am {@code NotificationController}) an stabile Namen, damit Regel, Ziel
+ * und Bedingung nicht via loser String-Literale auseinanderlaufen koennen.
  *
- * <p>Rel-Matrix (SPEC #141 Slice 5): Item-Rel {@code mark-read} (ITEM), Collection-Rel
- * {@code mark-all-read} (COLLECTION). Beide NOTIFICATION_WRITE-gegatet.
+ * <p>Rel-Matrix (SPEC #141 Slice 5): Item-Rel {@code mark-read} (ITEM), Collection-Rel {@code
+ * mark-all-read} (COLLECTION). Beide NOTIFICATION_WRITE-gegatet.
  */
 public final class NotificationHateoas {
 
@@ -23,7 +23,10 @@ public final class NotificationHateoas {
     /** Item-Rel: eine einzelne Benachrichtigung als gelesen markieren (PUT /{id}/read). */
     public static final String MARK_READ = "mark-read";
 
-    /** Collection-Rel: alle eigenen ungelesenen Benachrichtigungen als gelesen markieren (PUT /read-all). */
+    /**
+     * Collection-Rel: alle eigenen ungelesenen Benachrichtigungen als gelesen markieren (PUT
+     * /read-all).
+     */
     public static final String MARK_ALL_READ = "mark-all-read";
   }
 
@@ -34,10 +37,15 @@ public final class NotificationHateoas {
   public static final class Targets {
     private Targets() {}
 
-    /** PUT {@code /api/v1/notifications/{id}/read} (Einzelne Benachrichtigung als gelesen markieren). */
+    /**
+     * PUT {@code /api/v1/notifications/{id}/read} (Einzelne Benachrichtigung als gelesen
+     * markieren).
+     */
     public static final String MARK_READ = "notification.markRead";
 
-    /** PUT {@code /api/v1/notifications/read-all} (Alle Benachrichtigungen als gelesen markieren). */
+    /**
+     * PUT {@code /api/v1/notifications/read-all} (Alle Benachrichtigungen als gelesen markieren).
+     */
     public static final String MARK_ALL_READ = "notification.markAllRead";
   }
 
@@ -59,7 +67,10 @@ public final class NotificationHateoas {
   public static final class Specs {
     private Specs() {}
 
-    /** Bedingung: der Anfrager traegt die exakte Authority {@code task-management:NOTIFICATION_WRITE}. */
+    /**
+     * Bedingung: der Anfrager traegt die exakte Authority {@code
+     * task-management:NOTIFICATION_WRITE}.
+     */
     public static final String NOTIFICATION_WRITE = "notification.hasWriteAuthority";
   }
 }

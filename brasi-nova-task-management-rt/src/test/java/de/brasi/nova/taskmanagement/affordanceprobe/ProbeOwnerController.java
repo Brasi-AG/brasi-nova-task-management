@@ -1,6 +1,5 @@
 package de.brasi.nova.taskmanagement.affordanceprobe;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
@@ -10,6 +9,7 @@ import io.keel.framework.api.hateoas.annotation.LinkRules;
 import io.keel.framework.api.openapi.annotation.ApiFindResponse;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.hateoas.CollectionModel;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * SPIKE-WEGWERF-ARTEFAKT (PLAN #141 Slice 0). KEIN Produktionscode.
  *
- * <p>PLAIN {@code @RestController} (KEIN {@code AbstractNovaHateoasController}), der ueber {@code
- * @EnableNovaHateoas(entityClass=ProbeEntity.class)} als Regel-Owner fuer {@link ProbeEntity}
- * registriert wird (Option-1-Mechanik). Deklariert:
+ * <p>PLAIN {@code @RestController} (KEIN {@code AbstractNovaHateoasController}), der ueber
+ * {@code @EnableNovaHateoas(entityClass=ProbeEntity.class)} als Regel-Owner fuer {@link
+ * ProbeEntity} registriert wird (Option-1-Mechanik). Deklariert:
  *
  * <ul>
  *   <li>Item-Regel {@code self} -> GET {@code /probe/owner/{id}} (Nachweis P1).
@@ -51,9 +51,7 @@ import org.springframework.web.bind.annotation.RestController;
           linkTo = "probe_owner_edit",
           params = {@LinkParam(name = "id", source = "#dto.id")})
     },
-    collectionRules = {
-      @CollectionLinkRule(rel = "create", linkTo = "probe_owner_create")
-    })
+    collectionRules = {@CollectionLinkRule(rel = "create", linkTo = "probe_owner_create")})
 public class ProbeOwnerController {
 
   /** Self-Ziel (GET single): liefert ein {@link ProbeModel} mit gesetzter Entity. */

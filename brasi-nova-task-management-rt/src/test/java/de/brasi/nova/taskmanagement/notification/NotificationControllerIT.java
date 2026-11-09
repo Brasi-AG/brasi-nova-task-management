@@ -77,14 +77,15 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link NotificationController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>GET /notifications -> nur eigene Notifications des Actors (fremde NICHT sichtbar)
  *   <li>GET /notifications?filter=unread -> nur IS_READ=0
  *   <li>Pagination: limit+1 Seeds, Seite 1 + nextCursor -> Seite 2, kein Skip/Dupe
  *   <li>PUT /{id}/read -> IS_READ=1 in DB
  *   <li>PUT /read-all -> alle eigenen unread=1, fremde unveraendert
- *   <li>Negativ: anonym 401, kein NOTIFICATION_READ 403, kein NOTIFICATION_WRITE 403,
- *       unbekannte UUID 404
+ *   <li>Negativ: anonym 401, kein NOTIFICATION_READ 403, kein NOTIFICATION_WRITE 403, unbekannte
+ *       UUID 404
  * </ul>
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
@@ -130,6 +131,7 @@ class NotificationControllerIT {
 
   /** Zweiter Benutzer in Mandant A: Notifications NICHT fuer USER_A sichtbar. */
   private static final UUID USER_B_REF = UUID.randomUUID();
+
   private static final String USER_B_LOGIN = "user-b-notif@brasi.de";
   private static final long USER_B_DB_ID = 572L;
 
@@ -143,6 +145,7 @@ class NotificationControllerIT {
 
   /** Read-Only-User (kein NOTIFICATION_WRITE). */
   private static final UUID USER_READ_ONLY_REF = UUID.randomUUID();
+
   private static final String USER_READ_ONLY_LOGIN = "user-ro-notif@brasi.de";
 
   /**
@@ -191,8 +194,7 @@ class NotificationControllerIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -236,24 +238,43 @@ class NotificationControllerIT {
 
     // Notification fuer USER_A (soll sichtbar sein)
     final UUID notifIdA = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 1, notifIdA, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Notif fuer A", LocalDateTime.now().minusMinutes(5));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 1,
+        notifIdA,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Notif fuer A",
+        LocalDateTime.now().minusMinutes(5));
 
     // Notification fuer USER_B im gleichen Mandant (NICHT sichtbar fuer USER_A)
     final UUID notifIdB = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 2, notifIdB, TENANT_A_ID, USER_B_REF,
-        TYPE_ID_ASSIGN, false, "Notif fuer B", LocalDateTime.now().minusMinutes(4));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 2,
+        notifIdB,
+        TENANT_A_ID,
+        USER_B_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Notif fuer B",
+        LocalDateTime.now().minusMinutes(4));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
-    final String json = mvc.perform(get("/api/v1/notifications")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        // Slice 4: Items liegen HAL unter _embedded.notifications bzw. ohne HAL unter content;
-        // wire-tolerant ueber notificationItemsOf gelesen (Behavior-Test, Produktions-HAL separat).
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(get("/api/v1/notifications").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            // Slice 4: Items liegen HAL unter _embedded.notifications bzw. ohne HAL unter content;
+            // wire-tolerant ueber notificationItemsOf gelesen (Behavior-Test, Produktions-HAL
+            // separat).
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
     final JsonNode items = notificationItemsOf(root);
@@ -283,19 +304,39 @@ class NotificationControllerIT {
 
     final UUID unreadId = UUID.randomUUID();
     final UUID readId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 3, unreadId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Ungelesen", LocalDateTime.now().minusMinutes(10));
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 4, readId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, true, "Gelesen", LocalDateTime.now().minusMinutes(9));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 3,
+        unreadId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Ungelesen",
+        LocalDateTime.now().minusMinutes(10));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 4,
+        readId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        true,
+        "Gelesen",
+        LocalDateTime.now().minusMinutes(9));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
-    final String json = mvc.perform(get("/api/v1/notifications?filter=unread")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(
+                get("/api/v1/notifications?filter=unread")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
     // Slice 4: Items unter _embedded.notifications
@@ -328,23 +369,32 @@ class NotificationControllerIT {
     final UUID[] notifIds = new UUID[count];
     for (int i = 0; i < count; i++) {
       notifIds[i] = UUID.randomUUID();
-      seedNotification(jdbcTemplate, NOTIF_ID_BASE + 10 + i, notifIds[i],
-          TENANT_A_ID, USER_A_REF, TYPE_ID_ASSIGN, false,
+      seedNotification(
+          jdbcTemplate,
+          NOTIF_ID_BASE + 10 + i,
+          notifIds[i],
+          TENANT_A_ID,
+          USER_A_REF,
+          TYPE_ID_ASSIGN,
+          false,
           "Pagination-Notif-" + i,
           LocalDateTime.now().minusMinutes(100 - i)); // unterschiedliche Zeiten
     }
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
     // Seite 1 (limit=2)
-    final String page1Json = mvc.perform(get("/api/v1/notifications?limit=2")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hasMore").value(true))
-        .andExpect(jsonPath("$.nextCursor").isNotEmpty())
-        .andReturn().getResponse().getContentAsString();
+    final String page1Json =
+        mvc.perform(
+                get("/api/v1/notifications?limit=2").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.hasMore").value(true))
+            .andExpect(jsonPath("$.nextCursor").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode page1 = new ObjectMapper().readTree(page1Json);
     // Slice 4: Items unter _embedded.notifications (HAL-Collection), Cursor-Felder top-level.
@@ -353,11 +403,14 @@ class NotificationControllerIT {
     assertThat(nextCursor).isNotBlank();
 
     // Seite 2 mit Cursor
-    final String page2Json = mvc.perform(
-            get("/api/v1/notifications?limit=2&cursor=" + nextCursor)
-                .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String page2Json =
+        mvc.perform(
+                get("/api/v1/notifications?limit=2&cursor=" + nextCursor)
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode page2 = new ObjectMapper().readTree(page2Json);
     assertThat(notificationItemsOf(page2).size()).isGreaterThanOrEqualTo(1);
@@ -368,7 +421,8 @@ class NotificationControllerIT {
       page1Ids.add(item.get("id").asText());
     }
     for (final JsonNode item : notificationItemsOf(page2)) {
-      assertThat(page1Ids).as("Seite 2 darf keine IDs aus Seite 1 enthalten (kein Dupe)")
+      assertThat(page1Ids)
+          .as("Seite 2 darf keine IDs aus Seite 1 enthalten (kein Dupe)")
           .doesNotContain(item.get("id").asText());
     }
   }
@@ -381,22 +435,36 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
 
     final UUID notifId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 20, notifId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Soll gelesen werden", LocalDateTime.now().minusMinutes(30));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 20,
+        notifId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Soll gelesen werden",
+        LocalDateTime.now().minusMinutes(30));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ",
-        "task-management:NOTIFICATION_WRITE");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:NOTIFICATION_READ",
+            "task-management:NOTIFICATION_WRITE");
 
-    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            put("/api/v1/notifications/" + notifId + "/read")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNoContent());
 
     // DB-Beweis: IS_READ = 1
-    final Integer isRead = jdbcTemplate.queryForObject(
-        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, notifId);
+    final Integer isRead =
+        jdbcTemplate.queryForObject(
+            "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+            Integer.class,
+            notifId);
     assertThat(isRead).as("IS_READ muss nach PUT /{id}/read = 1 sein").isEqualTo(1);
   }
 
@@ -411,39 +479,71 @@ class NotificationControllerIT {
     // Zwei eigene ungelesene
     final UUID notif1 = UUID.randomUUID();
     final UUID notif2 = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 21, notif1, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Ungelesen 1", LocalDateTime.now().minusMinutes(50));
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 22, notif2, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Ungelesen 2", LocalDateTime.now().minusMinutes(49));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 21,
+        notif1,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Ungelesen 1",
+        LocalDateTime.now().minusMinutes(50));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 22,
+        notif2,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Ungelesen 2",
+        LocalDateTime.now().minusMinutes(49));
 
     // Notification von USER_B (anderen Empfaenger, muss unveraendert bleiben)
     final UUID notifB = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 23, notifB, TENANT_A_ID, USER_B_REF,
-        TYPE_ID_ASSIGN, false, "B ungelesen", LocalDateTime.now().minusMinutes(48));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 23,
+        notifB,
+        TENANT_A_ID,
+        USER_B_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "B ungelesen",
+        LocalDateTime.now().minusMinutes(48));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ",
-        "task-management:NOTIFICATION_WRITE");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:NOTIFICATION_READ",
+            "task-management:NOTIFICATION_WRITE");
 
-    mvc.perform(put("/api/v1/notifications/read-all")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(put("/api/v1/notifications/read-all").header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNoContent());
 
     // Beweis: eigene Notifications von USER_A sind gelesen
-    final Integer isRead1 = jdbcTemplate.queryForObject(
-        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, notif1);
-    final Integer isRead2 = jdbcTemplate.queryForObject(
-        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, notif2);
+    final Integer isRead1 =
+        jdbcTemplate.queryForObject(
+            "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+            Integer.class,
+            notif1);
+    final Integer isRead2 =
+        jdbcTemplate.queryForObject(
+            "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+            Integer.class,
+            notif2);
     assertThat(isRead1).as("Notif1 von USER_A muss IS_READ=1 sein").isEqualTo(1);
     assertThat(isRead2).as("Notif2 von USER_A muss IS_READ=1 sein").isEqualTo(1);
 
     // Beweis: USER_B Notification bleibt IS_READ=0
-    final Integer isReadB = jdbcTemplate.queryForObject(
-        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, notifB);
+    final Integer isReadB =
+        jdbcTemplate.queryForObject(
+            "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+            Integer.class,
+            notifB);
     assertThat(isReadB).as("Notif von USER_B muss unveraendert IS_READ=0 sein").isEqualTo(0);
   }
 
@@ -455,17 +555,27 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
 
     final UUID notifId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 30, notifId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "CreatedAt-Test", LocalDateTime.now().minusHours(1));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 30,
+        notifId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "CreatedAt-Test",
+        LocalDateTime.now().minusHours(1));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
-    final String json = mvc.perform(get("/api/v1/notifications")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(get("/api/v1/notifications").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
     // Slice 4: Items unter _embedded.notifications
@@ -491,15 +601,17 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
 
     // base64url-gueltiger Cursor, Token[0] ist kein LocalDateTime
-    final String badCursor = de.brasi.nova.taskmanagement.paging.KeysetCursor.encode(
-        List.of("KEIN_DATUM", UUID.randomUUID().toString()));
+    final String badCursor =
+        de.brasi.nova.taskmanagement.paging.KeysetCursor.encode(
+            List.of("KEIN_DATUM", UUID.randomUUID().toString()));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
-    mvc.perform(get("/api/v1/notifications?cursor=" + badCursor)
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            get("/api/v1/notifications?cursor=" + badCursor)
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isBadRequest());
   }
 
@@ -512,8 +624,16 @@ class NotificationControllerIT {
 
     // Aktive Notification (soll sichtbar sein)
     final UUID activeId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 40, activeId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "Aktive Notif", LocalDateTime.now().minusMinutes(60));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 40,
+        activeId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "Aktive Notif",
+        LocalDateTime.now().minusMinutes(60));
 
     // Deaktivierte Notification (soll NICHT sichtbar sein) - direkt per SQL mit DEACTIVE-Status
     final UUID deactivatedId = UUID.randomUUID();
@@ -523,18 +643,26 @@ class NotificationControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
             + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
             + "VALUES (?, 'DEACTIVE', ?, 1, ?, ?, ?, ?, ?, ?)",
-        NOTIF_ID_BASE + 41, NOTIF_ID_BASE + 41, deactivatedId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, 0, "Deaktivierte Notif",
+        NOTIF_ID_BASE + 41,
+        NOTIF_ID_BASE + 41,
+        deactivatedId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        0,
+        "Deaktivierte Notif",
         java.sql.Timestamp.valueOf(LocalDateTime.now().minusMinutes(59)));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:NOTIFICATION_READ");
 
-    final String json = mvc.perform(get("/api/v1/notifications")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(get("/api/v1/notifications").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
     // Slice 4: Items unter _embedded.notifications
@@ -569,24 +697,36 @@ class NotificationControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
             + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
             + "VALUES (?, 'DEACTIVE', ?, 1, ?, ?, ?, ?, ?, ?)",
-        NOTIF_ID_BASE + 50, NOTIF_ID_BASE + 50, deactivatedId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, 0, "Deaktivierte Notif fuer markRead-Test",
+        NOTIF_ID_BASE + 50,
+        NOTIF_ID_BASE + 50,
+        deactivatedId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        0,
+        "Deaktivierte Notif fuer markRead-Test",
         java.sql.Timestamp.valueOf(LocalDateTime.now().minusMinutes(70)));
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ",
-        "task-management:NOTIFICATION_WRITE");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:NOTIFICATION_READ",
+            "task-management:NOTIFICATION_WRITE");
 
     // PUT auf deaktivierte Notification muss 404 liefern
-    mvc.perform(put("/api/v1/notifications/" + deactivatedId + "/read")
-            .header("Authorization", "Bearer " + tokenA))
+    mvc.perform(
+            put("/api/v1/notifications/" + deactivatedId + "/read")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNotFound());
 
     // DB-Beweis: IS_READ bleibt 0 (unveraendert)
-    final Integer isRead = jdbcTemplate.queryForObject(
-        "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, deactivatedId);
+    final Integer isRead =
+        jdbcTemplate.queryForObject(
+            "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
+            Integer.class,
+            deactivatedId);
     assertThat(isRead).as("IS_READ muss nach 404 unveraendert 0 bleiben").isEqualTo(0);
   }
 
@@ -597,12 +737,22 @@ class NotificationControllerIT {
   void be8_put_read_value_true_setzt_is_read_1() throws Exception {
     final MockMvc mvc = buildMvc();
     final UUID notifId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 60, notifId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "value=true", LocalDateTime.now().minusMinutes(30));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 60,
+        notifId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "value=true",
+        LocalDateTime.now().minusMinutes(30));
 
-    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
-            .header("Authorization", "Bearer " + tokenAReadWrite())
-            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":true}"))
+    mvc.perform(
+            put("/api/v1/notifications/" + notifId + "/read")
+                .header("Authorization", "Bearer " + tokenAReadWrite())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
 
     assertThat(isReadInDb(notifId)).as("value=true -> IS_READ=1").isEqualTo(1);
@@ -614,12 +764,22 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
     final UUID notifId = UUID.randomUUID();
     // Startzustand gelesen -> wird auf ungelesen gesetzt.
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 61, notifId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, true, "value=false", LocalDateTime.now().minusMinutes(30));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 61,
+        notifId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        true,
+        "value=false",
+        LocalDateTime.now().minusMinutes(30));
 
-    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
-            .header("Authorization", "Bearer " + tokenAReadWrite())
-            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+    mvc.perform(
+            put("/api/v1/notifications/" + notifId + "/read")
+                .header("Authorization", "Bearer " + tokenAReadWrite())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":false}"))
         .andExpect(status().isNoContent());
 
     assertThat(isReadInDb(notifId)).as("value=false -> IS_READ=0 (unread)").isEqualTo(0);
@@ -632,21 +792,41 @@ class NotificationControllerIT {
 
     // {} (leerer JSON-Body) -> read=1
     final UUID n1 = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 62, n1, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "empty body", LocalDateTime.now().minusMinutes(30));
-    mvc.perform(put("/api/v1/notifications/" + n1 + "/read")
-            .header("Authorization", "Bearer " + tokenAReadWrite())
-            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 62,
+        n1,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "empty body",
+        LocalDateTime.now().minusMinutes(30));
+    mvc.perform(
+            put("/api/v1/notifications/" + n1 + "/read")
+                .header("Authorization", "Bearer " + tokenAReadWrite())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
         .andExpect(status().isNoContent());
     assertThat(isReadInDb(n1)).as("{} -> IS_READ=1").isEqualTo(1);
 
     // {"value":null} -> read=1
     final UUID n2 = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 63, n2, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "value null", LocalDateTime.now().minusMinutes(30));
-    mvc.perform(put("/api/v1/notifications/" + n2 + "/read")
-            .header("Authorization", "Bearer " + tokenAReadWrite())
-            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":null}"))
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 63,
+        n2,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "value null",
+        LocalDateTime.now().minusMinutes(30));
+    mvc.perform(
+            put("/api/v1/notifications/" + n2 + "/read")
+                .header("Authorization", "Bearer " + tokenAReadWrite())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":null}"))
         .andExpect(status().isNoContent());
     assertThat(isReadInDb(n2)).as("{\"value\":null} -> IS_READ=1").isEqualTo(1);
   }
@@ -656,8 +836,16 @@ class NotificationControllerIT {
   void be8_put_read_toggle() throws Exception {
     final MockMvc mvc = buildMvc();
     final UUID notifId = UUID.randomUUID();
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 64, notifId, TENANT_A_ID, USER_A_REF,
-        TYPE_ID_ASSIGN, false, "toggle", LocalDateTime.now().minusMinutes(30));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 64,
+        notifId,
+        TENANT_A_ID,
+        USER_A_REF,
+        TYPE_ID_ASSIGN,
+        false,
+        "toggle",
+        LocalDateTime.now().minusMinutes(30));
     final String tokenA = tokenAReadWrite();
 
     putReadValue(mvc, tokenA, notifId, "true");
@@ -674,12 +862,22 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
     final UUID notifId = UUID.randomUUID();
     // Notification gehoert USER_B; USER_A versucht unread -> neutrale 404, kein State-Change.
-    seedNotification(jdbcTemplate, NOTIF_ID_BASE + 65, notifId, TENANT_A_ID, USER_B_REF,
-        TYPE_ID_ASSIGN, true, "fremd", LocalDateTime.now().minusMinutes(30));
+    seedNotification(
+        jdbcTemplate,
+        NOTIF_ID_BASE + 65,
+        notifId,
+        TENANT_A_ID,
+        USER_B_REF,
+        TYPE_ID_ASSIGN,
+        true,
+        "fremd",
+        LocalDateTime.now().minusMinutes(30));
 
-    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
-            .header("Authorization", "Bearer " + tokenAReadWrite())
-            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+    mvc.perform(
+            put("/api/v1/notifications/" + notifId + "/read")
+                .header("Authorization", "Bearer " + tokenAReadWrite())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":false}"))
         .andExpect(status().isNotFound());
 
     assertThat(isReadInDb(notifId)).as("fremde Notif unveraendert IS_READ=1").isEqualTo(1);
@@ -689,12 +887,17 @@ class NotificationControllerIT {
   @DisplayName("be8_put_read_value_false_nur_notification_read_403")
   void be8_put_read_value_false_nur_read_403() throws Exception {
     final MockMvc mvc = buildMvc();
-    final String tokenNoWrite = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-        "task-management:NOTIFICATION_READ");
-    mvc.perform(put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
-            .header("Authorization", "Bearer " + tokenNoWrite)
-            .contentType(MediaType.APPLICATION_JSON).content("{\"value\":false}"))
+    final String tokenNoWrite =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_READ_ONLY_REF,
+            USER_READ_ONLY_LOGIN,
+            "task-management:NOTIFICATION_READ");
+    mvc.perform(
+            put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
+                .header("Authorization", "Bearer " + tokenNoWrite)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":false}"))
         .andExpect(status().isForbidden());
   }
 
@@ -706,32 +909,38 @@ class NotificationControllerIT {
     final MockMvc mvc = buildMvc();
 
     // 1. Anonym -> 401
-    mvc.perform(get("/api/v1/notifications"))
-        .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/v1/notifications")).andExpect(status().isUnauthorized());
 
     // 2. Token mit nur TASK_READ (kein NOTIFICATION_READ) -> GET 403
-    final String tokenReadOnly = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-        "task-management:TASK_READ");
-    mvc.perform(get("/api/v1/notifications")
-            .header("Authorization", "Bearer " + tokenReadOnly))
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    mvc.perform(get("/api/v1/notifications").header("Authorization", "Bearer " + tokenReadOnly))
         .andExpect(status().isForbidden());
 
     // 3. Token mit NOTIFICATION_READ aber KEIN NOTIFICATION_WRITE -> PUT read 403
-    final String tokenNoWrite = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN,
-        "task-management:NOTIFICATION_READ");
-    mvc.perform(put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
-            .header("Authorization", "Bearer " + tokenNoWrite))
+    final String tokenNoWrite =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_READ_ONLY_REF,
+            USER_READ_ONLY_LOGIN,
+            "task-management:NOTIFICATION_READ");
+    mvc.perform(
+            put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
+                .header("Authorization", "Bearer " + tokenNoWrite))
         .andExpect(status().isForbidden());
 
     // 4. Fremde/unbekannte Notification-UUID bei markRead -> 404
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ",
-        "task-management:NOTIFICATION_WRITE");
-    mvc.perform(put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
-            .header("Authorization", "Bearer " + tokenA))
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:NOTIFICATION_READ",
+            "task-management:NOTIFICATION_WRITE");
+    mvc.perform(
+            put("/api/v1/notifications/" + UUID.randomUUID() + "/read")
+                .header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isNotFound());
   }
 
@@ -747,9 +956,9 @@ class NotificationControllerIT {
    * Navigiert zu {@code _embedded.notifications} in einer HAL-Collection-Seite.
    *
    * <p>Slice 4: {@code GET /api/v1/notifications} liefert jetzt {@link
-   * de.brasi.nova.taskmanagement.paging.CursorCollectionModel} mit Items unter
-   * {@code _embedded.notifications}. Leere Collection nur bei vorhandenen Cursor-Feldern;
-   * unbekannte Form -> AssertionError.
+   * de.brasi.nova.taskmanagement.paging.CursorCollectionModel} mit Items unter {@code
+   * _embedded.notifications}. Leere Collection nur bei vorhandenen Cursor-Feldern; unbekannte Form
+   * -> AssertionError.
    */
   private com.fasterxml.jackson.databind.JsonNode notificationItemsOf(
       final com.fasterxml.jackson.databind.JsonNode page) {
@@ -776,29 +985,36 @@ class NotificationControllerIT {
       return new com.fasterxml.jackson.databind.node.ArrayNode(
           com.fasterxml.jackson.databind.node.JsonNodeFactory.instance);
     }
-    throw new AssertionError("Unbekannte Collection-Wire-Form (weder _embedded.notifications noch"
-        + " content noch items, keine Cursor-Felder): " + page);
+    throw new AssertionError(
+        "Unbekannte Collection-Wire-Form (weder _embedded.notifications noch"
+            + " content noch items, keine Cursor-Felder): "
+            + page);
   }
 
   private String tokenAReadWrite() {
     return buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:NOTIFICATION_READ", "task-management:NOTIFICATION_WRITE");
+        TENANT_A_UUID,
+        USER_A_REF,
+        USER_A_LOGIN,
+        "task-management:NOTIFICATION_READ",
+        "task-management:NOTIFICATION_WRITE");
   }
 
   private Integer isReadInDb(final UUID externalId) {
     return jdbcTemplate.queryForObject(
         "SELECT IS_READ FROM [dbo].[TASK_NOTIFICATION] WHERE EXTERNALID = ?",
-        Integer.class, externalId);
+        Integer.class,
+        externalId);
   }
 
   private void putReadValue(
       final MockMvc mvc, final String token, final UUID notifId, final String valueLiteral)
       throws Exception {
-    mvc.perform(put("/api/v1/notifications/" + notifId + "/read")
-            .header("Authorization", "Bearer " + token)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"value\":" + valueLiteral + "}"))
+    mvc.perform(
+            put("/api/v1/notifications/" + notifId + "/read")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":" + valueLiteral + "}"))
         .andExpect(status().isNoContent());
   }
 
@@ -839,7 +1055,10 @@ class NotificationControllerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -853,21 +1072,25 @@ class NotificationControllerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   /**
    * Seedet eine TASK_NOTIFICATION-Zeile direkt per JdbcTemplate.
    *
-   * @param jt         JdbcTemplate
-   * @param id         interne ID (deterministisch im eigenen Block)
+   * @param jt JdbcTemplate
+   * @param id interne ID (deterministisch im eigenen Block)
    * @param externalId externe UUID (EXTERNALID)
-   * @param tenantId   Mandanten-ID
-   * @param recipient  RECIPIENT_REF
-   * @param typeId     FK auf DIC_NOTIFICATION_TYPE (z.B. 401=ASSIGN)
-   * @param isRead     IS_READ-Flag
-   * @param text       TEXT
-   * @param createdAt  ANGELEGT_AM (Wand-Uhr-Zeit)
+   * @param tenantId Mandanten-ID
+   * @param recipient RECIPIENT_REF
+   * @param typeId FK auf DIC_NOTIFICATION_TYPE (z.B. 401=ASSIGN)
+   * @param isRead IS_READ-Flag
+   * @param text TEXT
+   * @param createdAt ANGELEGT_AM (Wand-Uhr-Zeit)
    */
   private static void seedNotification(
       final JdbcTemplate jt,
@@ -885,8 +1108,15 @@ class NotificationControllerIT {
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, RECIPIENT_REF,"
             + " TYPE_ID, IS_READ, TEXT, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, ?, ?, ?)",
-        id, id, externalId, tenantId, recipient, typeId,
-        isRead ? 1 : 0, text, java.sql.Timestamp.valueOf(createdAt));
+        id,
+        id,
+        externalId,
+        tenantId,
+        recipient,
+        typeId,
+        isRead ? 1 : 0,
+        text,
+        java.sql.Timestamp.valueOf(createdAt));
   }
 
   private static String toPem(final byte[] der) {

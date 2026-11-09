@@ -4,8 +4,8 @@ package de.brasi.nova.taskmanagement.tag;
  * HATEOAS-Konstanten (Rels, Targets, Titles, Specs) fuer die {@code TaskTag}-Entitaet (PLAN #141
  * Slice 2).
  *
- * <p>Handgepflegtes Gegenstueck zum scaffold-generierten {@code MenuHateoas} der application und zum
- * {@code TaskHateoas} der Task-Lane (Slice 1). Die Konstanten binden die deklarativen
+ * <p>Handgepflegtes Gegenstueck zum scaffold-generierten {@code MenuHateoas} der application und
+ * zum {@code TaskHateoas} der Task-Lane (Slice 1). Die Konstanten binden die deklarativen
  * Affordance-Regeln ({@code @LinkRule}/{@code @CollectionLinkRule}/{@code @HateoasLinkTarget} am
  * {@code TagController}) an stabile Namen, damit Regel, Ziel und Bedingung nicht via loser
  * String-Literale auseinanderlaufen koennen.

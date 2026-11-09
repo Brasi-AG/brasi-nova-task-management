@@ -90,12 +90,14 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
  * echtes MSSQL und einen echten Socket ({@code @SpringBootTest(RANDOM_PORT)} + {@link
  * StandardWebSocketClient}).
  *
- * <p>Beweist, dass der reale After-Commit-Seam ueber die echten {@link WebSocketNotificationPushPort}
- * / {@link WebSocketInboxSignalPort} ({@code @Primary}) auf einer realen Session ankommt:
+ * <p>Beweist, dass der reale After-Commit-Seam ueber die echten {@link
+ * WebSocketNotificationPushPort} / {@link WebSocketInboxSignalPort} ({@code @Primary}) auf einer
+ * realen Session ankommt:
  *
  * <ul>
  *   <li>{@code push_nach_commit}: ein per REST (Mention-Kommentar) ausgeloestes, committetes
- *       MENTION-Notification-Event erreicht die Empfaenger-Session als {@code notification}-Envelope.
+ *       MENTION-Notification-Event erreicht die Empfaenger-Session als {@code
+ *       notification}-Envelope.
  *   <li>{@code kein_push_bei_rollback}: eine in einer zurueckgerollten Transaktion registrierte
  *       Invalidierung erreicht die Session NICHT; eine danach committete Invalidierung schon
  *       (Positiv-Kontrolle, damit die Abwesenheit nicht an einer toten Session liegt).
@@ -149,11 +151,13 @@ class TaskWebSocketHandlerIT {
 
   /** USER_A: Akteur/Creator/Empfaenger der Snapshot-Signale. */
   private static final UUID USER_A_REF = UUID.randomUUID();
+
   private static final String USER_A_LOGIN = "user-a-wsctl@brasi.de";
   private static final long USER_A_DB_ID = 561L;
 
   /** USER_B: Mention-Ziel (bare login, damit @handle aufloesbar ist). */
   private static final UUID USER_B_REF = UUID.randomUUID();
+
   private static final String USER_B_LOGIN = "user-b-wsctl";
   private static final long USER_B_DB_ID = 562L;
 
@@ -246,7 +250,11 @@ class TaskWebSocketHandlerIT {
         jwt(USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ", "task-management:TASK_WRITE");
     // B braucht NOTIFICATION_READ, damit der Notification-Push ihn erreicht (Gate seit Slice 2).
     final String tokenB =
-        jwt(USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ", "task-management:NOTIFICATION_READ");
+        jwt(
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_READ",
+            "task-management:NOTIFICATION_READ");
 
     final UUID taskId = createTask(tokenA, "Push-nach-Commit-Task");
 
@@ -308,7 +316,8 @@ class TaskWebSocketHandlerIT {
       // Der erste (und einzige) Frame ist das snapshot-invalidated - NIE ein notification.
       final JsonNode frame = awaitFrame(b, 5);
       assertThat(frame.get("type").asText())
-          .as("ohne NOTIFICATION_READ darf kein notification-Frame kommen; nur snapshot-invalidated")
+          .as(
+              "ohne NOTIFICATION_READ darf kein notification-Frame kommen; nur snapshot-invalidated")
           .isEqualTo("snapshot-invalidated");
 
       // Kein nachgelagerter notification-Frame im Puffer.
@@ -406,8 +415,16 @@ class TaskWebSocketHandlerIT {
     for (int i = 0; i < 3; i++) {
       final long taskRowId = ID_BASE + 10 + i;
       final UUID uuid = UUID.randomUUID();
-      seedTask(jdbcTemplate, taskRowId, uuid, TENANT_A_ID, openId, normalId, dirId,
-          LocalDateTime.now().minusMinutes(30 - i), "Rebootstrap-Task-" + i);
+      seedTask(
+          jdbcTemplate,
+          taskRowId,
+          uuid,
+          TENANT_A_ID,
+          openId,
+          normalId,
+          dirId,
+          LocalDateTime.now().minusMinutes(30 - i),
+          "Rebootstrap-Task-" + i);
       seedParticipant(jdbcTemplate, ID_BASE + 20 + i, taskRowId, USER_A_REF, TENANT_A_ID);
       seedUserState(jdbcTemplate, ID_BASE + 30 + i, taskRowId, USER_A_REF, TENANT_A_ID);
       seeded.add(uuid);
@@ -420,7 +437,8 @@ class TaskWebSocketHandlerIT {
       // Bootstrap 1 (asOf1) - nur um den Ausgangszustand zu konsumieren
       enumerateActiveTaskIds(tokenA, 1);
 
-      // Mutation der AELTESTEN Aufgabe -> LAST_ACTIVITY_AT springt nach vorn (Reorder) + Invalidierung
+      // Mutation der AELTESTEN Aufgabe -> LAST_ACTIVITY_AT springt nach vorn (Reorder) +
+      // Invalidierung
       patchTitle(tokenA, seeded.get(0), "t0 nach vorne gezogen");
 
       final JsonNode frame = awaitFrame(a, 5);
@@ -576,7 +594,8 @@ class TaskWebSocketHandlerIT {
               .toEntity(String.class);
       assertThat(resp.getStatusCode().value()).isEqualTo(200);
       final JsonNode page = readJson(resp.getBody());
-      // Slice 4: Items unter _embedded.tasks (HAL) bzw. content (ohne HAL); leere Liste = keines von beiden.
+      // Slice 4: Items unter _embedded.tasks (HAL) bzw. content (ohne HAL); leere Liste = keines
+      // von beiden.
       // Dieser IT bootet ohne KSF-HAL-Converter: CollectionModel serialisiert dann als content.
       JsonNode embeddedTasks = page.path("_embedded").path("tasks");
       if (!embeddedTasks.isArray()) {
@@ -585,7 +604,8 @@ class TaskWebSocketHandlerIT {
       for (final JsonNode item : embeddedTasks) {
         ids.add(UUID.fromString(item.get("id").asText()));
       }
-      if (!page.path("hasMore").asBoolean(false) || page.path("nextCursor").isMissingNode()
+      if (!page.path("hasMore").asBoolean(false)
+          || page.path("nextCursor").isMissingNode()
           || page.path("nextCursor").isNull()) {
         return ids;
       }
@@ -635,8 +655,17 @@ class TaskWebSocketHandlerIT {
             + " TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'ws-handler-it', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)",
-        id, id, Timestamp.valueOf(lastActivityAt), externalId, tenantId, title,
-        statusId, priorityId, directionId, tenantId, Timestamp.valueOf(lastActivityAt));
+        id,
+        id,
+        Timestamp.valueOf(lastActivityAt),
+        externalId,
+        tenantId,
+        title,
+        statusId,
+        priorityId,
+        directionId,
+        tenantId,
+        Timestamp.valueOf(lastActivityAt));
   }
 
   private static void seedParticipant(
@@ -652,7 +681,13 @@ class TaskWebSocketHandlerIT {
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
             + "VALUES (?, 'ACTIVE', 'ws-handler-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, 1, 1, 1, NULL)",
-        id, id, UUID.randomUUID(), tenantId, taskId, participantRef, tenantId);
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        participantRef,
+        tenantId);
   }
 
   private static void seedUserState(
@@ -667,7 +702,13 @@ class TaskWebSocketHandlerIT {
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'ACTIVE', 'ws-handler-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
-        id, id, UUID.randomUUID(), tenantId, taskId, userRef, tenantId);
+        id,
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        userRef,
+        tenantId);
   }
 
   private static String jwt(
@@ -704,7 +745,10 @@ class TaskWebSocketHandlerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -718,7 +762,11 @@ class TaskWebSocketHandlerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {

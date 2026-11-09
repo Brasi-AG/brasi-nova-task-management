@@ -20,22 +20,22 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
-import org.springframework.transaction.annotation.EnableTransactionManagement;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * Beweist, dass das DEFAULT-OpenAPI-Dokument {@code /v3/api-docs} (Regen-Quelle des api-clients) fuer
- * die vier Listen-Endpunkte das Collection-Schema ({@code _embedded}, Cursor-Felder) traegt und nicht
- * auf das Einzel-Item-Model kollabiert ist.
+ * Beweist, dass das DEFAULT-OpenAPI-Dokument {@code /v3/api-docs} (Regen-Quelle des api-clients)
+ * fuer die vier Listen-Endpunkte das Collection-Schema ({@code _embedded}, Cursor-Felder) traegt
+ * und nicht auf das Einzel-Item-Model kollabiert ist.
  *
  * <p>Hintergrund: {@code @ApiFindResponse} laesst den KSF-{@code KsfApiResponseCustomizer} die 200
  * durch das Item-Model ersetzen; {@code @ApiFindCollectionResponse} laesst das springdoc-native
@@ -156,7 +156,10 @@ class OpenApiDefaultDocCollectionSchemaIT {
             .apply(SecurityMockMvcConfigurers.springSecurity())
             .build();
     final String body =
-        mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse()
+        mvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
             .getContentAsString();
     return new ObjectMapper().readTree(body);
   }
@@ -194,14 +197,15 @@ class OpenApiDefaultDocCollectionSchemaIT {
 
   private static void collectRefs(final JsonNode node, final Set<String> refs) {
     if (node.isObject()) {
-      node.fields().forEachRemaining(
-          e -> {
-            if ("$ref".equals(e.getKey()) && e.getValue().isTextual()) {
-              refs.add(e.getValue().asText());
-            } else {
-              collectRefs(e.getValue(), refs);
-            }
-          });
+      node.fields()
+          .forEachRemaining(
+              e -> {
+                if ("$ref".equals(e.getKey()) && e.getValue().isTextual()) {
+                  refs.add(e.getValue().asText());
+                } else {
+                  collectRefs(e.getValue(), refs);
+                }
+              });
     } else if (node.isArray()) {
       node.forEach(n -> collectRefs(n, refs));
     }
@@ -216,11 +220,17 @@ class OpenApiDefaultDocCollectionSchemaIT {
     final JsonNode schema = okSchema(doc, path);
     final JsonNode embedded = property(schema, doc, "_embedded");
     assertThat(embedded.isMissingNode()).as(path + " hat _embedded: " + schema).isFalse();
-    // EXAKTER Rel-Schluessel: _embedded hat genau eine Property <rel>, ein Array von $ref Item-Model.
+    // EXAKTER Rel-Schluessel: _embedded hat genau eine Property <rel>, ein Array von $ref
+    // Item-Model.
     final JsonNode embeddedProps = resolve(embedded, doc).path("properties");
-    assertThat(embeddedProps.fieldNames()).toIterable().as(path + " _embedded-Rel").containsExactly(rel);
+    assertThat(embeddedProps.fieldNames())
+        .toIterable()
+        .as(path + " _embedded-Rel")
+        .containsExactly(rel);
     final JsonNode relSchema = embeddedProps.path(rel);
-    assertThat(relSchema.path("type").asText()).as(path + " _embedded." + rel + " ist Array").isEqualTo("array");
+    assertThat(relSchema.path("type").asText())
+        .as(path + " _embedded." + rel + " ist Array")
+        .isEqualTo("array");
     assertThat(relSchema.path("items").path("$ref").asText())
         .as(path + " _embedded." + rel + " Item-Model")
         .isEqualTo("#/components/schemas/" + itemModel);
@@ -239,10 +249,17 @@ class OpenApiDefaultDocCollectionSchemaIT {
   void default_dokument_listen_endpunkte_tragen_collection_schema() throws Exception {
     final JsonNode doc = defaultDocument();
 
-    assertCollection(doc, "/api/v1/tasks", "tasks", "TaskSummaryModel", "nextCursor", "hasMore", "asOf");
+    assertCollection(
+        doc, "/api/v1/tasks", "tasks", "TaskSummaryModel", "nextCursor", "hasMore", "asOf");
     assertCollection(
         doc, "/api/v1/tasks/archive", "tasks", "TaskSummaryModel", "nextCursor", "hasMore", "asOf");
-    assertCollection(doc, "/api/v1/notifications", "notifications", "NotificationModel", "nextCursor", "hasMore");
+    assertCollection(
+        doc,
+        "/api/v1/notifications",
+        "notifications",
+        "NotificationModel",
+        "nextCursor",
+        "hasMore");
     assertCollection(doc, "/api/v1/tags", "tags", "TagModel");
 
     final Set<String> refs = new HashSet<>();
@@ -269,7 +286,8 @@ class OpenApiDefaultDocCollectionSchemaIT {
     assertThat(tags.get(0).asText()).isEqualTo("inbox-snapshot-controller");
   }
 
-  // ---- IT-Context: identisch zu InboxListAffordanceIT.ItConfig (voller Autoconfig + HATEOAS) -----
+  // ---- IT-Context: identisch zu InboxListAffordanceIT.ItConfig (voller Autoconfig + HATEOAS)
+  // -----
 
   @SpringBootConfiguration
   @org.springframework.boot.autoconfigure.EnableAutoConfiguration(
@@ -300,7 +318,9 @@ class OpenApiDefaultDocCollectionSchemaIT {
         "de.brasi.nova.taskmanagement.configuration",
       },
       excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class),
+        @ComponentScan.Filter(
+            type = FilterType.ANNOTATION,
+            classes = SpringBootConfiguration.class),
         @ComponentScan.Filter(
             type = FilterType.REGEX,
             pattern = "de\\.brasi\\.nova\\.taskmanagement\\.security\\.it\\..*")

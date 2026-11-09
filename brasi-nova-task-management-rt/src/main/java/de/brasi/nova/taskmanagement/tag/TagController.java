@@ -50,12 +50,13 @@ import org.springframework.web.bind.annotation.RestController;
  * </ul>
  *
  * <p>PLAN #141 Slice 2: dieser Controller ist Regel-Owner der Affordance-Links fuer {@link TaskTag}
- * ({@code @EnableNovaHateoas}). Die {@code @LinkRules} deklarieren permission-gegatete HATEOAS-{@code
- * _links} (ITEM: update/deactivate/delete am {@code _embedded}-Item; COLLECTION: create am
- * Collection-Level). Alle Rels sind TAG_ADMIN-gegatet ({@link TagHateoas.Specs#TAG_ADMIN}); {@code
- * deactivate} zusaetzlich nur bei aktivem Tag ({@link TagHateoas.Specs#IS_ACTIVE}). Die {@code
- * _links} sind rein ADDITIV (FE-Anzeige) und veraendern die bestehende Enforcement NICHT - jeder
- * Mutations-Handler traegt unveraendert sein {@code @RequiresPermission(TAG_ADMIN)}.
+ * ({@code @EnableNovaHateoas}). Die {@code @LinkRules} deklarieren permission-gegatete
+ * HATEOAS-{@code _links} (ITEM: update/deactivate/delete am {@code _embedded}-Item; COLLECTION:
+ * create am Collection-Level). Alle Rels sind TAG_ADMIN-gegatet ({@link
+ * TagHateoas.Specs#TAG_ADMIN}); {@code deactivate} zusaetzlich nur bei aktivem Tag ({@link
+ * TagHateoas.Specs#IS_ACTIVE}). Die {@code _links} sind rein ADDITIV (FE-Anzeige) und veraendern
+ * die bestehende Enforcement NICHT - jeder Mutations-Handler traegt unveraendert sein
+ * {@code @RequiresPermission(TAG_ADMIN)}.
  */
 @RestController
 @RequestMapping("/api/v1/tags")
@@ -116,7 +117,8 @@ public class TagController {
         // Bewusst OHNE explizites content: springdoc leitet das HAL-Collection-Schema
         // (_embedded.tags + _links) nativ aus dem Rueckgabetyp ab. Ein explizites @Content ohne
         // schema unterdrueckt dieses Schema im Default-Dokument (Regen-Quelle, #141 Slice 6).
-        description = "Tag-Liste erfolgreich geladen (HAL-CollectionModel, Items unter _embedded.tags)."),
+        description =
+            "Tag-Liste erfolgreich geladen (HAL-CollectionModel, Items unter _embedded.tags)."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT.")
   })
   @GetMapping

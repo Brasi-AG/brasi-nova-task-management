@@ -19,7 +19,9 @@ public class NonStaticInnerControllerFixture {
 
   /** Bewusst NON-STATIC inner (isIndependent()==false), ungegateter Schreib-Endpunkt. */
   @Controller
-  @ConditionalOnProperty(name = "task-management.test.affordance-probe.enabled", havingValue = "true")
+  @ConditionalOnProperty(
+      name = "task-management.test.affordance-probe.enabled",
+      havingValue = "true")
   @RequestMapping("/probe/inner-ungated")
   public class InnerUngatedController {
 

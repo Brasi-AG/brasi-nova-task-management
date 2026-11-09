@@ -451,7 +451,8 @@ public class TagCatalogService {
     // PLAN #141 Slice 2: die KSF-Enrichment-Pipeline braucht die geladene Entity am Model
     // (entityClass + refId werden daraus gesetzt) sowie einen expliziten modelState (die
     // IS_ACTIVE-Bedingung von deactivate liest ihn). Die daraus erzeugten _links sind rein additiv
-    // und veraendern den fachlichen Wire NICHT; die Enforcement bleibt @RequiresPermission(TAG_ADMIN)
+    // und veraendern den fachlichen Wire NICHT; die Enforcement bleibt
+    // @RequiresPermission(TAG_ADMIN)
     // an jedem Mutations-Handler.
     model.setEntity(tag);
     model.setModelState(

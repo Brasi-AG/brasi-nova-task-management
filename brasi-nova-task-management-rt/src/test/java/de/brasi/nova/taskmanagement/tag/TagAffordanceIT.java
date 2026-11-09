@@ -50,21 +50,21 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * Affordance-Integration-Test (PLAN #141 Slice 2): {@code GET /api/v1/tags} ist pipeline-angereichert
- * und traegt permission-gegatete HATEOAS-{@code _links} - OHNE die bestehende Enforcement
- * ({@code @RequiresPermission(TAG_ADMIN)} an jedem Mutations-Handler) oder den fachlichen Wire-Vertrag
- * von {@link de.brasi.nova.taskmanagement.tag.model.TagModel} zu veraendern. Die {@code _links} sind
- * rein additiv (Anzeige).
+ * Affordance-Integration-Test (PLAN #141 Slice 2): {@code GET /api/v1/tags} ist
+ * pipeline-angereichert und traegt permission-gegatete HATEOAS-{@code _links} - OHNE die bestehende
+ * Enforcement ({@code @RequiresPermission(TAG_ADMIN)} an jedem Mutations-Handler) oder den
+ * fachlichen Wire-Vertrag von {@link de.brasi.nova.taskmanagement.tag.model.TagModel} zu
+ * veraendern. Die {@code _links} sind rein additiv (Anzeige).
  *
- * <p>Wie {@code TaskDetailAffordanceIT} (Slice 1) bootet dieser IT den VOLLEN Spring-Boot-Autoconfig-
- * Graph: der globale {@code NovaFindResponseAdvice}, der {@code @EnableNovaHateoas}-Scan und die
- * Collection-/Item-Link-Resolver sind damit genauso live wie in Produktion, und die reale
- * KSF-Web-Security-Filterchain (JWT, Tenant-Binding) laeuft scharf - sonst wuerden die
- * TAG_ADMIN-gegateten Links faelschlich unterdrueckt.
+ * <p>Wie {@code TaskDetailAffordanceIT} (Slice 1) bootet dieser IT den VOLLEN
+ * Spring-Boot-Autoconfig- Graph: der globale {@code NovaFindResponseAdvice}, der
+ * {@code @EnableNovaHateoas}-Scan und die Collection-/Item-Link-Resolver sind damit genauso live
+ * wie in Produktion, und die reale KSF-Web-Security-Filterchain (JWT, Tenant-Binding) laeuft scharf
+ * - sonst wuerden die TAG_ADMIN-gegateten Links faelschlich unterdrueckt.
  *
  * <p>Rel-Matrix (SPEC #141): Item {@code update}/{@code deactivate}/{@code delete}, Collection
- * {@code create}; alle TAG_ADMIN-gegatet (deactivate zusaetzlich nur bei aktivem Tag). KEIN
- * {@code self}-Item-Link (es gibt kein GET /tags/{id}).
+ * {@code create}; alle TAG_ADMIN-gegatet (deactivate zusaetzlich nur bei aktivem Tag). KEIN {@code
+ * self}-Item-Link (es gibt kein GET /tags/{id}).
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
@@ -83,7 +83,8 @@ import org.springframework.web.context.WebApplicationContext;
       "spring.flyway.locations=classpath:db/migration",
       "ksf.persistence.dialect=MSSQL",
       "ksf.persistence.ddl-auto=none",
-      // Reale KSF-Web-Security-Filterchain (FILTER-Modus, JWT) - identisch zu TaskDetailAffordanceIT.
+      // Reale KSF-Web-Security-Filterchain (FILTER-Modus, JWT) - identisch zu
+      // TaskDetailAffordanceIT.
       "ksf.web-security.enabled=true",
       "ksf.web-security.filter-chain.enabled=true",
       "ksf.web-security.principal.profile-claim.enabled=true",
@@ -173,7 +174,8 @@ class TagAffordanceIT {
     // FINDING 2 (Slice 1): der KSF-Laufzeit-Regelresolver liest beim Link-Aufbau
     // system_controller_regel; fehlt die Tabelle, verschluckt der fail-safe-catch die GESAMTE
     // Link-Anreicherung (GET bleibt 200, aber ohne _links). RefSchemaItDb legt die leere
-    // Struktur-Kopie an (= reales Deploy-Provisioning); hier nur noch beweisen, dass das gegriffen hat.
+    // Struktur-Kopie an (= reales Deploy-Provisioning); hier nur noch beweisen, dass das gegriffen
+    // hat.
     final Integer tableExists =
         jt.queryForObject(
             "SELECT COUNT(*) FROM sys.objects"
@@ -211,7 +213,8 @@ class TagAffordanceIT {
   private static final List<String> PRE_EXISTING_TAG_FIELDS =
       List.of("id", "name", "severityCode", "color");
 
-  // ---- AC: TAG_ADMIN GET /tags -> _embedded.tags-Items tragen update/deactivate/delete + create --
+  // ---- AC: TAG_ADMIN GET /tags -> _embedded.tags-Items tragen update/deactivate/delete + create
+  // --
 
   @Test
   @Order(2)
@@ -223,9 +226,14 @@ class TagAffordanceIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
     final String admin =
-        buildJwt(USER_ADMIN_REF, USER_ADMIN_LOGIN, "task-management:TAG_ADMIN", "task-management:TASK_READ");
+        buildJwt(
+            USER_ADMIN_REF,
+            USER_ADMIN_LOGIN,
+            "task-management:TAG_ADMIN",
+            "task-management:TASK_READ");
 
-    final UUID tagId = createTag(mvc, admin, "{\"name\":\"AFF-Admin-Tag\",\"severityCode\":\"DANGER\"}");
+    final UUID tagId =
+        createTag(mvc, admin, "{\"name\":\"AFF-Admin-Tag\",\"severityCode\":\"DANGER\"}");
 
     final String body =
         mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + admin))
@@ -240,7 +248,8 @@ class TagAffordanceIT {
     assertThat(root.path("_links").path("create").path("href").isTextual())
         .as("BLOCKER: Collection-_links.create fehlt (TagController ist Rule-Owner). Body=" + body)
         .isTrue();
-    // Auflage 2 (IMPL-Gate): create zielt auf die Collection POST /api/v1/tags (ohne Tag-id) - fangt
+    // Auflage 2 (IMPL-Gate): create zielt auf die Collection POST /api/v1/tags (ohne Tag-id) -
+    // fangt
     // eine @HateoasLinkTarget-Fehlzuordnung des create-rels auf einen Item-Handler.
     assertThat(root.path("_links").path("create").path("href").asText())
         .as("create-href zielt auf POST /api/v1/tags (ohne id)")
@@ -251,7 +260,9 @@ class TagAffordanceIT {
 
     // Items liegen unter _embedded.tags (@Relation collectionRelation="tags").
     final JsonNode items = root.path("_embedded").path("tags");
-    assertThat(items.isArray()).as("GET /tags liefert _embedded.tags als Array. Body=" + body).isTrue();
+    assertThat(items.isArray())
+        .as("GET /tags liefert _embedded.tags als Array. Body=" + body)
+        .isTrue();
 
     final JsonNode item = findById(items, tagId);
     assertThat(item).as("angelegter Tag muss im _embedded.tags-Item erscheinen").isNotNull();
@@ -270,7 +281,8 @@ class TagAffordanceIT {
     // update/delete/deactivate-href tragen die Tag-id (Path-Variable aus #dto.id aufgeloest).
     assertThat(itemLinks.path("update").path("href").asText()).contains(tagId.toString());
     // Auflage 2 (IMPL-Gate): href-Ziel + HTTP-type je rel pinnen, damit eine @HateoasLinkTarget-
-    // Fehlzuordnung auffaellt. update (PUT /tags/{id}) und delete (DELETE /tags/{id}) teilen die URI
+    // Fehlzuordnung auffaellt. update (PUT /tags/{id}) und delete (DELETE /tags/{id}) teilen die
+    // URI
     // und sind NUR ueber den type unterscheidbar; deactivate traegt den /deactivate-Suffix.
     assertThat(itemLinks.path("update").path("type").asText())
         .as("update ist ein PUT /tags/{id}")
@@ -342,7 +354,11 @@ class TagAffordanceIT {
 
     // Ein Tag muss existieren (vom Admin angelegt), damit _embedded.tags ein Item traegt.
     final String admin =
-        buildJwt(USER_ADMIN_REF, USER_ADMIN_LOGIN, "task-management:TAG_ADMIN", "task-management:TASK_READ");
+        buildJwt(
+            USER_ADMIN_REF,
+            USER_ADMIN_LOGIN,
+            "task-management:TAG_ADMIN",
+            "task-management:TASK_READ");
     final UUID tagId = createTag(mvc, admin, "{\"name\":\"AFF-NonAdmin-Tag\"}");
 
     final String reader = buildJwt(USER_READER_REF, USER_READER_LOGIN, "task-management:TASK_READ");
@@ -362,7 +378,9 @@ class TagAffordanceIT {
 
     // Item: KEIN update/deactivate/delete.
     final JsonNode item = findById(root.path("_embedded").path("tags"), tagId);
-    assertThat(item).as("Tag muss auch fuer den Reader im _embedded.tags-Item erscheinen").isNotNull();
+    assertThat(item)
+        .as("Tag muss auch fuer den Reader im _embedded.tags-Item erscheinen")
+        .isNotNull();
     final JsonNode itemLinks = item.path("_links");
     assertThat(itemLinks.has("update")).as("ohne TAG_ADMIN kein update-Rel").isFalse();
     assertThat(itemLinks.has("deactivate")).as("ohne TAG_ADMIN kein deactivate-Rel").isFalse();
@@ -372,7 +390,8 @@ class TagAffordanceIT {
     assertThat(item.path("name").asText()).isEqualTo("AFF-NonAdmin-Tag");
   }
 
-  // ---- AC: TAG_ADMIN auf LEERER Collection -> create am Collection-Level (kritische Hypothese) ---
+  // ---- AC: TAG_ADMIN auf LEERER Collection -> create am Collection-Level (kritische Hypothese)
+  // ---
 
   @Test
   @Order(1)
@@ -384,7 +403,11 @@ class TagAffordanceIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
     final String admin =
-        buildJwt(USER_ADMIN_REF, USER_ADMIN_LOGIN, "task-management:TAG_ADMIN", "task-management:TASK_READ");
+        buildJwt(
+            USER_ADMIN_REF,
+            USER_ADMIN_LOGIN,
+            "task-management:TAG_ADMIN",
+            "task-management:TASK_READ");
 
     final String body =
         mvc.perform(get("/api/v1/tags").header("Authorization", "Bearer " + admin))
@@ -532,7 +555,9 @@ class TagAffordanceIT {
         "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
-        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class),
+        @ComponentScan.Filter(
+            type = FilterType.ANNOTATION,
+            classes = SpringBootConfiguration.class),
         @ComponentScan.Filter(
             type = FilterType.REGEX,
             pattern = "de\\.brasi\\.nova\\.taskmanagement\\.security\\.it\\..*")

@@ -17,20 +17,20 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p><b>(1) POSITIV — Scaffold lief:</b> Mindestens ein generiertes Persistenz-Artefakt existiert
  * auf dem Classpath. Geprüft via {@code Class.forName("de.brasi.nova.taskmanagement.repository.
- * BaseTaskParticipantRepository")} — diese Klasse wird ausschließlich vom Scaffold erzeugt und
- * muss nach einer korrekten Regen-Phase im {@code brasi-nova-task-management-api}-Modul vorhanden
- * sein. Wenn sie fehlt, ist der -api-Stand veraltet oder der Scaffold-Lauf wurde übersprungen.
+ * BaseTaskParticipantRepository")} — diese Klasse wird ausschließlich vom Scaffold erzeugt und muss
+ * nach einer korrekten Regen-Phase im {@code brasi-nova-task-management-api}-Modul vorhanden sein.
+ * Wenn sie fehlt, ist der -api-Stand veraltet oder der Scaffold-Lauf wurde übersprungen.
  *
  * <p><b>(2) NEGATIV / Routing — keine generischen CRUD-Routen:</b> Im gesamten Anwendungspaket
- * {@code de.brasi.nova.taskmanagement} darf kein vom Scaffold generierter
- * {@link RestController} existieren. Erlaubt sind ausschliesslich handgeschriebene Facade-
- * Controller (in der Allowlist) und der IT-Probe-Controller. Geprüft via Springs
- * {@link ClassPathScanningCandidateComponentProvider} gegen das Basis-Paket.
+ * {@code de.brasi.nova.taskmanagement} darf kein vom Scaffold generierter {@link RestController}
+ * existieren. Erlaubt sind ausschliesslich handgeschriebene Facade- Controller (in der Allowlist)
+ * und der IT-Probe-Controller. Geprüft via Springs {@link
+ * ClassPathScanningCandidateComponentProvider} gegen das Basis-Paket.
  *
- * <p>Da das Scaffold-Plugin gemäß arch-v2 §7 ausschließlich die Targets
- * Repository / Model / QClass / QueryProvider / ServiceProviders / Summary / Validator erzeugt
- * (kein Controller / Hateoas / Assembler / LinkSpec), erwarten wir KEINEN generierten
- * {@link RestController}. Die gesamte REST-Oberfläche sind handgeschriebene Facade-Controller.
+ * <p>Da das Scaffold-Plugin gemäß arch-v2 §7 ausschließlich die Targets Repository / Model / QClass
+ * / QueryProvider / ServiceProviders / Summary / Validator erzeugt (kein Controller / Hateoas /
+ * Assembler / LinkSpec), erwarten wir KEINEN generierten {@link RestController}. Die gesamte
+ * REST-Oberfläche sind handgeschriebene Facade-Controller.
  *
  * <p>Kein Spring-Context, kein DB-Zugang benötigt.
  */
@@ -68,7 +68,8 @@ class HandlerSentinelIT {
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";
 
-  // ---- (1) POSITIV: Scaffold-Persistenz-Artefakt vorhanden ----------------------------------------
+  // ---- (1) POSITIV: Scaffold-Persistenz-Artefakt vorhanden
+  // ----------------------------------------
 
   @Test
   @DisplayName(
@@ -85,7 +86,8 @@ class HandlerSentinelIT {
         .doesNotThrowAnyException();
   }
 
-  // ---- (2) NEGATIV: kein @RestController im Anwendungspaket (außer bekanntem Probe-Controller) -----
+  // ---- (2) NEGATIV: kein @RestController im Anwendungspaket (außer bekanntem Probe-Controller)
+  // -----
 
   @Test
   @DisplayName(
@@ -107,7 +109,8 @@ class HandlerSentinelIT {
         .findCandidateComponents(APP_BASE_PACKAGE)
         .forEach(bd -> found.add(bd.getBeanClassName()));
 
-    // Erlaubt: handgeschriebene Facade-Controller + IT-Probe-Controller (ALLOWED_FACADE_CONTROLLERS)
+    // Erlaubt: handgeschriebene Facade-Controller + IT-Probe-Controller
+    // (ALLOWED_FACADE_CONTROLLERS)
     // Verboten: alle anderen (= vom Scaffold generierte oder unbekannte Controller)
     List<String> forbidden =
         found.stream()
@@ -121,9 +124,7 @@ class HandlerSentinelIT {
                 + "(arch-v2 §7: nur Repository/Model/QClass/QueryProvider/ServiceProviders/"
                 + "Summary/Validator). Erlaubte Controller (handgeschrieben): %s."
                 + " Verbotene Treffer: %s",
-            APP_BASE_PACKAGE,
-            ALLOWED_FACADE_CONTROLLERS,
-            forbidden)
+            APP_BASE_PACKAGE, ALLOWED_FACADE_CONTROLLERS, forbidden)
         .isEmpty();
   }
 }

@@ -43,22 +43,23 @@ import org.springframework.stereotype.Service;
  * (arch-v2 §2.1/§3, plan-v3 Task 14, BE-1 Read-Enrichment).
  *
  * <p>Alle Reads sind benutzer-scoped ({@code userRef} aus dem Security-Context, nie aus
- * Clientdaten) und laufen im Request-Mandanten-Kontext (vom KSF-Filter gesetzt). Es gibt EIN
- * {@code asOf}-Wasserzeichen je Scroll: der Snapshot erzeugt es, die Folge-Reads tragen es im
- * Cursor weiter ({@code LAST_ACTIVITY_AT <= :asOf}).
+ * Clientdaten) und laufen im Request-Mandanten-Kontext (vom KSF-Filter gesetzt). Es gibt EIN {@code
+ * asOf}-Wasserzeichen je Scroll: der Snapshot erzeugt es, die Folge-Reads tragen es im Cursor
+ * weiter ({@code LAST_ACTIVITY_AT <= :asOf}).
  *
  * <p><b>BE-1 Read-Enrichment (keyset-then-enrich):</b> Nach der geordneten Keyset-Seite wird die
  * Seite EINMALIG per Batch-Querys angereichert (Ersteller/Erstellzeit/Beschreibung,
  * Assignees/Teilnehmer/Tags pro Zeile, persoenliche Marker, {@code isDone}, Archiv-{@code exit}) -
  * konstante Query-Zahl pro Seite, kein N+1. Die Anreicherung laeuft INNERHALB des
- * Generation-Brackets VOR dem abschliessenden Generation-Read, damit das asOf-gebundene
- * {@code exit}-Praedikat des Anfragers unter derselben Invariante wie die Seiten-Sichtbarkeit
- * ermittelt wird (SPEC O-1/O-2).
+ * Generation-Brackets VOR dem abschliessenden Generation-Read, damit das asOf-gebundene {@code
+ * exit}-Praedikat des Anfragers unter derselben Invariante wie die Seiten-Sichtbarkeit ermittelt
+ * wird (SPEC O-1/O-2).
  *
- * <p><b>Snapshot-Rejection (Finding 2 / Option B):</b> Membership-Zustandsfelder
- * ({@code UNSUBSCRIBED_AT}/{@code EXIT_KIND}/{@code EXIT_AT}) werden destruktiv ueberschrieben und
- * brechen die asOf-Invariante. Jeder Cursor traegt zusaetzlich die {@code GENERATION}
- * ({@link InboxGenerationService}) des Anfragers, unter der sein Snapshot erzeugt wurde:
+ * <p><b>Snapshot-Rejection (Finding 2 / Option B):</b> Membership-Zustandsfelder ({@code
+ * UNSUBSCRIBED_AT}/{@code EXIT_KIND}/{@code EXIT_AT}) werden destruktiv ueberschrieben und brechen
+ * die asOf-Invariante. Jeder Cursor traegt zusaetzlich die {@code GENERATION} ({@link
+ * InboxGenerationService}) des Anfragers, unter der sein Snapshot erzeugt wurde:
+ *
  * <ul>
  *   <li><b>Folgeseite (Cursor):</b> Page-Query + Anreicherung ZUERST, Generation DANACH lesen;
  *       weicht sie ab -> {@link SnapshotExpiredException} (HTTP 410), der Client re-bootstrapt
@@ -68,9 +69,11 @@ import org.springframework.stereotype.Service;
  *       lesen; nur bei Stabilitaet ({@code g1 == g2}) wird die Generation in den Cursor gestempelt,
  *       sonst Retry. Nach {@code MAX_SNAPSHOT_ATTEMPTS} -> 410.
  * </ul>
+ *
  * Die Generation-Invariante deckt NUR die requester-gescopten, asOf-gebundenen Querys (aktive Seite
- * + Archiv-Counts + Anreicherung). {@code participantSummaries} zeigen bewusst den LIVE-Teilnehmerstand
- * und werden ueber den Push-Invalidate-Kanal aktuell gehalten, nicht ueber Cursor/Generation.
+ * + Archiv-Counts + Anreicherung). {@code participantSummaries} zeigen bewusst den
+ * LIVE-Teilnehmerstand und werden ueber den Push-Invalidate-Kanal aktuell gehalten, nicht ueber
+ * Cursor/Generation.
  *
  * <p><b>Cursor:</b> opaker 4-Token-{@link KeysetCursor} ({@code asOf, lastActivityAt, externalId,
  * generation}), ohne HMAC. Limit wird auf {@code [1,100]} geclampt (Default 50).
@@ -99,10 +102,10 @@ public class InboxSnapshotService {
   private static final String FILTER_LEFT = "left";
 
   /**
-   * Sentinel-Obergrenze fuer die First-Page (kein Cursor): maximaler {@code uniqueidentifier}.
-   * Alle Bytes {@code 0xff} -> Maximum sowohl in der MSSQL-{@code uniqueidentifier}-Ordnung als
-   * auch lexikografisch/H2. Zusammen mit {@code asOf=jetzt} (strikt nach allen persistierten
-   * {@code LAST_ACTIVITY_AT}) macht das den Keyset-Zweig {@code < :asOf} all-inklusiv.
+   * Sentinel-Obergrenze fuer die First-Page (kein Cursor): maximaler {@code uniqueidentifier}. Alle
+   * Bytes {@code 0xff} -> Maximum sowohl in der MSSQL-{@code uniqueidentifier}-Ordnung als auch
+   * lexikografisch/H2. Zusammen mit {@code asOf=jetzt} (strikt nach allen persistierten {@code
+   * LAST_ACTIVITY_AT}) macht das den Keyset-Zweig {@code < :asOf} all-inklusiv.
    */
   private static final UUID MAX_UUID = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
@@ -157,12 +160,12 @@ public class InboxSnapshotService {
    * Notifications = erste Seite (all), Tags = globaler Katalog, participantSummaries = distinkte
    * (LIVE-)Teilnehmer der Aufgaben dieser aktiven Seite, {@code currentUserId} = Anfrager.
    *
-   * @param userRef  UUID des Benutzers (aus Security-Context)
+   * @param userRef UUID des Benutzers (aus Security-Context)
    * @param tenantId interne Mandanten-ID (aus Security-Context)
-   * @param notificationsVisible {@code true}, wenn der Aufrufer die Permission
-   *     {@code task-management:NOTIFICATION_READ} besitzt (vom Controller als Autz-Grenze
-   *     ausgewertet). Bei {@code false} wird die Notification-Seite NICHT geladen, sondern als
-   *     leere Seite zurueckgegeben (fail-closed).
+   * @param notificationsVisible {@code true}, wenn der Aufrufer die Permission {@code
+   *     task-management:NOTIFICATION_READ} besitzt (vom Controller als Autz-Grenze ausgewertet).
+   *     Bei {@code false} wird die Notification-Seite NICHT geladen, sondern als leere Seite
+   *     zurueckgegeben (fail-closed).
    * @return aufgebauter {@link InboxSnapshotModel}
    * @throws SnapshotExpiredException (HTTP 410) wenn unter anhaltender Membership-Aenderung kein
    *     konsistenter Snapshot erzeugt werden konnte
@@ -215,7 +218,8 @@ public class InboxSnapshotService {
 
     // LIVE-Teile ausserhalb der Generation-Invariante (siehe Klassen-Javadoc):
     // Notifications nur mit NOTIFICATION_READ (fail-closed): ohne Recht wird die Quelle NICHT
-    // angefragt, sondern eine leere Seite zurueckgegeben (kein DB-Leak, contract-stabiles non-null-Feld).
+    // angefragt, sondern eine leere Seite zurueckgegeben (kein DB-Leak, contract-stabiles
+    // non-null-Feld).
     final NotificationPage notifications =
         notificationsVisible
             ? notificationQueryService.listFor(userRef, tenantId, FILTER_ALL, null, effLimit)
@@ -235,15 +239,15 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Liefert eine Keyset-Seite aktiver (OPEN) Aufgaben fuer den Benutzer (Fortsetzung des
-   * Snapshots, {@code GET /api/v1/tasks}).
+   * Liefert eine Keyset-Seite aktiver (OPEN) Aufgaben fuer den Benutzer (Fortsetzung des Snapshots,
+   * {@code GET /api/v1/tasks}).
    *
    * <p>Slice 4: Return-Typ ist {@link CursorCollectionModel} (HAL-Collection mit top-level
    * Cursor-Feldern), damit die KSF-Enrichment-Pipeline Item-rels ergaenzen kann.
    *
    * @param userRef UUID des Benutzers
-   * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
-   * @param limit   Seitengroesse (wird geclampt)
+   * @param cursor opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param limit Seitengroesse (wird geclampt)
    * @return HAL-Collection aktiver Aufgaben
    * @throws SnapshotExpiredException (HTTP 410) wenn ein Folge-Read eine abgelaufene Generation
    *     traegt oder die First-Page unter Dauer-Mutation nicht konsistent erzeugbar war
@@ -266,9 +270,9 @@ public class InboxSnapshotService {
    * Benutzer ({@code GET /api/v1/tasks/archive}).
    *
    * @param userRef UUID des Benutzers
-   * @param filter  {@code all} (Default/null) | {@code done} | {@code left}
-   * @param cursor  opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
-   * @param limit   Seitengroesse (wird geclampt)
+   * @param filter {@code all} (Default/null) | {@code done} | {@code left}
+   * @param cursor opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param limit Seitengroesse (wird geclampt)
    * @return HAL-Collection archivierter Aufgaben
    * @throws EntityValidationException bei ungueltigem Filter (HTTP 400)
    * @throws SnapshotExpiredException (HTTP 410) wie {@link #loadActivePage}
@@ -370,8 +374,8 @@ public class InboxSnapshotService {
 
   /**
    * Fuehrt die drei Batch-Anreicherungs-Querys EINMALIG fuer die (fixe) Seite aus und delegiert an
-   * den {@link InboxEnrichmentAssembler}. Leere Seite -> KEINE Query (schuetzt vor MSSQL
-   * {@code IN ()}-Syntaxfehler), leere Map. Konstante Query-Zahl pro Seite (kein N+1).
+   * den {@link InboxEnrichmentAssembler}. Leere Seite -> KEINE Query (schuetzt vor MSSQL {@code IN
+   * ()}-Syntaxfehler), leere Map. Konstante Query-Zahl pro Seite (kein N+1).
    */
   private Map<Long, TaskEnrichment> enrich(
       final List<Task> pageTasks, final UUID userRef, final LocalDateTime asOf) {
@@ -385,7 +389,8 @@ public class InboxSnapshotService {
         tagAssignmentQueryRepository.findActiveTagUuidsByTaskIds(taskIds);
     final List<TaskUserState> actorStateRows =
         userStateQueryRepository.findByTaskIdsAndUserRef(taskIds, userRef);
-    // BE-7 (A6): Handover-Ziel-Batch INNERHALB des Generation-Brackets (Archiv, asOf-gebunden). EINE
+    // BE-7 (A6): Handover-Ziel-Batch INNERHALB des Generation-Brackets (Archiv, asOf-gebunden).
+    // EINE
     // tenant-/actor-gebundene Query ueber ALLE Seiten-taskIds (kein N+1).
     final List<HandoverTargetRow> handoverRows =
         handoverQueryRepository.findVisibleHandoverTargets(taskIds, userRef, asOf);
@@ -412,8 +417,8 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Baut die HAL-Collection (Mapping mit Anreicherung + hasMore + nextCursor + asOf) aus der
-   * FIXEN Seite.
+   * Baut die HAL-Collection (Mapping mit Anreicherung + hasMore + nextCursor + asOf) aus der FIXEN
+   * Seite.
    *
    * <p>Slice 4: Liefert {@link CursorCollectionModel} (via {@code ofTasks}) statt {@link
    * KeysetPage}. Der Snapshot-Pfad ({@link #loadSnapshot}) baut seinen {@link KeysetPage}-Block
@@ -427,7 +432,10 @@ public class InboxSnapshotService {
       final Map<Long, TaskEnrichment> enrichment) {
     final String nextCursor = hasMore ? encodeCursor(asOf, generation, page) : null;
     return CursorCollectionModel.ofTasks(
-        enrichedSummaries(page, enrichment), nextCursor, hasMore, auditTimeConverter.toInstant(asOf));
+        enrichedSummaries(page, enrichment),
+        nextCursor,
+        hasMore,
+        auditTimeConverter.toInstant(asOf));
   }
 
   /** Mappt die Seiten-Aufgaben mit ihrer Anreicherung auf {@link TaskSummaryModel}. */
@@ -441,8 +449,8 @@ public class InboxSnapshotService {
   /**
    * Mappt die Seiten-Aufgaben mit ihrer Anreicherung auf {@link TaskSummaryInfoModel} fuer den
    * Snapshot. Liefert InfoModel-Items, die der SelfLinkEnricher mit einem {@code self}-Link
-   * versieht (via {@code @SelfLinkTarget}). KEIN {@code setEntity}: InfoModel hat kein
-   * {@code setEntity}; der self-Link benoetigt nur {@code id}.
+   * versieht (via {@code @SelfLinkTarget}). KEIN {@code setEntity}: InfoModel hat kein {@code
+   * setEntity}; der self-Link benoetigt nur {@code id}.
    */
   private List<TaskSummaryInfoModel> snapshotSummaries(
       final List<Task> page, final Map<Long, TaskEnrichment> enrichment) {
@@ -452,9 +460,9 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das {@link TaskSummaryInfoModel}
-   * fuer den Snapshot. Setzt {@code setId(uuid)}, damit der SelfLinkEnricher den self-Link
-   * erzeugt. Kein {@code setEntity}/{@code setModelState} (InfoModel-API hat beides nicht).
+   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das {@link TaskSummaryInfoModel} fuer
+   * den Snapshot. Setzt {@code setId(uuid)}, damit der SelfLinkEnricher den self-Link erzeugt. Kein
+   * {@code setEntity}/{@code setModelState} (InfoModel-API hat beides nicht).
    */
   private TaskSummaryInfoModel toSnapshotSummary(final Task task, final TaskEnrichment e) {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
@@ -494,8 +502,8 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das angereicherte
-   * {@link TaskSummaryModel} (CODEs + Instant + Anreicherungsfelder).
+   * Mappt eine {@link Task} + ihre {@link TaskEnrichment} auf das angereicherte {@link
+   * TaskSummaryModel} (CODEs + Instant + Anreicherungsfelder).
    *
    * <p>Slice 4: {@code setEntity(task)} + {@code setModelState()} werden gesetzt, damit die
    * KSF-Enrichment-Pipeline (Item-rels via entityClass=Task) fuer die Listen-Items greift.
@@ -504,25 +512,26 @@ public class InboxSnapshotService {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
     final ExitModel exit =
         e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
-    final TaskSummaryModel model = new TaskSummaryModel(
-        task.getUuid(),
-        task.getTitle(),
-        statusCode,
-        resolver.resolveTaskPriorityCode(task.getPriorityId()),
-        task.getDueDate(),
-        auditTimeConverter.toInstant(task.getLastActivityAt()),
-        task.getCommentCount(),
-        e.createdById(),
-        auditTimeConverter.toInstant(task.getCreatedAt()),
-        task.getDescription(),
-        e.assigneeIds(),
-        e.participantIds(),
-        e.tagIds(),
-        e.isPinned(),
-        e.isFlagged(),
-        e.isMuted(),
-        isDoneStatus(statusCode),
-        exit);
+    final TaskSummaryModel model =
+        new TaskSummaryModel(
+            task.getUuid(),
+            task.getTitle(),
+            statusCode,
+            resolver.resolveTaskPriorityCode(task.getPriorityId()),
+            task.getDueDate(),
+            auditTimeConverter.toInstant(task.getLastActivityAt()),
+            task.getCommentCount(),
+            e.createdById(),
+            auditTimeConverter.toInstant(task.getCreatedAt()),
+            task.getDescription(),
+            e.assigneeIds(),
+            e.participantIds(),
+            e.tagIds(),
+            e.isPinned(),
+            e.isFlagged(),
+            e.isMuted(),
+            isDoneStatus(statusCode),
+            exit);
     model.setEntity(task);
     if (task.getEntityState() != null) {
       model.setModelState(

@@ -33,8 +33,8 @@ import lombok.experimental.Accessors;
  * ausliefernde Controller ein {@code @EnableNovaHateoas}-Rule-Owner ist.
  *
  * <p>Das top-level {@code id}-Feld von {@link InfoModel} wird per {@code @JsonIgnore} unterdrueckt:
- * der Snapshot hat keine eigene UUID (kein persistentes Objekt). {@code asOf}, {@code currentUserId}
- * und die anderen Nutzfelder werden per {@code @JsonProperty} gepinnt.
+ * der Snapshot hat keine eigene UUID (kein persistentes Objekt). {@code asOf}, {@code
+ * currentUserId} und die anderen Nutzfelder werden per {@code @JsonProperty} gepinnt.
  *
  * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
  * fuer bestehende Java-Konsumenten ({@code model.asOf()}, {@code model.tasks()} usw.).
@@ -71,8 +71,7 @@ public class InboxSnapshotModel extends InfoModel<InboxSnapshotModel> {
 
   @JsonProperty("participantSummaries")
   @Schema(
-      description =
-          "Distinkte Teilnehmer der Aufgaben dieser Seite (nur aktuell sichtbare Seite).")
+      description = "Distinkte Teilnehmer der Aufgaben dieser Seite (nur aktuell sichtbare Seite).")
   private List<ParticipantSummary> participantSummaries;
 
   @JsonProperty("archiveTotals")

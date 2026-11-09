@@ -8,12 +8,12 @@ import org.springframework.hateoas.CollectionModel;
 /**
  * HAL-Collection-Wrapper fuer Keyset-Cursor-paginierte Listen (PLAN #141 Slice 4, B).
  *
- * <p>Erbt von {@link CollectionModel} - Spring HATEOAS serialisiert den Inhalt als
- * {@code {"_embedded":{"<collectionRelation>":[...]},"_links":{...}}}; die Anreicherung (self-/
+ * <p>Erbt von {@link CollectionModel} - Spring HATEOAS serialisiert den Inhalt als {@code
+ * {"_embedded":{"<collectionRelation>":[...]},"_links":{...}}}; die Anreicherung (self-/
  * Affordance-Links) erfolgt ueber die KSF-{@code NovaMutationResponseAdvice}/Enrichment-Pipeline,
- * die OpenAPI-Dokumentation ueber {@code @ApiFindCollectionResponse}. Die Cursor-Felder ({@code nextCursor},
- * {@code hasMore}, {@code asOf}) landen TOP-LEVEL neben {@code _embedded}, deckungsgleich
- * mit dem P5-Mechanismus aus der Slice-0-Probe ({@code KeysetCollectionModel}).
+ * die OpenAPI-Dokumentation ueber {@code @ApiFindCollectionResponse}. Die Cursor-Felder ({@code
+ * nextCursor}, {@code hasMore}, {@code asOf}) landen TOP-LEVEL neben {@code _embedded},
+ * deckungsgleich mit dem P5-Mechanismus aus der Slice-0-Probe ({@code KeysetCollectionModel}).
  *
  * <p>{@code asOf} ist {@code @JsonInclude(NON_NULL)}: Notifications tragen kein asOf, Tasks schon.
  * Beide Endpunkte nutzen denselben Typ ohne toten {@code asOf:null}-Payload bei Notifications.
@@ -31,10 +31,10 @@ public class CursorCollectionModel<T> extends CollectionModel<T> {
   /**
    * Vollstaendiger Konstruktor (Jackson/Unterklassen).
    *
-   * @param content    Items der Collection
+   * @param content Items der Collection
    * @param nextCursor opaker Cursor oder {@code null} wenn {@code hasMore=false}
-   * @param hasMore    ob weitere Seiten vorhanden sind
-   * @param asOf       Snapshot-Wasserzeichen (UTC); {@code null} fuer Notifications
+   * @param hasMore ob weitere Seiten vorhanden sind
+   * @param asOf Snapshot-Wasserzeichen (UTC); {@code null} fuer Notifications
    */
   public CursorCollectionModel(
       final Collection<T> content,
@@ -50,11 +50,11 @@ public class CursorCollectionModel<T> extends CollectionModel<T> {
   /**
    * Erstellt ein Task-{@code CursorCollectionModel} mit asOf-Wasserzeichen.
    *
-   * @param <T>        Item-Typ
-   * @param items      Items der Collection
+   * @param <T> Item-Typ
+   * @param items Items der Collection
    * @param nextCursor opaker Cursor oder {@code null}
-   * @param hasMore    ob weitere Seiten vorhanden sind
-   * @param asOf       Snapshot-Wasserzeichen (Pflicht fuer Tasks)
+   * @param hasMore ob weitere Seiten vorhanden sind
+   * @param asOf Snapshot-Wasserzeichen (Pflicht fuer Tasks)
    * @return neue CursorCollectionModel-Instanz
    */
   public static <T> CursorCollectionModel<T> ofTasks(
@@ -68,16 +68,14 @@ public class CursorCollectionModel<T> extends CollectionModel<T> {
   /**
    * Erstellt ein Notification-{@code CursorCollectionModel} ohne asOf.
    *
-   * @param <T>        Item-Typ
-   * @param items      Items der Collection
+   * @param <T> Item-Typ
+   * @param items Items der Collection
    * @param nextCursor opaker Cursor oder {@code null}
-   * @param hasMore    ob weitere Seiten vorhanden sind
+   * @param hasMore ob weitere Seiten vorhanden sind
    * @return neue CursorCollectionModel-Instanz ohne asOf
    */
   public static <T> CursorCollectionModel<T> ofNotifications(
-      final Collection<T> items,
-      final String nextCursor,
-      final boolean hasMore) {
+      final Collection<T> items, final String nextCursor, final boolean hasMore) {
     return new CursorCollectionModel<>(items, nextCursor, hasMore, null);
   }
 

@@ -28,11 +28,11 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * reine Praedikatlogik des objekt-level Membership-Guards ab: aktiver WRITE-Member ist Read- und
  * Write-member; ausgetretener READ-Member darf lesen, aber nicht schreiben; Non-Member wird auf
  * beiden Pfaden mit {@link EntityNotFoundException} (HTTP 404, neutral) abgewiesen. Zusaetzlich der
- * fail-closed Tenant-Vertrag: weicht der uebergebene {@code tenant} vom gebundenen
- * {@link TenantContextHolder}-Mandanten ab, darf die Membership NICHT ausgewertet werden (404 bzw.
- * {@code false}), und das Repository wird nicht angefragt. Die konkrete {@code @NovaQuery}-SQL-
- * Semantik (PERSON, beide Tenant-Spalten, EXIT_KIND) wird separat per real-MSSQL-IT verifiziert;
- * hier nur die Guard-Service-Logik.
+ * fail-closed Tenant-Vertrag: weicht der uebergebene {@code tenant} vom gebundenen {@link
+ * TenantContextHolder}-Mandanten ab, darf die Membership NICHT ausgewertet werden (404 bzw. {@code
+ * false}), und das Repository wird nicht angefragt. Die konkrete {@code @NovaQuery}-SQL- Semantik
+ * (PERSON, beide Tenant-Spalten, EXIT_KIND) wird separat per real-MSSQL-IT verifiziert; hier nur
+ * die Guard-Service-Logik.
  */
 class TaskMembershipGuardTest {
 
@@ -65,18 +65,22 @@ class TaskMembershipGuardTest {
     when(participantQueryRepository.existsWriteMember(TASK_ID, ACTOR)).thenReturn(true);
     when(participantQueryRepository.existsReadMember(TASK_ID, ACTOR)).thenReturn(true);
 
-    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
-    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
   }
 
   @Test
   @DisplayName("ausgetretener READ-Member: requireReadMember ok, requireWriteMember -> 404")
   void ausgetretener_read_member_read_ok_write_404() {
-    // Ex-Member: Zeile bleibt ACTIVE, nur EXIT_KIND gesetzt -> READ-Member true, WRITE-Member false.
+    // Ex-Member: Zeile bleibt ACTIVE, nur EXIT_KIND gesetzt -> READ-Member true, WRITE-Member
+    // false.
     when(participantQueryRepository.existsReadMember(TASK_ID, ACTOR)).thenReturn(true);
     when(participantQueryRepository.existsWriteMember(TASK_ID, ACTOR)).thenReturn(false);
 
-    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
     assertThatThrownBy(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID))
         .isInstanceOf(EntityNotFoundException.class);
   }
@@ -147,8 +151,10 @@ class TaskMembershipGuardTest {
 
     assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isTrue();
     assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isTrue();
-    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
-    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
 
     verify(participantQueryRepository, times(4)).existsWriteMember(TASK_ID, ACTOR);
   }
@@ -159,8 +165,10 @@ class TaskMembershipGuardTest {
     when(participantQueryRepository.existsReadMember(TASK_ID, ACTOR)).thenReturn(true);
     when(participantQueryRepository.existsWriteMember(TASK_ID, ACTOR)).thenReturn(true);
 
-    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
-    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireReadMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> guard.requireWriteMember(TASK_ID, ACTOR, TENANT_ID))
+        .doesNotThrowAnyException();
     assertThat(guard.isWriteMember(TASK_ID, ACTOR, TENANT_ID)).isTrue();
 
     verify(participantQueryRepository).existsReadMember(TASK_ID, ACTOR);

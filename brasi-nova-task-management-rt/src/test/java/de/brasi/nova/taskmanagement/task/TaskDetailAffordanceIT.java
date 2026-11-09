@@ -55,9 +55,10 @@ import org.springframework.web.context.WebApplicationContext;
  * <p>Im Unterschied zu {@link TaskFacadeControllerIT} (handverlesene Autoconfig-Liste, OHNE den
  * HATEOAS-Enrichment-Graph) bootet dieser IT den VOLLEN Spring-Boot-Autoconfig-Graph (wie die reale
  * {@code BrasiNovaApplication} und der Slice-0-{@code ProbeWebContext}): der globale {@code
- * NovaFindResponseAdvice}, der {@code @EnableNovaHateoas}-Scan und der {@code SelfLinkEnricher} sind
- * damit genauso live wie in Produktion. Zusaetzlich laeuft die reale KSF-Web-Security-Filterchain
- * (JWT, Tenant-Binding) scharf, sodass Links nur im gebundenen Tenant-/Request-Kontext entstehen.
+ * NovaFindResponseAdvice}, der {@code @EnableNovaHateoas}-Scan und der {@code SelfLinkEnricher}
+ * sind damit genauso live wie in Produktion. Zusaetzlich laeuft die reale
+ * KSF-Web-Security-Filterchain (JWT, Tenant-Binding) scharf, sodass Links nur im gebundenen
+ * Tenant-/Request-Kontext entstehen.
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
@@ -76,7 +77,8 @@ import org.springframework.web.context.WebApplicationContext;
       "spring.flyway.locations=classpath:db/migration",
       "ksf.persistence.dialect=MSSQL",
       "ksf.persistence.ddl-auto=none",
-      // Reale KSF-Web-Security-Filterchain (FILTER-Modus, JWT) - identisch zu TaskFacadeControllerIT.
+      // Reale KSF-Web-Security-Filterchain (FILTER-Modus, JWT) - identisch zu
+      // TaskFacadeControllerIT.
       "ksf.web-security.enabled=true",
       "ksf.web-security.filter-chain.enabled=true",
       "ksf.web-security.principal.profile-claim.enabled=true",
@@ -195,7 +197,8 @@ class TaskDetailAffordanceIT {
     // diamant-DB vor (Startkarte: "SYS_SEQUENCE und SYSTEM*-Tabellen als leere Struktur-Kopie"),
     // genau wie PROD_FIRMA/PROD_BENUTZER. Der IT taeuscht sie daher NICHT mehr ad-hoc vor, sondern
     // RefSchemaItDb legt die leere Struktur-Kopie zentral an (= reales Deploy-Provisioning). Hier
-    // nur noch beweisen, dass dieser Mechanismus wirklich gegriffen hat: die Tabelle MUSS existieren
+    // nur noch beweisen, dass dieser Mechanismus wirklich gegriffen hat: die Tabelle MUSS
+    // existieren
     // (sonst traegt der GET den self-Link nur wegen einer Test-Vortaeuschung - genau der Befund).
     final Integer tableExists =
         jt.queryForObject(
@@ -325,7 +328,8 @@ class TaskDetailAffordanceIT {
     // andere Top-Level-Feld (insb. das geerbte version:null, aber auch ein kuenftig versehentlich
     // zusaetzlich serialisiertes BaseModel-Feld) laesst den Test fallen. version ist bewusst via
     // @JsonIgnoreProperties("version") aus dem Wire genommen -> hier explizit als abwesend gepinnt.
-    final java.util.Set<String> allowedTopLevel = new java.util.LinkedHashSet<>(PRE_EXISTING_FIELDS);
+    final java.util.Set<String> allowedTopLevel =
+        new java.util.LinkedHashSet<>(PRE_EXISTING_FIELDS);
     allowedTopLevel.add("modelState");
     allowedTopLevel.add("_links");
     final java.util.List<String> actualTopLevel = new java.util.ArrayList<>();
@@ -355,18 +359,10 @@ class TaskDetailAffordanceIT {
     assertThat(links.has("add-comment"))
         .as("add-comment-Rel muss fuer Write-Member vorhanden sein")
         .isTrue();
-    assertThat(links.has("exit"))
-        .as("exit-Rel muss fuer Write-Member vorhanden sein")
-        .isTrue();
-    assertThat(links.has("pin"))
-        .as("pin-Rel muss fuer Write-Member vorhanden sein")
-        .isTrue();
-    assertThat(links.has("flag"))
-        .as("flag-Rel muss fuer Write-Member vorhanden sein")
-        .isTrue();
-    assertThat(links.has("mute"))
-        .as("mute-Rel muss fuer Write-Member vorhanden sein")
-        .isTrue();
+    assertThat(links.has("exit")).as("exit-Rel muss fuer Write-Member vorhanden sein").isTrue();
+    assertThat(links.has("pin")).as("pin-Rel muss fuer Write-Member vorhanden sein").isTrue();
+    assertThat(links.has("flag")).as("flag-Rel muss fuer Write-Member vorhanden sein").isTrue();
+    assertThat(links.has("mute")).as("mute-Rel muss fuer Write-Member vorhanden sein").isTrue();
     // TASK_WRITE+Member-Rels (HAS_WRITE_AUTHORITY_AND_IS_MEMBER): der JWT traegt TASK_WRITE.
     assertThat(links.has("assignees"))
         .as("assignees-Rel muss fuer TASK_WRITE+Member vorhanden sein")
@@ -375,7 +371,9 @@ class TaskDetailAffordanceIT {
         .as("participants-Rel muss fuer TASK_WRITE+Member vorhanden sein")
         .isTrue();
     // delete-Rel existiert nicht (kein soft-delete-Endpunkt fuer Tasks).
-    assertThat(links.has("delete")).as("delete-Rel darf nicht erscheinen (kein Task-Delete)").isFalse();
+    assertThat(links.has("delete"))
+        .as("delete-Rel darf nicht erscheinen (kein Task-Delete)")
+        .isFalse();
   }
 
   @Test
@@ -562,7 +560,9 @@ class TaskDetailAffordanceIT {
         }) {
       assertThat(links.has(rel))
           .as(
-              "Ex-Member MIT TASK_WRITE darf '" + rel + "' nicht sehen (Membership-Haelfte). Links="
+              "Ex-Member MIT TASK_WRITE darf '"
+                  + rel
+                  + "' nicht sehen (Membership-Haelfte). Links="
                   + links)
           .isFalse();
     }
@@ -601,7 +601,8 @@ class TaskDetailAffordanceIT {
             "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
 
     // USER_A2 als aktiven Teilnehmer einfuegen (EXIT_KIND IS NULL = aktiver Write-Member nach
-    // Guard-Definition). Kein TASK_WRITE in seinem JWT -> IS_WRITE_MEMBER=true, HAS_WRITE_AUTHORITY=false.
+    // Guard-Definition). Kein TASK_WRITE in seinem JWT -> IS_WRITE_MEMBER=true,
+    // HAS_WRITE_AUTHORITY=false.
     final long participantId = 900100L + USER_A2_DB_ID;
     jdbcTemplate.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
@@ -624,15 +625,13 @@ class TaskDetailAffordanceIT {
 
     final String body =
         mvc.perform(
-                get("/api/v1/tasks/" + taskId)
-                    .header("Authorization", "Bearer " + memberNoWrite))
+                get("/api/v1/tasks/" + taskId).header("Authorization", "Bearer " + memberNoWrite))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
             .getContentAsString();
     final JsonNode root = om.readTree(body);
-    System.out.println(
-        "[AFF-member-no-write] GET /tasks/" + taskId + " -> " + body);
+    System.out.println("[AFF-member-no-write] GET /tasks/" + taskId + " -> " + body);
 
     final JsonNode links = root.path("_links");
 

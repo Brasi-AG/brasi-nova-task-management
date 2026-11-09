@@ -1,10 +1,10 @@
 package de.brasi.nova.taskmanagement.inbox.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.keel.framework.api.hateoas.annotation.SelfLinkTarget;
-import io.keel.framework.api.service.model.InfoModel;
 import de.brasi.nova.taskmanagement.task.TaskFacadeController;
 import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import io.keel.framework.api.hateoas.annotation.SelfLinkTarget;
+import io.keel.framework.api.service.model.InfoModel;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -20,20 +20,21 @@ import org.springframework.hateoas.server.core.Relation;
  * <p>Zweite Projektion neben {@link TaskSummaryModel} (R7: TaskSummaryModel fuer Listen mit
  * per-Item-Affordance-Rels; TaskSummaryInfoModel NUR fuer den Snapshot mit {@code self}-Link).
  *
- * <p>Der {@code SelfLinkEnricher} traversiert den {@link de.brasi.nova.taskmanagement.paging.KeysetPage}
- * -Record per reflektivem Feldzugriff ({@code items}-Feld = Iterable) und fuegt je
- * {@link InfoModel}-Instanz mit non-null {@code id} einen {@code self}-Link ein. Das Ziel stammt
- * aus {@code @SelfLinkTarget}: {@code controller=TaskFacadeController.class,
- * linkTo=TaskHateoas.Targets.GET_DETAIL}; der Enricher bindet {@code {id}} aus
- * {@code infoModel.getId()}.
+ * <p>Der {@code SelfLinkEnricher} traversiert den {@link
+ * de.brasi.nova.taskmanagement.paging.KeysetPage} -Record per reflektivem Feldzugriff ({@code
+ * items}-Feld = Iterable) und fuegt je {@link InfoModel}-Instanz mit non-null {@code id} einen
+ * {@code self}-Link ein. Das Ziel stammt aus {@code @SelfLinkTarget}: {@code
+ * controller=TaskFacadeController.class, linkTo=TaskHateoas.Targets.GET_DETAIL}; der Enricher
+ * bindet {@code {id}} aus {@code infoModel.getId()}.
  *
- * <p><b>Warum KEIN BaseModel:</b> InfoModel serialisiert nur {@code id:UUID} (+{@code _links}).
- * Es gibt keine {@code createdAt:LocalDateTime}-Kollision (InfoModel hat kein createdAt) ->
- * {@code createdAt:Instant} ist ein normales Feld ohne R8-Neutralisierungsaufwand. Es gibt auch
- * kein {@code modelState} im Wire (InfoModel hat keinen {@code modelState}-Getter).
+ * <p><b>Warum KEIN BaseModel:</b> InfoModel serialisiert nur {@code id:UUID} (+{@code _links}). Es
+ * gibt keine {@code createdAt:LocalDateTime}-Kollision (InfoModel hat kein createdAt) -> {@code
+ * createdAt:Instant} ist ein normales Feld ohne R8-Neutralisierungsaufwand. Es gibt auch kein
+ * {@code modelState} im Wire (InfoModel hat keinen {@code modelState}-Getter).
  *
  * <p>Feldnamen und Typen entsprechen exakt den {@link TaskSummaryModel}-Feldern (unveraenderter
  * fachlicher Wire-Vertrag fuer Snapshot-Items). Einzige gewollte Unterschiede:
+ *
  * <ul>
  *   <li>{@code self}-Link kommt hinzu (via SelfLinkEnricher).
  *   <li>{@code modelState} entfaellt (BaseModel-only, nicht in InfoModel).

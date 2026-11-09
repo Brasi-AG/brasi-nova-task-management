@@ -1,8 +1,8 @@
 package de.brasi.nova.taskmanagement.affordanceprobe;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import io.keel.framework.api.security.permission.RequiresPermission;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,17 +26,22 @@ public final class InterfaceAnnotatedControllerFixture {
 
   /**
    * Controller-/Mapping-Annotationen auf dem INTERFACE. Die Schreib-Methode traegt hier auch
-   * {@code @RequiresPermission} AUF DER INTERFACE-METHODE (Codex-Re-Gate R7): KSF enforced das unter
-   * CGLIB-Proxys NICHT (es liest die konkrete Methode), daher MUSS der Sentinel diesen Endpunkt als
-   * ungegatet (uncategorized) werten - ein {@code @RequiresPermission} auf der Interface-Methode
-   * zaehlt NICHT als Gatung.
+   * {@code @RequiresPermission} AUF DER INTERFACE-METHODE (Codex-Re-Gate R7): KSF enforced das
+   * unter CGLIB-Proxys NICHT (es liest die konkrete Methode), daher MUSS der Sentinel diesen
+   * Endpunkt als ungegatet (uncategorized) werten - ein {@code @RequiresPermission} auf der
+   * Interface-Methode zaehlt NICHT als Gatung.
    */
   @Controller
-  @ConditionalOnProperty(name = "task-management.test.affordance-probe.enabled", havingValue = "true")
+  @ConditionalOnProperty(
+      name = "task-management.test.affordance-probe.enabled",
+      havingValue = "true")
   @RequestMapping("/probe/iface-ungated")
   public interface AnnotatedControllerApi {
 
-    /** Schreib-Endpunkt mit @RequiresPermission NUR auf der Interface-Methode (KSF enforced es nicht). */
+    /**
+     * Schreib-Endpunkt mit @RequiresPermission NUR auf der Interface-Methode (KSF enforced es
+     * nicht).
+     */
     @PostMapping("/write")
     @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
     @ResponseBody

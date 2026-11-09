@@ -4,9 +4,10 @@ package de.brasi.nova.taskmanagement.task;
  * HATEOAS-Konstanten (Rels, Targets, Titles, Specs) fuer die {@code Task}-Entitaet (PLAN #141).
  *
  * <p>Handgepflegtes Gegenstueck zum scaffold-generierten {@code MenuHateoas} der application. Die
- * Konstanten binden die deklarativen Affordance-Regeln ({@code @LinkRule}/{@code @HateoasLinkTarget}
- * am {@code TaskFacadeController} und den Sibling-Controllern) an stabile Namen, damit Regel, Ziel
- * und Bedingung nicht via loser String-Literale auseinanderlaufen koennen.
+ * Konstanten binden die deklarativen Affordance-Regeln
+ * ({@code @LinkRule}/{@code @HateoasLinkTarget} am {@code TaskFacadeController} und den
+ * Sibling-Controllern) an stabile Namen, damit Regel, Ziel und Bedingung nicht via loser
+ * String-Literale auseinanderlaufen koennen.
  *
  * <p>Slice 1 fuehrt {@code self} (GET-Detail) ein; Slice 3 ergaenzt alle permission-/membership-
  * gegateten Schreib-Rels sowie die Collection-Rels (create/create-from-source).
@@ -153,19 +154,16 @@ public final class TaskHateoas {
      */
     public static final String IS_WRITE_MEMBER = "task.isWriteMember";
 
-    /**
-     * Bedingung: der Anfrager traegt die exakte Authority {@code task-management:TASK_WRITE}.
-     */
+    /** Bedingung: der Anfrager traegt die exakte Authority {@code task-management:TASK_WRITE}. */
     public static final String HAS_WRITE_AUTHORITY = "task.hasWriteAuthority";
 
-    /**
-     * Bedingung: der Anfrager traegt die exakte Authority {@code task-management:TASK_CREATE}.
-     */
+    /** Bedingung: der Anfrager traegt die exakte Authority {@code task-management:TASK_CREATE}. */
     public static final String HAS_CREATE_AUTHORITY = "task.hasCreateAuthority";
 
     /**
      * Bedingung: TASK_WRITE-Authority UND WRITE-Member (Konjunktion; fuer assignees/participants).
      */
-    public static final String HAS_WRITE_AUTHORITY_AND_IS_MEMBER = "task.hasWriteAuthorityAndMember";
+    public static final String HAS_WRITE_AUTHORITY_AND_IS_MEMBER =
+        "task.hasWriteAuthorityAndMember";
   }
 }

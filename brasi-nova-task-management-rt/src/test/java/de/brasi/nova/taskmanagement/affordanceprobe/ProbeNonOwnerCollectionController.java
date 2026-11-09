@@ -1,10 +1,10 @@
 package de.brasi.nova.taskmanagement.affordanceprobe;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import io.keel.framework.api.openapi.annotation.ApiFindResponse;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.PagedModel;
 import org.springframework.http.ResponseEntity;
@@ -56,8 +56,7 @@ public class ProbeNonOwnerCollectionController {
   public ResponseEntity<PagedModel<ProbeModel>> paged() {
     final ProbeModel a = new ProbeModel(UUID.randomUUID(), "paged-a");
     final ProbeModel b = new ProbeModel(UUID.randomUUID(), "paged-b");
-    return ResponseEntity.ok(
-        PagedModel.of(List.of(a, b), new PagedModel.PageMetadata(2, 0, 2, 1)));
+    return ResponseEntity.ok(PagedModel.of(List.of(a, b), new PagedModel.PageMetadata(2, 0, 2, 1)));
   }
 
   /** P5 (MVC-HAL-Wire): Keyset-Collection ueber den echten HTTP-/HAL-Konverter. */
