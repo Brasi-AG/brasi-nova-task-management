@@ -187,12 +187,15 @@ class ParticipantAddConcurrencyIT {
     seedBenutzer(jt, INSERT_REF_DB_ID, INSERT_REF, "insert-ref@brasi.de", TENANT_ID);
     seedBenutzer(jt, REACT_REF_DB_ID, REACT_REF, "react-ref@brasi.de", TENANT_ID);
     insertTask(jt, TASK_INSERT_ID, TASK_INSERT_UUID, TENANT_ID, "Insert-UNIQUE-Recovery-Task");
+    insertActiveCreator(jt, 593701L, TASK_INSERT_ID, CREATOR_REF, TENANT_ID);
     insertTask(jt, TASK_REACT_ID, TASK_REACT_UUID, TENANT_ID, "Reactivate-Race-Task");
+    insertActiveCreator(jt, 593702L, TASK_REACT_ID, CREATOR_REF, TENANT_ID);
     // Reaktivierungs-Race: eine bereits AUSGETRETENE Teilnehmer-Zeile fuer REACT_REF.
     insertExitedParticipant(jt, REACT_PARTICIPANT_ID, TASK_REACT_ID, REACT_REF, TENANT_ID);
     seedBenutzer(jt, 593203L, ORDER_REF_A, "order-a@brasi.de", TENANT_ID);
     seedBenutzer(jt, 593204L, ORDER_REF_B, "order-b@brasi.de", TENANT_ID);
     insertTask(jt, TASK_ORDER_ID, TASK_ORDER_UUID, TENANT_ID, "Inverse-Order-Task");
+    insertActiveCreator(jt, 593703L, TASK_ORDER_ID, CREATOR_REF, TENANT_ID);
     insertExitedParticipant(jt, 593302L, TASK_ORDER_ID, ORDER_REF_A, TENANT_ID);
     insertExitedParticipant(jt, 593303L, TASK_ORDER_ID, ORDER_REF_B, TENANT_ID);
     insertExitedUserState(jt, 593501L, TASK_ORDER_ID, ORDER_REF_A);
@@ -475,6 +478,28 @@ class ParticipantAddConcurrencyIT {
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, ?, ?, ?, GETDATE(), 0, 'it-seed', GETDATE())",
         id, id, externalId, tenantId, title, STATUS_OPEN, PRIORITY_NORMAL, DIRECTION, tenantId);
+  }
+
+  /**
+   * Aktiver Creator-Teilnehmer (EXIT_KIND NULL) des gemockten Actors: seit dem Membership-Guard
+   * (Commit 3e7bdc2) verlangt addParticipants Write-Membership des Actors. Die Zeile betrifft nur
+   * CREATOR_REF; alle Assertions des ITs sind auf die jeweils betroffene Ref eingeschraenkt.
+   */
+  private static void insertActiveCreator(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final UUID ref,
+      final long tenantId) {
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, TASK_ID, PARTICIPANT_REF, "
+            + " PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG, ASSIGNEE_FLAG, "
+            + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
+            + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 1, 0, 0, NULL, NULL, "
+            + " 'it-seed', GETDATE())",
+        id, id, tenantId, taskId, ref, tenantId);
   }
 
   private static void insertExitedParticipant(

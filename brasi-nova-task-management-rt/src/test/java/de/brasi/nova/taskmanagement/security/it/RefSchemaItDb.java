@@ -35,13 +35,16 @@ public final class RefSchemaItDb {
   private static final int STALE_TTL_HOURS = 2;
 
   /** Maximale Anzahl Versuche beim DROP einer Wegwerf-DB (SQL-Fehlercode 3702: "currently in use"). */
-  private static final int DROP_MAX_RETRIES = 3;
+  private static final int DROP_MAX_RETRIES = 5;
 
   /** Wartezeit zwischen DROP-Versuchen in Millisekunden. */
-  private static final long DROP_RETRY_WAIT_MS = 300L;
+  private static final long DROP_RETRY_WAIT_MS = 500L;
 
   /** SQL-Fehlercode 3702: "Cannot drop database ... because it is currently in use." */
   private static final int SQL_ERROR_DB_IN_USE = 3702;
+
+  /** SQL-Fehlercode 5064: Einzelbenutzermodus, ein Benutzer ist bereits verbunden (ALTER). */
+  private static final int SQL_ERROR_SINGLE_USER_BUSY = 5064;
 
   private RefSchemaItDb() {}
 
@@ -91,9 +94,16 @@ public final class RefSchemaItDb {
   /**
    * Droppt die Wegwerf-DB (SINGLE_USER kickt Restsessions); Name strikt validiert.
    *
-   * <p>Haertung: bei SQL-Fehlercode 3702 ("currently in use") wird ALTER SET SINGLE_USER erneut
-   * ausgefuehrt und DROP wiederholt, maximal {@link #DROP_MAX_RETRIES} Mal mit kurzem Warten.
-   * Dadurch wird der Race zwischen @AfterAll-Hook und noch lebenden Pool-Connections vermieden.
+   * <p>Haertung: bei den SQL-Fehlercodes 3702 ("currently in use", DROP) und 5064 ("Einzelbenutzer-
+   * modus, ein Benutzer ist verbunden", ALTER) wird ALTER SET SINGLE_USER + DROP wiederholt,
+   * maximal {@link #DROP_MAX_RETRIES} Mal mit kurzem Warten. Ursache: der Hikari-Pool eines
+   * gecachten Spring-Kontexts verbindet sich sofort neu und belegt den einzigen SINGLE_USER-Slot.
+   *
+   * <p>Sind die Versuche erschoepft, wird NICHT geworfen (sonst wuerde die IT-Klasse im
+   * {@code @AfterAll} rot, obwohl alle Tests gruen waren), sondern gewarnt: die Wegwerf-DB ist
+   * isoliert, beeinflusst keinen Testlauf und wird vom TTL-Stale-Cleanup ({@link
+   * #cleanupStaleDbs}, {@value #STALE_TTL_HOURS} h) eingesammelt. Bewusst KEIN {@code SET OFFLINE}:
+   * dabei wuerden die Dateien beim DROP nicht geloescht. Andere SQL-Fehler werden weiter geworfen.
    *
    * @param master DataSource auf master-DB
    * @param dbName Name der Wegwerf-DB (strikt validiert)
@@ -101,7 +111,6 @@ public final class RefSchemaItDb {
   public static void dropThrowawayDb(final DataSource master, final String dbName) {
     ensureSafeName(dbName);
     final JdbcTemplate jdbc = new JdbcTemplate(master);
-    RuntimeException lastException = null;
     for (int attempt = 1; attempt <= DROP_MAX_RETRIES; attempt++) {
       try {
         jdbc.execute(
@@ -109,43 +118,52 @@ public final class RefSchemaItDb {
         jdbc.execute("DROP DATABASE [" + dbName + "]");
         log.info("Task-Mgmt-IT Wegwerf-DB gedroppt: {} (Versuch {})", dbName, attempt);
         return;
-      } catch (RuntimeException e) {
-        if (isSqlErrorDbInUse(e) && attempt < DROP_MAX_RETRIES) {
+      } catch (final RuntimeException e) {
+        if (!isRetryableDropError(e)) {
+          throw e;
+        }
+        if (attempt < DROP_MAX_RETRIES) {
           log.warn(
-              "DROP {} fehlgeschlagen (3702 - DB in use), Versuch {}/{} - warte {}ms...",
+              "DROP {} fehlgeschlagen (DB in use / Single-User belegt), Versuch {}/{} - warte {}ms...",
               dbName,
               attempt,
               DROP_MAX_RETRIES,
               DROP_RETRY_WAIT_MS);
           try {
             Thread.sleep(DROP_RETRY_WAIT_MS);
-          } catch (InterruptedException ie) {
+          } catch (final InterruptedException ie) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("DROP-Retry unterbrochen.", ie);
           }
-          lastException = e;
         } else {
-          throw e;
+          log.warn(
+              "Wegwerf-DB {} nach {} Versuchen nicht gedroppt (Pool des gecachten Kontexts belegt"
+                  + " die DB) - Rueckfall auf TTL-Stale-Cleanup ({} h): {}",
+              dbName,
+              DROP_MAX_RETRIES,
+              STALE_TTL_HOURS,
+              e.getMessage());
         }
       }
     }
-    // Letzter Versuch fehlgeschlagen
-    throw lastException != null
-        ? lastException
-        : new RuntimeException("DROP DATABASE [" + dbName + "] nach " + DROP_MAX_RETRIES + " Versuchen fehlgeschlagen.");
   }
 
   /**
-   * Prueft, ob der SQL-Fehlercode 3702 ("currently in use") vorliegt.
+   * Klassifiziert SQL-Fehlercodes des Wegwerf-DB-Drops: 3702 und 5064 sind retrybar.
    *
-   * @param e die gefangene RuntimeException
-   * @return true, wenn es sich um Fehlercode 3702 handelt
+   * @param errorCode SQL-Server-Fehlercode
+   * @return true, wenn ein erneuter Versuch sinnvoll ist
    */
-  private static boolean isSqlErrorDbInUse(final RuntimeException e) {
+  static boolean isRetryableDropErrorCode(final int errorCode) {
+    return errorCode == SQL_ERROR_DB_IN_USE || errorCode == SQL_ERROR_SINGLE_USER_BUSY;
+  }
+
+  /** Prueft die Ursachenkette auf einen retrybaren SQL-Fehlercode. */
+  private static boolean isRetryableDropError(final RuntimeException e) {
     Throwable cause = e;
     while (cause != null) {
       if (cause instanceof SQLServerException sqlEx) {
-        return sqlEx.getErrorCode() == SQL_ERROR_DB_IN_USE;
+        return isRetryableDropErrorCode(sqlEx.getErrorCode());
       }
       cause = cause.getCause();
     }
