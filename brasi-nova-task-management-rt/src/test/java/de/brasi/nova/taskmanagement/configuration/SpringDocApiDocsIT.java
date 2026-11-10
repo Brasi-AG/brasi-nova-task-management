@@ -251,9 +251,7 @@ class SpringDocApiDocsIT {
 
     // 5b. #143: description ist ein nullable String (null = Beschreibung loeschen).
     final JsonNode description = patchSchema.path("properties").path("description");
-    assertThat(description.isMissingNode())
-        .as("TaskPatchInput.description vorhanden")
-        .isFalse();
+    assertThat(description.isMissingNode()).as("TaskPatchInput.description vorhanden").isFalse();
     assertThat(isNullable(description))
         .as("TaskPatchInput.description muss nullable sein: " + description)
         .isTrue();
