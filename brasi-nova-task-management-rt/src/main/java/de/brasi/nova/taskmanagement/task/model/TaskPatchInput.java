@@ -11,7 +11,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate).
+ * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate, description).
  *
  * <p>{@link PatchValue#absent()} bedeutet: Feld nicht aendern.
  * {@link PatchValue#of(Object)} bedeutet: Feld auf den angegebenen Wert setzen.
@@ -25,11 +25,15 @@ import java.util.UUID;
  * present(null) = Startdatum loeschen (Spalte nullable). Keine Datumsreihenfolge-Pruefung gegen
  * {@code dueDate} (konsistent zu Create und dem bestehenden dueDate-PATCH).
  *
- * @param title      neuer Titel (oder absent)
- * @param dueDate    neues Faelligkeitsdatum (oder absent/null)
- * @param statusCode neuer STATUS-CODE (z.B. "DONE"; oder absent)
- * @param tagIds     neue Tag-UUID-Menge (PUT-Set; oder absent = unberuehrt)
- * @param startDate  neues Startdatum (oder absent/null)
+ * <p>{@code description} (#143): absent = unveraendert; present(text) = setzen (wie bei Create
+ * unveraendert uebernommen); present(null) = Beschreibung loeschen (Spalte nullable).
+ *
+ * @param title       neuer Titel (oder absent)
+ * @param dueDate     neues Faelligkeitsdatum (oder absent/null)
+ * @param statusCode  neuer STATUS-CODE (z.B. "DONE"; oder absent)
+ * @param tagIds      neue Tag-UUID-Menge (PUT-Set; oder absent = unberuehrt)
+ * @param startDate   neues Startdatum (oder absent/null)
+ * @param description neue Beschreibung (oder absent/null)
  */
 public record TaskPatchInput(
     // Hinweis springdoc 2.8.12: PatchValue<T> wird als Wrapper kollabiert/missinterpretiert.
@@ -51,7 +55,12 @@ public record TaskPatchInput(
     @Schema(nullable = true,
         description = "Neues Startdatum ISO 8601 (absent = unveraendert, null = Datum loeschen).",
         example = "2026-11-01")
-    PatchValue<LocalDate> startDate) {
+    PatchValue<LocalDate> startDate,
+    @Schema(type = "string", nullable = true,
+        description = "Neue Beschreibung der Aufgabe (absent = unveraendert, null = Beschreibung"
+            + " loeschen).",
+        example = "Belege bis Monatsende einsammeln")
+    PatchValue<String> description) {
 
   @JsonAnySetter
   public void rejectSourceMutation(final String name, final Object value) {
@@ -65,6 +74,6 @@ public record TaskPatchInput(
   public static TaskPatchInput empty() {
     return new TaskPatchInput(
         PatchValue.absent(), PatchValue.absent(), PatchValue.absent(), PatchValue.absent(),
-        PatchValue.absent());
+        PatchValue.absent(), PatchValue.absent());
   }
 }
