@@ -249,6 +249,18 @@ class SpringDocApiDocsIT {
         .as("TaskPatchInput.dueDate muss nullable sein (null = Datum loeschen): " + dueDate)
         .isTrue();
 
+    // 5b. #143: description ist ein nullable String (null = Beschreibung loeschen).
+    final JsonNode description = patchSchema.path("properties").path("description");
+    assertThat(description.isMissingNode())
+        .as("TaskPatchInput.description vorhanden")
+        .isFalse();
+    assertThat(isNullable(description))
+        .as("TaskPatchInput.description muss nullable sein: " + description)
+        .isTrue();
+    assertThat(description.toString())
+        .as("TaskPatchInput.description ist vom Typ string: " + description)
+        .contains("\"string\"");
+
     // 6. Keyset-Items typisiert: GET /api/v1/tasks (aktive Aufgaben) -> 200-Schema referenziert den
     //    Typparameter TaskSummaryModel, nicht einen untypisierten KeysetPage (Codex-P2)
     final JsonNode activeSchema =

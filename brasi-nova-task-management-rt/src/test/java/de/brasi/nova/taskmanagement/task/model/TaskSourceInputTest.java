@@ -1,15 +1,10 @@
 package de.brasi.nova.taskmanagement.task.model;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.module.SimpleModule;
-import io.keel.framework.api.service.model.PatchValue;
 import io.keel.framework.api.validation.EntityValidationException;
-import io.keel.framework.web.jackson.PatchValueDeserializer;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
@@ -63,31 +58,5 @@ class TaskSourceInputTest {
 
     assertThatThrownBy(() -> mapper.readValue(body, TaskPatchInput.class))
         .hasRootCauseInstanceOf(EntityValidationException.class);
-  }
-
-  @Test
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  void patchDescriptionIsDeserializedAsPresentValueOrExplicitNull() throws Exception {
-    // Wie in der Anwendung: KSF-Deserializer fuer PatchValue (absent/present/null).
-    final ObjectMapper mapper =
-        Jackson2ObjectMapperBuilder.json()
-            .modulesToInstall(
-                new SimpleModule()
-                    .addDeserializer(
-                        (Class) PatchValue.class, (JsonDeserializer) new PatchValueDeserializer<>()))
-            .build();
-
-    final TaskPatchInput gesetzt =
-        mapper.readValue("{\"description\":\"Neuer Text\"}", TaskPatchInput.class);
-    assertThat(gesetzt.description().isPresent()).isTrue();
-    assertThat(gesetzt.description().get()).isEqualTo("Neuer Text");
-
-    final TaskPatchInput geloescht =
-        mapper.readValue("{\"description\":null}", TaskPatchInput.class);
-    assertThat(geloescht.description().isPresent()).isTrue();
-    assertThat(geloescht.description().get()).isNull();
-
-    final TaskPatchInput ohne = mapper.readValue("{\"title\":\"T\"}", TaskPatchInput.class);
-    assertThat(ohne.description().isPresent()).isFalse();
   }
 }

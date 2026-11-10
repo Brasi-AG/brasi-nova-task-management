@@ -2474,6 +2474,92 @@ class TaskFacadeControllerIT {
     assertThat(startDateNull).as("DB START_DATE ist NULL nach Loeschen").isEqualTo(1);
   }
 
+  // ---- #143: PATCH description (set / absent / clear / zu lang) -------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_description_set_clear: PATCH description -> Detail.description gesetzt + History;"
+          + " absent = No-Op; description=null -> DB DESCRIPTION null; 4001 Zeichen -> 400")
+  void patch_description_set_clear() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue143-Beschreibung");
+
+    // 1. Setzen
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("description", "Neue Beschreibung"))))
+        .andExpect(status().isNoContent());
+
+    final com.fasterxml.jackson.databind.JsonNode afterSet = getDetail(mvc, om, tokenA, taskId);
+    assertThat(afterSet.get("description").asText())
+        .as("Detail.description gesetzt")
+        .isEqualTo("Neue Beschreibung");
+    boolean descriptionHistory = false;
+    for (final com.fasterxml.jackson.databind.JsonNode h : afterSet.get("history")) {
+      if ("Beschreibung geaendert".equals(h.path("text").asText())) {
+        descriptionHistory = true;
+        break;
+      }
+    }
+    assertThat(descriptionHistory)
+        .as("History-Eintrag 'Beschreibung geaendert' vorhanden")
+        .isTrue();
+
+    // 2. Absent = No-Op: ein PATCH ohne description aendert die Beschreibung nicht.
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("title", "Issue143-umbenannt"))))
+        .andExpect(status().isNoContent());
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("description").asText())
+        .as("description durch description-absenten PATCH unveraendert")
+        .isEqualTo("Neue Beschreibung");
+
+    // 3. Zu lang (Entity-Laenge 4000): 400, Beschreibung bleibt unveraendert.
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("description", "x".repeat(4001)))))
+        .andExpect(status().isBadRequest());
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("description").asText())
+        .as("description nach abgelehntem PATCH unveraendert")
+        .isEqualTo("Neue Beschreibung");
+
+    // 4. Loeschen via rohem JSON (Map.of akzeptiert keinen null-Wert)
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":null}"))
+        .andExpect(status().isNoContent());
+
+    final com.fasterxml.jackson.databind.JsonNode afterClear = getDetail(mvc, om, tokenA, taskId);
+    final com.fasterxml.jackson.databind.JsonNode clearedDescription =
+        afterClear.path("description");
+    assertThat(clearedDescription.isNull() || clearedDescription.isMissingNode())
+        .as("Detail.description null nach Loeschen")
+        .isTrue();
+    final Integer descriptionNull =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK] WHERE EXTERNALID = ? AND DESCRIPTION IS NULL",
+            Integer.class,
+            taskId);
+    assertThat(descriptionNull).as("DB DESCRIPTION ist NULL nach Loeschen").isEqualTo(1);
+  }
+
   // ---- Regression: PATCH statusCode persistiert (FK @NovaForeignKey.updateable=true) ----------
 
   @Test

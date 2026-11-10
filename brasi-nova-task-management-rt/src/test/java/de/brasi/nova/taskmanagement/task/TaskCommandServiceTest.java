@@ -1255,7 +1255,12 @@ class TaskCommandServiceTest {
 
     assertThat(task.getDescription()).as("Beschreibung gesetzt").isEqualTo("Neuer Text");
     verify(historyService)
-        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Beschreibung geaendert"), any());
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            eq("Beschreibung geaendert"),
+            eq("10 -> 10 Zeichen"));
     verify(taskRepository).save(task);
   }
 
@@ -1282,7 +1287,12 @@ class TaskCommandServiceTest {
 
     assertThat(task.getDescription()).as("Beschreibung geloescht (null)").isNull();
     verify(historyService)
-        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Beschreibung geaendert"), any());
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            eq("Beschreibung geaendert"),
+            eq("10 -> 0 Zeichen"));
     verify(taskRepository).save(task);
   }
 
