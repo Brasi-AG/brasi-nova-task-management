@@ -286,6 +286,128 @@ class OpenApiDefaultDocCollectionSchemaIT {
     assertThat(tags.get(0).asText()).isEqualTo("inbox-snapshot-controller");
   }
 
+  // ---- GET /api/v1/tasks/participants: Doku-Vertrag (reine OpenAPI-Beschreibung) -----
+
+  private static final String PARTICIPANTS = "/api/v1/tasks/participants";
+
+  private JsonNode participantsGet() throws Exception {
+    return defaultDocument().path("paths").path(PARTICIPANTS).path("get");
+  }
+
+  private static JsonNode parameter(final JsonNode op, final String name) {
+    for (final JsonNode p : op.path("parameters")) {
+      if (name.equals(p.path("name").asText())) {
+        return p;
+      }
+    }
+    return MissingNode.getInstance();
+  }
+
+  private static JsonNode example(final JsonNode op, final String code, final String name)
+      throws Exception {
+    final JsonNode ex =
+        op.path("responses")
+            .path(code)
+            .path("content")
+            .path("application/json")
+            .path("examples")
+            .path(name);
+    assertThat(ex.isMissingNode()).as("Example " + code + "/" + name).isFalse();
+    final JsonNode value = ex.path("value");
+    return value.isTextual() ? new ObjectMapper().readTree(value.asText()) : value;
+  }
+
+  @Test
+  @DisplayName("participants_operation_description_traegt_kernaussagen")
+  void participants_operation_description_traegt_kernaussagen() throws Exception {
+    final String d = participantsGet().path("description").asText();
+    assertThat(d).contains("AKTIVEN BENUTZER").contains("Mandanten").contains("userRef");
+    assertThat(d).contains("assignees").contains("participants").contains("mentions");
+    assertThat(d).contains("400").contains("NICHT alphabetisch");
+    assertThat(d).contains("Ohne q").contains("ALLE");
+  }
+
+  @Test
+  @DisplayName("participants_parameter_beschreibungen_tragen_kerninfos")
+  void participants_parameter_beschreibungen_tragen_kerninfos() throws Exception {
+    final JsonNode op = participantsGet();
+    final String q = parameter(op, "q").path("description").asText();
+    assertThat(q).contains("Teiltreffer").contains("loginName").contains("fullName");
+    assertThat(q).contains("Gross-/Kleinschreibung").contains("kein exakter Lookup");
+    final String limit = parameter(op, "limit").path("description").asText();
+    assertThat(limit).contains("[1,100]").contains("50");
+    final String cursor = parameter(op, "cursor").path("description").asText();
+    assertThat(cursor).contains("nextCursor").contains("identischem q").contains("400");
+  }
+
+  @Test
+  @DisplayName("participants_200_hat_benannte_examples_und_schema_bleibt_ParticipantPage")
+  void participants_200_hat_benannte_examples_und_schema_bleibt_ParticipantPage() throws Exception {
+    final JsonNode doc = defaultDocument();
+    final JsonNode op = doc.path("paths").path(PARTICIPANTS).path("get");
+    assertThat(okSchema(doc, PARTICIPANTS).path("$ref").asText())
+        .isEqualTo("#/components/schemas/ParticipantPage");
+
+    final JsonNode all = example(op, "200", "alle-kandidaten");
+    assertThat(all.path("items").size()).isEqualTo(3);
+    assertThat(all.path("hasMore").asBoolean()).isFalse();
+    assertThat(all.path("nextCursor").isNull()).isTrue();
+
+    assertThat(example(op, "200", "suche").path("items").size()).isEqualTo(1);
+
+    final JsonNode first = example(op, "200", "erste-seite-mit-weiteren");
+    assertThat(first.path("items").size()).isEqualTo(2);
+    assertThat(first.path("hasMore").asBoolean()).isTrue();
+    assertThat(first.path("nextCursor").asText()).isNotBlank();
+  }
+
+  @Test
+  @DisplayName("participants_400_und_403_haben_nova_fehler_examples")
+  void participants_400_und_403_haben_nova_fehler_examples() throws Exception {
+    final JsonNode op = participantsGet();
+    final JsonNode bad = example(op, "400", "ungueltiger-cursor");
+    assertThat(bad.path("errorKey").asText()).isEqualTo("NOVA_VALIDATION_FAILED");
+    assertThat(bad.path("status").asInt()).isEqualTo(400);
+    final JsonNode denied = example(op, "403", "fehlende-berechtigung");
+    assertThat(denied.path("errorKey").asText()).isEqualTo("NOVA_ACCESS_DENIED");
+    assertThat(denied.path("status").asInt()).isEqualTo(403);
+    // Fehlerantworten duerfen nicht mehr auf das Erfolgs-Schema ParticipantPage zeigen.
+    for (final String code : new String[] {"400", "403"}) {
+      assertThat(
+              op.path("responses")
+                  .path(code)
+                  .path("content")
+                  .path("application/json")
+                  .path("schema")
+                  .path("$ref")
+                  .asText())
+          .as("Schema-$ref der " + code + "-Antwort")
+          .doesNotContain("ParticipantPage");
+    }
+  }
+
+  @Test
+  @DisplayName("participants_schema_felder_beschreiben_userRef_verwendung")
+  void participants_schema_felder_beschreiben_userRef_verwendung() throws Exception {
+    final JsonNode schemas = defaultDocument().path("components").path("schemas");
+    final String userRef =
+        schemas
+            .path("ParticipantSummary")
+            .path("properties")
+            .path("userRef")
+            .path("description")
+            .asText();
+    assertThat(userRef).contains("assignees").contains("participants").contains("mentions");
+    final String next =
+        schemas
+            .path("ParticipantPage")
+            .path("properties")
+            .path("nextCursor")
+            .path("description")
+            .asText();
+    assertThat(next).contains("hasMore=true").contains("gleichem q");
+  }
+
   // ---- IT-Context: identisch zu InboxListAffordanceIT.ItConfig (voller Autoconfig + HATEOAS)
   // -----
 
