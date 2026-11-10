@@ -305,8 +305,8 @@ public class TaskFacadeController {
       summary = "Aufgabe patchen",
       description =
           "Aktualisiert einzelne Felder einer Aufgabe (title, dueDate, statusCode, tagIds,"
-              + " startDate). Nur gesendete Felder werden geaendert (PatchValue-Semantik: absent ="
-              + " unveraendert, null = Datumsfeld loeschen).")
+              + " startDate, description). Nur gesendete Felder werden geaendert (PatchValue-"
+              + "Semantik: absent = unveraendert, null = Datumsfeld bzw. Beschreibung loeschen).")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
     @ApiResponse(

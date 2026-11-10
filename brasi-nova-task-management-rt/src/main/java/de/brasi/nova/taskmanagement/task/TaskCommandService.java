@@ -374,7 +374,7 @@ public class TaskCommandService {
   }
 
   /**
-   * Patcht eine bestehende Aufgabe (title, dueDate, startDate, statusCode, tagIds).
+   * Patcht eine bestehende Aufgabe (title, dueDate, startDate, description, statusCode, tagIds).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion. Nach
    * Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
@@ -472,6 +472,21 @@ public class TaskCommandService {
           "Startdatum geaendert",
           task.getStartDate() + " -> " + newStartDate);
       task.setStartDate(newStartDate);
+      changed = true;
+    }
+
+    // description (#143): present(text) = setzen, present(null) = loeschen; absent = unberuehrt.
+    // Wie bei Create wird der Text unveraendert uebernommen. Der Historieneintrag enthaelt bewusst
+    // nur die Laengen (Freitext kann bis zu 4000 Zeichen lang sein).
+    if (input.description().isPresent()) {
+      final String newDescription = input.description().get();
+      historyService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          "Beschreibung geaendert",
+          length(task.getDescription()) + " -> " + length(newDescription) + " Zeichen");
+      task.setDescription(newDescription);
       changed = true;
     }
 
@@ -748,6 +763,16 @@ public class TaskCommandService {
       end--;
     }
     return s.substring(0, end) + "...";
+  }
+
+  /**
+   * Liefert die Laenge eines optionalen Freitexts fuer Historieneintraege.
+   *
+   * @param s der Text (null-sicher)
+   * @return Laenge in UTF-16-Code-Units, 0 bei null
+   */
+  private static int length(final String s) {
+    return s == null ? 0 : s.length();
   }
 
   /**
