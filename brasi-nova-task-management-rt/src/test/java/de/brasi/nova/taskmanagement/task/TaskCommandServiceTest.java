@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,10 +15,12 @@ import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskDirectionCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
+import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
@@ -82,6 +86,8 @@ class TaskCommandServiceTest {
 
   private static final long DIRECTION_ID_CUSTOMER_INTERNAL = 301L;
   private static final long STATUS_ID_OPEN = 101L;
+  private static final long STATUS_ID_DONE = 102L;
+  private static final long STATUS_ID_CANCELLED = 103L;
   private static final long PRIORITY_ID_NORMAL = 202L;
 
   @Mock private BaseTaskRepository taskRepository;
@@ -136,6 +142,9 @@ class TaskCommandServiceTest {
     when(resolver.resolveTaskDirection(TaskDirectionCodes.CUSTOMER_INTERNAL))
         .thenReturn(DIRECTION_ID_CUSTOMER_INTERNAL);
     when(resolver.resolveTaskStatus(TaskStatusCodes.OPEN)).thenReturn(STATUS_ID_OPEN);
+    when(resolver.resolveTaskStatus(TaskStatusCodes.DONE)).thenReturn(STATUS_ID_DONE);
+    when(resolver.resolveTaskStatus(TaskStatusCodes.CANCELLED)).thenReturn(STATUS_ID_CANCELLED);
+    when(resolver.resolveTaskStatusDone()).thenReturn(STATUS_ID_DONE);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL)).thenReturn(PRIORITY_ID_NORMAL);
 
     // Codex #6: Der Service bumpt Multi-Ref-Mengen jetzt ueber den zentralen Helfer bumpSorted;
@@ -1315,6 +1324,242 @@ class TaskCommandServiceTest {
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
+  // ---- Intake #151: DONE-Benachrichtigung beim Schliessen einer Aufgabe -------------------------
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_done_benachrichtigt_jeden_aktiven_beteiligten_ausser_akteur: Ersteller,"
+          + " Zugewiesene und Beteiligte erhalten genau eine DONE-Benachrichtigung, der Akteur"
+          + " keine")
+  void patch_status_nach_done_benachrichtigt_jeden_aktiven_beteiligten_ausser_akteur() {
+    final Long taskId = 151L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID assigneeRef = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(assigneeRef, false, true, true, null),
+                participantRow(participantRef, false, false, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    assertThat(task.getTaskStatusId()).as("Status auf DONE gesetzt").isEqualTo(STATUS_ID_DONE);
+    for (final UUID recipientRef : List.of(creatorRef, assigneeRef, participantRef)) {
+      verify(notificationService, times(1))
+          .emit(
+              eq(recipientRef),
+              eq(taskId),
+              eq(NotificationTypeCodes.DONE),
+              eq(NotificationSeverityCodes.INFO),
+              eq("Die Aufgabe wurde erledigt."),
+              eq("Jahresabschluss"),
+              eq(USER_REF));
+    }
+    verify(notificationService, never())
+        .emit(eq(USER_REF), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(3)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_done_benachrichtigt_ausgetretene_person_nicht: EXIT_KIND gesetzt"
+          + " (Austritt/Abmeldung) -> keine DONE-Benachrichtigung")
+  void patch_status_nach_done_benachrichtigt_ausgetretene_person_nicht() {
+    final Long taskId = 152L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID unsubscribedRef = UUID.randomUUID();
+    final UUID handedOverRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(unsubscribedRef, false, false, true, ExitKind.UNSUBSCRIBED),
+                participantRow(handedOverRef, false, false, true, ExitKind.HANDOVER)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, never())
+        .emit(eq(unsubscribedRef), any(), any(), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(handedOverRef), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_done_benachrichtigt_abgemeldete_person_nicht: UNSUBSCRIBED_AT im"
+          + " UserState (Archiv-Leser) -> keine DONE-Benachrichtigung")
+  void patch_status_nach_done_benachrichtigt_abgemeldete_person_nicht() {
+    final Long taskId = 153L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID leftRef = UUID.randomUUID();
+    final TaskParticipant leftRow = participantRow(leftRef, false, true, true, null);
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                leftRow));
+    // Der Archiv-Leser-Pfad liefert Personen, die laut Code als "verlassen" gelten (EXIT_KIND
+    // gesetzt ODER UNSUBSCRIBED_AT im UserState).
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(leftRow));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, never())
+        .emit(eq(leftRef), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_done_benachrichtigt_person_mit_mehreren_rollen_genau_einmal: Ersteller +"
+          + " Zugewiesener + Beteiligter in einer Person -> genau eine DONE-Benachrichtigung")
+  void patch_status_nach_done_benachrichtigt_person_mit_mehreren_rollen_genau_einmal() {
+    final Long taskId = 154L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID multiRoleRef = UUID.randomUUID();
+    // Zusaetzlich defensiv: dieselbe Person doppelt geliefert -> trotzdem nur eine
+    // Benachrichtigung.
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(multiRoleRef, true, true, true, null),
+                participantRow(multiRoleRef, true, true, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(multiRoleRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_done_liest_beteiligte_vor_task_save_und_emittiert_danach: Lock-Reihenfolge"
+          + " (Membership-Read vor TASK-save) bleibt gewahrt")
+  void patch_status_nach_done_liest_beteiligte_vor_task_save_und_emittiert_danach() {
+    final Long taskId = 155L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    final org.mockito.InOrder order =
+        inOrder(participantQueryRepository, taskRepository, notificationService);
+    order.verify(participantQueryRepository).findActiveByTaskIds(any());
+    order.verify(taskRepository).save(task);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(creatorRef), eq(taskId), eq(NotificationTypeCodes.DONE), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_ohne_statuswechsel_loest_keine_done_benachrichtigung_aus: nur Titel -> keine"
+          + " Benachrichtigung")
+  void patch_ohne_statuswechsel_loest_keine_done_benachrichtigung_aus() {
+    final Long taskId = 156L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    stubCreatorAndActor();
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent()));
+
+    verify(taskRepository).save(task);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_done_bei_bereits_erledigter_aufgabe_loest_keine_benachrichtigung_aus:"
+          + " DONE -> DONE ist kein Uebergang")
+  void patch_status_done_bei_bereits_erledigter_aufgabe_loest_keine_benachrichtigung_aus() {
+    final Long taskId = 157L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_DONE);
+    stubCreatorAndActor();
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_DONE);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_abgebrochen_loest_keine_done_benachrichtigung_aus: OPEN -> CANCELLED")
+  void patch_status_nach_abgebrochen_loest_keine_done_benachrichtigung_aus() {
+    final Long taskId = 158L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    stubCreatorAndActor();
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_CANCELLED);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus: DONE -> OPEN (Reopen)")
+  void patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus() {
+    final Long taskId = 159L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_DONE);
+    stubCreatorAndActor();
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.OPEN));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_OPEN);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
   // ---- Surrogat-sichere Truncation (Codex Re-Gate 93781f4, Finding #1) --------------------
 
   @Test
@@ -1365,6 +1610,58 @@ class TaskCommandServiceTest {
     task.setLastActivityAt(java.time.LocalDateTime.now());
     task.setCommentCount(0);
     return task;
+  }
+
+  /**
+   * Baut eine Aufgabe mit Titel und Status und registriert sie als Treffer von {@code
+   * findByUuid}/{@code save}.
+   */
+  private Task taskWithStatus(final Long taskId, final long statusId) {
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setTitle("Jahresabschluss");
+    task.setTaskStatusId(statusId);
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    return task;
+  }
+
+  /** Baut eine PERSON-Teilnehmerzeile mit Rollen-Flags und optionalem Austritt. */
+  private static TaskParticipant participantRow(
+      final UUID ref,
+      final boolean creator,
+      final boolean assignee,
+      final boolean participant,
+      final ExitKind exitKind) {
+    final TaskParticipant row = new TaskParticipant();
+    row.setParticipantRef(ref);
+    row.setCreatorFlag(creator);
+    row.setAssigneeFlag(assignee);
+    row.setParticipantFlag(participant);
+    row.setExitKind(exitKind);
+    return row;
+  }
+
+  /** Baut ein Patch-Input, das ausschliesslich den statusCode setzt. */
+  private static TaskPatchInput statusPatch(final String statusCode) {
+    return new TaskPatchInput(
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.of(statusCode),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent());
+  }
+
+  /**
+   * Stellt Ersteller und Akteur als aktive Beteiligte bereit - so wuerde ein faelschlich
+   * ausgeloester Fan-out sichtbar (der Ersteller waere Empfaenger).
+   */
+  private void stubCreatorAndActor() {
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(UUID.randomUUID(), true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
   }
 
   /** Baut einen TaskTag mit interner Id, UUID und Bezeichnung ({@code entryValue}). */
