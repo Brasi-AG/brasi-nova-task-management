@@ -2,12 +2,12 @@
   {
     "operation": "activeTasks",
     "rule": "property-description",
-    "fingerprint": "7e1ecbc00b946314"
+    "fingerprint": "5e4704822cc71e17"
   },
   {
     "operation": "activeTasks",
     "rule": "response-example",
-    "fingerprint": "7e1ecbc00b946314"
+    "fingerprint": "5e4704822cc71e17"
   },
   {
     "operation": "addParticipants",
@@ -22,12 +22,12 @@
   {
     "operation": "archiveTasks",
     "rule": "property-description",
-    "fingerprint": "b0410f792801f12c"
+    "fingerprint": "018ad9140a1d387f"
   },
   {
     "operation": "archiveTasks",
     "rule": "response-example",
-    "fingerprint": "b0410f792801f12c"
+    "fingerprint": "018ad9140a1d387f"
   },
   {
     "operation": "create",
@@ -102,12 +102,12 @@
   {
     "operation": "detail",
     "rule": "property-description",
-    "fingerprint": "5972dd784da68704"
+    "fingerprint": "4d462a9d6221f3e7"
   },
   {
     "operation": "detail",
     "rule": "response-example",
-    "fingerprint": "5972dd784da68704"
+    "fingerprint": "4d462a9d6221f3e7"
   },
   {
     "operation": "exit",
@@ -147,22 +147,22 @@
   {
     "operation": "listNotifications",
     "rule": "property-description",
-    "fingerprint": "452ca4be0315a8e1"
+    "fingerprint": "34449950d5a673e6"
   },
   {
     "operation": "listNotifications",
     "rule": "response-example",
-    "fingerprint": "452ca4be0315a8e1"
+    "fingerprint": "34449950d5a673e6"
   },
   {
     "operation": "listTags",
     "rule": "property-description",
-    "fingerprint": "49406ad6598c8b79"
+    "fingerprint": "7af5acdde974ddb3"
   },
   {
     "operation": "listTags",
     "rule": "response-example",
-    "fingerprint": "49406ad6598c8b79"
+    "fingerprint": "7af5acdde974ddb3"
   },
   {
     "operation": "markAllRead",
@@ -222,12 +222,12 @@
   {
     "operation": "snapshot",
     "rule": "property-description",
-    "fingerprint": "05a7d1109ec4e683"
+    "fingerprint": "ae27a7168854334f"
   },
   {
     "operation": "snapshot",
     "rule": "response-example",
-    "fingerprint": "05a7d1109ec4e683"
+    "fingerprint": "ae27a7168854334f"
   },
   {
     "operation": "updateAssignees",
