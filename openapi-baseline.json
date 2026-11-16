@@ -1,0 +1,252 @@
+[
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "fingerprint": "7e1ecbc00b946314"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "fingerprint": "7e1ecbc00b946314"
+  },
+  {
+    "operation": "addParticipants",
+    "rule": "request-example",
+    "fingerprint": "76ed5b2fd355a0d3"
+  },
+  {
+    "operation": "addParticipants",
+    "rule": "response-example",
+    "fingerprint": "76ed5b2fd355a0d3"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "fingerprint": "b0410f792801f12c"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "fingerprint": "b0410f792801f12c"
+  },
+  {
+    "operation": "create",
+    "rule": "property-description",
+    "fingerprint": "fbdd0370f8a14b3c"
+  },
+  {
+    "operation": "create",
+    "rule": "request-example",
+    "fingerprint": "fbdd0370f8a14b3c"
+  },
+  {
+    "operation": "create",
+    "rule": "response-example",
+    "fingerprint": "fbdd0370f8a14b3c"
+  },
+  {
+    "operation": "createComment",
+    "rule": "example-valid",
+    "fingerprint": "211ddc53fb5a8558"
+  },
+  {
+    "operation": "createComment",
+    "rule": "request-example",
+    "fingerprint": "211ddc53fb5a8558"
+  },
+  {
+    "operation": "createComment",
+    "rule": "response-example",
+    "fingerprint": "211ddc53fb5a8558"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "property-description",
+    "fingerprint": "b6b4b33d8f067e6a"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "request-example",
+    "fingerprint": "b6b4b33d8f067e6a"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "fingerprint": "b6b4b33d8f067e6a"
+  },
+  {
+    "operation": "createTag",
+    "rule": "op-summary-de",
+    "fingerprint": "870d9123827ae372"
+  },
+  {
+    "operation": "createTag",
+    "rule": "request-example",
+    "fingerprint": "870d9123827ae372"
+  },
+  {
+    "operation": "createTag",
+    "rule": "response-example",
+    "fingerprint": "870d9123827ae372"
+  },
+  {
+    "operation": "deactivateTag",
+    "rule": "response-example",
+    "fingerprint": "ee979fb6a2765a06"
+  },
+  {
+    "operation": "deleteTag",
+    "rule": "response-example",
+    "fingerprint": "21b72b16d65eaef0"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "fingerprint": "5972dd784da68704"
+  },
+  {
+    "operation": "detail",
+    "rule": "response-example",
+    "fingerprint": "5972dd784da68704"
+  },
+  {
+    "operation": "exit",
+    "rule": "request-example",
+    "fingerprint": "b6d7e40d3d4018e2"
+  },
+  {
+    "operation": "exit",
+    "rule": "response-example",
+    "fingerprint": "b6d7e40d3d4018e2"
+  },
+  {
+    "operation": "flag",
+    "rule": "request-example",
+    "fingerprint": "5a2932e3fbda3101"
+  },
+  {
+    "operation": "flag",
+    "rule": "response-example",
+    "fingerprint": "5a2932e3fbda3101"
+  },
+  {
+    "operation": "getComments",
+    "rule": "response-example",
+    "fingerprint": "666f25b1ba29ce96"
+  },
+  {
+    "operation": "issueTicket",
+    "rule": "response-example",
+    "fingerprint": "9de121526164b7a1"
+  },
+  {
+    "operation": "listDictionaries",
+    "rule": "response-example",
+    "fingerprint": "b659d608a143a53c"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "fingerprint": "452ca4be0315a8e1"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "response-example",
+    "fingerprint": "452ca4be0315a8e1"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "fingerprint": "49406ad6598c8b79"
+  },
+  {
+    "operation": "listTags",
+    "rule": "response-example",
+    "fingerprint": "49406ad6598c8b79"
+  },
+  {
+    "operation": "markAllRead",
+    "rule": "response-example",
+    "fingerprint": "b3578b4488c8ca71"
+  },
+  {
+    "operation": "markRead",
+    "rule": "request-example",
+    "fingerprint": "5397f606f0398bd3"
+  },
+  {
+    "operation": "markRead",
+    "rule": "response-example",
+    "fingerprint": "5397f606f0398bd3"
+  },
+  {
+    "operation": "mute",
+    "rule": "request-example",
+    "fingerprint": "02e9796667e0c0c6"
+  },
+  {
+    "operation": "mute",
+    "rule": "response-example",
+    "fingerprint": "02e9796667e0c0c6"
+  },
+  {
+    "operation": "patch",
+    "rule": "request-example",
+    "fingerprint": "8f16f1cf22f2244d"
+  },
+  {
+    "operation": "patch",
+    "rule": "response-example",
+    "fingerprint": "8f16f1cf22f2244d"
+  },
+  {
+    "operation": "pin",
+    "rule": "request-example",
+    "fingerprint": "732179871f079cc2"
+  },
+  {
+    "operation": "pin",
+    "rule": "response-example",
+    "fingerprint": "732179871f079cc2"
+  },
+  {
+    "operation": "searchParticipants",
+    "rule": "example-valid",
+    "fingerprint": "68ebe29deb98f750"
+  },
+  {
+    "operation": "searchParticipants",
+    "rule": "response-example",
+    "fingerprint": "68ebe29deb98f750"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "fingerprint": "05a7d1109ec4e683"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "response-example",
+    "fingerprint": "05a7d1109ec4e683"
+  },
+  {
+    "operation": "updateAssignees",
+    "rule": "request-example",
+    "fingerprint": "2b7779141811aa97"
+  },
+  {
+    "operation": "updateAssignees",
+    "rule": "response-example",
+    "fingerprint": "2b7779141811aa97"
+  },
+  {
+    "operation": "updateTag",
+    "rule": "request-example",
+    "fingerprint": "b614a5b7d24f75e7"
+  },
+  {
+    "operation": "updateTag",
+    "rule": "response-example",
+    "fingerprint": "b614a5b7d24f75e7"
+  }
+]
