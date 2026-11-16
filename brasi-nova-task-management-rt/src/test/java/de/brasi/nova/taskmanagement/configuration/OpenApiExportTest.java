@@ -33,8 +33,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.TypeExcludeFilter;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.type.classreading.MetadataReader;
+import org.springframework.core.type.classreading.MetadataReaderFactory;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -50,27 +56,37 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 /**
  * Exportiert das Default-OpenAPI-Dokument {@code /v3/api-docs} fuer das OpenAPI-Gate des Brains.
  *
- * <p>Bootet denselben Facade-Context wie {@link SpringDocApiDocsIT} (dessen {@code ItConfig}), aber
- * ohne Datenbank: Flyway ist aus, die KSF-Sequenz-Initialisierung ist durch einen Stub ersetzt, und
- * die DataSource zeigt auf eine nicht erreichbare Adresse, die beim Start niemand benutzt. Damit
- * laeuft der Export im normalen {@code mvn test} ohne MSSQL-Zugang. Der Test-Probe-Controller
- * {@code /it/**} des ItConfig ist aus dem Dokument ausgeschlossen.
+ * <p>Bootet den vollen Anwendungskontext der {@link BrasiNovaApplication} (gleicher
+ * Komponenten-Scan, gleiche Auto-Konfiguration, {@code application.properties}) und damit dasselbe
+ * HAL-, Security- und springdoc-Rendering wie produktiv. Abweichungen vom Betrieb:
  *
- * <p>Schreibt nach {@code target/openapi/}:
+ * <ul>
+ *   <li>kein Config-Server (die Werte aus kpl-config fehlen; JWT mit Wegwerf-Schluessel);
+ *   <li>keine Datenbank: Flyway bleibt aus (wie produktiv), die KSF-Sequenz-Initialisierung ist
+ *       durch einen Stub ersetzt, und die DataSource zeigt auf eine nicht erreichbare Adresse, die
+ *       beim Start niemand benutzt;
+ *   <li>Klassen aus {@code target/test-classes} sind aus dem Komponenten-Scan ausgeschlossen
+ *       ({@link ProductionClassesOnly}), damit Test-Controller und Test-Konfigurationen nicht im
+ *       Dokument landen.
+ * </ul>
+ *
+ * <p>Damit laeuft der Export im normalen {@code mvn test} ohne MSSQL-Zugang. Er schreibt nach
+ * {@code target/openapi/}:
  *
  * <ul>
  *   <li>{@code openapi.json} &ndash; das Dokument, wie {@code /v3/api-docs} es liefert;
  *   <li>{@code operations.json} &ndash; je {@code operationId} die Art {@code handwritten}
- *       (Handler- Klasse liegt im {@code -rt}-Modul) oder {@code generated} (Handler-Klasse aus
+ *       (Handler-Klasse liegt im {@code -rt}-Modul) oder {@code generated} (Handler-Klasse aus
  *       einem anderen Modul bzw. Framework), ermittelt ueber die {@link
  *       RequestMappingHandlerMapping}s.
  * </ul>
  */
 @SpringBootTest(
-    classes = SpringDocApiDocsIT.ItConfig.class,
+    classes = BrasiNovaApplication.class,
     webEnvironment = SpringBootTest.WebEnvironment.MOCK,
     properties = {
       "spring.main.banner-mode=off",
+      // Kein Config-Server und kein Netz beim Export.
       "spring.cloud.config.enabled=false",
       "spring.cloud.bootstrap.enabled=false",
       "spring.cloud.config.import-check.enabled=false",
@@ -80,24 +96,13 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
       "spring.datasource.url=jdbc:sqlserver://127.0.0.1:1;databaseName=openapi_export;encrypt=false",
       "spring.datasource.driver-class-name=com.microsoft.sqlserver.jdbc.SQLServerDriver",
       "spring.datasource.hikari.connection-timeout=250",
+      // Produktiv aus der Verbindung erkannt; fest gesetzt, damit beim Start keine Abfrage laeuft.
       "ksf.persistence.dialect=MSSQL",
-      "ksf.persistence.ddl-auto=none",
-      "ksf.web-security.enabled=true",
-      "ksf.web-security.filter-chain.enabled=true",
-      "ksf.web-security.principal.profile-claim.enabled=true",
-      "ksf.web-security.tenant.context-binding=FILTER",
-      "ksf.web-security.tenant.binding.source=JWT",
-      "ksf.web-security.tenant.binding.required=false",
-      "ksf.web-security.tenant.entity-class=de.brasi.nova.taskmanagement.refentity.Firm",
-      "ksf.web-security.permit-paths=/actuator/health,/actuator/info,/v3/api-docs/**,/swagger-ui/**,/ws",
+      // Produktiv aus kpl-config: JWT-Filterkette und Mandanten-Entitaet.
       "ksf.security.jwt.enabled=true",
-      "ksf.module-registration.enabled=false",
-      "springdoc.api-docs.path=/v3/api-docs",
-      "springdoc.api-docs.enabled=true",
-      "springdoc.api-docs.version=openapi_3_0",
-      // Test-Probe-Controller des ItConfig gehoert nicht zur Schnittstelle des Dienstes.
-      "springdoc.paths-to-exclude=/it/**",
+      "ksf.security.tenant.entity-class=de.brasi.nova.taskmanagement.refentity.Firm",
     })
+@ContextConfiguration(initializers = OpenApiExportTest.ProductionClassesOnly.Registration.class)
 @Execution(ExecutionMode.SAME_THREAD)
 class OpenApiExportTest {
 
@@ -173,7 +178,7 @@ class OpenApiExportTest {
     final JsonNode document = mapper.readTree(body);
     final JsonNode paths = document.path("paths");
     assertThat(paths.size()).as("dokumentierte Pfade").isGreaterThanOrEqualTo(10);
-    assertThat(paths.has("/it/whoami")).as("Test-Probe-Controller ausgeschlossen").isFalse();
+    assertThat(paths.has("/it/whoami")).as("Test-Controller ausgeschlossen").isFalse();
 
     final Map<String, String> kinds = handlerKinds();
     final Map<String, String> operations = new TreeMap<>();
@@ -246,5 +251,53 @@ class OpenApiExportTest {
   private static URL codeSource(final Class<?> type) {
     final var source = type.getProtectionDomain().getCodeSource();
     return source == null ? null : source.getLocation();
+  }
+
+  /**
+   * Schliesst Klassen aus {@code target/test-classes} vom Komponenten-Scan der Anwendung aus.
+   *
+   * <p>{@code @SpringBootApplication} scannt {@code de.brasi.nova}; im Test liegen dort auch
+   * Test-Controller und -Konfigurationen. Der Spring-Boot-{@code TypeExcludeFilter} fragt alle
+   * Beans dieses Typs; die Registrierung erfolgt vor dem Scan ueber {@link Registration}.
+   */
+  static final class ProductionClassesOnly extends TypeExcludeFilter {
+
+    private static final URL TEST_CLASSES = codeSource(OpenApiExportTest.class);
+
+    @Override
+    public boolean match(
+        final MetadataReader metadataReader, final MetadataReaderFactory metadataReaderFactory)
+        throws IOException {
+      final String className = metadataReader.getClassMetadata().getClassName();
+      try {
+        final Class<?> type =
+            ClassUtils.forName(className, OpenApiExportTest.class.getClassLoader());
+        return Objects.equals(TEST_CLASSES, codeSource(type));
+      } catch (ClassNotFoundException | LinkageError e) {
+        return false;
+      }
+    }
+
+    @Override
+    public boolean equals(final Object other) {
+      return other instanceof ProductionClassesOnly;
+    }
+
+    @Override
+    public int hashCode() {
+      return ProductionClassesOnly.class.hashCode();
+    }
+
+    /** Registriert den Filter als Singleton, bevor der Komponenten-Scan laeuft. */
+    static final class Registration
+        implements ApplicationContextInitializer<ConfigurableApplicationContext> {
+
+      @Override
+      public void initialize(final ConfigurableApplicationContext context) {
+        context
+            .getBeanFactory()
+            .registerSingleton(ProductionClassesOnly.class.getName(), new ProductionClassesOnly());
+      }
+    }
   }
 }
