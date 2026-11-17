@@ -1,0 +1,56 @@
+# Laufzeit-Gewichte (Sekunden) der Integrationstests fuer die Aufteilung auf CI-Shards
+# (scripts/ci/split-integration-tests.sh). Format: <Klassenname> <Sekunden>, Kommentare mit #.
+#
+# Herkunft: Mittelwert von drei lokalen Serienlaeufen (Failsafe-Berichte, Stand 2026-11-17)
+# gegen den entfernten Entwicklungs-SQL-Server; innere Klassen (z. B. FlywayMigrationIT$SeedAssertions)
+# sind der aeusseren Klasse zugeschlagen. Absolute Werte in der CI weichen ab (lokaler Container),
+# fuer die Verteilung zaehlt das Verhaeltnis.
+#
+# Nicht gelistete Klassen erhalten das Standardgewicht des Skripts. Die Gate-Zusammenfassung
+# jedes CI-Laufs (Job "Integration tests") gibt die gemessenen Zeiten in diesem Format aus und
+# kann die Datei ersetzen.
+FlywayDictionaryUpgradeIT 314
+AssigneeControllerIT 197
+TagTransitionDetectionIT 191
+TaskFacadeControllerIT 140
+CommentControllerIT 90
+TaskTagPatchIT 88
+InboxSnapshotControllerIT 76
+HandoverConcurrencyIT 54
+InboxListAffordanceIT 52
+TaskDetailAffordanceIT 50
+UserStateControllerIT 49
+InboxReadEnrichmentIT 49
+InboxArchiveSearchIT 49
+TagLifecycleIT 47
+TaskWebSocketHandlerIT 46
+TagCatalogIT 45
+OpenApiDefaultDocCollectionSchemaIT 41
+DictionaryCatalogIT 41
+SpringDocApiDocsIT 40
+NotificationControllerIT 37
+DueReminderWorkerIT 37
+TaskSnapshotAffordanceIT 36
+ParticipantAddConcurrencyIT 36
+TagAffordanceIT 35
+EnumRoundtripIT 35
+CommentConcurrencyIT 35
+NotificationAffordanceIT 33
+FlywayMigrationIT 33
+V3ParticipantReconciliationIT 32
+ParticipantSearchIT 31
+KsfSaveEnumRoundtripIT 31
+InboxGenerationIT 31
+DueReminderEmitterRollbackIT 31
+WebSocketTicketIT 30
+TaskKeysetMembershipLeakIT 30
+TaskHandoverQueryRepositoryIT 30
+TaskEnrichmentBatchQueryIT 30
+TaskCommentQueryIT 30
+TaskOptimisticLockIT 29
+TaskKeysetSnapshotIT 29
+DictionaryAndKeysetQueryIT 29
+AffordanceMechanicsProbeIT 14
+SecurityBootstrapIT 9
+AffordanceWireShapeProbeIT 9
+HandlerSentinelIT 1
