@@ -101,12 +101,12 @@ class UserStateServiceTest {
         .isInstanceOf(BusinessRuleException.class);
   }
 
-  // ---- Intake #158: Reihenfolge Mute und (Wieder-)Zuweisung -----------------------------
+  // ---- Intake #158: Mute und (Wieder-)Zuweisung -----------------------------------------
 
   @Test
   @DisplayName(
-      "reactivate_behaelt_mute: erneute Zuweisung setzt nur UNSUBSCRIBED_AT zurueck, IS_MUTED"
-          + " bleibt gesetzt (ASSIGN kommt trotzdem an, weil ausgenommen)")
+      "reactivate_behaelt_mute: Nicht-Zuweisungs-Pfad (Teilnehmer-Wiedereintritt) setzt nur"
+          + " UNSUBSCRIBED_AT zurueck, IS_MUTED bleibt gesetzt")
   void reactivate_behaelt_mute_eines_vorhandenen_states() {
     final TaskUserState state = new TaskUserState();
     state.setTaskId(TASK_ID);
@@ -132,5 +132,43 @@ class UserStateServiceTest {
 
     org.mockito.Mockito.verify(repository).save(captor.capture());
     assertThat(captor.getValue().isMuted()).isFalse();
+  }
+
+  @Test
+  @DisplayName(
+      "reactivateAsAssignee_hebt_mute_auf: neue Zuweisung einer stummen Person setzt IS_MUTED"
+          + " zurueck und UNSUBSCRIBED_AT auf null, der State wird gespeichert")
+  void reactivateAsAssignee_hebt_mute_eines_vorhandenen_states_auf() {
+    final TaskUserState state = new TaskUserState();
+    state.setTaskId(TASK_ID);
+    state.setUserRef(USER_REF);
+    state.setMuted(true);
+    state.setPinned(true);
+    state.setFlagged(true);
+    state.setUnsubscribedAt(java.time.LocalDateTime.now().minusDays(1));
+    when(repository.findByTaskIdAndUserRef(TASK_ID, USER_REF)).thenReturn(List.of(state));
+
+    service.reactivateAsAssignee(TASK_ID, USER_REF, TENANT_ID);
+
+    assertThat(state.isMuted()).as("Mute aufgehoben").isFalse();
+    assertThat(state.getUnsubscribedAt()).as("wieder in der aktiven Inbox").isNull();
+    assertThat(state.isPinned()).as("Pin bleibt unberuehrt").isTrue();
+    assertThat(state.isFlagged()).as("Flag bleibt unberuehrt").isTrue();
+    org.mockito.Mockito.verify(repository).save(state);
+  }
+
+  @Test
+  @DisplayName("reactivateAsAssignee_neu: ein neu angelegter State startet nicht stumm")
+  void reactivateAsAssignee_legt_neuen_state_nicht_stumm_an() {
+    when(repository.findByTaskIdAndUserRef(TASK_ID, USER_REF)).thenReturn(List.of());
+    final org.mockito.ArgumentCaptor<TaskUserState> captor =
+        org.mockito.ArgumentCaptor.forClass(TaskUserState.class);
+
+    service.reactivateAsAssignee(TASK_ID, USER_REF, TENANT_ID);
+
+    org.mockito.Mockito.verify(repository).save(captor.capture());
+    assertThat(captor.getValue().isMuted()).isFalse();
+    assertThat(captor.getValue().getUserRef()).isEqualTo(USER_REF);
+    assertThat(captor.getValue().getTaskId()).isEqualTo(TASK_ID);
   }
 }
