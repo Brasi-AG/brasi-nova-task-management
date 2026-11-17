@@ -11,19 +11,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskHandover;
+import de.brasi.nova.taskmanagement.entity.TaskHandoverTarget;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
-import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
-import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
+import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
-import de.brasi.nova.taskmanagement.entity.TaskHandover;
-import de.brasi.nova.taskmanagement.entity.TaskHandoverTarget;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository;
@@ -66,8 +66,10 @@ import org.springframework.dao.DuplicateKeyException;
  * Unit-Tests fuer {@link AssigneeService} (gemockt, kein DB-Zugriff).
  *
  * <p>TDD-Rationale: beweist die Kern-Invarianten fuer Assignee-Zuweisung und Austritt:
+ *
  * <ol>
- *   <li>Neuer Assignee -> ASSIGNEE_FLAG gesetzt + UserState.ensure + ASSIGN-Notification + invalidate
+ *   <li>Neuer Assignee -> ASSIGNEE_FLAG gesetzt + UserState.ensure + ASSIGN-Notification +
+ *       invalidate
  *   <li>Exit HANDOVER -> EXIT_KIND/EXIT_AT gesetzt + HANDOVER-Notification + invalidate
  *   <li>404-Masking bei unbekannter/fremder Task-UUID
  *   <li>400 bei Exit wenn kein Participant
@@ -171,8 +173,10 @@ class AssigneeServiceTest {
     when(notificationService.emit(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(UUID.randomUUID());
 
-    // Codex #6: Multi-Ref-Bumps laufen jetzt ueber den zentralen Helfer bumpSorted (delegiert produktiv
-    // je Ref sortiert an bump). Der gemockte Helfer an denselben Mock delegieren, damit die bestehenden
+    // Codex #6: Multi-Ref-Bumps laufen jetzt ueber den zentralen Helfer bumpSorted (delegiert
+    // produktiv
+    // je Ref sortiert an bump). Der gemockte Helfer an denselben Mock delegieren, damit die
+    // bestehenden
     // je-Ref bump(..)-Verifikationen (WELCHE Refs, times/never) unveraendert gueltig bleiben.
     org.mockito.Mockito.doAnswer(
             inv -> {
@@ -192,7 +196,8 @@ class AssigneeServiceTest {
     TenantContextHolder.clear();
   }
 
-  // ---- Test 1: Zuweisung -> ASSIGNEE_FLAG + UserState.reactivate + ASSIGN-Notification + invalidate ---
+  // ---- Test 1: Zuweisung -> ASSIGNEE_FLAG + UserState.reactivate + ASSIGN-Notification +
+  // invalidate ---
 
   @Test
   @DisplayName(
@@ -222,23 +227,27 @@ class AssigneeServiceTest {
     verify(participantQueryRepository).save(pCaptor.capture());
     final TaskParticipant saved = pCaptor.getValue();
     assertThat(saved.isAssigneeFlag()).as("ASSIGNEE_FLAG muss true sein").isTrue();
-    assertThat(saved.getParticipantRef()).as("PARTICIPANT_REF muss ASSIGNEE_REF sein")
+    assertThat(saved.getParticipantRef())
+        .as("PARTICIPANT_REF muss ASSIGNEE_REF sein")
         .isEqualTo(ASSIGNEE_REF);
-    assertThat(saved.getParticipantKind()).as("PARTICIPANT_KIND muss PERSON sein")
+    assertThat(saved.getParticipantKind())
+        .as("PARTICIPANT_KIND muss PERSON sein")
         .isEqualTo(ParticipantKind.PERSON);
 
-    // UserState.reactivate aufgerufen (MAJOR 3: Reassign reaktiviert UNSUBSCRIBED_AT)
-    verify(userStateService).reactivate(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    // UserState als Zuweisung reaktiviert (MAJOR 3: UNSUBSCRIBED_AT zurueck; #158: Mute aufgehoben)
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    verify(userStateService, never()).reactivate(any(), any(), any());
 
     // ASSIGN-Notification emittiert
-    verify(notificationService).emit(
-        eq(ASSIGNEE_REF),
-        eq(taskId),
-        eq(NotificationTypeCodes.ASSIGN),
-        eq(NotificationSeverityCodes.INFO),
-        any(),
-        any(),
-        eq(ACTOR_REF));
+    verify(notificationService)
+        .emit(
+            eq(ASSIGNEE_REF),
+            eq(taskId),
+            eq(NotificationTypeCodes.ASSIGN),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
 
     // Invalidate aufgerufen
     @SuppressWarnings("unchecked")
@@ -256,7 +265,8 @@ class AssigneeServiceTest {
     verify(taskRepository).save(task);
   }
 
-  // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate -----------
+  // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate
+  // -----------
 
   @Test
   @DisplayName(
@@ -312,28 +322,28 @@ class AssigneeServiceTest {
         .isNotNull();
 
     // HANDOVER-Notification emittiert (Akteur als Empfaenger)
-    verify(notificationService).emit(
-        eq(ACTOR_REF),
-        eq(taskId),
-        eq(NotificationTypeCodes.HANDOVER),
-        eq(NotificationSeverityCodes.INFO),
-        any(),
-        any(),
-        eq(ACTOR_REF));
+    verify(notificationService)
+        .emit(
+            eq(ACTOR_REF),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
 
     // Invalidate aufgerufen
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
-    assertThat(refsCaptor.getValue())
-        .as("invalidate muss ACTOR_REF enthalten")
-        .contains(ACTOR_REF);
+    assertThat(refsCaptor.getValue()).as("invalidate muss ACTOR_REF enthalten").contains(ACTOR_REF);
 
     // Finding 2 / Option B: Austritt bumpt die Generation des Akteurs.
     verify(inboxGenerationService).bump(TENANT_ID, ACTOR_REF);
   }
 
-  // ---- Test 3: exit UNSUBSCRIBED -> kein HANDOVER-Notification -----------------------------------
+  // ---- Test 3: exit UNSUBSCRIBED -> kein HANDOVER-Notification
+  // -----------------------------------
 
   @Test
   @DisplayName(
@@ -373,14 +383,8 @@ class AssigneeServiceTest {
     service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
 
     // Assert: keine HANDOVER-Notification (notificationService.emit NICHT mit HANDOVER aufgerufen)
-    verify(notificationService, never()).emit(
-        any(),
-        any(),
-        eq(NotificationTypeCodes.HANDOVER),
-        any(),
-        any(),
-        any(),
-        any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.HANDOVER), any(), any(), any(), any());
 
     // EXIT_KIND=UNSUBSCRIBED
     final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
@@ -404,11 +408,12 @@ class AssigneeServiceTest {
    * nebenlaeufiger {@code PUT /assignees} (der die TASK-Version bumpt) und ein Austritt eines
    * beibehaltenen Assignees nicht beide committen und den PUT-Ziel-Satz verletzen. Wiring-Beweis:
    * ein erfolgreicher Austritt ruft {@code taskRepository.save(task)} (VERSION-Bump). Der
-   * Lock-Mechanismus selbst (zweiter save derselben Version -> BusinessRuleException) ist in
-   * {@code TaskOptimisticLockIT} deterministisch gegen echtes MSSQL bewiesen.
+   * Lock-Mechanismus selbst (zweiter save derselben Version -> BusinessRuleException) ist in {@code
+   * TaskOptimisticLockIT} deterministisch gegen echtes MSSQL bewiesen.
    */
   @Test
-  @DisplayName("exit_bumpt_task_version_guard: erfolgreicher Austritt ruft taskRepository.save(task)")
+  @DisplayName(
+      "exit_bumpt_task_version_guard: erfolgreicher Austritt ruft taskRepository.save(task)")
   void exit_bumpt_task_version_guard() {
     final Long taskId = 94L;
     final UUID taskUuid = UUID.randomUUID();
@@ -437,7 +442,8 @@ class AssigneeServiceTest {
   // ---- Test 4: 404-Masking bei unbekannter UUID ------------------------------------------------
 
   @Test
-  @DisplayName("updateAssignees_unbekannte_uuid_liefert_404: EntityNotFoundException bei unbekannter UUID")
+  @DisplayName(
+      "updateAssignees_unbekannte_uuid_liefert_404: EntityNotFoundException bei unbekannter UUID")
   void updateAssignees_unbekannte_uuid_liefert_404() {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
 
@@ -545,8 +551,10 @@ class AssigneeServiceTest {
     // Act: ASSIGNEE_REF erneut zuweisen
     service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ASSIGNEE_REF)));
 
-    // Assert: reactivate (nicht ensure) aufgerufen -> UNSUBSCRIBED_AT wird zurueckgesetzt
-    verify(userStateService).reactivate(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    // Assert: reactivateAsAssignee (nicht ensure) aufgerufen -> UNSUBSCRIBED_AT wird zurueckgesetzt
+    // und der Mute aufgehoben (#158-Folge)
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
+    verify(userStateService, never()).reactivate(any(), any(), any());
     verify(userStateService, never()).ensure(any(), any(), any());
   }
 
@@ -583,18 +591,19 @@ class AssigneeServiceTest {
   // ---- Test 8: MINOR - null-assignees wirft EntityValidationException ----------------------
 
   @Test
-  @DisplayName("null_assignees_wirft_400: AssigneeUpdateInput mit null -> EntityValidationException")
+  @DisplayName(
+      "null_assignees_wirft_400: AssigneeUpdateInput mit null -> EntityValidationException")
   void null_assignees_wirft_400() {
     assertThatThrownBy(() -> new AssigneeUpdateInput(null))
-        .isInstanceOf(
-            io.keel.framework.api.validation.EntityValidationException.class)
+        .isInstanceOf(io.keel.framework.api.validation.EntityValidationException.class)
         .hasMessageContaining("assignees");
   }
 
   // ---- Test 8b: Re-Gate-P2 - Assignee-Obergrenze (100) -> 400 (SQL-Parameterlimit-Schutz) ------
 
   @Test
-  @DisplayName("assignees_ueber_limit_400: 101 Assignees -> EntityValidationException (Bound-Schutz)")
+  @DisplayName(
+      "assignees_ueber_limit_400: 101 Assignees -> EntityValidationException (Bound-Schutz)")
   void assignees_ueber_limit_400() {
     final java.util.Set<UUID> tooMany = new java.util.LinkedHashSet<>();
     for (int i = 0; i < 101; i++) {
@@ -750,7 +759,8 @@ class AssigneeServiceTest {
     active.setAssigneeFlag(true);
 
     // Re-Check liefert eine FRISCHE, weiterhin aktive Zeile (EXIT_KIND null) - eigenes Objekt,
-    // damit die vor save() gesetzte In-Memory-Mutation des ersten Lookups das Ergebnis nicht faelscht.
+    // damit die vor save() gesetzte In-Memory-Mutation des ersten Lookups das Ergebnis nicht
+    // faelscht.
     final TaskParticipant stillActive = new TaskParticipant();
     stillActive.setId(81L);
     stillActive.setTenantId(TENANT_ID);
@@ -776,10 +786,10 @@ class AssigneeServiceTest {
   // ---- Test RG1: Invalidate fuer ALLE aktiven Teilnehmer (nicht nur geaenderte Refs) -----------
 
   /**
-   * Whole-Branch-Re-Gate (P2): Beim Hinzufuegen eines Assignees aendert sich
-   * {@code participantSummaries} fuer JEDEN verbleibenden aktiven Teilnehmer, nicht nur fuer den
-   * neu hinzugefuegten. Deshalb muss {@code invalidate} die Vereinigung aus geaenderten Refs UND
-   * allen aktuell aktiven Teilnehmer-Refs der Aufgabe erhalten - sonst bleibt der Snapshot eines
+   * Whole-Branch-Re-Gate (P2): Beim Hinzufuegen eines Assignees aendert sich {@code
+   * participantSummaries} fuer JEDEN verbleibenden aktiven Teilnehmer, nicht nur fuer den neu
+   * hinzugefuegten. Deshalb muss {@code invalidate} die Vereinigung aus geaenderten Refs UND allen
+   * aktuell aktiven Teilnehmer-Refs der Aufgabe erhalten - sonst bleibt der Snapshot eines
    * unveraendert zugewiesenen Benutzers (A) ohne den neuen Teilnehmer (B) veraltet.
    */
   @Test
@@ -836,8 +846,8 @@ class AssigneeServiceTest {
    * Whole-Branch-Re-Gate (P2, Folge-Auflage): Ein idempotenter PUT ohne tatsaechliche Aenderung
    * (Ziel-Menge == aktueller Stand, inkl. Creator-Schutz-No-Ops) darf WEDER aktive UserStates laden
    * NOCH eine Invalidierung senden - sonst entstehen vermeidbare DB-Last, Push-Traffic und
-   * Client-Snapshot-Reloads. Guard auf {@code affectedRefs} (actual-change), analog
-   * {@code TaskCommandService.patch}.
+   * Client-Snapshot-Reloads. Guard auf {@code affectedRefs} (actual-change), analog {@code
+   * TaskCommandService.patch}.
    */
   @Test
   @DisplayName(
@@ -868,17 +878,18 @@ class AssigneeServiceTest {
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
     verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
-    // P2 #3: No-Op-PUT bumpt die TASK-Version NICHT (kein optimistischer Lock-Write ohne Aenderung).
+    // P2 #3: No-Op-PUT bumpt die TASK-Version NICHT (kein optimistischer Lock-Write ohne
+    // Aenderung).
     verify(taskRepository, never()).save(any(Task.class));
   }
 
   // ---- Test RG-exit: exit invalidiert Akteur UND verbleibende aktive Teilnehmer ----------------
 
   /**
-   * Whole-Branch-Re-Gate (P2): Beim Verlassen einer Aufgabe entfernt sich der Akteur aus
-   * {@code participantSummaries} - das veraendert den Snapshot JEDES verbleibenden aktiven
-   * Teilnehmers. Deshalb muss {@code exit} den Akteur gemeinsam mit den verbleibenden aktiven
-   * Teilnehmern invalidieren (analog {@code updateAssignees}), sonst behalten diese veraltete Daten.
+   * Whole-Branch-Re-Gate (P2): Beim Verlassen einer Aufgabe entfernt sich der Akteur aus {@code
+   * participantSummaries} - das veraendert den Snapshot JEDES verbleibenden aktiven Teilnehmers.
+   * Deshalb muss {@code exit} den Akteur gemeinsam mit den verbleibenden aktiven Teilnehmern
+   * invalidieren (analog {@code updateAssignees}), sonst behalten diese veraltete Daten.
    */
   @Test
   @DisplayName(
@@ -914,8 +925,7 @@ class AssigneeServiceTest {
     // Nach dem Austritt ist B der verbleibende aktive Teilnehmer.
     final TaskUserState stateB = new TaskUserState();
     stateB.setUserRef(remainingRefB);
-    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
-        .thenReturn(List.of(stateB));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of(stateB));
     final UUID archivedRef = UUID.randomUUID();
     final TaskParticipant archivedReader = new TaskParticipant();
     archivedReader.setParticipantRef(archivedRef);
@@ -962,8 +972,10 @@ class AssigneeServiceTest {
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
     // Ziele: keine bestehende Zeile -> neu als Assignee.
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
@@ -978,9 +990,15 @@ class AssigneeServiceTest {
     verify(handoverRepository).save(any(TaskHandover.class));
     verify(handoverTargetRepository, times(2)).save(any());
     // 2 Ziel-Notify (HANDOVER) + 1 Selbst-Notify (HANDOVER) = 3 HANDOVER-Emits
-    verify(notificationService, times(3)).emit(
-        any(), eq(taskId), eq(NotificationTypeCodes.HANDOVER), eq(NotificationSeverityCodes.INFO),
-        any(), any(), eq(ACTOR_REF));
+    verify(notificationService, times(3))
+        .emit(
+            any(),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
     // Akteur-Save: ASSIGNEE_FLAG=false + EXIT=HANDOVER
     final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
     verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce()).save(pCaptor.capture());
@@ -996,6 +1014,10 @@ class AssigneeServiceTest {
     assertThat(task.getLastActivityAt()).isNotNull();
     verify(taskRepository).save(task);
     verify(taskHistoryService).record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), any(), any());
+    // Ziele werden als Zuweisung reaktiviert (Mute aufgehoben, #158-Folge), nicht als Teilnehmer
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t1), eq(TENANT_ID));
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t2), eq(TENANT_ID));
+    verify(userStateService, never()).reactivate(any(), any(), any());
     // Ziel-Bumps + Akteur-Bump
     verify(inboxGenerationService).bump(TENANT_ID, t1);
     verify(inboxGenerationService).bump(TENANT_ID, t2);
@@ -1015,7 +1037,8 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
@@ -1053,8 +1076,10 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
@@ -1109,8 +1134,10 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t2))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
@@ -1130,14 +1157,19 @@ class AssigneeServiceTest {
 
     // 1. Austritt per Handover (!shouldStay) -> EXIT_KIND=HANDOVER.
     service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false));
-    assertThat(actor.getExitKind()).as("nach erstem Austritt EXIT=HANDOVER").isEqualTo(ExitKind.HANDOVER);
+    assertThat(actor.getExitKind())
+        .as("nach erstem Austritt EXIT=HANDOVER")
+        .isEqualTo(ExitKind.HANDOVER);
 
     // 2. ECHTER Reaktivierungspfad: erneute Zuweisung via updateAssignees -> der reactivate-Zweig
-    //    (ASSIGNEE_FLAG=true, EXIT_KIND=null) laeuft auf DERSELBEN Participant-Zeile (kein manueller
+    //    (ASSIGNEE_FLAG=true, EXIT_KIND=null) laeuft auf DERSELBEN Participant-Zeile (kein
+    // manueller
     //    Feld-Reset). Nach dem Austritt ist ACTOR kein aktiver Assignee mehr -> toAdd={ACTOR}.
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
     service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF)));
-    assertThat(actor.getExitKind()).as("Reaktivierung via updateAssignees -> wieder aktiv").isNull();
+    assertThat(actor.getExitKind())
+        .as("Reaktivierung via updateAssignees -> wieder aktiv")
+        .isNull();
     assertThat(actor.isAssigneeFlag()).as("Reaktivierung -> ASSIGNEE_FLAG=true").isTrue();
 
     // 3. Erneuter Austritt per Handover -> NEUES Ereignis + EXIT erneut gesetzt.
@@ -1150,13 +1182,15 @@ class AssigneeServiceTest {
         .as("zwei verschiedene Ereignisse (Reaktivierung erzeugt KEIN Merge)")
         .doesNotHaveDuplicates();
     assertThat(actor.getExitKind())
-        .as("nach erneutem Austritt wieder EXIT=HANDOVER").isEqualTo(ExitKind.HANDOVER);
+        .as("nach erneutem Austritt wieder EXIT=HANDOVER")
+        .isEqualTo(ExitKind.HANDOVER);
     assertThat(actor.getExitAt()).isNotNull();
   }
 
   @Test
-  @DisplayName("U5: Creator HANDOVER shouldStay=true -> Ziele Assignee; Creator ASSIGNEE_FLAG=false,"
-      + " CREATOR+PARTICIPANT+UserState aktiv; kein 409")
+  @DisplayName(
+      "U5: Creator HANDOVER shouldStay=true -> Ziele Assignee; Creator ASSIGNEE_FLAG=false,"
+          + " CREATOR+PARTICIPANT+UserState aktiv; kein 409")
   void u5_creator_handover_stay() {
     final Long taskId = 305L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1173,7 +1207,8 @@ class AssigneeServiceTest {
     creator.setParticipantFlag(true);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(creator));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
@@ -1232,16 +1267,19 @@ class AssigneeServiceTest {
     assertThatThrownBy(
             () ->
                 service.exit(
-                    taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED, List.of(UUID.randomUUID()), false)))
+                    taskUuid,
+                    new ExitInput(ExitKind.UNSUBSCRIBED, List.of(UUID.randomUUID()), false)))
         .isInstanceOf(EntityValidationException.class);
-    assertThatThrownBy(() -> service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED, List.of(), true)))
+    assertThatThrownBy(
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED, List.of(), true)))
         .isInstanceOf(EntityValidationException.class);
 
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
   }
 
   @Test
-  @DisplayName("U8: HANDOVER shouldStay=true leere Ziele -> 400 (auch Creator: leer-stay 400 VOR 409)")
+  @DisplayName(
+      "U8: HANDOVER shouldStay=true leere Ziele -> 400 (auch Creator: leer-stay 400 VOR 409)")
   void u8_stay_leere_ziele_400() {
     final Long taskId = 308L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1262,7 +1300,8 @@ class AssigneeServiceTest {
   }
 
   @Test
-  @DisplayName("U9: HANDOVER shouldStay=false leere Ziele Nicht-Creator -> Selbst-Handover (EXIT, Selbst-Notify)")
+  @DisplayName(
+      "U9: HANDOVER shouldStay=false leere Ziele Nicht-Creator -> Selbst-Handover (EXIT, Selbst-Notify)")
   void u9_selbst_handover_leer() {
     final Long taskId = 309L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1284,8 +1323,15 @@ class AssigneeServiceTest {
     // Event ohne Targets; EXIT=HANDOVER; 1 Selbst-Notify (keine Ziel-Notify).
     verify(handoverRepository).save(any(TaskHandover.class));
     verify(handoverTargetRepository, never()).save(any());
-    verify(notificationService, times(1)).emit(
-        eq(ACTOR_REF), eq(taskId), eq(NotificationTypeCodes.HANDOVER), any(), any(), any(), eq(ACTOR_REF));
+    verify(notificationService, times(1))
+        .emit(
+            eq(ACTOR_REF),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
     final ArgumentCaptor<TaskParticipant> pCaptor = ArgumentCaptor.forClass(TaskParticipant.class);
     verify(participantQueryRepository).save(pCaptor.capture());
     assertThat(pCaptor.getValue().getExitKind()).isEqualTo(ExitKind.HANDOVER);
@@ -1301,7 +1347,8 @@ class AssigneeServiceTest {
 
     // Self-Ziel -> 400 (vor Participant-Load).
     assertThatThrownBy(
-            () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(ACTOR_REF), false)))
+            () ->
+                service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(ACTOR_REF), false)))
         .isInstanceOf(EntityValidationException.class);
 
     // Unbekanntes Ziel -> 400. findActiveByUuids liefert den Ref NICHT.
@@ -1316,7 +1363,8 @@ class AssigneeServiceTest {
   }
 
   @Test
-  @DisplayName("U11: Ziel bereits Assignee -> idempotent (ASSIGNEE_FLAG bleibt true), trotzdem TARGET + Notify")
+  @DisplayName(
+      "U11: Ziel bereits Assignee -> idempotent (ASSIGNEE_FLAG bleibt true), trotzdem TARGET + Notify")
   void u11_ziel_bereits_assignee_idempotent() {
     final Long taskId = 311L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1327,7 +1375,8 @@ class AssigneeServiceTest {
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
     // t1 ist bereits aktiver Assignee. ensureAssignee waehlt die Ziel-Zeile seit Slice 4
-    // Unique-Key-exakt via findRowByUniqueKey (task-tenant/PERSON -> reaktivieren, bleibt Assignee).
+    // Unique-Key-exakt via findRowByUniqueKey (task-tenant/PERSON -> reaktivieren, bleibt
+    // Assignee).
     final TaskParticipant existingTarget = activeAssignee(taskId, t1, false);
     existingTarget.setEntityState(EntityState.ACTIVE);
     when(participantQueryRepository.findRowByUniqueKey(taskId, t1))
@@ -1344,8 +1393,15 @@ class AssigneeServiceTest {
 
     // TARGET-Row + Ziel-Notify trotz bereits bestehender Assignee-Zeile.
     verify(handoverTargetRepository, times(1)).save(any());
-    verify(notificationService, times(1)).emit(
-        eq(t1), eq(taskId), eq(NotificationTypeCodes.HANDOVER), any(), any(), any(), eq(ACTOR_REF));
+    verify(notificationService, times(1))
+        .emit(
+            eq(t1),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
     assertThat(existingTarget.isAssigneeFlag()).as("bleibt Assignee").isTrue();
   }
 
@@ -1375,7 +1431,8 @@ class AssigneeServiceTest {
   }
 
   @Test
-  @DisplayName("U-dedup: HANDOVER mit [t1, t1] -> genau 1 TARGET + 1 Ziel-Notify + 1 Ziel-Bump (Dedup)")
+  @DisplayName(
+      "U-dedup: HANDOVER mit [t1, t1] -> genau 1 TARGET + 1 Ziel-Notify + 1 Ziel-Bump (Dedup)")
   void u_dedup_ziele() {
     final Long taskId = 313L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1385,7 +1442,8 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, t1))
+        .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
     when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
@@ -1398,15 +1456,25 @@ class AssigneeServiceTest {
 
     verify(handoverTargetRepository, times(1)).save(any());
     verify(inboxGenerationService, times(1)).bump(TENANT_ID, t1);
-    verify(notificationService, times(1)).emit(
-        eq(t1), eq(taskId), eq(NotificationTypeCodes.HANDOVER), any(), any(), any(), eq(ACTOR_REF));
+    verify(notificationService, times(1))
+        .emit(
+            eq(t1),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
   }
 
   @Test
-  @DisplayName("U13a: per Handover de-assignter Creator bleibt bei PUT-ohne-ihn aktiver Participant (kein EXIT)")
+  @DisplayName(
+      "U13a: per Handover de-assignter Creator bleibt bei PUT-ohne-ihn aktiver Participant (kein EXIT)")
   void u13a_handover_deassignter_creator_bleibt_bei_put() {
-    // Creator wurde per Handover shouldStay=true de-assignt: CREATOR+PARTICIPANT aktiv, ASSIGNEE_FLAG=false.
-    // Ein PUT ohne ihn findet ihn NICHT in findActiveAssigneesByTaskId -> kein toRemove -> kein EXIT.
+    // Creator wurde per Handover shouldStay=true de-assignt: CREATOR+PARTICIPANT aktiv,
+    // ASSIGNEE_FLAG=false.
+    // Ein PUT ohne ihn findet ihn NICHT in findActiveAssigneesByTaskId -> kein toRemove -> kein
+    // EXIT.
     final Long taskId = 314L;
     final UUID taskUuid = UUID.randomUUID();
     final Task task = taskWithId(taskId, taskUuid);
@@ -1426,7 +1494,8 @@ class AssigneeServiceTest {
   // ============================================================================================
 
   @Test
-  @DisplayName("addParticipants verarbeitet inverse Mehrfach-Ref-Inputs in gleicher UUID-Reihenfolge")
+  @DisplayName(
+      "addParticipants verarbeitet inverse Mehrfach-Ref-Inputs in gleicher UUID-Reihenfolge")
   void addParticipants_inverse_refs_haben_gleiche_mutationsreihenfolge() {
     final UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
     final UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
@@ -1518,6 +1587,7 @@ class AssigneeServiceTest {
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
     verify(userStateService, never()).ensure(any(), any(), any());
     verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
   }
@@ -1555,7 +1625,9 @@ class AssigneeServiceTest {
     assertThat(saved.getExitKind()).as("EXIT_KIND zurueckgesetzt").isNull();
     assertThat(saved.getExitAt()).isNull();
 
+    // Reiner Teilnehmer-Wiedereintritt ist keine Zuweisung: Mute bleibt (nur reactivate).
     verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
   }
 
@@ -1601,12 +1673,11 @@ class AssigneeServiceTest {
     final UUID ref = UUID.randomUUID();
     final Task task = taskWithId(204L, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
-    // unbekannt -> findActiveByUuids liefert den Ref NICHT. doReturn (statt when/thenReturn), weil der
+    // unbekannt -> findActiveByUuids liefert den Ref NICHT. doReturn (statt when/thenReturn), weil
+    // der
     // setUp-Stub thenAnswer nutzt: ein when(...)-Re-Stub wuerde die alte Answer-Lambda ausloesen
     // (verschachteltes when()) -> Mockito-Fehler.
-    org.mockito.Mockito.doReturn(List.of())
-        .when(userReadRepository)
-        .findActiveByUuids(any());
+    org.mockito.Mockito.doReturn(List.of()).when(userReadRepository).findActiveByUuids(any());
 
     assertThatThrownBy(
             () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref))))
@@ -1755,8 +1826,7 @@ class AssigneeServiceTest {
     assertThatThrownBy(
             () ->
                 service.exit(
-                    taskUuid,
-                    new ExitInput(ExitKind.HANDOVER, List.of(UUID.randomUUID()), false)))
+                    taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(UUID.randomUUID()), false)))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
 
@@ -1822,7 +1892,8 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    // t1 ist NICHT WRITE-Member (neu/ausgetreten/inaktiv/TEAM/fremd) -> isWriteMember=false (Default).
+    // t1 ist NICHT WRITE-Member (neu/ausgetreten/inaktiv/TEAM/fremd) -> isWriteMember=false
+    // (Default).
     when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
         .thenReturn(false);
 
@@ -1851,7 +1922,8 @@ class AssigneeServiceTest {
     final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(actor));
-    // t1 kein WRITE-Member (isWriteMember=false Default), aber TASK_WRITE vorhanden (setUp-Default).
+    // t1 kein WRITE-Member (isWriteMember=false Default), aber TASK_WRITE vorhanden
+    // (setUp-Default).
     // t1 hat keine Unique-Key-Zeile -> INSERT (findRowByUniqueKey=List.of() Default).
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
@@ -2042,13 +2114,16 @@ class AssigneeServiceTest {
     foreignBase.setParticipantRef(t1);
     foreignBase.setParticipantKind(ParticipantKind.PERSON);
     foreignBase.setEntityState(EntityState.ACTIVE);
-    when(participantQueryRepository.findRowByUniqueKey(taskId, t1)).thenReturn(List.of(foreignBase));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, t1))
+        .thenReturn(List.of(foreignBase));
 
     assertThatThrownBy(
             () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(t1), false)))
         .isInstanceOf(BusinessRuleException.class);
 
-    assertThat(foreignBase.getTenantId()).as("fremdes Basis-TENANT_ID unveraendert").isEqualTo(999L);
+    assertThat(foreignBase.getTenantId())
+        .as("fremdes Basis-TENANT_ID unveraendert")
+        .isEqualTo(999L);
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
   }
 
@@ -2093,7 +2168,194 @@ class AssigneeServiceTest {
     assertThat(insertedTarget.isCreatorFlag()).as("CREATOR_FLAG=0").isFalse();
   }
 
+  // ============================================================================================
+  // Intake #158 (Folge): eine NEUE Zuweisung hebt Mute auf; Teilnehmer-Pfad und unveraenderte
+  // Assignees nicht. Hier laeuft der ECHTE UserStateService (Repository gemockt), damit der
+  // Zustand des Markers nachgewiesen wird und nicht nur der Aufruf.
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "mute_put_stummer_ex_assignee_wird_neu_zugewiesen_und_entstummt: ausgetretener, stummer"
+          + " Ex-Assignee wird per PUT erneut zugewiesen -> IS_MUTED=false, UNSUBSCRIBED_AT=null")
+  void mute_put_stummer_ex_assignee_wird_neu_zugewiesen_und_entstummt() {
+    final Long taskId = 700L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID exAssigneeRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+
+    final TaskParticipant exited = new TaskParticipant();
+    exited.setId(70L);
+    exited.setTenantId(TENANT_ID);
+    exited.setTaskId(taskId);
+    exited.setParticipantRef(exAssigneeRef);
+    exited.setAssigneeFlag(true);
+    exited.setExitKind(ExitKind.UNSUBSCRIBED);
+    exited.setExitAt(java.time.LocalDateTime.now().minusDays(2));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, exAssigneeRef))
+        .thenReturn(List.of(exited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState mutedState = mutedState(taskId, exAssigneeRef);
+    mutedState.setUnsubscribedAt(java.time.LocalDateTime.now().minusDays(2));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, exAssigneeRef))
+        .thenReturn(List.of(mutedState));
+
+    serviceWithRealUserState()
+        .updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(exAssigneeRef)));
+
+    assertThat(mutedState.isMuted()).as("neue Zuweisung hebt Mute auf").isFalse();
+    assertThat(mutedState.getUnsubscribedAt()).as("wieder in der aktiven Inbox").isNull();
+    verify(userStateQueryRepository).save(mutedState);
+    // ASSIGN ist ohnehin vom Mute ausgenommen und kommt weiterhin an.
+    verify(notificationService)
+        .emit(
+            eq(exAssigneeRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.ASSIGN),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  @Test
+  @DisplayName(
+      "mute_put_unveraenderter_assignee_bleibt_stumm: PUT mit einem unveraendert bleibenden"
+          + " stummen Assignee und einer neuen Person -> nur die neue Person wird angefasst")
+  void mute_put_unveraenderter_assignee_bleibt_stumm() {
+    final Long taskId = 701L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID unchangedRef = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, unchangedRef, false)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRef))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState unchangedState = mutedState(taskId, unchangedRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, unchangedRef))
+        .thenReturn(List.of(unchangedState));
+    final TaskUserState newState = mutedState(taskId, newRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, newRef))
+        .thenReturn(List.of(newState));
+
+    serviceWithRealUserState()
+        .updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(unchangedRef, newRef)));
+
+    assertThat(unchangedState.isMuted()).as("unveraenderter Assignee bleibt stumm").isTrue();
+    verify(userStateQueryRepository, never()).save(unchangedState);
+    assertThat(newState.isMuted()).as("neu zugewiesene Person ist entstummt").isFalse();
+    verify(userStateQueryRepository).save(newState);
+  }
+
+  @Test
+  @DisplayName(
+      "mute_handover_ziel_wird_entstummt: HANDOVER-Ziel mit stummem State -> IS_MUTED=false")
+  void mute_handover_ziel_wird_entstummt() {
+    final Long taskId = 702L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID targetRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState targetState = mutedState(taskId, targetRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, targetRef))
+        .thenReturn(List.of(targetState));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+
+    serviceWithRealUserState()
+        .exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(targetRef), false));
+
+    assertThat(targetState.isMuted()).as("Uebergabe hebt Mute des Ziels auf").isFalse();
+    assertThat(targetState.getUnsubscribedAt()).isNull();
+    verify(userStateQueryRepository).save(targetState);
+    // HANDOVER ist ohnehin vom Mute ausgenommen und kommt weiterhin an.
+    verify(notificationService)
+        .emit(
+            eq(targetRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  @Test
+  @DisplayName(
+      "mute_add_participants_laesst_mute_stehen: ausgetretener stummer Teilnehmer wird per"
+          + " addParticipants wieder aufgenommen -> IS_MUTED bleibt true (keine Zuweisung)")
+  void mute_add_participants_laesst_mute_stehen() {
+    final Long taskId = 703L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+
+    final TaskParticipant exited = new TaskParticipant();
+    exited.setId(73L);
+    exited.setTaskId(taskId);
+    exited.setParticipantRef(ref);
+    exited.setParticipantFlag(true);
+    exited.setAssigneeFlag(false);
+    exited.setExitKind(ExitKind.UNSUBSCRIBED);
+    exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(exited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState mutedState = mutedState(taskId, ref);
+    mutedState.setUnsubscribedAt(java.time.LocalDateTime.now().minusDays(1));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ref))
+        .thenReturn(List.of(mutedState));
+
+    serviceWithRealUserState().addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    assertThat(mutedState.isMuted()).as("addParticipants hebt Mute nicht auf").isTrue();
+    assertThat(mutedState.getUnsubscribedAt()).as("wieder aktiv als Teilnehmer").isNull();
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
+
+  /** Service mit ECHTEM {@link UserStateService} auf dem gemockten State-Repository. */
+  private AssigneeService serviceWithRealUserState() {
+    return new AssigneeService(
+        taskRepository,
+        participantQueryRepository,
+        userStateQueryRepository,
+        new UserStateService(userStateQueryRepository),
+        notificationService,
+        inboxSignalService,
+        userReadRepository,
+        userAccessor,
+        inboxGenerationService,
+        handoverRepository,
+        handoverTargetRepository,
+        taskHistoryService,
+        membershipGuard,
+        permissionEvaluator);
+  }
+
+  /** Aktiver, stummgeschalteter {@link TaskUserState} (persoenlicher Marker IS_MUTED=true). */
+  private static TaskUserState mutedState(final Long taskId, final UUID ref) {
+    final TaskUserState s = userStateFor(taskId, ref);
+    s.setMuted(true);
+    return s;
+  }
 
   private static Task taskWithId(final Long id, final UUID uuid) {
     final Task task = new Task();

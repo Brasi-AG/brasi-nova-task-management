@@ -501,6 +501,120 @@ class CommentControllerIT {
         .isEqualTo(1);
   }
 
+  // ---- IT Intake #158 (Folge): eine NEUE Zuweisung hebt den Mute auf --------------------------
+
+  @Test
+  @DisplayName(
+      "i158_neue_zuweisung_per_put_hebt_mute_auf_unveraenderte_nicht (Intake #158, Folge):"
+          + " USER_B (stumm, ausgetreten) wird per PUT neu zugewiesen -> entstummt, ein Top-Level-"
+          + " Kommentar erreicht ihn; nach erneutem Stummschalten laesst ein PUT ohne Aenderung den"
+          + " Mute stehen")
+  void i158_neue_zuweisung_per_put_hebt_mute_auf_unveraenderte_nicht() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-158-Reassign");
+
+    // (1) USER_B zuweisen und stummschalten: Top-Level-Kommentar erreicht ihn nicht.
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    putMute(mvc, tokenB, taskUuid, true);
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("USER_B ist stumm").isTrue();
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level vor der Neuzuweisung.", null);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("stummer USER_B erhaelt KEIN COMMENT (Positivkontrolle der #158-Regel)")
+        .isZero();
+
+    // (2) USER_B faellt aus der Ziel-Menge (Austritt, State bleibt stumm) und wird dann neu
+    // zugewiesen: der Mute ist aufgehoben.
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF))
+        .as("der Austritt ueber PUT aendert den Mute-Marker nicht")
+        .isTrue();
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("neue Zuweisung hebt den Mute auf").isFalse();
+
+    // (3) Der Top-Level-Kommentar erreicht USER_B jetzt.
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level nach der Neuzuweisung.", null);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("entstummter USER_B erhaelt COMMENT")
+        .isEqualTo(1);
+
+    // (4) Erneut stummschalten: ein PUT mit unveraendert bleibender Ziel-Menge laesst den Mute
+    // stehen, es entsteht kein weiteres COMMENT.
+    putMute(mvc, tokenB, taskUuid, true);
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("unveraenderter Assignee bleibt stumm").isTrue();
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level nach dem unveraenderten PUT.", null);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("weiterhin stummer USER_B erhaelt kein weiteres COMMENT")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i158_uebergabe_hebt_mute_des_ziels_auf (Intake #158, Folge): USER_B (stumm, ausgetreten)"
+          + " ist HANDOVER-Ziel -> entstummt, ein Top-Level-Kommentar erreicht ihn")
+  void i158_uebergabe_hebt_mute_des_ziels_auf() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-158-Handover");
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    putMute(mvc, tokenB, taskUuid, true);
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("USER_B ist ausgetreten und stumm").isTrue();
+
+    // Der Ersteller uebergibt an USER_B und bleibt als Teilnehmer.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/exit")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(USER_B_REF),
+                            "shouldStay",
+                            true))))
+        .andExpect(status().isNoContent());
+
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("Uebergabe hebt den Mute auf").isFalse();
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level nach der Uebergabe.", null);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("USER_B als entstummtes Uebergabeziel erhaelt COMMENT")
+        .isEqualTo(1);
+  }
+
   // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------
 
   @Test
@@ -1261,6 +1375,46 @@ class CommentControllerIT {
             .getResponse()
             .getContentAsString();
     return om.readValue(resp, JsonNode.class).get("id").traverse(om).readValueAs(UUID.class);
+  }
+
+  /** Setzt die Assignee-Menge einer Aufgabe per PUT (erwartet 204). */
+  private void putAssignees(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final UUID... assignees)
+      throws Exception {
+    mvc.perform(
+            put("/api/v1/tasks/" + taskUuid + "/assignees")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(assignees)))))
+        .andExpect(status().isNoContent());
+  }
+
+  /** Setzt den persoenlichen Mute-Marker des Token-Inhabers per PUT (erwartet 204). */
+  private void putMute(
+      final MockMvc mvc, final String token, final UUID taskUuid, final boolean value)
+      throws Exception {
+    mvc.perform(
+            put("/api/v1/tasks/" + taskUuid + "/mute")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":" + value + "}"))
+        .andExpect(status().isNoContent());
+  }
+
+  /** Liest den persoenlichen Mute-Marker (IS_MUTED) eines Benutzers fuer eine Aufgabe direkt. */
+  private boolean isMuted(final UUID taskUuid, final UUID userRef) {
+    return Boolean.TRUE.equals(
+        jdbcTemplate.queryForObject(
+            "SELECT s.IS_MUTED FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+            Boolean.class,
+            taskUuid,
+            userRef));
   }
 
   private MockMvc buildMvc() {

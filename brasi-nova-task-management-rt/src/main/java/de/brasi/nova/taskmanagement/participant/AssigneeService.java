@@ -121,9 +121,11 @@ public class AssigneeService {
    * <ol>
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Aktuelle Assignees laden und mit Ziel-Menge vergleichen.
-   *   <li>Neu zugewiesene Assignees: {@link TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1,
-   *       PARTICIPANT_KIND=PERSON), {@link UserStateService#reactivate} (UserState sichern +
-   *       UNSUBSCRIBED_AT zuruecksetzen), ASSIGN-Notification emittieren.
+   *   <li>Neu zugewiesene Assignees (in der Ziel-Menge, aber noch kein aktiver Assignee): {@link
+   *       TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link
+   *       UserStateService#reactivateAsAssignee} (UserState sichern, UNSUBSCRIBED_AT zuruecksetzen
+   *       und einen Mute dieser Aufgabe aufheben), ASSIGN-Notification emittieren. Unveraendert
+   *       bleibende Assignees werden nicht angefasst, ihr Mute bleibt bestehen.
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
    *       setzen.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer alle betroffenen userRefs.
@@ -236,9 +238,11 @@ public class AssigneeService {
       }
 
       // UserState reaktivieren: UNSUBSCRIBED_AT=null setzen (Reassign-Reaktivierung - MAJOR 3).
-      // reactivate stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT zurueckgesetzt
-      // wird. Damit erscheint der erneut zugewiesene Benutzer wieder in findActivePage.
-      userStateService.reactivate(taskId, assigneeRef, tenantId);
+      // reactivateAsAssignee stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT
+      // zurueckgesetzt wird. Damit erscheint der erneut zugewiesene Benutzer wieder in
+      // findActivePage. Eine NEUE Zuweisung hebt zudem den Mute dieser Aufgabe auf (Folge von
+      // #158); diese Schleife laeuft nur ueber toAdd, unveraenderte Assignees bleiben stumm.
+      userStateService.reactivateAsAssignee(taskId, assigneeRef, tenantId);
 
       // ASSIGN-Notification emittieren
       notificationService.emit(
@@ -479,6 +483,8 @@ public class AssigneeService {
       if (!saveParticipantHandlingRace(p, taskId, ref)) {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }
+      // Reiner Teilnehmer, keine Zuweisung: bewusst reactivate (nicht reactivateAsAssignee), ein
+      // vorhandener Mute dieser Aufgabe bleibt bestehen.
       userStateService.reactivate(taskId, ref, tenantId);
       // Codex #6: Generation-Bump NICHT hier (sofort/ungeordnet), sondern gebuendelt + SORTIERT im
       // Aufrufer (addParticipants) ueber affectedRefs - konsistente Generation-Lock-Ordnung. Der
@@ -604,10 +610,12 @@ public class AssigneeService {
    *       {@code shouldStay} false sein (sonst 400). Nicht-Creator -> EXIT_KIND=UNSUBSCRIBED;
    *       Creator -> 409.
    *   <li><b>HANDOVER:</b> der Akteur uebergibt die Aufgabe an {@code handedOverToIds} (werden
-   *       Assignees). Optionaler Verbleib ({@code shouldStay}) laesst den Akteur reiner Teilnehmer.
-   *       Der Akteur wird IMMER de-assignt (ASSIGNEE_FLAG=false). Nicht-Creator + !shouldStay ->
-   *       EXIT_KIND=HANDOVER + Austritt; Creator -> nur shouldStay=true erlaubt (sonst 409), bleibt
-   *       dann immobiler Teilnehmer (CREATOR+PARTICIPANT + aktiver UserState, ASSIGNEE_FLAG=false).
+   *       Assignees; ihr Mute dieser Aufgabe wird aufgehoben, siehe {@link
+   *       UserStateService#reactivateAsAssignee}). Optionaler Verbleib ({@code shouldStay}) laesst
+   *       den Akteur reiner Teilnehmer. Der Akteur wird IMMER de-assignt (ASSIGNEE_FLAG=false).
+   *       Nicht-Creator + !shouldStay -> EXIT_KIND=HANDOVER + Austritt; Creator -> nur
+   *       shouldStay=true erlaubt (sonst 409), bleibt dann immobiler Teilnehmer
+   *       (CREATOR+PARTICIPANT + aktiver UserState, ASSIGNEE_FLAG=false).
    * </ul>
    *
    * <p>Alles in EINER Transaktion: TASK_HANDOVER-Ereignis + Ziele + Rollenwechsel + History +
@@ -772,7 +780,9 @@ public class AssigneeService {
         handoverTargetRepository.save(targetRow);
 
         ensureAssignee(taskId, targetRef, tenantId);
-        userStateService.reactivate(taskId, targetRef, tenantId);
+        // Ein Uebergabeziel wird Assignee: wie bei einer neuen Zuweisung per PUT hebt das den Mute
+        // dieser Aufgabe fuer das Ziel auf (Folge von #158).
+        userStateService.reactivateAsAssignee(taskId, targetRef, tenantId);
         notificationService.emit(
             targetRef,
             taskId,

@@ -13,8 +13,8 @@ import org.springframework.stereotype.Service;
 /**
  * Verwaltet den benutzerspezifischen Zustand ({@link TaskUserState}) fuer Aufgaben.
  *
- * <p>Alle Schreiboperationen laufen in der aktiven Transaktion des Aufrufers
- * (kein eigenes {@code @Transactional} - KSF-{@code NovaRepository.save()} hat selbst Tx-Propagation).
+ * <p>Alle Schreiboperationen laufen in der aktiven Transaktion des Aufrufers (kein eigenes
+ * {@code @Transactional} - KSF-{@code NovaRepository.save()} hat selbst Tx-Propagation).
  */
 @Service
 public class UserStateService {
@@ -31,11 +31,11 @@ public class UserStateService {
   /**
    * Stellt sicher, dass ein {@link TaskUserState}-Eintrag fuer den Benutzer existiert (idempotent).
    *
-   * <p>Wenn kein Eintrag existiert, wird ein neuer (aktiver) angelegt. Wenn bereits einer
-   * vorhanden ist, bleibt er unveraendert. Laueft in der aktiven Transaktion des Aufrufers.
+   * <p>Wenn kein Eintrag existiert, wird ein neuer (aktiver) angelegt. Wenn bereits einer vorhanden
+   * ist, bleibt er unveraendert. Laueft in der aktiven Transaktion des Aufrufers.
    *
-   * @param taskId   interne Aufgaben-ID
-   * @param userRef  UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
    * @param tenantId interner Mandanten-Schluessel
    * @return {@code true}, wenn ein neuer aktiver Eintrag angelegt wurde (der Benutzer also durch
    *     diesen Aufruf inbox-faehig wird); {@code false}, wenn bereits ein Eintrag existierte
@@ -81,18 +81,50 @@ public class UserStateService {
   }
 
   /**
-   * Reaktiviert den {@link TaskUserState} eines erneut zugewiesenen Benutzers.
+   * Reaktiviert den {@link TaskUserState} eines wieder aufgenommenen Teilnehmers (KEINE Zuweisung).
    *
-   * <p>Stellt sicher, dass ein Eintrag existiert (wie {@link #ensure}), und setzt
-   * {@code UNSUBSCRIBED_AT} auf {@code null} zurueck, sodass der Benutzer wieder in der
-   * aktiven Inbox erscheint ({@code findActivePage} filtert auf {@code UNSUBSCRIBED_AT IS NULL}).
-   * Laueft in der aktiven Transaktion des Aufrufers.
+   * <p>Stellt sicher, dass ein Eintrag existiert (wie {@link #ensure}), und setzt {@code
+   * UNSUBSCRIBED_AT} auf {@code null} zurueck, sodass der Benutzer wieder in der aktiven Inbox
+   * erscheint ({@code findActivePage} filtert auf {@code UNSUBSCRIBED_AT IS NULL}). Der
+   * persoenliche Mute-Marker {@code IS_MUTED} eines vorhandenen States bleibt unveraendert (Intake
+   * #158): ein stummer Teilnehmer, der per {@code addParticipants} wieder aufgenommen wird, bleibt
+   * stumm. Fuer eine neue Zuweisung (Assignee) gilt {@link #reactivateAsAssignee}. Laueft in der
+   * aktiven Transaktion des Aufrufers.
    *
-   * @param taskId   interne Aufgaben-ID
-   * @param userRef  UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
    * @param tenantId interner Mandanten-Schluessel
    */
   public void reactivate(final Long taskId, final UUID userRef, final Long tenantId) {
+    reactivate(taskId, userRef, tenantId, false);
+  }
+
+  /**
+   * Reaktiviert den {@link TaskUserState} einer NEU zugewiesenen Person und hebt ihren Mute auf.
+   *
+   * <p>Wie {@link #reactivate}, setzt aber zusaetzlich {@code IS_MUTED} auf {@code false}: eine
+   * neue Zuweisung (PUT /assignees fuer neu hinzukommende oder wieder zugewiesene Personen, Ziele
+   * einer Uebergabe per HANDOVER) soll die Person die Aufgabe wieder aktiv wahrnehmen lassen (Folge
+   * von Intake #158). Pin und Flag bleiben unberuehrt. Unveraendert bleibende Assignees eines PUT,
+   * reine Teilnehmer und die Marker-Pfade rufen diese Methode NICHT auf. Ein neu angelegter State
+   * startet ohnehin nicht stumm. Laueft in der aktiven Transaktion des Aufrufers.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interner Mandanten-Schluessel
+   */
+  public void reactivateAsAssignee(final Long taskId, final UUID userRef, final Long tenantId) {
+    reactivate(taskId, userRef, tenantId, true);
+  }
+
+  /**
+   * Gemeinsame Umsetzung von {@link #reactivate} und {@link #reactivateAsAssignee}.
+   *
+   * @param clearMute {@code true}: {@code IS_MUTED} eines vorhandenen States zuruecksetzen (neue
+   *     Zuweisung); {@code false}: Mute unveraendert lassen
+   */
+  private void reactivate(
+      final Long taskId, final UUID userRef, final Long tenantId, final boolean clearMute) {
     final List<TaskUserState> existing = repository.findByTaskIdAndUserRef(taskId, userRef);
     if (existing.isEmpty()) {
       // Kein Eintrag vorhanden -> neu anlegen (wie ensure)
@@ -110,14 +142,21 @@ public class UserStateService {
           taskId,
           userRef);
     } else {
-      // Bestehenden Eintrag reaktivieren: UNSUBSCRIBED_AT zuruecksetzen
+      // Bestehenden Eintrag reaktivieren: UNSUBSCRIBED_AT zuruecksetzen; bei neuer Zuweisung
+      // zusaetzlich den Mute aufheben
       final TaskUserState state = existing.get(0);
+      final boolean muteCleared = clearMute && state.isMuted();
       state.setUnsubscribedAt(null);
+      if (clearMute) {
+        state.setMuted(false);
+      }
       repository.save(state);
       log.debug(
-          "UserStateService.reactivate: UNSUBSCRIBED_AT zurueckgesetzt fuer Task {} und User {}.",
+          "UserStateService.reactivate: UNSUBSCRIBED_AT zurueckgesetzt fuer Task {} und User {}"
+              + " (Mute aufgehoben: {}).",
           taskId,
-          userRef);
+          userRef,
+          muteCleared);
     }
   }
 
@@ -126,7 +165,7 @@ public class UserStateService {
    *
    * <p>Wenn kein {@link TaskUserState}-Eintrag existiert, wird der Aufruf ignoriert.
    *
-   * @param taskId  interne Aufgaben-ID
+   * @param taskId interne Aufgaben-ID
    * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
    */
   public void markRead(final Long taskId, final UUID userRef) {
@@ -143,8 +182,6 @@ public class UserStateService {
     state.setReadAt(LocalDateTime.now());
     repository.save(state);
     log.debug(
-        "UserStateService.markRead: READ_AT gesetzt fuer Task {} und User {}.",
-        taskId,
-        userRef);
+        "UserStateService.markRead: READ_AT gesetzt fuer Task {} und User {}.", taskId, userRef);
   }
 }
