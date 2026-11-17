@@ -1,8 +1,8 @@
 package de.brasi.nova.taskmanagement.comment;
 
 /**
- * OpenAPI-Beispieltexte (JSON) fuer die Operation {@code createComment} ({@code POST
- * /api/v1/tasks/{id}/comments}).
+ * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code createComment} ({@code POST
+ * /api/v1/tasks/{id}/comments}) und {@code getComments} ({@code GET} auf demselben Pfad).
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -25,7 +25,10 @@ final class CommentApiExamples {
   /** Beispiel-UUID des Eltern-Kommentars. */
   static final String PARENT_COMMENT_REF = "660e8400-e29b-41d4-a716-446655440000";
 
-  /** Pfad von {@code POST /api/v1/tasks/{id}/comments} in den Fehlerbeispielen. */
+  /**
+   * Pfad von {@code POST} und {@code GET /api/v1/tasks/{id}/comments} in den Fehlerbeispielen (401
+   * und 404 sind fuer beide gleich).
+   */
   private static final String PATH_COMMENTS = "/api/v1/tasks/" + TASK_REF + "/comments";
 
   /** Kopf der Fehlerbeispiele im {@code ApiError}-Format (Zeitstempel ohne Zeitzone). */
@@ -42,10 +45,7 @@ final class CommentApiExamples {
   static final String REQUEST_REPLY =
       "{\"text\":\"Erledigt, danke.\",\"parentCommentId\":\"" + PARENT_COMMENT_REF + "\"}";
 
-  /**
-   * 201: der neue Kommentar als Antwort auf einen Kommentar. Bei einem Kommentar ohne
-   * Eltern-Kommentar ist {@code parentCommentId} {@code null}.
-   */
+  /** 201: der neue Kommentar als Antwort auf einen Kommentar. */
   static final String CREATED_REPLY =
       "{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"taskId\":\""
           + TASK_REF
@@ -53,6 +53,36 @@ final class CommentApiExamples {
           + PARENT_COMMENT_REF
           + "\",\"text\":\"Erledigt, danke.\",\"edited\":false,"
           + "\"createdAt\":\"2026-11-17T10:00:00Z\"}";
+
+  /** 201: der neue Kommentar ohne Eltern-Kommentar ({@code parentCommentId} ist {@code null}). */
+  static final String CREATED_TOP_LEVEL =
+      "{\"id\":\""
+          + PARENT_COMMENT_REF
+          + "\",\"taskId\":\""
+          + TASK_REF
+          + "\",\"authorRef\":\"880e8400-e29b-41d4-a716-446655440003\",\"parentCommentId\":null,"
+          + "\"text\":\"Bitte bis Ende der Woche erledigen.\",\"edited\":false,"
+          + "\"createdAt\":\"2026-11-17T09:00:00Z\"}";
+
+  /**
+   * 200 von {@code getComments}: chronologisch aufsteigend, ein Kommentar ohne und eine Antwort
+   * darauf.
+   */
+  static final String LIST_COMMENTS = "[" + CREATED_TOP_LEVEL + "," + CREATED_REPLY + "]";
+
+  /** Pfad von {@code GET /api/v1/tasks/{id}/comments} bei einer ungueltigen UUID im Pfad. */
+  private static final String PATH_INVALID_ID = "/api/v1/tasks/keine-uuid/comments";
+
+  /** 400 von {@code getComments}: keine gueltige UUID im Pfad. */
+  static final String BAD_REQUEST_PATH =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der URL-Parameter 'id' hat einen ungültigen Wert. Ein Wert vom Typ"
+          + " 'UUID' wird erwartet.\",\"path\":\""
+          + PATH_INVALID_ID
+          + "\",\"errorKey\":\"NOVA_TYPE_MISMATCH\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"Wert: 'keine-uuid'\"]}";
 
   /** 400: der Eltern-Kommentar ist unbekannt, gehoert zu einer anderen Aufgabe oder ist inaktiv. */
   static final String BAD_REQUEST_PARENT =

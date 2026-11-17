@@ -64,7 +64,10 @@ public class CommentController {
       summary = "Kommentare einer Aufgabe lesen",
       description =
           "Liefert die flache, chronologische Kommentarliste einer Aufgabe."
-              + " Der Client rekonstruiert den Antwort-Baum ueber parentCommentId.")
+              + " Der Client rekonstruiert den Antwort-Baum ueber parentCommentId; sie ist null bei"
+              + " einem Kommentar ohne Eltern-Kommentar oder wenn der Eltern-Kommentar nicht mehr"
+              + " aktiv ist. Lesen duerfen Mitglieder der Aufgabe, auch ausgetretene (Archiv);"
+              + " fuer alle anderen ist die Aufgabe nicht sichtbar (404).")
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",
@@ -72,12 +75,37 @@ public class CommentController {
         content =
             @Content(
                 mediaType = "application/json",
-                array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)))),
-    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+                array = @ArraySchema(schema = @Schema(implementation = CommentModel.class)),
+                examples =
+                    @ExampleObject(
+                        name = "kommentar-und-antwort",
+                        summary = "Ein Kommentar und eine Antwort darauf",
+                        value = CommentApiExamples.LIST_COMMENTS))),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Ungueltige Anfrage: keine gueltige UUID im Pfad.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = CommentApiExamples.BAD_REQUEST_PATH))),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = CommentApiExamples.UNAUTHORIZED))),
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = CommentApiExamples.NOT_FOUND)))
   })
   @GetMapping("/{id}/comments")
   @HateoasLinkTarget(TaskHateoas.Targets.GET_COMMENTS)
@@ -135,13 +163,17 @@ public class CommentController {
             @Content(
                 mediaType = "application/json",
                 schema = @Schema(implementation = CommentModel.class),
-                examples =
-                    @ExampleObject(
-                        name = "antwort",
-                        summary = "Antwort auf einen Kommentar",
-                        description =
-                            "Bei einem Kommentar ohne Eltern-Kommentar ist parentCommentId null.",
-                        value = CommentApiExamples.CREATED_REPLY))),
+                examples = {
+                  @ExampleObject(
+                      name = "top-level",
+                      summary = "Kommentar ohne Eltern-Kommentar",
+                      description = "parentCommentId ist null.",
+                      value = CommentApiExamples.CREATED_TOP_LEVEL),
+                  @ExampleObject(
+                      name = "antwort",
+                      summary = "Antwort auf einen Kommentar",
+                      value = CommentApiExamples.CREATED_REPLY)
+                })),
     @ApiResponse(
         responseCode = "400",
         description =

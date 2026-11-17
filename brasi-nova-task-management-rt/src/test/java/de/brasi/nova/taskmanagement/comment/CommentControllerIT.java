@@ -1042,10 +1042,11 @@ class CommentControllerIT {
 
   @Test
   @DisplayName(
-      "i156_createcomment_antworten_entsprechen_den_openapi_beispielen (Intake #156): die"
-          + " Live-Antworten fuer 201, 400 (Eltern-Kommentar, Text fehlt), 401, 404 und 409 haben"
-          + " dieselben Felder und stabilen Werte wie die Beispiele der Operation")
-  void i156_create_comment_responses_match_openapi_examples() throws Exception {
+      "i156_kommentar_antworten_entsprechen_den_openapi_beispielen (Intake #156): die"
+          + " Live-Antworten von POST /comments (201 ohne und mit Eltern-Kommentar, 400 Eltern-"
+          + " Kommentar und Text fehlt, 401, 404, 409) und GET /comments (200, 400, 401, 404) haben"
+          + " dieselben Felder und stabilen Werte wie die Beispiele der Operationen")
+  void i156_comment_responses_match_openapi_examples() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
     final String tokenA =
@@ -1059,8 +1060,23 @@ class CommentControllerIT {
     final String path = "/api/v1/tasks/" + taskId + "/comments";
     final SoftAssertions soft = new SoftAssertions();
 
+    // 201 ohne Eltern-Kommentar: parentCommentId ist null (Feld vorhanden), sonst wie im Beispiel.
+    final JsonNode topLevel =
+        om.readTree(
+            mvc.perform(
+                    post(path)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(om.writeValueAsString(Map.of("text", "Eltern-Kommentar."))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertCommentMatchesExample(
+        soft, topLevel, om.readTree(CommentApiExamples.CREATED_TOP_LEVEL), taskId);
+    final UUID parent = UUID.fromString(topLevel.get("id").asText());
+
     // 201: Antwort auf einen Kommentar; Felder und Formen wie im Beispiel.
-    final UUID parent = postComment(mvc, om, tokenA, taskId, "Eltern-Kommentar.", null);
     final String createdJson =
         mvc.perform(
                 post(path)
@@ -1074,21 +1090,61 @@ class CommentControllerIT {
             .getResponse()
             .getContentAsString();
     final JsonNode created = om.readTree(createdJson);
-    final JsonNode createdExample = om.readTree(CommentApiExamples.CREATED_REPLY);
-    final Set<String> createdFields = new java.util.TreeSet<>();
-    created.fieldNames().forEachRemaining(createdFields::add);
-    final Set<String> createdExampleFields = new java.util.TreeSet<>();
-    createdExample.fieldNames().forEachRemaining(createdExampleFields::add);
-    soft.assertThat(createdFields)
-        .as("Felder der 201-Antwort: %s", created)
-        .isEqualTo(createdExampleFields);
-    soft.assertThat(created.get("taskId").asText()).isEqualTo(taskId.toString());
+    assertCommentMatchesExample(
+        soft, created, om.readTree(CommentApiExamples.CREATED_REPLY), taskId);
     soft.assertThat(created.get("parentCommentId").asText()).isEqualTo(parent.toString());
-    soft.assertThat(created.get("edited").asBoolean())
-        .isEqualTo(createdExample.get("edited").asBoolean());
-    soft.assertThat(created.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
-    soft.assertThat(createdExample.get("createdAt").asText())
-        .matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
+
+    // GET /comments: 200 mit den beiden Kommentaren chronologisch aufsteigend, Elemente wie im
+    // Beispiel (der erste ohne, der zweite mit Eltern-Kommentar).
+    final JsonNode list =
+        om.readTree(
+            mvc.perform(get(path).header("Authorization", "Bearer " + tokenA))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    final JsonNode listExample = om.readTree(CommentApiExamples.LIST_COMMENTS);
+    soft.assertThat(list.size()).isEqualTo(listExample.size());
+    for (int i = 0; i < Math.min(list.size(), listExample.size()); i++) {
+      assertCommentMatchesExample(soft, list.get(i), listExample.get(i), taskId);
+    }
+
+    // GET /comments 400: keine UUID im Pfad.
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                get("/api/v1/tasks/keine-uuid/comments")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.BAD_REQUEST_PATH,
+        taskId);
+
+    // GET /comments 401 (problem+json der Filterkette) und 404 (unbekannte Aufgabe, maskiert).
+    soft.assertThat(
+            om.readTree(
+                mvc.perform(get(path))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString()))
+        .isEqualTo(om.readTree(CommentApiExamples.UNAUTHORIZED));
+    final UUID unknownForGet = UUID.randomUUID();
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                get("/api/v1/tasks/" + unknownForGet + "/comments")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.NOT_FOUND,
+        unknownForGet);
 
     // 400: Eltern-Kommentar unbekannt (Service-Validierung).
     assertMatchesExample(
@@ -1210,6 +1266,27 @@ class CommentControllerIT {
         CommentApiExamples.CONFLICT,
         taskId);
     soft.assertAll();
+  }
+
+  /**
+   * Vergleicht einen Kommentar der Live-Antwort mit dem Beispiel: gleiche Feldmenge (auch ein
+   * {@code null}-Wert von parentCommentId steht als Feld da), gleiche Form von parentCommentId
+   * (null oder UUID), edited und createdAt im Format UTC-Instant, taskId die verwendete.
+   */
+  private static void assertCommentMatchesExample(
+      final SoftAssertions soft, final JsonNode live, final JsonNode example, final UUID taskId) {
+    final Set<String> liveFields = new java.util.TreeSet<>();
+    live.fieldNames().forEachRemaining(liveFields::add);
+    final Set<String> exampleFields = new java.util.TreeSet<>();
+    example.fieldNames().forEachRemaining(exampleFields::add);
+    soft.assertThat(liveFields).as("Felder des Kommentars: %s", live).isEqualTo(exampleFields);
+    soft.assertThat(live.get("taskId").asText()).isEqualTo(taskId.toString());
+    soft.assertThat(live.get("parentCommentId").isNull())
+        .as("parentCommentId null wie im Beispiel: %s", live)
+        .isEqualTo(example.get("parentCommentId").isNull());
+    soft.assertThat(live.get("edited").asBoolean()).isEqualTo(example.get("edited").asBoolean());
+    soft.assertThat(live.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
+    soft.assertThat(example.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
   }
 
   /**

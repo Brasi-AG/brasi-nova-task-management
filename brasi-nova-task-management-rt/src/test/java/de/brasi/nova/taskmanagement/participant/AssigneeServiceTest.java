@@ -299,6 +299,121 @@ class AssigneeServiceTest {
     order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
   }
 
+  // ---- Intake #156: gleiche Sperr-Reihenfolge (UUID aufsteigend) in allen mehrzeiligen Pfaden ---
+
+  /**
+   * Zwei UUIDs, deren HashSet-Reihenfolge der UUID-Sortierung entgegenlaeuft: ORDER_HIGH liegt im
+   * HashSet (Standardgroesse) vor ORDER_LOW. Eine Verarbeitung ueber ein HashSet wuerde den Test
+   * also rot machen.
+   */
+  private static final UUID ORDER_LOW = UUID.fromString("00000059-00f0-0059-0000-000000000595");
+
+  private static final UUID ORDER_HIGH = UUID.fromString("00000059-00f1-0059-0000-000000000595");
+
+  @Test
+  @DisplayName(
+      "lock_order_update_assignees_neue_personen_aufsteigend (Intake #156): neue Assignees werden"
+          + " nach UUID sortiert geschrieben (Teilnehmer- und State-Zeile je Person), unabhaengig"
+          + " von der Reihenfolge der Eingabemenge")
+  void lock_order_update_assignees_neue_personen_aufsteigend() {
+    final Long taskId = 44L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(anyLong(), any()))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ORDER_HIGH, ORDER_LOW)));
+
+    final ArgumentCaptor<TaskParticipant> saves = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, times(2)).save(saves.capture());
+    assertThat(saves.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList())
+        .containsExactly(ORDER_LOW, ORDER_HIGH);
+    final InOrder order = inOrder(userStateService);
+    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_LOW, TENANT_ID);
+    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_HIGH, TENANT_ID);
+  }
+
+  @Test
+  @DisplayName(
+      "lock_order_update_assignees_abgewaehlte_personen_aufsteigend (Intake #156): abgewaehlte"
+          + " Assignees werden nach UUID sortiert ausgetreten")
+  void lock_order_update_assignees_abgewaehlte_personen_aufsteigend() {
+    final Long taskId = 45L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final TaskParticipant high = activeAssignee(taskId, ORDER_HIGH, false);
+    final TaskParticipant low = activeAssignee(taskId, ORDER_LOW, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(high, low));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ORDER_HIGH))
+        .thenReturn(List.of(high));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ORDER_LOW))
+        .thenReturn(List.of(low));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of()));
+
+    final ArgumentCaptor<TaskParticipant> saves = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, times(2)).save(saves.capture());
+    assertThat(saves.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList())
+        .containsExactly(ORDER_LOW, ORDER_HIGH);
+  }
+
+  @Test
+  @DisplayName(
+      "lock_order_exit_handover_ziele_aufsteigend (Intake #156): Uebergabeziele werden nach UUID"
+          + " sortiert geschrieben (Ziel-Zeile, Teilnehmer, State, Benachrichtigung), unabhaengig"
+          + " von der Eingabereihenfolge")
+  void lock_order_exit_handover_ziele_aufsteigend() {
+    final Long taskId = 46L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final TaskParticipant actor = activeAssignee(taskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(ORDER_HIGH, ORDER_LOW), true));
+
+    final ArgumentCaptor<TaskHandoverTarget> targets =
+        ArgumentCaptor.forClass(TaskHandoverTarget.class);
+    verify(handoverTargetRepository, times(2)).save(targets.capture());
+    assertThat(targets.getAllValues().stream().map(TaskHandoverTarget::getToRef).toList())
+        .containsExactly(ORDER_LOW, ORDER_HIGH);
+    final InOrder order = inOrder(userStateService, notificationService);
+    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_LOW, TENANT_ID);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(ORDER_LOW),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_HIGH, TENANT_ID);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(ORDER_HIGH),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
   // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate
   // -----------
 

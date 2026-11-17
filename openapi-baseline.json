@@ -95,11 +95,6 @@
     "fingerprint": "5a2932e3fbda3101"
   },
   {
-    "operation": "getComments",
-    "rule": "response-example",
-    "fingerprint": "666f25b1ba29ce96"
-  },
-  {
     "operation": "issueTicket",
     "rule": "response-example",
     "fingerprint": "9de121526164b7a1"

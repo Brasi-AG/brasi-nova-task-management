@@ -174,17 +174,22 @@ public class AssigneeService {
             .map(TaskParticipant::getParticipantRef)
             .collect(Collectors.toSet());
 
-    // Neue Assignees: in desired, aber nicht in current
-    final Set<UUID> toAdd =
-        desiredRefs.stream().filter(ref -> !currentRefs.contains(ref)).collect(Collectors.toSet());
+    // Neue Assignees: in desired, aber nicht in current. Intake #156: nach UUID sortiert, weil
+    // dieselben Teilnehmer-/State-Zeilen auch createComment (Aufnahme erwaehnter Personen),
+    // addParticipants und die Uebergabe schreiben und alle Pfade mehrere Zeilen in GLEICHER
+    // Reihenfolge sperren muessen; eine HashSet-Reihenfolge liesse zwei ausgetretene Personen, die
+    // gleichzeitig erwaehnt und zugewiesen werden, ueberkreuz sperren (Deadlock).
+    final List<UUID> toAdd =
+        desiredRefs.stream().filter(ref -> !currentRefs.contains(ref)).sorted().toList();
 
     // Abgewaehlte Assignees: in current, aber nicht in desired.
     // BE-7 (A3): Creator-Schutz ist nun MITGLIEDSCHAFTS-Schutz (nicht mehr "Creator nie aus
     // toRemove"): ein ausgelassener Creator wird DE-ASSIGNT (ASSIGNEE_FLAG=false), behaelt aber
     // CREATOR_FLAG + PARTICIPANT_FLAG + aktiven UserState + EXIT_KIND=null (KEIN Austritt). Ein
     // ausgelassener Nicht-Creator wird wie bisher mit EXIT_KIND=UNSUBSCRIBED ausgetreten.
-    final Set<UUID> toRemove =
-        currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).collect(Collectors.toSet());
+    // Ebenfalls nach UUID sortiert (siehe toAdd).
+    final List<UUID> toRemove =
+        currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).sorted().toList();
 
     // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
     // Sonst entstuenden orphan-/cross-tenant-Participant/UserState/Notification. Unbekannt/fremd/
@@ -206,6 +211,11 @@ public class AssigneeService {
 
     // Neue Assignees anlegen
     for (final UUID assigneeRef : toAdd) {
+      // Test-Seam: Synchronisation der Nebenlaeufigkeits-ITs VOR dem ersten Zeilen-Zugriff je
+      // Person
+      // (Reihenfolge-Beweis gegen die Aufnahme per Erwaehnung). Produktiv No-Op.
+      onBeforeAssigneeAddForTest(taskId, assigneeRef);
+
       // Pruefen ob bereits ein Participant-Eintrag existiert (z.B. als Beobachter oder CREATOR)
       final List<TaskParticipant> existing =
           participantQueryRepository.findByTaskIdAndParticipantRef(taskId, assigneeRef);
@@ -659,6 +669,19 @@ public class AssigneeService {
   }
 
   /**
+   * Test-Seam (Default No-Op): Haken in {@link #updateAssignees} VOR dem ersten Zeilen-Zugriff je
+   * neu zugewiesener Person. Ermoeglicht dem Nebenlaeufigkeits-IT (Intake #156), updateAssignees
+   * und die Aufnahme per Erwaehnung vor ihrem ersten Write zu synchronisieren und so die gleiche
+   * Sperr-Reihenfolge (UUID-aufsteigend) zu beweisen. Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der gleich zugewiesenen Person
+   */
+  protected void onBeforeAssigneeAddForTest(final Long taskId, final UUID ref) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
    * Test-Seam (Default No-Op): Haken ZWISCHEN dem Vorab-Read und dem Participant-save in {@link
    * #addSingleParticipant}/{@link #saveParticipantHandlingRace}. Ermoeglicht deterministische
    * Nebenlaeufigkeits-ITs (D8): beide Threads werden nachweislich VOR dem ersten Write
@@ -857,7 +880,12 @@ public class AssigneeService {
       final TaskHandover savedEvent = handoverRepository.save(event);
       final Long handoverId = savedEvent.getId();
 
-      for (final UUID targetRef : dedupedTargets) {
+      // Intake #156: die Ziele schreiben Teilnehmer- und State-Zeilen wie updateAssignees und die
+      // Aufnahme per Erwaehnung und werden daher nach UUID sortiert verarbeitet (gleiche
+      // Sperr-Reihenfolge ueber alle Pfade). dedupedTargets bleibt in Eingabereihenfolge
+      // (Historie).
+      final List<UUID> sortedTargets = dedupedTargets.stream().sorted().toList();
+      for (final UUID targetRef : sortedTargets) {
         final TaskHandoverTarget targetRow = new TaskHandoverTarget();
         targetRow.setTenantId(tenantId);
         targetRow.setHandoverId(handoverId);

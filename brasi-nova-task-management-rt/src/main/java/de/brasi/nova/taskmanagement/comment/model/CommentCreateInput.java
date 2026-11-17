@@ -34,23 +34,28 @@ public record CommentCreateInput(
         String text,
     @Schema(
             description = "Externe UUID des Eltern-Kommentars (null = Top-Level-Kommentar).",
-            example = "660e8400-e29b-41d4-a716-446655440001")
+            example = "660e8400-e29b-41d4-a716-446655440001",
+            nullable = true)
         UUID parentCommentId,
     @ArraySchema(
+            maxItems = 100,
+            arraySchema =
+                @Schema(
+                    description =
+                        "UUIDs der erwaehnten Benutzer (hoechstens 100, keine null-Elemente; null oder"
+                            + " fehlend = keine). Mitglieder der Aufgabe erhalten eine MENTION. Aktive"
+                            + " Benutzer des eigenen Mandanten, die noch kein Mitglied sind (auch"
+                            + " Ausgetretene), werden als Beteiligte hinzugefuegt und erhalten nur die"
+                            + " MENTION, wenn die aufrufende Person Beteiligte hinzufuegen darf"
+                            + " (Berechtigung TASK_WRITE wie bei POST /participants); sonst werden sie"
+                            + " still verworfen. Unbekannte, inaktive und mandantenfremde UUIDs werden"
+                            + " ebenfalls still verworfen (kein 400).",
+                    nullable = true),
             schema =
                 @Schema(
                     type = "string",
                     format = "uuid",
                     description = "GUID eines erwaehnten Benutzers (PROD_BENUTZER.EXTERNALID)."))
-        @Schema(
-            description =
-                "UUIDs der erwaehnten Benutzer (hoechstens 100, keine null-Elemente; null oder"
-                    + " fehlend = keine). Mitglieder der Aufgabe erhalten eine MENTION. Aktive Benutzer des eigenen"
-                    + " Mandanten, die noch kein Mitglied sind (auch Ausgetretene), werden als Beteiligte"
-                    + " hinzugefuegt und erhalten nur die MENTION, wenn die aufrufende Person Beteiligte"
-                    + " hinzufuegen darf (Berechtigung TASK_WRITE wie bei POST /participants); sonst werden sie"
-                    + " still verworfen. Unbekannte, inaktive und mandantenfremde UUIDs werden ebenfalls still"
-                    + " verworfen (kein 400).")
         List<UUID> mentions) {
 
   /**
