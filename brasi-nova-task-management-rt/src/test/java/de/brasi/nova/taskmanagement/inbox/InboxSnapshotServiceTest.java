@@ -597,6 +597,113 @@ class InboxSnapshotServiceTest {
         .isInstanceOf(EntityValidationException.class);
   }
 
+  // ---- Archivsuche (#149): Validierung + Filter-Zweige + Muster in EINER Keyset-Query ----------
+
+  @Test
+  @DisplayName("searchArchivePage_leere_query_wirft_400_ohne_db_zugriff")
+  void searchArchivePage_leere_query_wirft_400_ohne_db_zugriff() {
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "   ", null, null, 10))
+        .isInstanceOf(EntityValidationException.class);
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, null, null, null, 10))
+        .isInstanceOf(EntityValidationException.class);
+    verify(inboxGenerationService, never()).currentGeneration(any());
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_zu_lange_query_wirft_400")
+  void searchArchivePage_zu_lange_query_wirft_400() {
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "x".repeat(201), null, null, 10))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_ungueltiger_filter_wirft_400")
+  void searchArchivePage_ungueltiger_filter_wirft_400() {
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "abc", "pending", null, 10))
+        .isInstanceOf(EntityValidationException.class);
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_filter_all_bindet_beide_zweige_und_escaped_muster")
+  void searchArchivePage_filter_all_bindet_beide_zweige_und_escaped_muster() {
+    when(taskQueryRepository.findArchiveSearchPage(
+            eq(USER_REF),
+            eq(DONE_ID),
+            eq(CANCELLED_ID),
+            eq(1),
+            eq(1),
+            eq("%50!%%"),
+            any(),
+            any(),
+            eq(MAX_UUID),
+            eq(11)))
+        .thenReturn(buildTasks(1));
+    final CursorCollectionModel<TaskSummaryModel> page =
+        service.searchArchivePage(USER_REF, " 50% ", null, null, 10);
+    assertThat(items(page)).hasSize(1);
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_filter_done_und_left_schalten_je_einen_zweig")
+  void searchArchivePage_filter_done_und_left_schalten_je_einen_zweig() {
+    service.searchArchivePage(USER_REF, "abc", "done", null, 10);
+    verify(taskQueryRepository)
+        .findArchiveSearchPage(
+            eq(USER_REF),
+            eq(DONE_ID),
+            eq(CANCELLED_ID),
+            eq(1),
+            eq(0),
+            eq("%abc%"),
+            any(),
+            any(),
+            eq(MAX_UUID),
+            eq(11));
+    service.searchArchivePage(USER_REF, "abc", "left", null, 10);
+    verify(taskQueryRepository)
+        .findArchiveSearchPage(
+            eq(USER_REF),
+            eq(DONE_ID),
+            eq(CANCELLED_ID),
+            eq(0),
+            eq(1),
+            eq("%abc%"),
+            any(),
+            any(),
+            eq(MAX_UUID),
+            eq(11));
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_folge_cursor_reicht_fenster_durch_und_410_bei_generation")
+  void searchArchivePage_folge_cursor_reicht_fenster_durch_und_410_bei_generation() {
+    final LocalDateTime asOf = LocalDateTime.of(2026, 10, 17, 10, 0, 0);
+    final LocalDateTime lastActivity = LocalDateTime.of(2026, 10, 16, 9, 30, 0);
+    final UUID lastExternal = UUID.randomUUID();
+    final String cursor =
+        KeysetCursor.encode(
+            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "2"));
+    when(taskQueryRepository.findArchiveSearchPage(
+            eq(USER_REF),
+            eq(DONE_ID),
+            eq(CANCELLED_ID),
+            eq(1),
+            eq(1),
+            eq("%abc%"),
+            eq(asOf),
+            eq(lastActivity),
+            eq(lastExternal),
+            eq(6)))
+        .thenReturn(buildTasks(1));
+
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(2L);
+    assertThat(items(service.searchArchivePage(USER_REF, "abc", "all", cursor, 5))).hasSize(1);
+
+    when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(3L);
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "abc", "all", cursor, 5))
+        .isInstanceOf(SnapshotExpiredException.class);
+  }
+
   // ---- BE-1: currentUserId + Anreicherung + N+1-Sentinel + Enrichment-im-Bracket --------------
 
   @Test

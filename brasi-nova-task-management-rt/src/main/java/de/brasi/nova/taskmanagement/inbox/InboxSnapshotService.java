@@ -279,14 +279,7 @@ public class InboxSnapshotService {
    */
   public CursorCollectionModel<TaskSummaryModel> loadArchivePage(
       final UUID userRef, final String filter, final String cursor, final int limit) {
-    final String resolvedFilter = (filter == null || filter.isBlank()) ? FILTER_ALL : filter;
-    if (!FILTER_ALL.equals(resolvedFilter)
-        && !FILTER_DONE.equals(resolvedFilter)
-        && !FILTER_LEFT.equals(resolvedFilter)) {
-      throw new EntityValidationException(
-          "Ungueltiger filter-Wert: '" + filter + "'. Erlaubt: all, done, left.");
-    }
-
+    final String resolvedFilter = resolveArchiveFilter(filter);
     final int effLimit = clampLimit(limit);
     final PageFetch fetch =
         switch (resolvedFilter) {
@@ -312,7 +305,74 @@ public class InboxSnapshotService {
     return readPage(userRef, cursor, effLimit, fetch);
   }
 
+  /**
+   * Sucht im Archiv des Benutzers nach einem Stichwort ({@code GET /api/v1/tasks/archive/search},
+   * Intake #149). Treffer ueber Titel, Beschreibung, Tag-Bezeichnung und Anzeigename der Teilnehmer
+   * (case-insensitiver Teilstring, siehe {@link TaskKeysetQueryRepository#findArchiveSearchPage}).
+   *
+   * <p>Filter, Cursor, Limit, asOf/Generation und 410 verhalten sich wie bei {@link
+   * #loadArchivePage}; Sichtbarkeit und Suche stecken in derselben Keyset-Query, damit die
+   * Seitengrenzen vollstaendig bleiben. Der Suchbegriff wird vor jedem DB-Zugriff validiert.
+   *
+   * @param userRef UUID des Benutzers
+   * @param query Suchbegriff (Pflicht; wird getrimmt, 1 bis 200 Zeichen)
+   * @param filter {@code all} (Default/null) | {@code done} | {@code left}
+   * @param cursor opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param limit Seitengroesse (wird geclampt)
+   * @return HAL-Collection der gefundenen archivierten Aufgaben
+   * @throws EntityValidationException bei fehlendem/zu langem Suchbegriff, ungueltigem Filter oder
+   *     Cursor (HTTP 400)
+   * @throws SnapshotExpiredException (HTTP 410) wie {@link #loadActivePage}
+   */
+  public CursorCollectionModel<TaskSummaryModel> searchArchivePage(
+      final UUID userRef,
+      final String query,
+      final String filter,
+      final String cursor,
+      final int limit) {
+    final ArchiveSearchTerm term = ArchiveSearchTerm.of(query);
+    final String resolvedFilter = resolveArchiveFilter(filter);
+    final int effLimit = clampLimit(limit);
+    final Long doneId = resolver.resolveTaskStatusDone();
+    final Long cancelledId = resolver.resolveTaskStatusCancelled();
+    final int includeDone = FILTER_LEFT.equals(resolvedFilter) ? 0 : 1;
+    final int includeLeft = FILTER_DONE.equals(resolvedFilter) ? 0 : 1;
+    return readPage(
+        userRef,
+        cursor,
+        effLimit,
+        (asOf, lastActivityAt, externalId) ->
+            taskQueryRepository.findArchiveSearchPage(
+                userRef,
+                doneId,
+                cancelledId,
+                includeDone,
+                includeLeft,
+                term.likePattern(),
+                asOf,
+                lastActivityAt,
+                externalId,
+                effLimit + 1));
+  }
+
   // ---- intern ---------------------------------------------------------------------------------
+
+  /**
+   * Loest den Archiv-Filter auf: null/blank -> {@code all}; sonst muss er {@code all}, {@code done}
+   * oder {@code left} sein.
+   *
+   * @throws EntityValidationException bei unbekanntem Filter (HTTP 400)
+   */
+  private static String resolveArchiveFilter(final String filter) {
+    final String resolvedFilter = (filter == null || filter.isBlank()) ? FILTER_ALL : filter;
+    if (!FILTER_ALL.equals(resolvedFilter)
+        && !FILTER_DONE.equals(resolvedFilter)
+        && !FILTER_LEFT.equals(resolvedFilter)) {
+      throw new EntityValidationException(
+          "Ungueltiger filter-Wert: '" + filter + "'. Erlaubt: all, done, left.");
+    }
+    return resolvedFilter;
+  }
 
   /** Abruf einer Rohseite ({@code limit+1}) fuer ein Keyset-Fenster (asOf, lastActivityAt, ext). */
   @FunctionalInterface

@@ -13,26 +13,26 @@ import java.util.UUID;
  * Ergaenzt {@link BaseTaskRepository} um benutzer-scoped Inbox-/Archiv-Queries (arch-v2 §2.1,
  * arch-v3 §3.1).
  *
- * <p>Alle Queries sind benutzer-scoped. Inbox-/Archiv-done-Queries verlangen einen aktiven
- * {@code TASK_USER_STATE} (UNSUBSCRIBED_AT IS NULL). Die Archiv-left-Query ist das Gegenstueck:
- * sie liefert Tasks, die der Benutzer verlassen hat - entweder ueber {@code TASK_USER_STATE.
+ * <p>Alle Queries sind benutzer-scoped. Inbox-/Archiv-done-Queries verlangen einen aktiven {@code
+ * TASK_USER_STATE} (UNSUBSCRIBED_AT IS NULL). Die Archiv-left-Query ist das Gegenstueck: sie
+ * liefert Tasks, die der Benutzer verlassen hat - entweder ueber {@code TASK_USER_STATE.
  * UNSUBSCRIBED_AT} (persoenliches Abmelden) ODER ueber {@code TASK_PARTICIPANT.EXIT_KIND}
  * (Teilnehmer-Austritt, z.B. HANDOVER). EXIT_KIND liegt auf TASK_PARTICIPANT, nicht auf
  * TASK_USER_STATE; beide Dimensionen muessen in der Query (nicht service-seitig) OR-verknuepft
  * werden, sonst ist die Keyset-/TOP-Paginierung unvollstaendig.
  *
  * <p><b>Entity-Status-Filter (Pflicht):</b> Alle Reads filtern {@code ENTITY_STATUS = 'ACTIVE'}
- * sowohl auf dem TASK-Row als auch in den {@code EXISTS}-Membership-Subqueries
- * ({@code TASK_USER_STATE}/{@code TASK_PARTICIPANT}). Sonst liefern/zaehlen Archiv- und
- * Snapshot-Reads logisch geloeschte (deaktivierte) Aufgaben bzw. Mitgliedschaften (modulweite
- * Konvention, konsistent mit den Notification-Queries).
+ * sowohl auf dem TASK-Row als auch in den {@code EXISTS}-Membership-Subqueries ({@code
+ * TASK_USER_STATE}/{@code TASK_PARTICIPANT}). Sonst liefern/zaehlen Archiv- und Snapshot-Reads
+ * logisch geloeschte (deaktivierte) Aufgaben bzw. Mitgliedschaften (modulweite Konvention,
+ * konsistent mit den Notification-Queries).
  *
  * <p><b>Membership-Konjunkt (Pflicht, Slice 6 / SPEC Auflage 5):</b> Jede requester-scoped Sicht
- * und jeder Zaehler setzt als REQUIRED-Konjunkt die Existenz einer passenden
- * {@code TASK_PARTICIPANT}-Zeile ({@code PARTICIPANT_KIND = 'PERSON'}, {@code ENTITY_STATUS =
- * 'ACTIVE'}, beide Tenant-Spalten = Request-Mandant) voraus. Ohne diese harte Vorbedingung wuerde
- * eine verwaiste {@code TASK_USER_STATE}-Zeile (Orphan-State ohne passende Participant-Row) ueber
- * die reinen State-Zweige faelschlich gelistet/gezaehlt (Residual-Leak, der dem Detail-Guard
+ * und jeder Zaehler setzt als REQUIRED-Konjunkt die Existenz einer passenden {@code
+ * TASK_PARTICIPANT}-Zeile ({@code PARTICIPANT_KIND = 'PERSON'}, {@code ENTITY_STATUS = 'ACTIVE'},
+ * beide Tenant-Spalten = Request-Mandant) voraus. Ohne diese harte Vorbedingung wuerde eine
+ * verwaiste {@code TASK_USER_STATE}-Zeile (Orphan-State ohne passende Participant-Row) ueber die
+ * reinen State-Zweige faelschlich gelistet/gezaehlt (Residual-Leak, der dem Detail-Guard
  * widerspricht). Die aktive Seite verlangt WRITE-Member ({@code EXIT_KIND IS NULL}), die sechs
  * Archiv-Queries verlangen READ-Member ({@code EXIT_KIND} egal -> ausgetretener Nutzer liest sein
  * Archiv). Der Konjunkt UMSCHLIESST die bestehenden Status-/State-OR-Zweige: diese bestimmen die
@@ -40,31 +40,32 @@ import java.util.UUID;
  * Treffers/jeder gezaehlten Zeile. {@code EXISTS} nutzt den TASK_ID-praefixierten Unique-Index aus
  * {@code V3__participant_unique_and_audit_indexes.sql}.
  *
- * <p>Status-Filter laufen ueber aufgeloeste {@code Long}-IDs ({@code :openStatusId},
- * {@code :doneId}, {@code :cancelledId}), die der aufrufende Service einmalig via
- * {@link de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver} aufloest.
- * Das sind KEINE tenantId-Parameter — der {@code NovaQueryTenantValidator} bleibt erfuellt;
- * {@code :tenantId} wird weiterhin automatisch gebunden.
+ * <p>Status-Filter laufen ueber aufgeloeste {@code Long}-IDs ({@code :openStatusId}, {@code
+ * :doneId}, {@code :cancelledId}), die der aufrufende Service einmalig via {@link
+ * de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver} aufloest. Das sind KEINE
+ * tenantId-Parameter — der {@code NovaQueryTenantValidator} bleibt erfuellt; {@code :tenantId} wird
+ * weiterhin automatisch gebunden.
  *
- * <p><b>Startup-Falle:</b> Kein Parameter darf {@code tenantId} heissen (KSF
- * {@code NovaQueryTenantValidator} bricht sonst den Context-Start ab). Alle Status-Ids sind
- * bewusst anders benannt.
+ * <p><b>Startup-Falle:</b> Kein Parameter darf {@code tenantId} heissen (KSF {@code
+ * NovaQueryTenantValidator} bricht sonst den Context-Start ab). Alle Status-Ids sind bewusst anders
+ * benannt.
  */
 public interface TaskKeysetQueryRepository extends BaseTaskRepository {
 
   // ---- Inbox: aktive Tasks (TASK_STATUS_ID = openStatusId) --------------------------------
 
   /**
-   * Liefert eine Keyset-Seite aktiver Tasks fuer den angegebenen Benutzer.
-   * Filtert auf {@code TASK_STATUS_ID = :openStatusId} (aufgeloeste Id, kein String-Literal).
-   * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf} Wasserzeichen.
+   * Liefert eine Keyset-Seite aktiver Tasks fuer den angegebenen Benutzer. Filtert auf {@code
+   * TASK_STATUS_ID = :openStatusId} (aufgeloeste Id, kein String-Literal). Keyset: {@code
+   * LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf} Wasserzeichen.
    *
-   * @param userRef       UUID des Benutzers (aus {@code UserAccessor}, nie aus Clientdaten)
-   * @param openStatusId  aufgeloeste ID fuer "OPEN" (via {@link de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver})
-   * @param asOf          Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param userRef UUID des Benutzers (aus {@code UserAccessor}, nie aus Clientdaten)
+   * @param openStatusId aufgeloeste ID fuer "OPEN" (via {@link
+   *     de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver})
+   * @param asOf Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
    * @param lastActivityAt Keyset-Cursor: letzte LAST_ACTIVITY_AT (exklusive Tie-Break-Grenze)
-   * @param externalId    Keyset-Cursor: letzte EXTERNALID (Tie-Break)
-   * @param limit         maximale Anzahl zurueckgegebener Tasks (fuer hasMore: limit+1 uebergeben)
+   * @param externalId Keyset-Cursor: letzte EXTERNALID (Tie-Break)
+   * @param limit maximale Anzahl zurueckgegebener Tasks (fuer hasMore: limit+1 uebergeben)
    * @return Liste der Tasks, sortiert nach {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC}
    */
   @NovaQuery(
@@ -131,7 +132,7 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * {@code DueReminderWorker} setzt pro Treffer anschliessend {@code runWithTenant(tenantOf(row))},
    * bevor er Empfaenger aufloest und emittiert.
    *
-   * @param today        Faelligkeitstag (vom Worker in der Persistenz-Zone bestimmt)
+   * @param today Faelligkeitstag (vom Worker in der Persistenz-Zone bestimmt)
    * @param openStatusId aufgeloeste Id des Status {@code OPEN}
    * @return faellige, offene, aktive Aufgaben (mandantenuebergreifend)
    */
@@ -155,17 +156,17 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
   // ---- Archiv: erledigte Tasks (done/cancelled) ------------------------------------------
 
   /**
-   * Liefert eine Keyset-Seite archivierter Tasks (DONE oder CANCELLED) fuer den Benutzer.
-   * Filtert auf {@code TASK_STATUS_ID IN (:doneId, :cancelledId)} (aufgeloeste Ids).
-   * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf} Wasserzeichen.
+   * Liefert eine Keyset-Seite archivierter Tasks (DONE oder CANCELLED) fuer den Benutzer. Filtert
+   * auf {@code TASK_STATUS_ID IN (:doneId, :cancelledId)} (aufgeloeste Ids). Keyset: {@code
+   * LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf} Wasserzeichen.
    *
-   * @param userRef      UUID des Benutzers
-   * @param doneId       aufgeloeste ID fuer "DONE"
-   * @param cancelledId  aufgeloeste ID fuer "CANCELLED"
-   * @param asOf         Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param userRef UUID des Benutzers
+   * @param doneId aufgeloeste ID fuer "DONE"
+   * @param cancelledId aufgeloeste ID fuer "CANCELLED"
+   * @param asOf Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
    * @param lastActivityAt Keyset-Cursor
-   * @param externalId   Keyset-Cursor Tie-Break
-   * @param limit        maximale Anzahl
+   * @param externalId Keyset-Cursor Tie-Break
+   * @param limit maximale Anzahl
    * @return Liste der Tasks
    */
   @NovaQuery(
@@ -223,18 +224,18 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
   // ---- Archiv: verlassene Tasks (UNSUBSCRIBED_AT/EXIT_KIND, statusunabhaengig) -----------
 
   /**
-   * Liefert eine Keyset-Seite verlassener Tasks fuer den Benutzer (statusunabhaengig).
-   * "Verlassen" = {@code TASK_USER_STATE.UNSUBSCRIBED_AT IS NOT NULL} (persoenliches Abmelden)
-   * ODER {@code TASK_PARTICIPANT.EXIT_KIND IS NOT NULL} fuer {@code PARTICIPANT_REF = :userRef}
+   * Liefert eine Keyset-Seite verlassener Tasks fuer den Benutzer (statusunabhaengig). "Verlassen"
+   * = {@code TASK_USER_STATE.UNSUBSCRIBED_AT IS NOT NULL} (persoenliches Abmelden) ODER {@code
+   * TASK_PARTICIPANT.EXIT_KIND IS NOT NULL} fuer {@code PARTICIPANT_REF = :userRef}
    * (Teilnehmer-Austritt, z.B. HANDOVER) - arch-v2 §2.1. Beide Alternativen sind in der Query
    * OR-verknuepft (nicht service-seitig), damit die Keyset-/TOP-Paginierung vollstaendig bleibt.
    * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC}.
    *
-   * @param userRef        UUID des Benutzers
-   * @param asOf           Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param userRef UUID des Benutzers
+   * @param asOf Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
    * @param lastActivityAt Keyset-Cursor
-   * @param externalId     Keyset-Cursor Tie-Break
-   * @param limit          maximale Anzahl
+   * @param externalId Keyset-Cursor Tie-Break
+   * @param limit maximale Anzahl
    * @return Liste der Tasks
    */
   @NovaQuery(
@@ -297,31 +298,27 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
               + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC")
   List<Task> findArchiveLeftPage(
-      UUID userRef,
-      LocalDateTime asOf,
-      LocalDateTime lastActivityAt,
-      UUID externalId,
-      int limit);
+      UUID userRef, LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId, int limit);
 
   // ---- Archiv: Vereinigung erledigt ODER verlassen ("all") -------------------------------
 
   /**
    * Liefert eine Keyset-Seite der Vereinigung aus erledigt ODER verlassen fuer den Benutzer
-   * (Archiv-Filter {@code all}, arch-v2 §2.1). "all" ist exakt die Vereinigung von
-   * {@link #findArchiveDonePage} (DONE/CANCELLED mit aktivem {@code TASK_USER_STATE}) und
-   * {@link #findArchiveLeftPage} ({@code UNSUBSCRIBED_AT} ODER {@code EXIT_KIND}), in EINER
-   * Query OR-verknuepft, damit die Keyset-/TOP-Paginierung vollstaendig bleibt (nicht
-   * service-seitig zusammengefuehrt). Ein Task, der zugleich erledigt und verlassen ist, wird
-   * durch das einzelne {@code EXISTS}-Praedikat genau einmal gezaehlt (keine Doppelung).
-   * Keyset: {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf}.
+   * (Archiv-Filter {@code all}, arch-v2 §2.1). "all" ist exakt die Vereinigung von {@link
+   * #findArchiveDonePage} (DONE/CANCELLED mit aktivem {@code TASK_USER_STATE}) und {@link
+   * #findArchiveLeftPage} ({@code UNSUBSCRIBED_AT} ODER {@code EXIT_KIND}), in EINER Query
+   * OR-verknuepft, damit die Keyset-/TOP-Paginierung vollstaendig bleibt (nicht service-seitig
+   * zusammengefuehrt). Ein Task, der zugleich erledigt und verlassen ist, wird durch das einzelne
+   * {@code EXISTS}-Praedikat genau einmal gezaehlt (keine Doppelung). Keyset: {@code
+   * LAST_ACTIVITY_AT DESC, EXTERNALID DESC} mit {@code <= :asOf}.
    *
-   * @param userRef        UUID des Benutzers
-   * @param doneId         aufgeloeste ID fuer "DONE"
-   * @param cancelledId    aufgeloeste ID fuer "CANCELLED"
-   * @param asOf           Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param userRef UUID des Benutzers
+   * @param doneId aufgeloeste ID fuer "DONE"
+   * @param cancelledId aufgeloeste ID fuer "CANCELLED"
+   * @param asOf Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
    * @param lastActivityAt Keyset-Cursor
-   * @param externalId     Keyset-Cursor Tie-Break
-   * @param limit          maximale Anzahl
+   * @param externalId Keyset-Cursor Tie-Break
+   * @param limit maximale Anzahl
    * @return Liste der Tasks
    */
   @NovaQuery(
@@ -400,6 +397,154 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
       UUID externalId,
       int limit);
 
+  // ---- Archiv: Stichwortsuche (Intake #149) ----------------------------------------------
+
+  /**
+   * Liefert eine Keyset-Seite archivierter Tasks des Benutzers, die das Suchmuster treffen ({@code
+   * GET /api/v1/tasks/archive/search}, Intake #149).
+   *
+   * <p><b>Sichtbarkeit:</b> exakt die Archiv-Praedikate von {@link #findArchiveDonePage} (Zweig
+   * {@code :includeDone = 1}) und {@link #findArchiveLeftPage} (Zweig {@code :includeLeft = 1}),
+   * OR-verknuepft in EINER Query; beide Schalter = 1 ergibt genau {@link #findArchiveAllPage}. Die
+   * READ-Mitgliedschaft ({@code pm}) bleibt hartes Konjunkt (kein verwaister State).
+   *
+   * <p><b>Suche:</b> zusaetzliches Konjunkt, ein Treffer genuegt (OR): Titel, Beschreibung,
+   * Bezeichnung eines aktiv zugeordneten Tags (unabhaengig vom Katalog-Status des Tags, wie die
+   * Anreicherung {@code tagIds}) oder {@code VOLLER_NAME} eines aktiven PERSON-Teilnehmers des
+   * Mandanten (Ersteller unabhaengig vom Austritt, Zugewiesene/Beteiligte nur ohne Austritt - wie
+   * {@code createdById}/{@code assigneeIds}/{@code participantIds} der Anreicherung). Tags und
+   * Teilnehmer laufen ueber {@code EXISTS}, damit jede Aufgabe hoechstens einmal erscheint und
+   * {@code TOP}/Keyset vollstaendige Seiten liefern (keine Nachfilterung im Service). Vergleich
+   * case-insensitiv ueber {@code LOWER(...)} gegen das klein geschriebene, mit {@code !} escapte
+   * Muster ({@code ESCAPE '!'}).
+   *
+   * @param userRef UUID des Benutzers
+   * @param doneId aufgeloeste ID fuer "DONE"
+   * @param cancelledId aufgeloeste ID fuer "CANCELLED"
+   * @param includeDone 1 = Zweig "erledigt" aktiv, sonst 0
+   * @param includeLeft 1 = Zweig "verlassen" aktiv, sonst 0
+   * @param pattern LIKE-Muster (klein, escaped, mit {@code %} aussen)
+   * @param asOf Wasserzeichen (Snapshot-Zeitpunkt, inklusiv)
+   * @param lastActivityAt Keyset-Cursor
+   * @param externalId Keyset-Cursor Tie-Break
+   * @param limit maximale Anzahl
+   * @return Liste der Tasks, sortiert nach {@code LAST_ACTIVITY_AT DESC, EXTERNALID DESC}
+   */
+  @NovaQuery(
+      value =
+          "SELECT TOP (:limit) t.* FROM TASK t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.ENTITY_STATUS = 'ACTIVE'"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (:includeDone = 1 AND t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM TASK_USER_STATE s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
+              + "       AND s.ENTITY_STATUS = 'ACTIVE'))"
+              + "   OR (:includeLeft = 1 AND ("
+              + "     EXISTS ("
+              + "       SELECT 1 FROM TASK_USER_STATE s2"
+              + "       WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "       AND s2.USER_REF = :userRef AND s2.ANGELEGT_AM <= :asOf AND s2.UNSUBSCRIBED_AT IS NOT NULL AND s2.UNSUBSCRIBED_AT <= :asOf"
+              + "       AND s2.ENTITY_STATUS = 'ACTIVE')"
+              + "     OR EXISTS ("
+              + "       SELECT 1 FROM TASK_PARTICIPANT p"
+              + "       WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "       AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
+              + "       AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
+              + "       AND p.ENTITY_STATUS = 'ACTIVE')))"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM TASK_PARTICIPANT pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )"
+              + " AND ("
+              + "   LOWER(t.TITLE) LIKE :pattern ESCAPE '!'"
+              + "   OR LOWER(t.DESCRIPTION) LIKE :pattern ESCAPE '!'"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_TAG_ASSIGNMENT a"
+              + "     JOIN TASK_TAG tag ON a.TAG_ID = tag.ID AND tag.TENANT_ID = 0"
+              + "     WHERE a.TASK_ID = t.ID AND a.TENANT_ID = :tenantId AND a.ENTITY_STATUS = 'ACTIVE'"
+              + "     AND LOWER(tag.BEZEICHNUNG) LIKE :pattern ESCAPE '!')"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM TASK_PARTICIPANT sp"
+              + "     JOIN PROD_BENUTZER b ON b.EXTERNALID = sp.PARTICIPANT_REF"
+              + "       AND b.TENANT_ID = :tenantId AND b.ENTITY_STATUS = 'ACTIVE'"
+              + "     WHERE sp.TASK_ID = t.ID AND sp.TENANT_ID = :tenantId"
+              + "     AND sp.PARTICIPANT_TENANT_ID = :tenantId AND sp.PARTICIPANT_KIND = 'PERSON'"
+              + "     AND sp.ENTITY_STATUS = 'ACTIVE' AND (sp.EXIT_KIND IS NULL OR sp.CREATOR_FLAG = 1)"
+              + "     AND LOWER(b.VOLLER_NAME) LIKE :pattern ESCAPE '!')"
+              + " )"
+              + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
+              + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
+              + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC",
+      mssql =
+          "SELECT TOP (:limit) t.* FROM [dbo].[TASK] t"
+              + " WHERE t.TENANT_ID = :tenantId"
+              + " AND t.ENTITY_STATUS = 'ACTIVE'"
+              + " AND t.LAST_ACTIVITY_AT <= :asOf"
+              + " AND ("
+              + "   (:includeDone = 1 AND t.TASK_STATUS_ID IN (:doneId, :cancelledId)"
+              + "     AND EXISTS ("
+              + "       SELECT 1 FROM [dbo].[TASK_USER_STATE] s"
+              + "       WHERE s.TASK_ID = t.ID AND s.TENANT_ID = :tenantId"
+              + "       AND s.USER_REF = :userRef AND s.ANGELEGT_AM <= :asOf AND (s.UNSUBSCRIBED_AT IS NULL OR s.UNSUBSCRIBED_AT > :asOf)"
+              + "       AND s.ENTITY_STATUS = 'ACTIVE'))"
+              + "   OR (:includeLeft = 1 AND ("
+              + "     EXISTS ("
+              + "       SELECT 1 FROM [dbo].[TASK_USER_STATE] s2"
+              + "       WHERE s2.TASK_ID = t.ID AND s2.TENANT_ID = :tenantId"
+              + "       AND s2.USER_REF = :userRef AND s2.ANGELEGT_AM <= :asOf AND s2.UNSUBSCRIBED_AT IS NOT NULL AND s2.UNSUBSCRIBED_AT <= :asOf"
+              + "       AND s2.ENTITY_STATUS = 'ACTIVE')"
+              + "     OR EXISTS ("
+              + "       SELECT 1 FROM [dbo].[TASK_PARTICIPANT] p"
+              + "       WHERE p.TASK_ID = t.ID AND p.TENANT_ID = :tenantId"
+              + "       AND p.PARTICIPANT_TENANT_ID = :tenantId AND p.PARTICIPANT_KIND = 'PERSON'"
+              + "       AND p.PARTICIPANT_REF = :userRef AND p.EXIT_KIND IS NOT NULL AND p.ANGELEGT_AM <= :asOf AND (p.EXIT_AT IS NULL OR p.EXIT_AT <= :asOf)"
+              + "       AND p.ENTITY_STATUS = 'ACTIVE')))"
+              + " )"
+              + " AND EXISTS ("
+              + "   SELECT 1 FROM [dbo].[TASK_PARTICIPANT] pm"
+              + "   WHERE pm.TASK_ID = t.ID AND pm.PARTICIPANT_REF = :userRef"
+              + "   AND pm.PARTICIPANT_KIND = 'PERSON' AND pm.ENTITY_STATUS = 'ACTIVE'"
+              + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
+              + " )"
+              + " AND ("
+              + "   LOWER(t.TITLE) LIKE :pattern ESCAPE '!'"
+              + "   OR LOWER(t.DESCRIPTION) LIKE :pattern ESCAPE '!'"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_TAG_ASSIGNMENT] a"
+              + "     JOIN [dbo].[TASK_TAG] tag ON a.TAG_ID = tag.ID AND tag.TENANT_ID = 0"
+              + "     WHERE a.TASK_ID = t.ID AND a.TENANT_ID = :tenantId AND a.ENTITY_STATUS = 'ACTIVE'"
+              + "     AND LOWER(tag.BEZEICHNUNG) LIKE :pattern ESCAPE '!')"
+              + "   OR EXISTS ("
+              + "     SELECT 1 FROM [dbo].[TASK_PARTICIPANT] sp"
+              + "     JOIN [dbo].[PROD_BENUTZER] b ON b.EXTERNALID = sp.PARTICIPANT_REF"
+              + "       AND b.TENANT_ID = :tenantId AND b.ENTITY_STATUS = 'ACTIVE'"
+              + "     WHERE sp.TASK_ID = t.ID AND sp.TENANT_ID = :tenantId"
+              + "     AND sp.PARTICIPANT_TENANT_ID = :tenantId AND sp.PARTICIPANT_KIND = 'PERSON'"
+              + "     AND sp.ENTITY_STATUS = 'ACTIVE' AND (sp.EXIT_KIND IS NULL OR sp.CREATOR_FLAG = 1)"
+              + "     AND LOWER(b.VOLLER_NAME) LIKE :pattern ESCAPE '!')"
+              + " )"
+              + " AND (t.LAST_ACTIVITY_AT < :lastActivityAt"
+              + "   OR (t.LAST_ACTIVITY_AT = :lastActivityAt AND t.EXTERNALID < :externalId))"
+              + " ORDER BY t.LAST_ACTIVITY_AT DESC, t.EXTERNALID DESC")
+  List<Task> findArchiveSearchPage(
+      UUID userRef,
+      Long doneId,
+      Long cancelledId,
+      int includeDone,
+      int includeLeft,
+      String pattern,
+      LocalDateTime asOf,
+      LocalDateTime lastActivityAt,
+      UUID externalId,
+      int limit);
+
   // ---- Archiv-Gesamtzahlen (asOf-gebunden, user-scoped) ----------------------------------
 
   /**
@@ -407,10 +552,10 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * Benutzer bis zum Wasserzeichen. WHERE-Praedikat deckungsgleich mit {@link #findArchiveAllPage}
    * (ohne Keyset/TOP/ORDER) -> Zaehler == volle Kardinalitaet der {@code all}-Seitenmenge.
    *
-   * @param userRef     UUID des Benutzers
-   * @param doneId      aufgeloeste ID fuer "DONE"
+   * @param userRef UUID des Benutzers
+   * @param doneId aufgeloeste ID fuer "DONE"
    * @param cancelledId aufgeloeste ID fuer "CANCELLED"
-   * @param asOf        Wasserzeichen (inklusiv)
+   * @param asOf Wasserzeichen (inklusiv)
    * @return Anzahl archivierter Aufgaben (erledigt ODER verlassen)
    */
   @NovaQuery(
@@ -480,10 +625,10 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * Zaehlt die erledigten Aufgaben (DONE/CANCELLED mit aktivem {@code TASK_USER_STATE}) fuer den
    * Benutzer bis zum Wasserzeichen. WHERE deckungsgleich mit {@link #findArchiveDonePage}.
    *
-   * @param userRef     UUID des Benutzers
-   * @param doneId      aufgeloeste ID fuer "DONE"
+   * @param userRef UUID des Benutzers
+   * @param doneId aufgeloeste ID fuer "DONE"
    * @param cancelledId aufgeloeste ID fuer "CANCELLED"
-   * @param asOf        Wasserzeichen (inklusiv)
+   * @param asOf Wasserzeichen (inklusiv)
    * @return Anzahl erledigter Aufgaben
    */
   @NovaQuery(
@@ -528,7 +673,7 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * Benutzer bis zum Wasserzeichen. WHERE deckungsgleich mit {@link #findArchiveLeftPage}.
    *
    * @param userRef UUID des Benutzers
-   * @param asOf    Wasserzeichen (inklusiv)
+   * @param asOf Wasserzeichen (inklusiv)
    * @return Anzahl verlassener Aufgaben
    */
   @NovaQuery(
