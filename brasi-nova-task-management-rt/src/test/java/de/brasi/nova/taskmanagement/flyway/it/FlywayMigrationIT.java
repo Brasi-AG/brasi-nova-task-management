@@ -242,10 +242,10 @@ class FlywayMigrationIT {
     }
 
     @Test
-    @DisplayName("dic_notification_type_seeds_korrekt_9_eintraege")
+    @DisplayName("dic_notification_type_seeds_korrekt_10_eintraege")
     void dic_notification_type_seeds_korrekt() {
-      // Intake #136: COMMENT als 9. Typ (V9 heal-or-insert) ergaenzt; Map.of ist auf 10 Paare
-      // begrenzt -> ofEntries verwenden.
+      // Intake #136: COMMENT als 9. Typ (V9 heal-or-insert) ergaenzt; Intake #157: CANCELLED als
+      // 10. Typ (V10). Map.of ist auf 10 Paare begrenzt -> ofEntries verwenden.
       assertSeedCodes(
           "DIC_NOTIFICATION_TYPE",
           Map.ofEntries(
@@ -257,7 +257,8 @@ class FlywayMigrationIT {
               Map.entry("CHANGE", "Änderung"),
               Map.entry("HANDOVER", "Übergabe"),
               Map.entry("SYSTEM", "System"),
-              Map.entry("COMMENT", "Neuer Kommentar")));
+              Map.entry("COMMENT", "Neuer Kommentar"),
+              Map.entry("CANCELLED", "Abgebrochen")));
       assertAllGlobal("DIC_NOTIFICATION_TYPE");
     }
 

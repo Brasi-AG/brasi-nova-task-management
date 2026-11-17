@@ -19,4 +19,10 @@ public final class NotificationTypeCodes {
    * auch ohne @-Erwaehnung.
    */
   public static final String COMMENT = "COMMENT";
+
+  /**
+   * Aufgabe wurde abgebrochen, also in den Status {@code CANCELLED} ueberfuehrt (Intake #157).
+   * Spiegelt {@link #DONE}: der Typ-CODE entspricht dem Status-CODE. Seed per Flyway V10.
+   */
+  public static final String CANCELLED = "CANCELLED";
 }

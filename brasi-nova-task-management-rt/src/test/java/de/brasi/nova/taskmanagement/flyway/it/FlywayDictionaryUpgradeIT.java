@@ -413,33 +413,122 @@ class FlywayDictionaryUpgradeIT {
         });
   }
 
-  // ---- Helper (Intake #136) -----------------------------------------------------------------
+  // ===========================================================================================
+  // Intake #157 - V10 notification-type CANCELLED: frischer V1->V10, Heal abweichende
+  // Schreibweise + stale Metadaten, V10-Skript-Idempotenz (zweiter Lauf des heal-or-insert).
+  // ===========================================================================================
+
+  @Test
+  @DisplayName("i157_frisch_v1_zu_v10_genau_ein_aktiver_cancelled_typ_resolverfaehig")
+  void i157_fresh_v1_to_v10_exactly_one_active_cancelled() {
+    withFreshDbMigratedTo(
+        "10",
+        jt -> {
+          assertThat(historyVersions(jt)).contains("10");
+          assertThat(activeTypeCount(jt, "CANCELLED")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "CANCELLED");
+          assertThat(row.get("CODE")).isEqualTo("CANCELLED");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Abgebrochen");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("TENANT_ID")).longValue()).isZero();
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          // Fester Seed (frische DB ohne Vor-Zeile): ID=410, feste UUIDv4-EXTERNALID.
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(410L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("d5a8c3e7-2f61-4b9d-8e14-6c0b7a9f3d25");
+          // COMMENT (V9) bleibt unberuehrt.
+          assertThat(activeTypeCount(jt, "COMMENT")).isEqualTo(1);
+        });
+  }
+
+  @Test
+  @DisplayName(
+      "i157_heal_abweichende_schreibweise_und_stale_metadaten_wird_kanonisch_id_externalid_erhalten")
+  void i157_heal_variant_spelling_and_stale_metadata() {
+    withFreshDbMigratedTo(
+        "9",
+        jt -> {
+          // Vor V10 eine Zeile mit abweichender Schreibweise 'cancelled' und stale Metadaten.
+          jt.update(
+              "INSERT INTO [dbo].[DIC_NOTIFICATION_TYPE]"
+                  + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, GUELTIG_BIS,"
+                  + "  ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, CODE)"
+                  + " VALUES (771, 'DEACTIVE', N'Storniert', 'SYSTEM_PRIVATE',"
+                  + "  '2020-01-01', '2020-12-31', 'legacy', GETDATE(),"
+                  + "  '44444410-0000-0000-0000-00000000bbbb', 3, 0, 'cancelled')");
+
+          migrateTo(jt, "10");
+          assertThat(historyVersions(jt)).contains("10");
+
+          assertThat(activeTypeCount(jt, "CANCELLED")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "CANCELLED");
+          assertThat(row.get("CODE")).isEqualTo("CANCELLED");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Abgebrochen");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(771L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("44444410-0000-0000-0000-00000000bbbb");
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          assertThat(String.valueOf(row.get("GUELTIG_VON"))).isEqualTo("2020-01-01");
+
+          // V10-Skript-Idempotenz: das echte heal-or-insert ein zweites Mal ausfuehren.
+          for (final String batch : extractHealOrInsertBatches(V10_RESOURCE)) {
+            jt.update(batch);
+          }
+          assertThat(activeTypeCount(jt, "CANCELLED")).isEqualTo(1);
+          final Map<String, Object> rowAgain = canonicalTypeRow(jt, "CANCELLED");
+          assertThat(((Number) rowAgain.get("ID")).longValue()).isEqualTo(771L);
+          assertThat(rowAgain.get("BEZEICHNUNG")).isEqualTo("Abgebrochen");
+          assertThat(rowAgain.get("GUELTIG_VON")).isEqualTo(row.get("GUELTIG_VON"));
+        });
+  }
+
+  // ---- Helper (Intake #136, #157) -----------------------------------------------------------
 
   /**
    * Anzahl der aktiven+gueltigen COMMENT-Zeilen (identisches Praedikat wie
    * NotificationType.findByCode).
    */
   private static int activeCommentCount(final JdbcTemplate jt) {
+    return activeTypeCount(jt, "COMMENT");
+  }
+
+  /**
+   * Anzahl der aktiven+gueltigen Zeilen eines Benachrichtigungstyps (identisches Praedikat wie
+   * NotificationType.findByCode).
+   */
+  private static int activeTypeCount(final JdbcTemplate jt, final String code) {
     final Integer n =
         jt.queryForObject(
             "SELECT COUNT(*) FROM [dbo].[DIC_NOTIFICATION_TYPE]"
-                + " WHERE TENANT_ID = 0 AND ENTITY_STATUS = 'ACTIVE' AND CODE = 'COMMENT'"
+                + " WHERE TENANT_ID = 0 AND ENTITY_STATUS = 'ACTIVE' AND CODE = ?"
                 + " AND GUELTIG_VON <= CAST(GETDATE() AS DATE)"
                 + " AND (GUELTIG_BIS IS NULL OR GUELTIG_BIS >= CAST(GETDATE() AS DATE))",
-            Integer.class);
+            Integer.class,
+            code);
     return n == null ? 0 : n;
   }
 
   /** Die eine COMMENT-Zeile (Unique-Key TENANT_ID=0, CODE='COMMENT') mit relevanten Spalten. */
   private static Map<String, Object> canonicalCommentRow(final JdbcTemplate jt) {
+    return canonicalTypeRow(jt, "COMMENT");
+  }
+
+  /** Die eine Zeile eines Benachrichtigungstyps (Unique-Key TENANT_ID=0, CODE) mit Spalten. */
+  private static Map<String, Object> canonicalTypeRow(final JdbcTemplate jt, final String code) {
     return jt.queryForMap(
         "SELECT ID, CODE, BEZEICHNUNG, ENTRY_TYPE, ENTITY_STATUS, TENANT_ID,"
             + " CONVERT(nvarchar(36), EXTERNALID) AS EXTERNALID,"
             + " CONVERT(varchar(10), GUELTIG_VON, 120) AS GUELTIG_VON, GUELTIG_BIS"
-            + " FROM [dbo].[DIC_NOTIFICATION_TYPE] WHERE TENANT_ID = 0 AND CODE = 'COMMENT'");
+            + " FROM [dbo].[DIC_NOTIFICATION_TYPE] WHERE TENANT_ID = 0 AND CODE = ?",
+        code);
   }
 
   private static final String V9_RESOURCE = "db/migration/V9__notification_type_comment.sql";
+
+  private static final String V10_RESOURCE = "db/migration/V10__notification_type_cancelled.sql";
 
   /**
    * Fuehrt das TATSAECHLICHE heal-or-insert aus {@code V9__notification_type_comment.sql} separat
@@ -457,14 +546,22 @@ class FlywayDictionaryUpgradeIT {
    * Laedt V9, zerlegt an {@code GO} und liefert den UPDATE- + INSERT-Batch (in Dateireihenfolge).
    */
   static List<String> extractV9Batches() {
+    return extractHealOrInsertBatches(V9_RESOURCE);
+  }
+
+  /**
+   * Laedt eine heal-or-insert-Migration (V9-Muster), zerlegt an {@code GO} und liefert den UPDATE-
+   * + INSERT-Batch (in Dateireihenfolge).
+   */
+  static List<String> extractHealOrInsertBatches(final String resource) {
     final String raw;
     try {
       raw =
           new String(
-              FileCopyUtils.copyToByteArray(new ClassPathResource(V9_RESOURCE).getInputStream()),
+              FileCopyUtils.copyToByteArray(new ClassPathResource(resource).getInputStream()),
               StandardCharsets.UTF_8);
     } catch (final IOException e) {
-      throw new UncheckedIOException("V9-Ressource nicht lesbar: " + V9_RESOURCE, e);
+      throw new UncheckedIOException("Ressource nicht lesbar: " + resource, e);
     }
     final StringBuilder codeOnly = new StringBuilder();
     for (final String line : raw.split("\\R")) {
@@ -480,13 +577,13 @@ class FlywayDictionaryUpgradeIT {
         batches.add(batch);
       }
     }
-    // Sentinel: genau EIN UPDATE (heal) + EIN INSERT (insert) in V9.
+    // Sentinel: genau EIN UPDATE (heal) + EIN INSERT (insert) in der Migration.
     assertThat(batches)
-        .as("genau ein UPDATE-Batch (heal) und ein INSERT-Batch (insert) in " + V9_RESOURCE)
+        .as("genau ein UPDATE-Batch (heal) und ein INSERT-Batch (insert) in " + resource)
         .hasSize(2);
-    assertThat(batches.get(0)).as("erster V9-Batch = heal-UPDATE").containsIgnoringCase("UPDATE");
+    assertThat(batches.get(0)).as("erster Batch = heal-UPDATE").containsIgnoringCase("UPDATE");
     assertThat(batches.get(1))
-        .as("zweiter V9-Batch = INSERT ... WHERE NOT EXISTS")
+        .as("zweiter Batch = INSERT ... WHERE NOT EXISTS")
         .containsIgnoringCase("INSERT")
         .containsIgnoringCase("WHERE NOT EXISTS");
     return batches;

@@ -2627,6 +2627,77 @@ class TaskFacadeControllerIT {
         .isEqualTo(103L);
   }
 
+  // ---- Intake #157: Abbrechen loest CANCELLED-Benachrichtigung aus (Ende-zu-Ende, V10) ---------
+
+  @Test
+  @DisplayName(
+      "patch_statuscode_cancelled_benachrichtigt_zugewiesene_ohne_akteur (Intake #157): POST mit"
+          + " assignees=[A2], dann PATCH statusCode=CANCELLED durch A -> 204; genau eine persistierte"
+          + " CANCELLED-Benachrichtigung fuer A2, keine fuer A. Belegt zugleich den V10-Seed (sonst"
+          + " scheitert der Resolver und der Patch rollt zurueck).")
+  void patch_statuscode_cancelled_benachrichtigt_zugewiesene_ohne_akteur() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final String postResp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(
+                            Map.of(
+                                "title",
+                                "Abbruch-Benachrichtigung",
+                                "assignees",
+                                List.of(USER_A2_REF)))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskExternalId = UUID.fromString(om.readTree(postResp).get("id").asText());
+
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskExternalId)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("statusCode", TaskStatusCodes.CANCELLED))))
+        .andExpect(status().isNoContent());
+
+    final Long internalTaskId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskExternalId);
+    final String countSql =
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] t ON n.TYPE_ID = t.ID"
+            + " WHERE n.TASK_ID = ? AND n.RECIPIENT_REF = ? AND t.CODE = ?";
+    assertThat(
+            jdbcTemplate.queryForObject(
+                countSql,
+                Integer.class,
+                internalTaskId,
+                USER_A2_REF,
+                NotificationTypeCodes.CANCELLED))
+        .as("genau eine CANCELLED-Benachrichtigung fuer den Zugewiesenen A2")
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                countSql,
+                Integer.class,
+                internalTaskId,
+                USER_A_REF,
+                NotificationTypeCodes.CANCELLED))
+        .as("keine CANCELLED-Benachrichtigung fuer den abbrechenden Akteur A")
+        .isZero();
+  }
+
   // ---- Codex #3: Reopen (DONE -> OPEN) ist erlaubt (kein Transition-Guard) ----------------------
 
   @Test

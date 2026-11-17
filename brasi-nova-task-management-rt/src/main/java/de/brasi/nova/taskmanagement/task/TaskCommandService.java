@@ -389,8 +389,17 @@ public class TaskCommandService {
    * Status DONE, bisheriger nicht) erhaelt jeder aktive Beteiligte (Ersteller, Zugewiesene,
    * Beteiligte) genau eine {@code DONE}-Benachrichtigung inkl. WebSocket-Push nach Commit - ohne
    * den schliessenden Akteur und ohne Personen, die die Aufgabe verlassen haben. Ein Patch ohne
-   * Statuswechsel oder in einen anderen Status loest nichts aus. Die Emission laeuft in derselben
-   * Transaktion wie die Statusaenderung.
+   * Statuswechsel oder in einen anderen Status loest keine DONE-Benachrichtigung aus. Die Emission
+   * laeuft in derselben Transaktion wie die Statusaenderung.
+   *
+   * <p><b>CANCELLED-Benachrichtigung (Intake #157):</b> Spiegelbildlich zu DONE loest der
+   * <i>Uebergang</i> in {@code CANCELLED} (neuer Status CANCELLED, bisheriger nicht) genau eine
+   * {@code CANCELLED}-Benachrichtigung je Empfaenger aus (Schwere INFO, Vorschau = Titel); dieselbe
+   * Empfaengerermittlung wie bei DONE ({@link #findStatusChangeRecipients}). Wie bei DONE zaehlt
+   * jeder Uebergang unabhaengig vom Ausgangsstatus: {@code OPEN -> CANCELLED} und {@code DONE ->
+   * CANCELLED} loesen CANCELLED aus, {@code CANCELLED -> DONE} loest (unveraendert) DONE aus.
+   * {@code CANCELLED -> CANCELLED} ist kein Uebergang; ein Reopen ({@code CANCELLED -> OPEN}) loest
+   * nichts aus.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
@@ -434,8 +443,9 @@ public class TaskCommandService {
     membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
 
     boolean changed = false;
-    // Intake #151: true genau dann, wenn dieser Patch die Aufgabe in den Status DONE ueberfuehrt.
-    boolean closedToDone = false;
+    // Intake #151/#157: Typ-CODE der Statusbenachrichtigung (DONE oder CANCELLED), wenn dieser
+    // Patch die Aufgabe in einen dieser Status ueberfuehrt; sonst null.
+    String statusNotificationType = null;
 
     // title
     if (input.title().isPresent()) {
@@ -512,11 +522,16 @@ public class TaskCommandService {
         throw new EntityValidationException("Ungueltiger statusCode: '" + newStatusCode + "'.");
       }
       historyService.record(taskId, tenantId, actorRef, "Status geaendert", "-> " + newStatusCode);
-      // Uebergang in DONE: nur wenn der neue Status DONE ist UND der bisherige nicht (IDs statt
-      // Code-Strings, damit die Pruefung unabhaengig von der Schreibweise des Client-Codes ist).
-      closedToDone =
-          newStatusId.equals(resolver.resolveTaskStatusDone())
-              && !newStatusId.equals(task.getTaskStatusId());
+      // Uebergang in DONE bzw. CANCELLED: nur wenn der neue Status vom bisherigen abweicht (IDs
+      // statt Code-Strings, damit die Pruefung unabhaengig von der Schreibweise des Client-Codes
+      // ist).
+      if (!newStatusId.equals(task.getTaskStatusId())) {
+        if (newStatusId.equals(resolver.resolveTaskStatusDone())) {
+          statusNotificationType = NotificationTypeCodes.DONE;
+        } else if (newStatusId.equals(resolver.resolveTaskStatusCancelled())) {
+          statusNotificationType = NotificationTypeCodes.CANCELLED;
+        }
+      }
       task.setTaskStatusId(newStatusId);
       changed = true;
     }
@@ -684,17 +699,19 @@ public class TaskCommandService {
           .map(TaskUserState::getUserRef)
           .forEach(readerRefs::add);
       // Archiv-Leser = Personen, die die Aufgabe laut Code verlassen haben (EXIT_KIND gesetzt ODER
-      // UNSUBSCRIBED_AT im UserState); sie werden zusaetzlich fuer die DONE-Empfaenger
-      // ausgeschlossen.
+      // UNSUBSCRIBED_AT im UserState); sie werden zusaetzlich fuer die Empfaenger der
+      // Statusbenachrichtigung (DONE/CANCELLED) ausgeschlossen.
       final Set<UUID> leftRefs =
           participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
               .map(TaskParticipant::getParticipantRef)
               .collect(Collectors.toSet());
       readerRefs.addAll(leftRefs);
-      // Intake #151: DONE-Empfaenger aus demselben Grund ebenfalls VOR dem TASK-save lesen
-      // (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
-      final List<UUID> doneRecipients =
-          closedToDone ? findDoneRecipients(taskId, actorRef, leftRefs) : List.of();
+      // Intake #151/#157: Empfaenger der Statusbenachrichtigung aus demselben Grund ebenfalls VOR
+      // dem TASK-save lesen (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
+      final List<UUID> statusRecipients =
+          statusNotificationType != null
+              ? findStatusChangeRecipients(taskId, actorRef, leftRefs)
+              : List.of();
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
       log.info(
@@ -702,24 +719,26 @@ public class TaskCommandService {
           taskExternalId,
           actorRef,
           tenantId);
-      // Intake #151: DONE-Benachrichtigung in DERSELBEN Transaktion wie die Statusaenderung; der
-      // WebSocket-Push folgt wie bei allen Typen erst nach Commit (NotificationService).
-      for (final UUID recipientRef : doneRecipients) {
+      // Intake #151/#157: Statusbenachrichtigung (DONE/CANCELLED) in DERSELBEN Transaktion wie die
+      // Statusaenderung; der WebSocket-Push folgt wie bei allen Typen erst nach Commit
+      // (NotificationService).
+      for (final UUID recipientRef : statusRecipients) {
         notificationService.emit(
             recipientRef,
             taskId,
-            NotificationTypeCodes.DONE,
+            statusNotificationType,
             NotificationSeverityCodes.INFO,
-            "Die Aufgabe wurde erledigt.",
+            statusNotificationText(statusNotificationType),
             task.getTitle(),
             actorRef);
       }
-      if (closedToDone) {
+      if (statusNotificationType != null) {
         log.info(
-            "TaskCommandService.patch: Aufgabe {} erledigt - DONE-Benachrichtigung an {}"
-                + " Empfaenger emittiert.",
+            "TaskCommandService.patch: Aufgabe {} in Status {} ueberfuehrt -"
+                + " Benachrichtigung an {} Empfaenger emittiert.",
             taskExternalId,
-            doneRecipients.size());
+            statusNotificationType,
+            statusRecipients.size());
       }
       // Gleiche deduplizierte Menge fuer atomaren Generation-Bump und Signal nach Commit.
       if (!readerRefs.isEmpty()) {
@@ -730,18 +749,34 @@ public class TaskCommandService {
   }
 
   /**
-   * Ermittelt die Empfaenger der DONE-Benachrichtigung (Intake #151): alle aktiven Beteiligten der
-   * Aufgabe (Ersteller, Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren
-   * Rollen -, ohne den schliessenden Akteur und ohne Personen, die die Aufgabe verlassen haben.
+   * Text der Statusbenachrichtigung je Typ-CODE (Intake #151 DONE, #157 CANCELLED).
+   *
+   * @param typeCode {@link NotificationTypeCodes#DONE} oder {@link NotificationTypeCodes#CANCELLED}
+   * @return deutscher Benachrichtigungstext
+   */
+  private static String statusNotificationText(final String typeCode) {
+    return NotificationTypeCodes.CANCELLED.equals(typeCode)
+        ? "Die Aufgabe wurde abgebrochen."
+        : "Die Aufgabe wurde erledigt.";
+  }
+
+  /**
+   * Ermittelt die Empfaenger einer Statusbenachrichtigung beim Schliessen (DONE, Intake #151) und
+   * beim Abbrechen (CANCELLED, Intake #157): alle aktiven Beteiligten der Aufgabe (Ersteller,
+   * Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren Rollen -, ohne den
+   * handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben.
+   *
+   * <p>Bewusst EINE gemeinsame Ermittlung fuer beide Statuswechsel: Anpassungen der Empfaengerlogik
+   * (z. B. Stummschalten, Intake #158) gelten damit automatisch fuer Schliessen und Abbrechen.
    *
    * <p>Muss VOR dem TASK-save aufgerufen werden (Lock-Reihenfolge, siehe {@link #patch}).
    *
    * @param taskId interne Aufgaben-ID
-   * @param actorRef UUID der schliessenden Person (wird nicht benachrichtigt)
+   * @param actorRef UUID der handelnden Person (wird nicht benachrichtigt)
    * @param leftRefs Personen, die die Aufgabe verlassen haben (EXIT_KIND oder UNSUBSCRIBED_AT)
    * @return Empfaenger-UUIDs ohne Duplikate
    */
-  private List<UUID> findDoneRecipients(
+  private List<UUID> findStatusChangeRecipients(
       final Long taskId, final UUID actorRef, final Set<UUID> leftRefs) {
     return participantQueryRepository.findActiveByTaskIds(List.of(taskId)).stream()
         .filter(participant -> participant.getExitKind() == null)
