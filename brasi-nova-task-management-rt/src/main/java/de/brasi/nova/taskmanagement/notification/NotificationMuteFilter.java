@@ -36,10 +36,13 @@ import org.springframework.stereotype.Component;
  * dieser Regel nicht beruehrt.
  *
  * <p><b>Buendelung:</b> Die Ausloesepfade (Kommentar, Statuswechsel DONE/CANCELLED, Faelligkeit)
- * lesen die Mute-Zustaende ihrer Empfaenger-Kandidaten in GENAU EINER Abfrage je Ereignis ({@link
- * TaskUserStateQueryRepository#findMutedByTaskIdAndUserRefs}), und zwar im Lese-Block VOR dem
- * versionierten TASK-save. Bewusst nicht zentral in {@link NotificationService#emit}: dort liefe
- * die Lesung je Empfaenger (N+1) und NACH dem TASK-save; ein {@code TASK_USER_STATE}-Read unter dem
+ * lesen die Mute-Zustaende in GENAU EINER Abfrage je Ereignis ({@link
+ * TaskUserStateQueryRepository#findMutedByTaskId}), und zwar im Lese-Block VOR dem versionierten
+ * TASK-save. Die Abfrage fragt nach den stummen Personen der AUFGABE (konstante Parameterzahl)
+ * statt nach den Kandidaten ({@code IN}-Liste): eine Aufgabe kann mehr aktive Beteiligte haben, als
+ * das SQL-Server-Limit von 2100 Parametern zulaesst. Die Schnittmenge mit den Kandidaten bildet
+ * dieser Filter in Java. Bewusst nicht zentral in {@link NotificationService#emit}: dort liefe die
+ * Lesung je Empfaenger (N+1) und NACH dem TASK-save; ein {@code TASK_USER_STATE}-Read unter dem
  * TASK-X-Lock invertierte die Lock-Reihenfolge gegen {@code AssigneeService#exit} (UserState vor
  * TASK) und koennte auf MSSQL einen Deadlock ausloesen. Pfade, die nur ausgenommene Typen
  * emittieren ({@code ASSIGN}/{@code HANDOVER} in {@code TaskCommandService#create} und {@code
@@ -85,9 +88,9 @@ public class NotificationMuteFilter {
    * Liefert die stummgeschalteten Personen unter den Kandidaten, fuer die eine Benachrichtigung des
    * Typs {@code typeCode} zu dieser Aufgabe unterdrueckt werden muss.
    *
-   * <p>Genau eine Abfrage, und nur wenn der Typ stummschaltbar ist, eine Aufgabe vorliegt und die
-   * Kandidatenmenge nicht leer ist; sonst keine Abfrage und eine leere Menge. Laeuft im
-   * Mandanten-Kontext des Aufrufers.
+   * <p>Genau eine Abfrage ohne Kandidatenliste, und nur wenn der Typ stummschaltbar ist, eine
+   * Aufgabe vorliegt und die Kandidatenmenge nicht leer ist; sonst keine Abfrage und eine leere
+   * Menge. Laeuft im Mandanten-Kontext des Aufrufers.
    *
    * @param taskId interne Aufgaben-ID (null = keine Aufgabe, nichts stumm)
    * @param typeCode Typ-CODE der geplanten Benachrichtigung
@@ -101,7 +104,7 @@ public class NotificationMuteFilter {
     }
     final Set<UUID> distinctCandidates = new LinkedHashSet<>(candidates);
     final Set<UUID> muted =
-        userStateRepository.findMutedByTaskIdAndUserRefs(taskId, distinctCandidates).stream()
+        userStateRepository.findMutedByTaskId(taskId).stream()
             .map(TaskUserState::getUserRef)
             .filter(distinctCandidates::contains)
             .collect(Collectors.toUnmodifiableSet());

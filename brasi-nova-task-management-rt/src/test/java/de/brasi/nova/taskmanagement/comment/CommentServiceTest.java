@@ -1014,7 +1014,7 @@ class CommentServiceTest {
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
         .thenReturn(List.of(assigneeWith(ALICE_UUID), assigneeWith(BOB_UUID)));
-    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
         .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
 
     service.createComment(
@@ -1026,9 +1026,7 @@ class CommentServiceTest {
         .emit(eq(BOB_UUID), any(), any(), any(), any(), any(), any());
     final org.mockito.InOrder inOrder =
         org.mockito.Mockito.inOrder(userStateQueryRepository, taskRepository);
-    inOrder
-        .verify(userStateQueryRepository, times(1))
-        .findMutedByTaskIdAndUserRefs(eq(taskId), any());
+    inOrder.verify(userStateQueryRepository, times(1)).findMutedByTaskId(eq(taskId));
     inOrder.verify(taskRepository).save(any(Task.class));
   }
 
@@ -1047,7 +1045,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
         .thenReturn(List.of(assigneeWith(BOB_UUID)));
-    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
         .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
 
     service.createComment(
@@ -1074,7 +1072,7 @@ class CommentServiceTest {
     when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(parent));
     stubSave();
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
-    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
         .thenReturn(List.of(mutedState(ALICE_UUID, taskId)));
 
     service.createComment(
@@ -1082,7 +1080,7 @@ class CommentServiceTest {
 
     verify(notificationService, times(1))
         .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
-    verify(userStateQueryRepository, never()).findMutedByTaskIdAndUserRefs(any(), any());
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
   }
 
   // ---- InOrder (Codex-Hinweis: GETRENNTE Aufrufe!): Reads VOR taskRepository.save --------------

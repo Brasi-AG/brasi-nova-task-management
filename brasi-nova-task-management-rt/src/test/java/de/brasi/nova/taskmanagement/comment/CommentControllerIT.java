@@ -484,6 +484,21 @@ class CommentControllerIT {
     assertThat(countNotifications(taskUuid, USER_B_REF, "DONE"))
         .as("stummer USER_B darf KEIN DONE erhalten")
         .isZero();
+
+    // (5) Stummschaltung gilt je Aufgabe: die Query liest nur die stummen States der EIGENEN
+    // Aufgabe (ohne Empfaengerliste, TASK_ID ist der einzige Diskriminator). Auf einer anderen
+    // Aufgabe bleibt USER_B laut.
+    final UUID otherTaskUuid = createTask(mvc, om, tokenA, "Comment-IT-158-Other");
+    mvc.perform(
+            put("/api/v1/tasks/" + otherTaskUuid + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
+        .andExpect(status().isNoContent());
+    postComment(mvc, om, tokenA, otherTaskUuid, "Top-Level auf anderer Aufgabe.", null);
+    assertThat(countNotifications(otherTaskUuid, USER_B_REF, "COMMENT"))
+        .as("USER_B hat nur die erste Aufgabe stummgeschaltet und erhaelt COMMENT auf der anderen")
+        .isEqualTo(1);
   }
 
   // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------

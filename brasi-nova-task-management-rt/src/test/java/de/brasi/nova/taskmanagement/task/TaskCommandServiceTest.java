@@ -1778,7 +1778,7 @@ class TaskCommandServiceTest {
                 participantRow(creatorRef, true, false, true, null),
                 participantRow(USER_REF, false, true, true, null),
                 participantRow(mutedRef, false, true, true, null)));
-    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
         .thenReturn(List.of(mutedState(mutedRef, taskId)));
 
     service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
@@ -1795,9 +1795,7 @@ class TaskCommandServiceTest {
     verify(notificationService, never())
         .emit(eq(mutedRef), any(), any(), any(), any(), any(), any());
     final org.mockito.InOrder order = inOrder(userStateQueryRepository, taskRepository);
-    order
-        .verify(userStateQueryRepository, times(1))
-        .findMutedByTaskIdAndUserRefs(eq(taskId), any());
+    order.verify(userStateQueryRepository, times(1)).findMutedByTaskId(eq(taskId));
     order.verify(taskRepository).save(task);
   }
 
@@ -1814,7 +1812,7 @@ class TaskCommandServiceTest {
             List.of(
                 participantRow(creatorRef, true, false, true, null),
                 participantRow(USER_REF, false, true, true, null)));
-    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
         .thenReturn(List.of(mutedState(creatorRef, taskId)));
 
     service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
@@ -1842,7 +1840,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent()));
 
-    verify(userStateQueryRepository, never()).findMutedByTaskIdAndUserRefs(any(), any());
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
   }
 
   /** Aktiver, stummgeschalteter UserState (Intake #158). */

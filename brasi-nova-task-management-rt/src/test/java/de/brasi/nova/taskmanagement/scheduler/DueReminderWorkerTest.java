@@ -144,8 +144,7 @@ class DueReminderWorkerTest {
         .thenReturn(TENANT_UUID.toString());
     when(participantRepository.findActiveAssigneesByTaskId(TASK_ID))
         .thenReturn(List.of(loud, muted));
-    when(userStateRepository.findMutedByTaskIdAndUserRefs(eq(TASK_ID), any()))
-        .thenReturn(List.of(mutedState));
+    when(userStateRepository.findMutedByTaskId(eq(TASK_ID))).thenReturn(List.of(mutedState));
 
     worker(true).checkDueTasks();
 
@@ -154,7 +153,7 @@ class DueReminderWorkerTest {
             eq(TENANT_ID), eq(TASK_ID), eq(RECIPIENT), any(LocalDate.class), any(), eq(false));
     verify(emitter, times(1))
         .emitOnce(eq(TENANT_ID), eq(TASK_ID), eq(mutedRef), any(LocalDate.class), any(), eq(true));
-    verify(userStateRepository, times(1)).findMutedByTaskIdAndUserRefs(eq(TASK_ID), any());
+    verify(userStateRepository, times(1)).findMutedByTaskId(eq(TASK_ID));
   }
 
   // ---- Bean-Gating (beide Flag-Zustaende) -----------------------------------------------------

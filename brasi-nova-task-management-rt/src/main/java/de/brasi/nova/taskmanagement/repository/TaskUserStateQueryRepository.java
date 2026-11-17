@@ -127,19 +127,20 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
       @Param("taskIds") Collection<Long> taskIds, @Param("userRef") UUID userRef);
 
   /**
-   * Batch-Lesung fuer die Stummschalt-Regel der Benachrichtigungen (Intake #158): liefert die
-   * aktiven {@link TaskUserState}-Rows einer Aufgabe, deren Benutzer in {@code userRefs} liegt und
-   * die Aufgabe stummgeschaltet hat ({@code IS_MUTED = 1}). Eine Abfrage je Ereignis, kein N+1.
+   * Lesung fuer die Stummschalt-Regel der Benachrichtigungen (Intake #158): liefert die aktiven
+   * {@link TaskUserState}-Rows einer Aufgabe, die stummgeschaltet sind ({@code IS_MUTED = 1}). Eine
+   * Abfrage je Ereignis, kein N+1.
    *
-   * <p>Benutzer ohne aktive Row fehlen im Ergebnis und gelten damit als nicht stumm.
+   * <p>Bewusst OHNE Empfaengerliste: eine {@code IN}-Liste ueber alle Empfaenger koennte bei sehr
+   * vielen Beteiligten das SQL-Server-Limit von 2100 Parametern ueberschreiten. Die Parameterzahl
+   * bleibt hier konstant; die Menge stummer Personen je Aufgabe ist klein. Die Schnittmenge mit den
+   * Empfaenger-Kandidaten bildet der Aufrufer ({@code NotificationMuteFilter}) in Java.
    *
-   * <p>{@code userRefs} darf NIE leer sein (MSSQL {@code IN ()} -> Syntaxfehler); der Aufrufer
-   * ({@code NotificationMuteFilter}) guardet die leere Menge. {@code :tenantId} wird automatisch
-   * vom KSF-NovaQueryTenantValidator gebunden.
+   * <p>Benutzer ohne aktive Row fehlen im Ergebnis und gelten damit als nicht stumm. {@code
+   * :tenantId} wird automatisch vom KSF-NovaQueryTenantValidator gebunden.
    *
    * @param taskId interne Aufgaben-ID
-   * @param userRefs UUIDs der Empfaenger-Kandidaten (nicht leer)
-   * @return die stummgeschalteten aktiven Rows dieser Kandidaten (hoechstens eine je Benutzer)
+   * @return die stummgeschalteten aktiven Rows dieser Aufgabe (hoechstens eine je Benutzer)
    */
   @NovaQuery(
       value =
@@ -147,7 +148,6 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
-              + "AND USER_REF IN (:userRefs) "
               + "AND IS_MUTED = 1 "
               + "AND ENTITY_STATUS = 'ACTIVE'",
       mssql =
@@ -155,9 +155,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
-              + "AND USER_REF IN (:userRefs) "
               + "AND IS_MUTED = 1 "
               + "AND ENTITY_STATUS = 'ACTIVE'")
-  List<TaskUserState> findMutedByTaskIdAndUserRefs(
-      @Param("taskId") Long taskId, @Param("userRefs") Collection<UUID> userRefs);
+  List<TaskUserState> findMutedByTaskId(@Param("taskId") Long taskId);
 }
