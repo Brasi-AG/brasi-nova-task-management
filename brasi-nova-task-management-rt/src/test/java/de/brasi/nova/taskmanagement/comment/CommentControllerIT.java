@@ -620,6 +620,168 @@ class CommentControllerIT {
         .isEqualTo(1);
   }
 
+  // ---- IT Intake #147: POST /participants benachrichtigt neu hinzugefuegte Personen -----------
+
+  @Test
+  @DisplayName(
+      "i147_teilnehmer_hinzufuegen_benachrichtigt_neue_person_genau_einmal_nicht_den_akteur"
+          + " (Intake #147): USER_A fuegt USER_B per POST /participants hinzu -> genau eine"
+          + " PARTICIPANT-Benachrichtigung fuer USER_B (Schwere INFO, Vorschau = Titel, Akteur ="
+          + " USER_A), keine fuer USER_A; erneutes Hinzufuegen und Mengen mit aktiven Mitgliedern"
+          + " erzeugen keine weitere")
+  void i147_add_participant_notifies_new_person_once_never_the_actor() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-147-Neu");
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_B_REF);
+
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT"))
+        .as("die neu hinzugefuegte Person erhaelt genau eine PARTICIPANT-Benachrichtigung")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_A_REF, "PARTICIPANT"))
+        .as("der Akteur erhaelt keine PARTICIPANT-Benachrichtigung")
+        .isZero();
+    final Map<String, Object> row = notificationRow(taskUuid, USER_B_REF, "PARTICIPANT");
+    assertThat(row.get("TEXT")).isEqualTo("Du wurdest als Beteiligter zur Aufgabe hinzugefuegt.");
+    assertThat(row.get("PREVIEW")).as("Vorschau = Aufgabentitel").isEqualTo("Comment-IT-147-Neu");
+    assertThat(row.get("SEVERITY")).isEqualTo("INFO");
+    assertThat(String.valueOf(row.get("ACTOR_REF"))).isEqualToIgnoringCase(USER_A_REF.toString());
+    assertThat(row.get("IS_READ")).as("ungelesen").isEqualTo(false);
+
+    // Erneutes Hinzufuegen (idempotent), auch zusammen mit dem Akteur (Ersteller, aktiv): keine
+    // weitere Benachrichtigung, weder fuer USER_B noch fuer USER_A.
+    postParticipants(mvc, om, tokenA, taskUuid, USER_B_REF);
+    postParticipants(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT"))
+        .as("schon aktives Mitglied wird nicht erneut benachrichtigt")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_A_REF, "PARTICIPANT")).isZero();
+
+    // Auch ein aktiver Assignee (hier: USER_B auf einer anderen Aufgabe) ist schon Mitglied.
+    final UUID assignedTask = createTask(mvc, om, tokenA, "Comment-IT-147-Assignee");
+    putAssignees(mvc, om, tokenA, assignedTask, USER_A_REF, USER_B_REF);
+    postParticipants(mvc, om, tokenA, assignedTask, USER_B_REF);
+    assertThat(countNotifications(assignedTask, USER_B_REF, "PARTICIPANT"))
+        .as("aktiver Assignee ist schon Mitglied: kein PARTICIPANT")
+        .isZero();
+    assertThat(countNotifications(assignedTask, USER_B_REF, "ASSIGN"))
+        .as("die Zuweisung selbst wurde benachrichtigt (Gegenprobe)")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i147_stummer_ausgetretener_teilnehmer_wird_reaktiviert_und_benachrichtigt_mute_bleibt"
+          + " (Intake #147): USER_B (stumm, per PUT ausgetreten) wird per POST /participants"
+          + " reaktiviert -> bekommt PARTICIPANT trotz Mute, der Mute bleibt stehen (kein DONE"
+          + " danach), ein zweites Hinzufuegen loest nichts aus; nach erneutem Austritt kommt eine"
+          + " neue Benachrichtigung")
+  void i147_muted_exited_participant_is_reactivated_and_notified_mute_stays() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-147-Mute");
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_B_REF);
+    putMute(mvc, tokenB, taskUuid, true);
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF)).as("USER_B ist ausgetreten und stumm").isTrue();
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT")).isZero();
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_B_REF);
+
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT"))
+        .as("PARTICIPANT kommt trotz Mute an (direkt persoenlich wie ASSIGN und HANDOVER)")
+        .isEqualTo(1);
+    assertThat(isMuted(taskUuid, USER_B_REF))
+        .as("das Hinzufuegen als Beteiligter hebt den Mute nicht auf")
+        .isTrue();
+    assertThat(countActiveParticipantRows(taskUuid, USER_B_REF))
+        .as("USER_B ist wieder aktives Mitglied (reiner Teilnehmer)")
+        .isEqualTo(1);
+
+    // Der Mute wirkt weiter: Schliessen (DONE) erreicht den stummen Teilnehmer nicht.
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("statusCode", "DONE"))))
+        .andExpect(status().is2xxSuccessful());
+    assertThat(countNotifications(taskUuid, USER_B_REF, "DONE"))
+        .as("stummer Teilnehmer erhaelt kein DONE")
+        .isZero();
+
+    // Idempotent: ein zweites Hinzufuegen erzeugt keine weitere Benachrichtigung.
+    postParticipants(mvc, om, tokenA, taskUuid, USER_B_REF);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT")).isEqualTo(1);
+
+    // Tritt USER_B aus (UNSUBSCRIBED) und wird erneut hinzugefuegt, ist das eine neue Aufnahme.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/exit")
+                .header("Authorization", "Bearer " + tokenB)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"exitKind\":\"UNSUBSCRIBED\"}"))
+        .andExpect(status().isNoContent());
+    assertThat(countActiveParticipantRows(taskUuid, USER_B_REF)).isZero();
+    postParticipants(mvc, om, tokenA, taskUuid, USER_B_REF);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT"))
+        .as("erneute Aufnahme nach dem Austritt benachrichtigt wieder")
+        .isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName(
+      "i147_unbekannte_person_in_der_menge_400_keine_benachrichtigung (Intake #147): alles oder"
+          + " nichts, bei 400 entsteht weder ein Teilnehmer noch eine PARTICIPANT-Benachrichtigung"
+          + " (auch nicht fuer die gueltigen Personen der Menge)")
+  void i147_unknown_person_in_set_returns_400_without_notification() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-147-400");
+
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(USER_B_REF, UUID.randomUUID())))))
+        .andExpect(status().isBadRequest());
+
+    assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT")).isZero();
+    assertThat(countActiveParticipantRows(taskUuid, USER_B_REF)).isZero();
+  }
+
   // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------
 
   @Test
@@ -1424,6 +1586,22 @@ class CommentControllerIT {
         .andExpect(status().isNoContent());
   }
 
+  /** Fuegt Personen per POST /participants hinzu (erwartet 204). */
+  private void postParticipants(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final UUID... participantIds)
+      throws Exception {
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/participants")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("participantIds", List.of(participantIds)))))
+        .andExpect(status().isNoContent());
+  }
+
   /** Setzt den persoenlichen Mute-Marker des Token-Inhabers per PUT (erwartet 204). */
   private void putMute(
       final MockMvc mvc, final String token, final UUID taskUuid, final boolean value)
@@ -1491,6 +1669,32 @@ class CommentControllerIT {
         taskUuid,
         recipientRef,
         code);
+  }
+
+  /** Die einzige Benachrichtigung eines Typs fuer einen Empfaenger an einer Aufgabe (Spalten). */
+  private Map<String, Object> notificationRow(
+      final UUID taskUuid, final UUID recipientRef, final String code) {
+    return jdbcTemplate.queryForMap(
+        "SELECT n.TEXT, n.PREVIEW, n.IS_READ, n.ACTOR_REF, s.CODE AS SEVERITY"
+            + " FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " LEFT JOIN [dbo].[DIC_NOTIFICATION_SEVERITY] s ON n.SEVERITY_ID = s.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND d.CODE = ?",
+        taskUuid,
+        recipientRef,
+        code);
+  }
+
+  /** Anzahl der aktiven (nicht ausgetretenen) Teilnehmerzeilen einer Person an einer Aufgabe. */
+  private int countActiveParticipantRows(final UUID taskUuid, final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+            + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ? AND p.EXIT_KIND IS NULL",
+        Integer.class,
+        taskUuid,
+        userRef);
   }
 
   /** Interne TASK.ID zur externen UUID (fuer die direkten TASK_PARTICIPANT-Inserts). */
