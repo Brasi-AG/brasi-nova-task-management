@@ -35,6 +35,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -454,13 +456,34 @@ class InboxArchiveSearchIT {
 
     // Mitgliedschafts-Generation des Anfragers aendert sich -> alter Cursor 410.
     bumpGeneration(USER_P_REF);
-    mvc.perform(
-            get(SEARCH_URL)
-                .queryParam("query", "serie")
-                .queryParam("limit", "2")
-                .queryParam("cursor", firstCursor)
-                .header("Authorization", "Bearer " + token))
-        .andExpect(status().isGone());
+    final JsonNode gone =
+        new ObjectMapper()
+            .readTree(
+                mvc.perform(
+                        get(SEARCH_URL)
+                            .queryParam("query", "serie")
+                            .queryParam("limit", "2")
+                            .queryParam("cursor", firstCursor)
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isGone())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString());
+
+    // Das OpenAPI-Beispiel fuer 410 zeigt das echte Fehlerformat: gleiche Felder, gleiche stabile
+    // Werte, Grundtext der Exception unter details (timestamp und traceId sind je Aufruf neu).
+    final JsonNode example = ArchiveSearchOpenApiExamples.forResponse("410");
+    final Set<String> exampleFields = new TreeSet<>();
+    example.fieldNames().forEachRemaining(exampleFields::add);
+    final Set<String> liveFields = new TreeSet<>();
+    gone.fieldNames().forEachRemaining(liveFields::add);
+    assertThat(liveFields).as("Felder der 410-Antwort: %s", gone).isEqualTo(exampleFields);
+    for (final String stable : List.of("status", "error", "message", "path", "errorKey")) {
+      assertThat(gone.get(stable)).as("410-Feld %s", stable).isEqualTo(example.get(stable));
+    }
+    assertThat(gone.get("details")).isEqualTo(example.get("details"));
+    assertThat(gone.get("details").get(0).asText())
+        .isEqualTo(new SnapshotExpiredException().getReason());
   }
 
   /**

@@ -187,7 +187,7 @@ public class InboxSnapshotController {
                                 + "\"title\":\"Quartalsbericht erstellen\","
                                 + "\"statusCode\":\"DONE\",\"priorityCode\":\"NORMAL\","
                                 + "\"dueDate\":\"2026-12-31\","
-                                + "\"lastActivityAt\":\"2026-11-16T09:30:00Z\","
+                                + "\"lastActivityAt\":\"2026-11-16T08:30:00.500Z\","
                                 + "\"commentCount\":2,"
                                 + "\"createdById\":\"550e8400-e29b-41d4-a716-446655440000\","
                                 + "\"createdAt\":\"2026-11-01T06:30:00Z\","
@@ -205,7 +205,7 @@ public class InboxSnapshotController {
                                 + ArchiveSearchPageSchema.EXAMPLE_CURSOR
                                 + "\","
                                 + "\"hasMore\":true,"
-                                + "\"asOf\":\"2026-11-17T10:00:00Z\"}"))),
+                                + "\"asOf\":\"2026-11-17T10:00:00.123456Z\"}"))),
     @ApiResponse(
         responseCode = "400",
         description =
@@ -249,8 +249,12 @@ public class InboxSnapshotController {
                         value =
                             "{\"timestamp\":\"2026-11-17T10:00:00.123456\",\"status\":410,"
                                 + "\"error\":\"Gone\","
-                                + "\"message\":\"Snapshot abgelaufen\","
-                                + "\"path\":\"/api/v1/tasks/archive/search\"}")))
+                                + "\"message\":\"Die Anfrage konnte nicht verarbeitet werden.\","
+                                + "\"path\":\"/api/v1/tasks/archive/search\","
+                                + "\"errorKey\":\"NOVA_REQUEST_ERROR\","
+                                + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+                                + "\"details\":[\"Inbox-Snapshot abgelaufen oder nicht konsistent"
+                                + " erzeugbar; bitte neu laden.\"]}")))
   })
   @GetMapping("/archive/search")
   public ResponseEntity<CursorCollectionModel<TaskSummaryModel>> searchArchive(
