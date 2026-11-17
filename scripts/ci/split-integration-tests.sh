@@ -65,6 +65,9 @@ fi
 declare -A weight_of=()
 if [[ -f "$weights_file" ]]; then
   while read -r name seconds _; do
+    # Windows-Zeilenende (CRLF) tolerieren.
+    name="${name%$'\r'}"
+    seconds="${seconds%$'\r'}"
     if [[ -z "${name:-}" || "$name" == \#* ]]; then
       continue
     fi
