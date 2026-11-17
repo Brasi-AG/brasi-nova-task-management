@@ -23,7 +23,10 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>{@code MENTION} und {@code REPLY}: direkte @-Erwaehnung und Antwort auf einen eigenen
  *       Kommentar (laut Issue);
- *   <li>{@code ASSIGN} und {@code HANDOVER}: direkte persoenliche Zuweisung bzw. Uebergabe.
+ *   <li>{@code ASSIGN} und {@code HANDOVER}: direkte persoenliche Zuweisung bzw. Uebergabe;
+ *   <li>{@code PARTICIPANT}: direkte persoenliche Aufnahme als Beteiligte (Intake #147),
+ *       gleichrangig mit ASSIGN und HANDOVER. Das Hinzufuegen hebt einen vorhandenen Mute NICHT
+ *       auf.
  * </ul>
  *
  * <p>Unterdrueckt werden damit {@code COMMENT}, {@code DONE}, {@code CANCELLED}, {@code CHANGE},
@@ -45,8 +48,9 @@ import org.springframework.stereotype.Component;
  * Lesung je Empfaenger (N+1) und NACH dem TASK-save; ein {@code TASK_USER_STATE}-Read unter dem
  * TASK-X-Lock invertierte die Lock-Reihenfolge gegen {@code AssigneeService#exit} (UserState vor
  * TASK) und koennte auf MSSQL einen Deadlock ausloesen. Pfade, die nur ausgenommene Typen
- * emittieren ({@code ASSIGN}/{@code HANDOVER} in {@code TaskCommandService#create} und {@code
- * AssigneeService}), brauchen den Filter nicht; er waere dort ein No-Op ohne Abfrage.
+ * emittieren ({@code ASSIGN}/{@code HANDOVER}/{@code PARTICIPANT} in {@code
+ * TaskCommandService#create} und {@code AssigneeService}), brauchen den Filter nicht; er waere dort
+ * ein No-Op ohne Abfrage.
  *
  * <p><b>Mute und (Wieder-)Zuweisung:</b> Eine NEUE Zuweisung hebt den Mute der Aufgabe fuer die
  * zugewiesene Person auf: {@code UserStateService#reactivateAsAssignee} setzt {@code IS_MUTED} auf
@@ -56,7 +60,9 @@ import org.springframework.stereotype.Component;
  * Benachrichtigungen (z.B. {@code COMMENT}) erreichen die Person danach wieder. Unveraendert
  * bleibende Assignees eines PUT, ein bereits aktiver Assignee als Uebergabeziel, reine Teilnehmer
  * ({@code UserStateService#reactivate} bei {@code addParticipants}) und die Marker-Pfade lassen den
- * Mute unveraendert; ein neu angelegter State startet nicht stumm.
+ * Mute unveraendert; ein neu angelegter State startet nicht stumm. Auch die {@code
+ * PARTICIPANT}-Benachrichtigung beim Hinzufuegen als Beteiligte kommt trotz Mute an, hebt ihn aber
+ * nicht auf.
  */
 @Component
 public class NotificationMuteFilter {
@@ -69,7 +75,8 @@ public class NotificationMuteFilter {
           NotificationTypeCodes.MENTION,
           NotificationTypeCodes.REPLY,
           NotificationTypeCodes.ASSIGN,
-          NotificationTypeCodes.HANDOVER);
+          NotificationTypeCodes.HANDOVER,
+          NotificationTypeCodes.PARTICIPANT);
 
   private final TaskUserStateQueryRepository userStateRepository;
 

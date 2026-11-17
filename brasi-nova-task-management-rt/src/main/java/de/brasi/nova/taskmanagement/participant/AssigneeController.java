@@ -279,7 +279,10 @@ public class AssigneeController {
    * Fuegt Benutzer additiv als Teilnehmer der Aufgabe hinzu (idempotent).
    *
    * <p>Verleiht ausschliesslich die Teilnehmer-Rolle (PARTICIPANT_FLAG), NIE die Assignee-Rolle.
-   * Bereits aktive Teilnehmer werden uebersprungen; ein leeres Array ist ein No-Op.
+   * Bereits aktive Teilnehmer werden uebersprungen; ein leeres Array ist ein No-Op. Jede
+   * tatsaechlich neu hinzugefuegte oder aus dem Austritt reaktivierte Person erhaelt eine
+   * PARTICIPANT-Benachrichtigung (Intake #147); der Akteur und schon aktive Mitglieder nicht. Der
+   * Typ ist von der Stummschaltung ausgenommen, das Hinzufuegen hebt einen Mute nicht auf.
    *
    * @param id externe UUID der Aufgabe
    * @param input hinzuzufuegende Teilnehmer-UUIDs
@@ -290,20 +293,82 @@ public class AssigneeController {
       description =
           "Fuegt die angegebenen Benutzer additiv als Teilnehmer der Aufgabe hinzu (idempotent)."
               + " Verleiht ausschliesslich die Teilnehmer-Rolle, nicht die Assignee-Rolle."
-              + " Bereits aktive Teilnehmer werden uebersprungen; ein leeres Array ist ein No-Op.")
+              + " Bereits aktive Mitglieder der Aufgabe werden uebersprungen; ein leeres Array ist"
+              + " ein No-Op. Zuvor ausgetretene Personen werden als reine Teilnehmer reaktiviert."
+              + " Jede Person, die dabei tatsaechlich neu hinzukommt oder reaktiviert wird, erhaelt"
+              + " eine Benachrichtigung vom Typ PARTICIPANT (gespeichert, abrufbar ueber"
+              + " GET /api/v1/notifications; zusaetzlich nach dem Commit nach bestem Bemuehen"
+              + " per WebSocket an offene Sitzungen mit Recht NOTIFICATION_READ); der aufrufende Benutzer selbst und bereits aktive Mitglieder"
+              + " erhalten keine, ein wiederholter Aufruf loest keine weitere aus. PARTICIPANT ist"
+              + " direkt persoenlich und von der Stummschaltung ausgenommen: die Benachrichtigung"
+              + " kommt auch bei einer stummgeschalteten Aufgabe an, das Hinzufuegen hebt die"
+              + " Stummschaltung aber nicht auf (anders als eine neue Zuweisung). Alles oder"
+              + " nichts: ist eine UUID kein aktiver Benutzer des Mandanten, wird niemand"
+              + " hinzugefuegt und niemand benachrichtigt (400).")
   @ApiResponses({
     @ApiResponse(
         responseCode = "204",
-        description = "Teilnehmer erfolgreich hinzugefuegt (oder No-Op)."),
+        description =
+            "Teilnehmer erfolgreich hinzugefuegt (oder No-Op); neu hinzugekommene Personen sind"
+                + " benachrichtigt."),
     @ApiResponse(
         responseCode = "400",
         description =
-            "Ungueltige Eingabe (unbekannte Benutzer-UUID, null-Elemente, mehr als 100)."),
-    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-    @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
+            "Ungueltige Eingabe: UUID ist kein aktiver Benutzer des Mandanten (unbekannt, fremder"
+                + " Mandant, inaktiv), Feld participantIds fehlt oder ist null, null-Element,"
+                + " mehr als 100 Eintraege, kein gueltiges JSON oder keine UUID im Pfad.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "unbekannter-benutzer",
+                      summary = "UUID ist kein aktiver Benutzer des Mandanten",
+                      value = ParticipantApiExamples.BAD_REQUEST_PARTICIPANTS),
+                  @ExampleObject(
+                      name = "participantIds-fehlt",
+                      summary = "Body ohne das Pflichtfeld participantIds",
+                      value = ParticipantApiExamples.BAD_REQUEST_PARTICIPANTS_BODY)
+                })),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.UNAUTHORIZED))),
+    @ApiResponse(
+        responseCode = "403",
+        description = "Fehlende TASK_WRITE-Berechtigung.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.FORBIDDEN_PARTICIPANTS))),
     @ApiResponse(
         responseCode = "404",
-        description = "Aufgabe nicht gefunden oder fremder Mandant (neutral maskiert).")
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder keine aktive Mitgliedschaft des"
+                + " Aufrufers (neutral maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_PARTICIPANTS))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Nebenlaeufiger Konflikt: paralleler Schreibzugriff auf dieselbe Teilnehmerzeile oder"
+                + " den persoenlichen Zustand der Person (Versionskonflikt) bzw. gleichzeitiges"
+                + " erstes Hinzufuegen; die Anfrage gegen den frischen Stand wiederholen (der Aufruf"
+                + " ist idempotent).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.CONFLICT_PARTICIPANTS)))
   })
   @PostMapping("/{id}/participants")
   @HateoasLinkTarget(TaskHateoas.Targets.ADD_PARTICIPANTS)
@@ -311,7 +376,37 @@ public class AssigneeController {
   public ResponseEntity<Void> addParticipants(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
-      @RequestBody final ParticipantAddInput input) {
+      @io.swagger.v3.oas.annotations.parameters.RequestBody(
+              description =
+                  "UUIDs der hinzuzufuegenden Benutzer (hoechstens 100, additiv, idempotent).",
+              required = true,
+              content =
+                  @Content(
+                      mediaType = "application/json",
+                      schema = @Schema(implementation = ParticipantAddInput.class),
+                      examples = {
+                        @ExampleObject(
+                            name = "hinzufuegen",
+                            summary = "Zwei Benutzer als Teilnehmer hinzufuegen",
+                            description =
+                                "Neu hinzukommende oder ausgetretene Benutzer werden Teilnehmer"
+                                    + " und benachrichtigt; aktive Mitglieder werden"
+                                    + " uebersprungen.",
+                            value =
+                                "{\"participantIds\":[\""
+                                    + ParticipantApiExamples.USER_REF_A
+                                    + "\",\""
+                                    + ParticipantApiExamples.USER_REF_B
+                                    + "\"]}"),
+                        @ExampleObject(
+                            name = "no-op",
+                            summary = "Leeres Array",
+                            description =
+                                "Ein leeres Array aendert nichts und benachrichtigt niemanden.",
+                            value = "{\"participantIds\":[]}")
+                      }))
+          @RequestBody
+          final ParticipantAddInput input) {
     assigneeService.addParticipants(id, input);
     return ResponseEntity.noContent().build();
   }

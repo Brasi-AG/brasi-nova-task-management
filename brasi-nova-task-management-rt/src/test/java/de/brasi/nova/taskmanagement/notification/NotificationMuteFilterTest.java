@@ -67,7 +67,8 @@ class NotificationMuteFilterTest {
         NotificationTypeCodes.MENTION,
         NotificationTypeCodes.REPLY,
         NotificationTypeCodes.ASSIGN,
-        NotificationTypeCodes.HANDOVER
+        NotificationTypeCodes.HANDOVER,
+        NotificationTypeCodes.PARTICIPANT
       })
   @DisplayName("ausgenommene Typen: stumme Empfaenger bleiben erhalten, keine Abfrage")
   void ausgenommener_typ_filtert_nicht_und_liest_nicht(final String typeCode) {
@@ -89,7 +90,8 @@ class NotificationMuteFilterTest {
             NotificationTypeCodes.MENTION,
             NotificationTypeCodes.REPLY,
             NotificationTypeCodes.ASSIGN,
-            NotificationTypeCodes.HANDOVER);
+            NotificationTypeCodes.HANDOVER,
+            NotificationTypeCodes.PARTICIPANT);
   }
 
   @Test

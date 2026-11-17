@@ -547,6 +547,7 @@ class EntityMappingTest {
   void notificationTypeCodes_exactSet() throws Exception {
     // Intake #136: COMMENT als 9. Notification-Typ ergaenzt (Top-Level-Kommentar an Assignee).
     // Intake #157: CANCELLED als 10. Notification-Typ (Abbrechen einer Aufgabe).
+    // Intake #147: PARTICIPANT als 11. Notification-Typ (als Beteiligter hinzugefuegt).
     final String[] expected = {
       "ASSIGN",
       "REPLY",
@@ -557,7 +558,8 @@ class EntityMappingTest {
       "HANDOVER",
       "SYSTEM",
       "COMMENT",
-      "CANCELLED"
+      "CANCELLED",
+      "PARTICIPANT"
     };
     Set<String> values = getPublicStringConstants(NotificationTypeCodes.class);
     assertThat(values).containsExactlyInAnyOrder(expected);

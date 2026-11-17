@@ -485,6 +485,94 @@ class FlywayDictionaryUpgradeIT {
         });
   }
 
+  // ===========================================================================================
+  // Intake #147 - V11 notification-type PARTICIPANT: frischer V1->V11, Heal abweichende
+  // Schreibweise + stale Metadaten, V11-Skript-Idempotenz (zweiter Lauf des heal-or-insert).
+  // ===========================================================================================
+
+  @Test
+  @DisplayName("i147_frisch_v1_zu_v11_genau_ein_aktiver_participant_typ_resolverfaehig")
+  void i147_fresh_v1_to_v11_exactly_one_active_participant() {
+    withFreshDbMigratedTo(
+        "11",
+        jt -> {
+          assertThat(historyVersions(jt)).contains("11");
+          assertThat(activeTypeCount(jt, "PARTICIPANT")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "PARTICIPANT");
+          assertThat(row.get("CODE")).isEqualTo("PARTICIPANT");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Als Beteiligter hinzugefügt");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("TENANT_ID")).longValue()).isZero();
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          // Fester Seed (frische DB ohne Vor-Zeile): ID=411, feste UUIDv4-EXTERNALID.
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(411L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("7573f130-8c64-4e46-b5a3-a9f40406d0d2");
+          // COMMENT (V9) und CANCELLED (V10) bleiben unberuehrt.
+          assertThat(activeTypeCount(jt, "COMMENT")).isEqualTo(1);
+          assertThat(activeTypeCount(jt, "CANCELLED")).isEqualTo(1);
+        });
+  }
+
+  @Test
+  @DisplayName(
+      "i147_heal_abweichende_schreibweise_und_stale_metadaten_wird_kanonisch_id_externalid_erhalten")
+  void i147_heal_variant_spelling_and_stale_metadata() {
+    withFreshDbMigratedTo(
+        "10",
+        jt -> {
+          // Vor V11 eine Zeile mit abweichender Schreibweise 'participant' und stale Metadaten.
+          jt.update(
+              "INSERT INTO [dbo].[DIC_NOTIFICATION_TYPE]"
+                  + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, GUELTIG_BIS,"
+                  + "  ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, CODE)"
+                  + " VALUES (772, 'DEACTIVE', N'Teilnehmer', 'SYSTEM_PRIVATE',"
+                  + "  '2020-01-01', '2020-12-31', 'legacy', GETDATE(),"
+                  + "  '44444411-0000-0000-0000-00000000cccc', 3, 0, 'participant')");
+
+          migrateTo(jt, "11");
+          assertThat(historyVersions(jt)).contains("11");
+
+          assertThat(activeTypeCount(jt, "PARTICIPANT")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "PARTICIPANT");
+          assertThat(row.get("CODE")).isEqualTo("PARTICIPANT");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Als Beteiligter hinzugefügt");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(772L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("44444411-0000-0000-0000-00000000cccc");
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          assertThat(String.valueOf(row.get("GUELTIG_VON"))).isEqualTo("2020-01-01");
+
+          // V11-Skript-Idempotenz: das echte heal-or-insert ein zweites Mal ausfuehren.
+          for (final String batch : extractHealOrInsertBatches(V11_RESOURCE)) {
+            jt.update(batch);
+          }
+          assertThat(activeTypeCount(jt, "PARTICIPANT")).isEqualTo(1);
+          final Map<String, Object> rowAgain = canonicalTypeRow(jt, "PARTICIPANT");
+          assertThat(((Number) rowAgain.get("ID")).longValue()).isEqualTo(772L);
+          assertThat(rowAgain.get("BEZEICHNUNG")).isEqualTo("Als Beteiligter hinzugefügt");
+          assertThat(rowAgain.get("GUELTIG_VON")).isEqualTo(row.get("GUELTIG_VON"));
+        });
+  }
+
+  @Test
+  @DisplayName("i147_v11_skript_zweiter_lauf_auf_frischer_db_aendert_nichts")
+  void i147_v11_script_second_run_on_fresh_db_is_noop() {
+    withFreshDbMigratedTo(
+        "11",
+        jt -> {
+          final Map<String, Object> before = canonicalTypeRow(jt, "PARTICIPANT");
+          for (final String batch : extractHealOrInsertBatches(V11_RESOURCE)) {
+            jt.update(batch);
+          }
+          assertThat(activeTypeCount(jt, "PARTICIPANT")).isEqualTo(1);
+          assertThat(canonicalTypeRow(jt, "PARTICIPANT")).isEqualTo(before);
+        });
+  }
+
   // ---- Helper (Intake #136, #157) -----------------------------------------------------------
 
   /**
@@ -529,6 +617,8 @@ class FlywayDictionaryUpgradeIT {
   private static final String V9_RESOURCE = "db/migration/V9__notification_type_comment.sql";
 
   private static final String V10_RESOURCE = "db/migration/V10__notification_type_cancelled.sql";
+
+  private static final String V11_RESOURCE = "db/migration/V11__notification_type_participant.sql";
 
   /**
    * Fuehrt das TATSAECHLICHE heal-or-insert aus {@code V9__notification_type_comment.sql} separat

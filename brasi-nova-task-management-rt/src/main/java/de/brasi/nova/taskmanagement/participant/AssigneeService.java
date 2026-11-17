@@ -377,6 +377,11 @@ public class AssigneeService {
    *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
    *       #saveParticipantHandlingRace} idempotent aufgeloest.
    *   <li>Generation-Bump + UserState NUR fuer tatsaechlich neu angelegte/reaktivierte Refs.
+   *   <li>PARTICIPANT-Benachrichtigung (Intake #147) an genau diese Refs, nie an den Akteur, nie an
+   *       schon aktive Mitglieder und nie an den Verlierer eines gleich-Ref-Race (den meldet der
+   *       Gewinner). Der Typ ist vom Mute ausgenommen ({@code NotificationMuteFilter}); das
+   *       Hinzufuegen hebt einen Mute NICHT auf. Der Push folgt nach Commit ({@link
+   *       NotificationService#emit}).
    *   <li><b>KEIN</b> TASK-Optimistic-Lock: die additive Union ist kommutativ (anders als die
    *       PUT-Set-Semantik von {@link #updateAssignees}) - die TASK-VERSION wird NICHT gebumpt.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} NUR bei tatsaechlicher Aenderung.
@@ -432,6 +437,27 @@ public class AssigneeService {
       if (addSingleParticipant(taskId, ref, tenantId)) {
         affectedRefs.add(ref);
       }
+    }
+
+    // Intake #147: PARTICIPANT-Benachrichtigung nur an tatsaechlich neu hinzugefuegte oder aus dem
+    // Austritt reaktivierte Personen (affectedRefs: aktive Zeilen und Race-Verlierer sind schon
+    // herausgefallen), nie an den Akteur. PARTICIPANT ist vom Mute ausgenommen -> kein
+    // NotificationMuteFilter und damit keine zusaetzliche Lesung. addParticipants speichert die
+    // TASK-Zeile nicht; der emit steht wie bei updateAssignees vor dem gebuendelten Generation-Bump
+    // (Participant-/State-Writes, dann Benachrichtigung, dann Bump und Signal). Der Push folgt erst
+    // nach Commit (NotificationService#emit).
+    for (final UUID ref : affectedRefs) {
+      if (ref.equals(actorRef)) {
+        continue;
+      }
+      notificationService.emit(
+          ref,
+          taskId,
+          NotificationTypeCodes.PARTICIPANT,
+          NotificationSeverityCodes.INFO,
+          "Du wurdest als Beteiligter zur Aufgabe hinzugefuegt.",
+          task.getTitle(),
+          actorRef);
     }
 
     // Codex #6: Generation-Bump der tatsaechlich hinzugefuegten/reaktivierten Refs gebuendelt ueber

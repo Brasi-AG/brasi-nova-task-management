@@ -1,10 +1,17 @@
 package de.brasi.nova.taskmanagement.participant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
@@ -153,6 +160,7 @@ class ParticipantAddConcurrencyIT {
   private static String dbName;
 
   @Autowired private TestAssigneeService service;
+  @Autowired private NotificationService notificationService;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private DataSource dataSource;
 
@@ -213,6 +221,7 @@ class ParticipantAddConcurrencyIT {
   void insert_unique_recovery_via_seam_injection() {
     // Injektion ueber eine WIRKLICH UNABHAENGIGE, bereits committete Verbindung (autocommit) -
     // NICHT ueber die tx-gebundene Verbindung des Service (sonst kein echter UNIQUE-Konflikt).
+    clearInvocations(notificationService);
     service.armInjector(
         () ->
             injectCommittedParticipant(
@@ -255,6 +264,9 @@ class ParticipantAddConcurrencyIT {
     assertThat(taskVersion(TASK_INSERT_UUID))
         .as("TASK-VERSION unveraendert")
         .isEqualTo(versionBefore);
+    // Intake #147: die Verliererin des Insert-Konflikts meldet nichts (der Gewinner war ein
+    // Fremd-Insert, der seine Benachrichtigung nicht ueber diesen Service erzeugt).
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   // ---- Beweis 2: Reaktivierungs-Race (echter 2-Thread-Beweis, VERSION-Pfad) ---------------------
@@ -264,6 +276,7 @@ class ParticipantAddConcurrencyIT {
       "reactivate_race_zwei_threads_beide_committen: zwei Threads reaktivieren dieselbe exited Zeile"
           + " -> VERSION-Konflikt -> Re-Read-SKIP; beide 204, 1 Catch, XACT_STATE=1, 1 Zeile, gen +1")
   void reactivate_race_zwei_threads_beide_committen() throws Exception {
+    clearInvocations(notificationService);
     final CyclicBarrier barrier = new CyclicBarrier(2);
     service.armBarrier(barrier);
 
@@ -302,11 +315,23 @@ class ParticipantAddConcurrencyIT {
     assertThat(taskVersion(TASK_REACT_UUID))
         .as("TASK-VERSION unveraendert (additive Union)")
         .isEqualTo(versionBefore);
+    // Intake #147: genau eine PARTICIPANT-Benachrichtigung - die Gewinnerin meldet, die
+    // Verliererin (Re-Read-SKIP) nicht; kein Doppel-emit wie beim Generation-Bump.
+    verify(notificationService, times(1))
+        .emit(
+            eq(REACT_REF),
+            eq(TASK_REACT_ID),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            any(),
+            any(),
+            any(),
+            any());
   }
 
   @Test
   @DisplayName("inverse Mehrfach-Ref-Reaktivierungen committen ohne Lock-Inversion")
   void inverse_mehrfach_ref_reaktivierungen_committen() throws Exception {
+    clearInvocations(notificationService);
     service.armBarrier(null); // anderer Test nutzt eine Single-Ref-Save-Barrier.
     final int taskVersionBefore = taskVersion(TASK_ORDER_UUID);
     final CountDownLatch start = new CountDownLatch(1);
@@ -331,7 +356,19 @@ class ParticipantAddConcurrencyIT {
       assertThat(generation(ref)).as("genau ein Bump pro reaktiviertem Ref").isEqualTo(1L);
     }
     assertThat(taskVersion(TASK_ORDER_UUID)).isEqualTo(taskVersionBefore);
-    assertThat(notificationRows(TASK_ORDER_ID)).isZero();
+    // Intake #147: je reaktivierter Person genau eine PARTICIPANT-Benachrichtigung, trotz der
+    // gegenlaeufigen Ref-Reihenfolge beider Requests (der Verlierer je Ref meldet nichts).
+    for (final UUID ref : List.of(ORDER_REF_A, ORDER_REF_B)) {
+      verify(notificationService, times(1))
+          .emit(
+              eq(ref),
+              eq(TASK_ORDER_ID),
+              eq(NotificationTypeCodes.PARTICIPANT),
+              any(),
+              any(),
+              any(),
+              any());
+    }
   }
 
   // ---- Helfer ----------------------------------------------------------------------------------
@@ -379,11 +416,6 @@ class ParticipantAddConcurrencyIT {
         taskId,
         ref,
         TENANT_ID);
-  }
-
-  private int notificationRows(final long taskId) {
-    return jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?", Integer.class, taskId);
   }
 
   /**
@@ -769,7 +801,9 @@ class ParticipantAddConcurrencyIT {
 
     @Bean
     NotificationService notificationService() {
-      // addParticipants emittiert KEINE Notification (D5) -> Mock genuegt.
+      // Mock genuegt: der IT prueft die emit-Aufrufe (genau eine PARTICIPANT-Benachrichtigung je
+      // tatsaechlich hinzugefuegter Person), nicht die Persistenz (Endpunkt-IT:
+      // CommentControllerIT).
       return mock(NotificationService.class);
     }
 

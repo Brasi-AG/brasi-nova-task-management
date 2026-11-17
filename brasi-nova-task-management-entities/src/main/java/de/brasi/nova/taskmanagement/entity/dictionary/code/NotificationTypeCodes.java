@@ -25,4 +25,11 @@ public final class NotificationTypeCodes {
    * Spiegelt {@link #DONE}: der Typ-CODE entspricht dem Status-CODE. Seed per Flyway V10.
    */
   public static final String CANCELLED = "CANCELLED";
+
+  /**
+   * Person wurde einer Aufgabe als Beteiligte hinzugefuegt (Intake #147, {@code POST
+   * /api/v1/tasks/{id}/participants}). Direkt persoenlich wie {@link #ASSIGN} und {@link
+   * #HANDOVER} und daher von der Stummschaltung ausgenommen. Seed per Flyway V11.
+   */
+  public static final String PARTICIPANT = "PARTICIPANT";
 }

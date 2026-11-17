@@ -1,8 +1,8 @@
 package de.brasi.nova.taskmanagement.participant;
 
 /**
- * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code mute}, {@code updateAssignees} und
- * {@code exit}.
+ * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code mute}, {@code updateAssignees}, {@code
+ * exit} und {@code addParticipants}.
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -30,6 +30,10 @@ final class ParticipantApiExamples {
 
   /** Pfad von {@code POST /api/v1/tasks/{id}/exit} in den Fehlerbeispielen. */
   private static final String PATH_EXIT = "/api/v1/tasks/3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b/exit";
+
+  /** Pfad von {@code POST /api/v1/tasks/{id}/participants} in den Fehlerbeispielen. */
+  private static final String PATH_PARTICIPANTS =
+      "/api/v1/tasks/3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b/participants";
 
   /** Kopf der Fehlerbeispiele im {@code ApiError}-Format (Zeitstempel ohne Zeitzone). */
   private static final String ERROR_HEAD = "{\"timestamp\":\"2026-11-17T10:00:00.123456\",";
@@ -116,6 +120,75 @@ final class ParticipantApiExamples {
           + "\"path\":\""
           + PATH_MUTE
           + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
+
+  /** 400 von {@code addParticipants}: ein Eintrag ist kein aktiver Benutzer des Mandanten. */
+  static final String BAD_REQUEST_PARTICIPANTS =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Unbekannte oder nicht zugelassene Teilnehmer-Benutzer: ["
+          + USER_REF_B
+          + "]\",\"path\":\""
+          + PATH_PARTICIPANTS
+          + "\",\"errorKey\":\"NOVA_VALIDATION_FAILED\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.validation.EntityValidationException:"
+          + " Unbekannte oder nicht zugelassene Teilnehmer-Benutzer: ["
+          + USER_REF_B
+          + "]\"]}";
+
+  /**
+   * 400 von {@code addParticipants}: das Feld participantIds fehlt oder ist null (ebenso null-
+   * Element, mehr als 100 Eintraege). Die Validierung greift beim Lesen des Bodys; die
+   * KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den Validierungstext nach details.
+   */
+  static final String BAD_REQUEST_PARTICIPANTS_BODY =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der Request-Body ist fehlerhaft formatiert oder konnte nicht gelesen"
+          + " werden.\",\"path\":\""
+          + PATH_PARTICIPANTS
+          + "\",\"errorKey\":\"NOVA_MESSAGE_NOT_READABLE\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"Das Feld 'participantIds' darf nicht null sein. Verwende ein leeres"
+          + " Array [] fuer einen No-Op.\"]}";
+
+  /** 403 von {@code addParticipants}: Berechtigung TASK_WRITE fehlt. */
+  static final String FORBIDDEN_PARTICIPANTS =
+      ERROR_HEAD
+          + "\"status\":403,\"error\":\"Forbidden\",\"message\":\""
+          + FORBIDDEN_MESSAGE
+          + "\",\"path\":\""
+          + PATH_PARTICIPANTS
+          + "\",\"errorKey\":\"NOVA_ACCESS_DENIED\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.security.permission.PermissionDeniedException:"
+          + " Fehlende Permission 'task-management:TASK_WRITE' für"
+          + " AssigneeController#addParticipants\"]}";
+
+  /** 404 von {@code addParticipants}: Aufgabe unbekannt, fremder Mandant oder kein Mitglied. */
+  static final String NOT_FOUND_PARTICIPANTS =
+      ERROR_HEAD
+          + "\"status\":404,\"error\":\"Not Found\",\"message\":\"Aufgabe nicht gefunden.\","
+          + "\"path\":\""
+          + PATH_PARTICIPANTS
+          + "\",\"errorKey\":\"NOVA_NOT_FOUND\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
+          + " Aufgabe nicht gefunden.\"]}";
+
+  /**
+   * 409 von {@code addParticipants}: nebenlaeufiger Versionskonflikt beim Speichern der
+   * Teilnehmerzeile oder des persoenlichen Zustands.
+   */
+  static final String CONFLICT_PARTICIPANTS =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_PARTICIPANTS
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
 
   /** 400 von {@code exit}: unbekanntes oder fremdes Uebergabeziel. */
   static final String BAD_REQUEST_EXIT =

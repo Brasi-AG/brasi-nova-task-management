@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
@@ -18,6 +19,7 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
 import io.jsonwebtoken.Jwts;
+import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.security.AuditorProvider;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
@@ -26,6 +28,8 @@ import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfigurati
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import io.keel.framework.security.KsfSecurityAutoConfiguration;
 import io.keel.framework.security.web.KsfWebSecurityAutoConfiguration;
+import io.keel.framework.web.controller.GlobalApiExceptionHandler;
+import io.keel.framework.web.exception.ApiError;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -67,8 +72,10 @@ import org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConf
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -1256,6 +1263,173 @@ class AssigneeControllerIT {
             taskId,
             unknown);
     assertThat(count).as("keine Zeile fuer unbekannten Ref").isZero();
+  }
+
+  // ---- Intake #147: Fehlerantworten von POST /participants entsprechen den OpenAPI-Beispielen --
+
+  /** Task-UUID in den OpenAPI-Beispielen von {@link ParticipantApiExamples}. */
+  private static final String EXAMPLE_TASK_ID = "3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b";
+
+  @Autowired private GlobalApiExceptionHandler apiExceptionHandler;
+  @Autowired private ObjectMapper contextObjectMapper;
+
+  @Test
+  @DisplayName(
+      "post_participants_fehlerantworten_entsprechen_den_openapi_beispielen (Intake #147): die"
+          + " Live-Antworten fuer 400 (unbekannter Benutzer, fehlendes Feld), 401, 403, 404 und"
+          + " 409 haben dieselben Felder und stabilen Werte wie die Beispiele der Operation")
+  void post_participants_error_responses_match_openapi_examples() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "Participants-Error-Format-IT-Task");
+    final SoftAssertions soft = new SoftAssertions();
+    final UUID unknown = UUID.fromString(ParticipantApiExamples.USER_REF_B);
+    final String path = "/api/v1/tasks/" + taskId + "/participants";
+    final String unknownBody = om.writeValueAsString(Map.of("participantIds", List.of(unknown)));
+
+    // 400: UUID ist kein aktiver Benutzer des Mandanten (Service-Validierung).
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                post(path)
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(unknownBody))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.BAD_REQUEST_PARTICIPANTS,
+        taskId);
+
+    // 400: Pflichtfeld fehlt (Validierung beim Lesen des Bodys); auch ein explizites null.
+    for (final String body : List.of("{}", "{\"participantIds\":null}")) {
+      assertMatchesExample(
+          soft,
+          om,
+          mvc.perform(
+                  post(path)
+                      .header("Authorization", "Bearer " + tokenA)
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(body))
+              .andExpect(status().isBadRequest())
+              .andReturn()
+              .getResponse()
+              .getContentAsString(),
+          ParticipantApiExamples.BAD_REQUEST_PARTICIPANTS_BODY,
+          taskId);
+    }
+
+    // 400: keine UUID im Pfad (dokumentiert in der Beschreibung der 400-Antwort).
+    mvc.perform(
+            post("/api/v1/tasks/keine-uuid/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(unknownBody))
+        .andExpect(status().isBadRequest());
+
+    // 403: ohne TASK_WRITE.
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                post(path)
+                    .header("Authorization", "Bearer " + tokenReadOnly)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(unknownBody))
+            .andExpect(status().isForbidden())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.FORBIDDEN_PARTICIPANTS,
+        taskId);
+
+    // 404: unbekannte Aufgabe (neutral maskiert).
+    final UUID unknownTask = UUID.randomUUID();
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                post("/api/v1/tasks/" + unknownTask + "/participants")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(unknownBody))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.NOT_FOUND_PARTICIPANTS,
+        unknownTask);
+
+    // 401: ohne Anmeldung antwortet die Filterkette mit problem+json.
+    final JsonNode unauthorized =
+        om.readTree(
+            mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(unknownBody))
+                .andExpect(status().isUnauthorized())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    soft.assertThat(unauthorized).isEqualTo(om.readTree(ParticipantApiExamples.UNAUTHORIZED));
+
+    // 409: der Versionskonflikt beim Speichern (KSF: BusinessRuleException mit
+    // OptimisticLockingFailureException als Ursache) laeuft durch den echten Fehler-Handler des
+    // Kontexts; ein echter Versionskonflikt ist deterministisch nicht ueber HTTP zu erzeugen
+    // (Nebenlaeufigkeitsbeweis: ParticipantAddConcurrencyIT).
+    final String conflictMessage =
+        "Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).";
+    final ApiError conflict =
+        apiExceptionHandler
+            .handleNovaBusinessRule(
+                new BusinessRuleException(
+                    conflictMessage, new OptimisticLockingFailureException(conflictMessage)),
+                new MockHttpServletRequest("POST", path))
+            .getBody();
+    assertMatchesExample(
+        soft,
+        om,
+        contextObjectMapper.writeValueAsString(conflict),
+        ParticipantApiExamples.CONFLICT_PARTICIPANTS,
+        taskId);
+    soft.assertAll();
+  }
+
+  /**
+   * Vergleicht eine Live-Antwort mit einem OpenAPI-Beispiel: gleiche Feldmenge und gleiche Werte,
+   * ausser {@code timestamp} und {@code traceId} (je Aufruf neu). Die Aufgaben-UUID im {@code path}
+   * des Beispiels wird durch die verwendete ersetzt, ebenso die Beispiel-UUID des unbekannten
+   * Benutzers in der 400-Meldung.
+   */
+  private static void assertMatchesExample(
+      final SoftAssertions soft,
+      final ObjectMapper om,
+      final String liveJson,
+      final String exampleJson,
+      final UUID taskId)
+      throws Exception {
+    final JsonNode live = om.readTree(liveJson);
+    final JsonNode example = om.readTree(exampleJson.replace(EXAMPLE_TASK_ID, taskId.toString()));
+    final Set<String> exampleFields = new java.util.TreeSet<>();
+    example.fieldNames().forEachRemaining(exampleFields::add);
+    final Set<String> liveFields = new java.util.TreeSet<>();
+    live.fieldNames().forEachRemaining(liveFields::add);
+    soft.assertThat(liveFields).as("Felder der Antwort: %s", live).isEqualTo(exampleFields);
+    for (final String stable :
+        List.of("status", "error", "message", "path", "errorKey", "details")) {
+      soft.assertThat(live.get(stable))
+          .as("Feld %s der Antwort: %s", stable, live)
+          .isEqualTo(example.get(stable));
+    }
   }
 
   @Test

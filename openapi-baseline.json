@@ -10,16 +10,6 @@
     "fingerprint": "5e4704822cc71e17"
   },
   {
-    "operation": "addParticipants",
-    "rule": "request-example",
-    "fingerprint": "76ed5b2fd355a0d3"
-  },
-  {
-    "operation": "addParticipants",
-    "rule": "response-example",
-    "fingerprint": "76ed5b2fd355a0d3"
-  },
-  {
     "operation": "archiveTasks",
     "rule": "property-description",
     "fingerprint": "018ad9140a1d387f"

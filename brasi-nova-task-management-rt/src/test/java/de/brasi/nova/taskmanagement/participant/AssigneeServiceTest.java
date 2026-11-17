@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -56,6 +57,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -1529,7 +1531,8 @@ class AssigneeServiceTest {
   @Test
   @DisplayName(
       "addParticipants_neuer_ref: neuer Ref -> Teilnehmer (PARTICIPANT_FLAG=1, kein Assignee/Creator)"
-          + " + ensure + bump + invalidate; KEINE Notification, KEIN Task-VERSION-Bump")
+          + " + ensure + bump + invalidate + genau eine PARTICIPANT-Notification; KEIN"
+          + " Task-VERSION-Bump")
   void addParticipants_neuer_ref() {
     final Long taskId = 200L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1561,8 +1564,19 @@ class AssigneeServiceTest {
     verify(inboxSignalService).invalidate(eq(TENANT_ID), refsCaptor.capture());
     assertThat(refsCaptor.getValue()).contains(ref);
 
-    // D5: keine Notification; D8: kein Task-VERSION-Bump (kommutative Union).
-    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    // Intake #147: genau eine PARTICIPANT-Notification an die neue Person (Akteur ist der
+    // Ausloeser, Vorschau ist der Aufgabentitel); D8: kein Task-VERSION-Bump (kommutative Union).
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            eq("Du wurdest als Beteiligter zur Aufgabe hinzugefuegt."),
+            eq("Testtitel"),
+            eq(ACTOR_REF));
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
     verify(taskRepository, never()).save(any(Task.class));
   }
 
@@ -1593,12 +1607,14 @@ class AssigneeServiceTest {
     verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    // Intake #147: ein schon aktives Mitglied wird nicht erneut benachrichtigt.
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
   @DisplayName(
       "addParticipants_exited_ref_reactivate: ausgetretene Zeile -> als reiner Teilnehmer reaktiviert"
-          + " (PARTICIPANT_FLAG=1, EXIT_KIND null) + reactivate + bump")
+          + " (PARTICIPANT_FLAG=1, EXIT_KIND null) + reactivate + bump + PARTICIPANT-Notification")
   void addParticipants_exited_ref_reactivate() {
     final Long taskId = 202L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1632,6 +1648,16 @@ class AssigneeServiceTest {
     verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
     verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
+    // Intake #147: auch die aus dem Austritt reaktivierte Person bekommt die Benachrichtigung.
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
   }
 
   @Test
@@ -1688,6 +1714,7 @@ class AssigneeServiceTest {
 
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
     verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -1702,6 +1729,7 @@ class AssigneeServiceTest {
     verify(userReadRepository, never()).findActiveByUuids(any());
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -1732,6 +1760,8 @@ class AssigneeServiceTest {
     verify(userStateService, never()).ensure(any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    // Intake #147: der Race-Verlierer meldet nichts; die Benachrichtigung kommt vom Gewinner.
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -1782,6 +1812,7 @@ class AssigneeServiceTest {
 
     verify(userStateService, never()).ensure(any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -1802,6 +1833,153 @@ class AssigneeServiceTest {
 
     verify(participantQueryRepository).save(any(TaskParticipant.class)); // genau 1x
     verify(inboxGenerationService).bump(TENANT_ID, ref); // genau 1x
+    // Intake #147: auch die Benachrichtigung genau einmal.
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  // ---- Intake #147: PARTICIPANT-Benachrichtigung an neu hinzugefuegte Personen ----------------
+
+  @Test
+  @DisplayName(
+      "i147_gemischte_menge_nur_neue_und_reaktivierte_in_uuid_reihenfolge: aktives Mitglied wird"
+          + " uebersprungen, neue und aus dem Austritt reaktivierte Person bekommen je genau eine"
+          + " PARTICIPANT-Benachrichtigung, in UUID-Reihenfolge")
+  void i147_mixed_set_notifies_only_new_and_reactivated_in_uuid_order() {
+    final Long taskId = 220L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID activeRef = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID newRef = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    final UUID exitedRef = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+
+    final TaskParticipant active = new TaskParticipant();
+    active.setId(11L);
+    active.setTaskId(taskId);
+    active.setParticipantRef(activeRef);
+    active.setParticipantFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, activeRef))
+        .thenReturn(List.of(active));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRef))
+        .thenReturn(List.of());
+    final TaskParticipant exited = new TaskParticipant();
+    exited.setId(12L);
+    exited.setTaskId(taskId);
+    exited.setParticipantRef(exitedRef);
+    exited.setParticipantFlag(true);
+    exited.setExitKind(ExitKind.UNSUBSCRIBED);
+    exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, exitedRef))
+        .thenReturn(List.of(exited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(
+        taskUuid, new ParticipantAddInput(List.of(exitedRef, activeRef, newRef)));
+
+    final InOrder order = inOrder(notificationService);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(newRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    order
+        .verify(notificationService)
+        .emit(
+            eq(exitedRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(notificationService, never())
+        .emit(eq(activeRef), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(2)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i147_akteur_in_der_menge_wird_nie_benachrichtigt: auch wenn der Akteur in der Menge steht"
+          + " und angelegt wird, geht keine PARTICIPANT-Benachrichtigung an ihn")
+  void i147_actor_in_set_is_never_notified() {
+    final Long taskId = 221L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID otherRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(anyLong(), any()))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ACTOR_REF, otherRef)));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(otherRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i147_reihenfolge_save_emit_bump_invalidate: Participant-Save und State vor der"
+          + " Benachrichtigung, Generation-Bump und Signal danach (kein TASK-Save)")
+  void i147_order_save_emit_bump_invalidate() {
+    final Long taskId = 222L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    final InOrder order =
+        inOrder(
+            participantQueryRepository,
+            userStateService,
+            notificationService,
+            inboxGenerationService,
+            inboxSignalService);
+    order.verify(participantQueryRepository).save(any(TaskParticipant.class));
+    order.verify(userStateService).ensure(taskId, ref, TENANT_ID);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
+    order.verify(inboxSignalService).invalidate(eq(TENANT_ID), any());
+    verify(taskRepository, never()).save(any(Task.class));
   }
 
   // ============================================================================================
@@ -2382,6 +2560,17 @@ class AssigneeServiceTest {
 
     assertThat(mutedState.isMuted()).as("addParticipants hebt Mute nicht auf").isTrue();
     assertThat(mutedState.getUnsubscribedAt()).as("wieder aktiv als Teilnehmer").isNull();
+    // Intake #147: PARTICIPANT ist direkt persoenlich und vom Mute ausgenommen; die Person bekommt
+    // die Benachrichtigung trotz Stummschaltung (Endpunkt-Beweis: CommentControllerIT).
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------
