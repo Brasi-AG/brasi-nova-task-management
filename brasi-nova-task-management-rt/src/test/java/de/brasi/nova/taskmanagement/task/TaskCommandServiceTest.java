@@ -22,6 +22,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
@@ -128,7 +129,8 @@ class TaskCommandServiceTest {
             notificationService,
             inboxGenerationService,
             membershipGuard,
-            sourceRegistry);
+            sourceRegistry,
+            new NotificationMuteFilter(userStateQueryRepository));
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -1757,6 +1759,97 @@ class TaskCommandServiceTest {
 
     assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_OPEN);
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  // ---- Intake #158: Stummgeschaltete Aufgabe unterdrueckt DONE und CANCELLED -------------------
+
+  @Test
+  @DisplayName(
+      "patch_status_done_benachrichtigt_stumme_beteiligte_nicht: wer die Aufgabe stummgeschaltet"
+          + " hat, erhaelt kein DONE; Mute-Lesung gebuendelt (1 Query) VOR dem TASK-save")
+  void patch_status_done_benachrichtigt_stumme_beteiligte_nicht() {
+    final Long taskId = 178L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID mutedRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(mutedRef, false, true, true, null)));
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
+        .thenReturn(List.of(mutedState(mutedRef, taskId)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, never())
+        .emit(eq(mutedRef), any(), any(), any(), any(), any(), any());
+    final org.mockito.InOrder order = inOrder(userStateQueryRepository, taskRepository);
+    order.verify(userStateQueryRepository, times(1)).findMutedByTaskId(eq(taskId));
+    order.verify(taskRepository).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_cancelled_benachrichtigt_stumme_beteiligte_nicht: gemeinsame"
+          + " Empfaengerermittlung mit DONE filtert stumme Personen auch beim Abbrechen")
+  void patch_status_cancelled_benachrichtigt_stumme_beteiligte_nicht() {
+    final Long taskId = 179L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
+        .thenReturn(List.of(mutedState(creatorRef, taskId)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_CANCELLED);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_ohne_statuswechsel_liest_keinen_mute_zustand: ohne Statusbenachrichtigung keine"
+          + " zusaetzliche Query")
+  void patch_ohne_statuswechsel_liest_keinen_mute_zustand() {
+    final Long taskId = 180L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    stubCreatorAndActor();
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent()));
+
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
+  }
+
+  /** Aktiver, stummgeschalteter UserState (Intake #158). */
+  private static TaskUserState mutedState(final UUID userRef, final Long taskId) {
+    final TaskUserState state = new TaskUserState();
+    state.setTaskId(taskId);
+    state.setUserRef(userRef);
+    state.setMuted(true);
+    return state;
   }
 
   // ---- Surrogat-sichere Truncation (Codex Re-Gate 93781f4, Finding #1) --------------------

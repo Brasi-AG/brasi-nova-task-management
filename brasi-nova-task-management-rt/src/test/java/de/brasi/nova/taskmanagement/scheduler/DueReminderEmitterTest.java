@@ -1,13 +1,25 @@
 package de.brasi.nova.taskmanagement.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
+import de.brasi.nova.taskmanagement.entity.TaskReminderReceipt;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.repository.BaseTaskReminderReceiptRepository;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/**
- * Unit-Tests fuer die laengen-/surrogat-sichere Text-Kappung in {@link DueReminderEmitter}.
- */
+/** Unit-Tests fuer die laengen-/surrogat-sichere Text-Kappung in {@link DueReminderEmitter}. */
 class DueReminderEmitterTest {
 
   @Test
@@ -57,5 +69,43 @@ class DueReminderEmitterTest {
 
     assertThat(result).hasSize(500);
     assertThat(result).endsWith(emoji);
+  }
+
+  // ---- Intake #158: stumme Empfaenger erhalten keine DUE-Benachrichtigung ---------------------
+
+  @Test
+  @DisplayName(
+      "emitOnce_stumm: Quittung und snapshot-invalidated wie bisher, aber KEINE DUE-Benachrichtigung")
+  void emitOnce_stumm_schreibt_quittung_und_signal_ohne_benachrichtigung() {
+    final BaseTaskReminderReceiptRepository receipts =
+        mock(BaseTaskReminderReceiptRepository.class);
+    final NotificationService notifications = mock(NotificationService.class);
+    final InboxSignalService signals = mock(InboxSignalService.class);
+    final DueReminderEmitter emitter = new DueReminderEmitter(receipts, notifications, signals);
+    final UUID recipient = UUID.randomUUID();
+
+    emitter.emitOnce(7L, 70L, recipient, LocalDate.now(), "Faellig", true);
+
+    verify(receipts, times(1)).save(any(TaskReminderReceipt.class));
+    verify(notifications, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(signals, times(1)).invalidate(7L, List.of(recipient));
+  }
+
+  @Test
+  @DisplayName("emitOnce_laut: Quittung, DUE-Benachrichtigung und Signal (unveraendert)")
+  void emitOnce_laut_emittiert_due() {
+    final BaseTaskReminderReceiptRepository receipts =
+        mock(BaseTaskReminderReceiptRepository.class);
+    final NotificationService notifications = mock(NotificationService.class);
+    final InboxSignalService signals = mock(InboxSignalService.class);
+    final DueReminderEmitter emitter = new DueReminderEmitter(receipts, notifications, signals);
+    final UUID recipient = UUID.randomUUID();
+
+    emitter.emitOnce(7L, 70L, recipient, LocalDate.now(), "Faellig", false);
+
+    verify(receipts, times(1)).save(any(TaskReminderReceipt.class));
+    verify(notifications, times(1))
+        .emit(eq(recipient), eq(70L), eq(NotificationTypeCodes.DUE), any(), any(), any(), any());
+    verify(signals, times(1)).invalidate(7L, List.of(recipient));
   }
 }

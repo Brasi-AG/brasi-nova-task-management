@@ -12,6 +12,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
@@ -82,6 +83,7 @@ public class TaskCommandService {
   private final InboxGenerationService inboxGenerationService;
   private final TaskMembershipGuard membershipGuard;
   private final TaskSourceRegistry sourceRegistry;
+  private final NotificationMuteFilter muteFilter;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -100,7 +102,8 @@ public class TaskCommandService {
       final NotificationService notificationService,
       final InboxGenerationService inboxGenerationService,
       final TaskMembershipGuard membershipGuard,
-      final TaskSourceRegistry sourceRegistry) {
+      final TaskSourceRegistry sourceRegistry,
+      final NotificationMuteFilter muteFilter) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -117,6 +120,7 @@ public class TaskCommandService {
     this.inboxGenerationService = inboxGenerationService;
     this.membershipGuard = membershipGuard;
     this.sourceRegistry = sourceRegistry;
+    this.muteFilter = muteFilter;
   }
 
   /**
@@ -708,9 +712,10 @@ public class TaskCommandService {
       readerRefs.addAll(leftRefs);
       // Intake #151/#157: Empfaenger der Statusbenachrichtigung aus demselben Grund ebenfalls VOR
       // dem TASK-save lesen (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
+      // Intake #158: inklusive gebuendelter Mute-Lesung (stumme Personen fallen heraus).
       final List<UUID> statusRecipients =
           statusNotificationType != null
-              ? findStatusChangeRecipients(taskId, actorRef, leftRefs)
+              ? findStatusChangeRecipients(taskId, statusNotificationType, actorRef, leftRefs)
               : List.of();
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
@@ -769,22 +774,30 @@ public class TaskCommandService {
    * <p>Bewusst EINE gemeinsame Ermittlung fuer beide Statuswechsel: Anpassungen der Empfaengerlogik
    * (z. B. Stummschalten, Intake #158) gelten damit automatisch fuer Schliessen und Abbrechen.
    *
-   * <p>Muss VOR dem TASK-save aufgerufen werden (Lock-Reihenfolge, siehe {@link #patch}).
+   * <p>Intake #158: Personen, die die Aufgabe stummgeschaltet haben, erhalten weder DONE noch
+   * CANCELLED. Die Regel steht zentral im {@link NotificationMuteFilter}; die Mute-Zustaende aller
+   * Kandidaten werden in einer Query gelesen.
+   *
+   * <p>Muss VOR dem TASK-save aufgerufen werden (Lock-Reihenfolge, siehe {@link #patch}); das gilt
+   * auch fuer die Mute-Lesung auf {@code TASK_USER_STATE}.
    *
    * @param taskId interne Aufgaben-ID
+   * @param typeCode Typ der Statusbenachrichtigung ({@code DONE} oder {@code CANCELLED})
    * @param actorRef UUID der handelnden Person (wird nicht benachrichtigt)
    * @param leftRefs Personen, die die Aufgabe verlassen haben (EXIT_KIND oder UNSUBSCRIBED_AT)
-   * @return Empfaenger-UUIDs ohne Duplikate
+   * @return Empfaenger-UUIDs ohne Duplikate und ohne stummgeschaltete Personen
    */
   private List<UUID> findStatusChangeRecipients(
-      final Long taskId, final UUID actorRef, final Set<UUID> leftRefs) {
-    return participantQueryRepository.findActiveByTaskIds(List.of(taskId)).stream()
-        .filter(participant -> participant.getExitKind() == null)
-        .map(TaskParticipant::getParticipantRef)
-        .filter(ref -> !ref.equals(actorRef))
-        .filter(ref -> !leftRefs.contains(ref))
-        .distinct()
-        .toList();
+      final Long taskId, final String typeCode, final UUID actorRef, final Set<UUID> leftRefs) {
+    final List<UUID> candidates =
+        participantQueryRepository.findActiveByTaskIds(List.of(taskId)).stream()
+            .filter(participant -> participant.getExitKind() == null)
+            .map(TaskParticipant::getParticipantRef)
+            .filter(ref -> !ref.equals(actorRef))
+            .filter(ref -> !leftRefs.contains(ref))
+            .distinct()
+            .toList();
+    return muteFilter.withoutMuted(taskId, typeCode, candidates);
   }
 
   /**

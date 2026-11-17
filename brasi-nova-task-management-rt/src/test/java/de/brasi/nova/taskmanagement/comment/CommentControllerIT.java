@@ -2,7 +2,9 @@ package de.brasi.nova.taskmanagement.comment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -388,6 +390,115 @@ class CommentControllerIT {
     assertThat(commentNotifA)
         .as("Autor USER_A darf KEINE COMMENT-Notification erhalten (Self-Exclusion)")
         .isEqualTo(0);
+  }
+
+  // ---- IT Intake #158: stummgeschaltete Aufgabe -> kein COMMENT/DONE, aber MENTION und REPLY ---
+
+  @Test
+  @DisplayName(
+      "i158_stumme_aufgabe_unterdrueckt_comment_und_done_nicht_mention_und_reply (Intake #158):"
+          + " USER_B (Assignee) schaltet stumm, USER_READ_ONLY (Assignee ohne UserState) bleibt"
+          + " laut -> Top-Level-Kommentar und Schliessen benachrichtigen nur den lauten, die"
+          + " @-Erwaehnung und die Antwort erreichen USER_B trotzdem")
+  void i158_stumme_aufgabe_unterdrueckt_comment_und_done_nicht_mention_und_reply()
+      throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-158-Mute");
+    final long taskId = taskDbId(taskUuid);
+
+    // USER_B ueber den echten Zuweisungspfad (Participant + TaskUserState) zuweisen, dann
+    // stummschalten ueber den Marker-Endpunkt.
+    mvc.perform(
+            put("/api/v1/tasks/" + taskUuid + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
+        .andExpect(status().isNoContent());
+    mvc.perform(
+            put("/api/v1/tasks/" + taskUuid + "/mute")
+                .header("Authorization", "Bearer " + tokenB)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+    // Lauter Diskriminator: aktiver Assignee OHNE TaskUserState (fehlender State = nicht stumm).
+    insertActiveMember(560581L, taskId, USER_READ_ONLY_REF);
+
+    // (1) Top-Level-Kommentar ohne Mention: COMMENT nur fuer den lauten Assignee.
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level an alle.", null);
+    assertThat(countNotifications(taskUuid, USER_READ_ONLY_REF, "COMMENT"))
+        .as("lauter Assignee erhaelt COMMENT (Positivkontrolle)")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("stummer Assignee USER_B darf KEIN COMMENT erhalten")
+        .isZero();
+
+    // (2) @-Erwaehnung von USER_B: MENTION kommt trotz Mute an.
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("text", "@user-b bitte ansehen.", "mentions", List.of(USER_B_REF)))))
+        .andExpect(status().isCreated());
+    assertThat(countNotifications(taskUuid, USER_B_REF, "MENTION"))
+        .as("MENTION erreicht den stummen USER_B")
+        .isEqualTo(1);
+
+    // (3) Antwort auf einen eigenen Kommentar von USER_B: REPLY kommt trotz Mute an.
+    final UUID ownComment = postComment(mvc, om, tokenB, taskUuid, "Eigener Kommentar B.", null);
+    postComment(mvc, om, tokenA, taskUuid, "Antwort an B.", ownComment);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "REPLY"))
+        .as("REPLY erreicht den stummen USER_B")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("auch nach weiteren Kommentaren kein COMMENT fuer USER_B")
+        .isZero();
+
+    // (4) Schliessen (DONE): nur der laute Beteiligte wird benachrichtigt.
+    mvc.perform(
+            patch("/api/v1/tasks/" + taskUuid)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("statusCode", "DONE"))))
+        .andExpect(status().is2xxSuccessful());
+    assertThat(countNotifications(taskUuid, USER_READ_ONLY_REF, "DONE"))
+        .as("lauter Beteiligter erhaelt DONE (Positivkontrolle)")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "DONE"))
+        .as("stummer USER_B darf KEIN DONE erhalten")
+        .isZero();
+
+    // (5) Stummschaltung gilt je Aufgabe: die Query liest nur die stummen States der EIGENEN
+    // Aufgabe (ohne Empfaengerliste, TASK_ID ist der einzige Diskriminator). Auf einer anderen
+    // Aufgabe bleibt USER_B laut.
+    final UUID otherTaskUuid = createTask(mvc, om, tokenA, "Comment-IT-158-Other");
+    mvc.perform(
+            put("/api/v1/tasks/" + otherTaskUuid + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
+        .andExpect(status().isNoContent());
+    postComment(mvc, om, tokenA, otherTaskUuid, "Top-Level auf anderer Aufgabe.", null);
+    assertThat(countNotifications(otherTaskUuid, USER_B_REF, "COMMENT"))
+        .as("USER_B hat nur die erste Aufgabe stummgeschaltet und erhaelt COMMENT auf der anderen")
+        .isEqualTo(1);
   }
 
   // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------
@@ -1182,6 +1293,19 @@ class CommentControllerIT {
   private static String buildGrantFreeJwt(
       final UUID tenantUuid, final UUID userUuid, final String loginName) {
     return buildJwtWithAuthority(tenantUuid, userUuid, loginName);
+  }
+
+  /** Anzahl der Benachrichtigungen eines Typ-CODEs fuer einen Empfaenger an einer Aufgabe. */
+  private int countNotifications(final UUID taskUuid, final UUID recipientRef, final String code) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND d.CODE = ?",
+        Integer.class,
+        taskUuid,
+        recipientRef,
+        code);
   }
 
   /** Interne TASK.ID zur externen UUID (fuer die direkten TASK_PARTICIPANT-Inserts). */

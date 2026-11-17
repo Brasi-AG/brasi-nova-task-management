@@ -21,10 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>Atomizitaet:</b> Receipt-INSERT und DUE-Notification laufen in EINER eigenen Transaktion
  * ({@link Propagation#REQUIRES_NEW}). Der Receipt wird ZUERST gespeichert - ein UNIQUE-Konflikt
- * (die Erinnerung existiert bereits) bricht die Transaktion mit einer
- * {@link org.springframework.dao.DuplicateKeyException} ab, bevor eine zweite Notification
- * entsteht. Scheitert die Notification, rollt der Receipt mit zurueck -> ein Retry ist moeglich.
- * Der UNIQUE-Konflikt wird bewusst AUSSERHALB dieser Methode (im {@link DueReminderWorker}) als
+ * (die Erinnerung existiert bereits) bricht die Transaktion mit einer {@link
+ * org.springframework.dao.DuplicateKeyException} ab, bevor eine zweite Notification entsteht.
+ * Scheitert die Notification, rollt der Receipt mit zurueck -> ein Retry ist moeglich. Der
+ * UNIQUE-Konflikt wird bewusst AUSSERHALB dieser Methode (im {@link DueReminderWorker}) als
  * "bereits erledigt" behandelt. Push und Snapshot-Invalidierung laufen ueber den After-Commit-Seam
  * von {@link NotificationService}/{@link InboxSignalService} erst nach erfolgreichem Commit.
  */
@@ -52,13 +52,14 @@ public class DueReminderEmitter {
 
   /**
    * Schreibt Idempotenz-Quittung + DUE-Notification atomar und invalidiert nach Commit den
-   * Empfaenger-Snapshot.
+   * Empfaenger-Snapshot. Kurzform fuer einen nicht stummgeschalteten Empfaenger (siehe {@link
+   * #emitOnce(long, Long, UUID, LocalDate, String, boolean)}).
    *
-   * @param tenantId       interne Mandanten-Id (wird in der Receipt-Entity gesetzt)
-   * @param taskId         interne Aufgaben-Id
-   * @param recipientRef   UUID des Empfaengers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interne Mandanten-Id (wird in der Receipt-Entity gesetzt)
+   * @param taskId interne Aufgaben-Id
+   * @param recipientRef UUID des Empfaengers (PROD_BENUTZER.EXTERNALID)
    * @param occurrenceDate Faelligkeitstag
-   * @param taskTitle      Aufgabentitel (Vorschau/Anzeigetext)
+   * @param taskTitle Aufgabentitel (Vorschau/Anzeigetext)
    * @throws org.springframework.dao.DuplicateKeyException wenn die Erinnerung bereits existiert
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -68,6 +69,34 @@ public class DueReminderEmitter {
       final UUID recipientRef,
       final LocalDate occurrenceDate,
       final String taskTitle) {
+    emitOnce(tenantId, taskId, recipientRef, occurrenceDate, taskTitle, false);
+  }
+
+  /**
+   * Schreibt die Idempotenz-Quittung, die DUE-Notification (ausser bei stummgeschaltetem
+   * Empfaenger) und invalidiert nach Commit den Empfaenger-Snapshot.
+   *
+   * <p>Intake #158: Hat der Empfaenger die Aufgabe stummgeschaltet (vom {@link DueReminderWorker}
+   * gebuendelt ueber den {@code NotificationMuteFilter} ermittelt), entfaellt nur die
+   * DUE-Benachrichtigung. Quittung und {@code snapshot-invalidated}-Signal bleiben unveraendert:
+   * die Quittung markiert den Tag als erledigt (kein erneuter Versuch je Scheduler-Lauf), das
+   * Signal ist keine Benachrichtigung.
+   *
+   * @param tenantId interne Mandanten-Id (wird in der Receipt-Entity gesetzt)
+   * @param taskId interne Aufgaben-Id
+   * @param recipientRef UUID des Empfaengers (PROD_BENUTZER.EXTERNALID)
+   * @param occurrenceDate Faelligkeitstag
+   * @param taskTitle Aufgabentitel (Vorschau/Anzeigetext)
+   * @param recipientMuted {@code true}, wenn der Empfaenger die Aufgabe stummgeschaltet hat
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void emitOnce(
+      final long tenantId,
+      final Long taskId,
+      final UUID recipientRef,
+      final LocalDate occurrenceDate,
+      final String taskTitle,
+      final boolean recipientMuted) {
 
     // Receipt ZUERST: UNIQUE-Konflikt bricht ab, bevor eine zweite DUE-Notification entsteht.
     final TaskReminderReceipt receipt = new TaskReminderReceipt();
@@ -78,15 +107,26 @@ public class DueReminderEmitter {
     receiptRepository.save(receipt);
 
     // TASK_NOTIFICATION.TEXT/PREVIEW sind nvarchar(500); TITLE darf bis 500 Zeichen lang sein.
-    // Mit dem Praefix wuerde TEXT sonst ueberlaufen -> Insert-Fehler -> Receipt-Rollback -> kein DUE.
-    notificationService.emit(
-        recipientRef,
-        taskId,
-        NotificationTypeCodes.DUE,
-        NotificationSeverityCodes.WARN,
-        truncate("Aufgabe faellig: " + taskTitle, MAX_NOTIFICATION_TEXT),
-        truncate(taskTitle, MAX_NOTIFICATION_TEXT),
-        null);
+    // Mit dem Praefix wuerde TEXT sonst ueberlaufen -> Insert-Fehler -> Receipt-Rollback -> kein
+    // DUE.
+    if (recipientMuted) {
+      log.info(
+          "DueReminderEmitter: Aufgabe {} von Empfaenger {} stummgeschaltet -"
+              + " DUE-Benachrichtigung unterdrueckt (Tag {}, Mandant {}).",
+          taskId,
+          recipientRef,
+          occurrenceDate,
+          tenantId);
+    } else {
+      notificationService.emit(
+          recipientRef,
+          taskId,
+          NotificationTypeCodes.DUE,
+          NotificationSeverityCodes.WARN,
+          truncate("Aufgabe faellig: " + taskTitle, MAX_NOTIFICATION_TEXT),
+          truncate(taskTitle, MAX_NOTIFICATION_TEXT),
+          null);
+    }
 
     // Snapshot-Invalidierung nach Commit (arch-v2 §3: Due aendert die Inbox-Liste).
     inboxSignalService.invalidate(tenantId, List.of(recipientRef));

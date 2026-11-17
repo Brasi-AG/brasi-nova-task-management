@@ -95,11 +95,42 @@ class UserStateServiceTest {
         .thenReturn(List.of())
         .thenReturn(List.of());
 
-    doThrow(new BusinessRuleException("Unrelated conflict."))
-        .when(repository)
-        .save(any());
+    doThrow(new BusinessRuleException("Unrelated conflict.")).when(repository).save(any());
 
     assertThatThrownBy(() -> service.ensure(TASK_ID, USER_REF, TENANT_ID))
         .isInstanceOf(BusinessRuleException.class);
+  }
+
+  // ---- Intake #158: Reihenfolge Mute und (Wieder-)Zuweisung -----------------------------
+
+  @Test
+  @DisplayName(
+      "reactivate_behaelt_mute: erneute Zuweisung setzt nur UNSUBSCRIBED_AT zurueck, IS_MUTED"
+          + " bleibt gesetzt (ASSIGN kommt trotzdem an, weil ausgenommen)")
+  void reactivate_behaelt_mute_eines_vorhandenen_states() {
+    final TaskUserState state = new TaskUserState();
+    state.setTaskId(TASK_ID);
+    state.setUserRef(USER_REF);
+    state.setMuted(true);
+    state.setUnsubscribedAt(java.time.LocalDateTime.now().minusDays(1));
+    when(repository.findByTaskIdAndUserRef(TASK_ID, USER_REF)).thenReturn(List.of(state));
+
+    service.reactivate(TASK_ID, USER_REF, TENANT_ID);
+
+    assertThat(state.getUnsubscribedAt()).isNull();
+    assertThat(state.isMuted()).isTrue();
+  }
+
+  @Test
+  @DisplayName("reactivate_neu: ein neu angelegter State startet nicht stumm")
+  void reactivate_legt_neuen_state_nicht_stumm_an() {
+    when(repository.findByTaskIdAndUserRef(TASK_ID, USER_REF)).thenReturn(List.of());
+    final org.mockito.ArgumentCaptor<TaskUserState> captor =
+        org.mockito.ArgumentCaptor.forClass(TaskUserState.class);
+
+    service.reactivate(TASK_ID, USER_REF, TENANT_ID);
+
+    org.mockito.Mockito.verify(repository).save(captor.capture());
+    assertThat(captor.getValue().isMuted()).isFalse();
   }
 }
