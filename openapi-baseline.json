@@ -35,21 +35,6 @@
     "fingerprint": "fbdd0370f8a14b3c"
   },
   {
-    "operation": "createComment",
-    "rule": "example-valid",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
-    "operation": "createComment",
-    "rule": "request-example",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
-    "operation": "createComment",
-    "rule": "response-example",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
     "operation": "createFromSource",
     "rule": "property-description",
     "fingerprint": "b6b4b33d8f067e6a"
