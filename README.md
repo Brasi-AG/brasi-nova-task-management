@@ -150,10 +150,13 @@ gegen einen eigenen MSSQL-Container:
 - **Auswahl:** je Shard
   `mvn -pl brasi-nova-task-management-rt -am verify -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=<Klassen>`
   (keine Unit-Tests, nur die ITs des Shards).
-- **Gate:** `scripts/ci/check-integration-results.py` scheitert bei 0 Tests, bei
-  Failures/Errors, bei **Skips** (Maven bleibt bei uebersprungenen ITs gruen,
-  etwa ohne DB-Zugang), bei fehlendem Bericht einer erwarteten IT-Klasse und bei
-  Berichten unerwarteter Klassen. Der Job `integration-tests` fasst alle Shards
+- **Gate:** `scripts/ci/check-integration-results.py` scheitert bei 0 Tests (auch
+  je erwarteter Klasse einschliesslich innerer Klassen), bei Failures/Errors,
+  bei **Skips** (Maven bleibt bei uebersprungenen ITs gruen, etwa ohne
+  DB-Zugang), bei fehlendem Bericht einer erwarteten IT-Klasse und bei
+  Berichten unerwarteter Klassen. Tests: `python3 -m unittest discover -s
+  scripts/ci -p 'test_*.py'` (laufen auch im Job `integration-tests`). Der Job
+  `integration-tests` fasst alle Shards
   zusammen und prueft, dass jede IT-Klasse des Repositories gelaufen ist. Er
   ist der Pflicht-Check (`Integration tests`).
 - **Berichte:** Failsafe-Berichte und MSSQL-Log je Shard als Artefakt

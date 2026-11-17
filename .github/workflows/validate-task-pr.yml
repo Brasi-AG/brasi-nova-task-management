@@ -389,6 +389,9 @@ jobs:
             exit 1
           fi
 
+      - name: Self-test the integration test result gate
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
       - name: Download failsafe reports of all shards
         uses: actions/download-artifact@v4
         with:

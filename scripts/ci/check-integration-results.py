@@ -8,6 +8,8 @@ Test. Das Gate scheitert deshalb, wenn
 - keine Berichte vorliegen oder insgesamt 0 Tests liefen,
 - ein Test fehlgeschlagen ist (failures/errors) oder uebersprungen wurde (skipped),
 - fuer eine erwartete IT-Klasse kein Bericht existiert (nicht ausgefuehrt),
+- eine erwartete IT-Klasse einschliesslich ihrer inneren Klassen 0 Tests hat (z. B. fehlt der
+  Bericht der inneren Klasse: der Bericht der aeusseren Klasse allein meldet 0 Tests),
 - ein Bericht zu einer nicht erwarteten IT-Klasse existiert (Auswahl zu breit).
 
 Aufruf:
@@ -111,6 +113,20 @@ def main() -> int:
     unexpected = sorted(reported - expected)
     if missing:
         problems.append(f"Kein Bericht fuer erwartete IT-Klasse(n): {', '.join(missing)}")
+
+    # Testzahl je erwarteter Klasse inklusive innerer Klassen: Ein Bericht allein (z. B. der
+    # aeusseren Klasse FlywayMigrationIT mit tests="0") beweist nicht, dass Tests liefen.
+    tests_by_class: dict[str, int] = {}
+    for suite in suites:
+        tests_by_class[suite["top"]] = tests_by_class.get(suite["top"], 0) + suite["tests"]
+    without_tests = sorted(
+        name for name in expected & reported if tests_by_class.get(name, 0) == 0
+    )
+    if without_tests:
+        problems.append(
+            "0 Tests (einschliesslich innerer Klassen) in erwarteter IT-Klasse(n): "
+            f"{', '.join(without_tests)}. Fehlt der Bericht einer inneren Klasse?"
+        )
     if unexpected:
         problems.append(f"Bericht(e) zu nicht erwarteten IT-Klasse(n): {', '.join(unexpected)}")
 
