@@ -107,8 +107,8 @@ public class UserStateController {
    * <p>Eine stummgeschaltete Aufgabe loest fuer den Benutzer keine Benachrichtigungen mehr aus,
    * ausser {@code MENTION}, {@code REPLY}, {@code ASSIGN} und {@code HANDOVER} ({@code
    * NotificationMuteFilter}). Eine neue Zuweisung (PUT /assignees fuer neu hinzukommende Personen,
-   * HANDOVER-Ziele von POST /exit) hebt den Mute wieder auf ({@code
-   * UserStateService#reactivateAsAssignee}); dieser Endpunkt selbst ruft das nie auf.
+   * HANDOVER-Ziele von POST /exit, die vorher kein aktiver Assignee waren) hebt den Mute wieder auf
+   * ({@code UserStateService#reactivateAsAssignee}); dieser Endpunkt selbst ruft das nie auf.
    *
    * @param id externe UUID der Aufgabe
    * @param input gewuenschter Zielwert ({@code true} = stummgeschaltet, {@code false} = nicht
@@ -126,11 +126,22 @@ public class UserStateController {
               + " (HANDOVER)."
               + " Eine neue Zuweisung der Aufgabe an den Benutzer hebt die Stummschaltung"
               + " automatisch auf: PUT /api/v1/tasks/{id}/assignees fuer neu hinzukommende Personen"
-              + " und POST /api/v1/tasks/{id}/exit fuer die Ziele einer Uebergabe."
-              + " Unveraendert bleibende Assignees und das Hinzufuegen als reiner Teilnehmer"
-              + " (POST /api/v1/tasks/{id}/participants) lassen die Stummschaltung bestehen.")
+              + " und POST /api/v1/tasks/{id}/exit (HANDOVER) fuer Ziele, die vorher kein aktiver"
+              + " Assignee waren."
+              + " Unveraendert bleibende Assignees, ein bereits aktiver Assignee als Uebergabeziel"
+              + " und das Hinzufuegen als reiner Teilnehmer (POST /api/v1/tasks/{id}/participants)"
+              + " lassen die Stummschaltung bestehen.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Ungueltige Eingabe: das Feld value fehlt oder ist null (Request-Body nicht lesbar).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.BAD_REQUEST_MUTE))),
     @ApiResponse(
         responseCode = "401",
         description = "Kein oder ungueltiges JWT.",
@@ -142,7 +153,8 @@ public class UserStateController {
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).",
+            "Aufgabe nicht gefunden, fremder Mandant oder keine aktive Mitgliedschaft (neutral"
+                + " maskiert).",
         content =
             @Content(
                 mediaType = "application/json",

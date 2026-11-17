@@ -567,7 +567,8 @@ class CommentControllerIT {
   @Test
   @DisplayName(
       "i158_uebergabe_hebt_mute_des_ziels_auf (Intake #158, Folge): USER_B (stumm, ausgetreten)"
-          + " ist HANDOVER-Ziel -> entstummt, ein Top-Level-Kommentar erreicht ihn")
+          + " ist HANDOVER-Ziel -> entstummt, ein Top-Level-Kommentar erreicht ihn; ist USER_B"
+          + " schon aktiver Assignee und stumm, laesst eine Uebergabe den Mute stehen")
   void i158_uebergabe_hebt_mute_des_ziels_auf() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -593,25 +594,29 @@ class CommentControllerIT {
     assertThat(isMuted(taskUuid, USER_B_REF)).as("USER_B ist ausgetreten und stumm").isTrue();
 
     // Der Ersteller uebergibt an USER_B und bleibt als Teilnehmer.
-    mvc.perform(
-            post("/api/v1/tasks/" + taskUuid + "/exit")
-                .header("Authorization", "Bearer " + tokenA)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    om.writeValueAsString(
-                        Map.of(
-                            "exitKind",
-                            "HANDOVER",
-                            "handedOverToIds",
-                            List.of(USER_B_REF),
-                            "shouldStay",
-                            true))))
-        .andExpect(status().isNoContent());
+    handoverStay(mvc, om, tokenA, taskUuid, USER_B_REF);
 
     assertThat(isMuted(taskUuid, USER_B_REF)).as("Uebergabe hebt den Mute auf").isFalse();
     postComment(mvc, om, tokenA, taskUuid, "Top-Level nach der Uebergabe.", null);
     assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
         .as("USER_B als entstummtes Uebergabeziel erhaelt COMMENT")
+        .isEqualTo(1);
+
+    // USER_B ist jetzt aktiver Assignee. Schaltet er stumm und der Ersteller uebergibt erneut an
+    // ihn, ist das keine neue Zuweisung: der Mute bleibt, ein Top-Level-Kommentar erreicht ihn
+    // nicht (HANDOVER selbst kommt trotzdem an).
+    putMute(mvc, tokenB, taskUuid, true);
+    final int handoverBefore = countNotifications(taskUuid, USER_B_REF, "HANDOVER");
+    handoverStay(mvc, om, tokenA, taskUuid, USER_B_REF);
+    assertThat(isMuted(taskUuid, USER_B_REF))
+        .as("Uebergabe an einen bereits aktiven Assignee laesst den Mute stehen")
+        .isTrue();
+    assertThat(countNotifications(taskUuid, USER_B_REF, "HANDOVER"))
+        .as("HANDOVER kommt trotz Mute an")
+        .isEqualTo(handoverBefore + 1);
+    postComment(mvc, om, tokenA, taskUuid, "Top-Level nach der zweiten Uebergabe.", null);
+    assertThat(countNotifications(taskUuid, USER_B_REF, "COMMENT"))
+        .as("weiterhin stummer USER_B erhaelt kein weiteres COMMENT")
         .isEqualTo(1);
   }
 
@@ -1390,6 +1395,32 @@ class CommentControllerIT {
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("assignees", List.of(assignees)))))
+        .andExpect(status().isNoContent());
+  }
+
+  /**
+   * Uebergibt die Aufgabe per POST /exit (HANDOVER, shouldStay=true) an ein Ziel (erwartet 204).
+   */
+  private void handoverStay(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final UUID target)
+      throws Exception {
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/exit")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "exitKind",
+                            "HANDOVER",
+                            "handedOverToIds",
+                            List.of(target),
+                            "shouldStay",
+                            true))))
         .andExpect(status().isNoContent());
   }
 

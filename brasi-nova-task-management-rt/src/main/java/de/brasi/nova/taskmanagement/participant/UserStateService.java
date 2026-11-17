@@ -104,10 +104,11 @@ public class UserStateService {
    *
    * <p>Wie {@link #reactivate}, setzt aber zusaetzlich {@code IS_MUTED} auf {@code false}: eine
    * neue Zuweisung (PUT /assignees fuer neu hinzukommende oder wieder zugewiesene Personen, Ziele
-   * einer Uebergabe per HANDOVER) soll die Person die Aufgabe wieder aktiv wahrnehmen lassen (Folge
-   * von Intake #158). Pin und Flag bleiben unberuehrt. Unveraendert bleibende Assignees eines PUT,
-   * reine Teilnehmer und die Marker-Pfade rufen diese Methode NICHT auf. Ein neu angelegter State
-   * startet ohnehin nicht stumm. Laueft in der aktiven Transaktion des Aufrufers.
+   * einer Uebergabe per HANDOVER, die vorher kein aktiver Assignee waren) soll die Person die
+   * Aufgabe wieder aktiv wahrnehmen lassen (Folge von Intake #158). Pin und Flag bleiben
+   * unberuehrt. Unveraendert bleibende Assignees eines PUT, reine Teilnehmer und die Marker-Pfade
+   * rufen diese Methode NICHT auf. Ein neu angelegter State startet ohnehin nicht stumm. Laueft in
+   * der aktiven Transaktion des Aufrufers.
    *
    * @param taskId interne Aufgaben-ID
    * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)

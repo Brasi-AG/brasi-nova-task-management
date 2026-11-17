@@ -79,6 +79,32 @@ final class ParticipantApiExamples {
           + PATH_ASSIGNEES
           + "\",\"errorKey\":\"NOVA_NOT_FOUND\"}";
 
+  /**
+   * 409 von {@code updateAssignees}: nebenlaeufiger Versionskonflikt beim Speichern der Aufgabe.
+   */
+  static final String CONFLICT_ASSIGNEES =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_ASSIGNEES
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
+
+  /**
+   * 400 von {@code mute}: das Feld value fehlt oder ist null. Die Validierung greift beim Lesen des
+   * Bodys; die KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den Validierungstext nach
+   * details. Format gegen die Live-Antwort in {@code UserStateControllerIT} abgesichert.
+   */
+  static final String BAD_REQUEST_MUTE =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der Request-Body ist fehlerhaft formatiert oder konnte nicht gelesen"
+          + " werden.\",\"path\":\""
+          + PATH_MUTE
+          + "\",\"errorKey\":\"NOVA_MESSAGE_NOT_READABLE\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"value ist Pflichtfeld.\"]}";
+
   /** 400 von {@code exit}: unbekanntes oder fremdes Uebergabeziel. */
   static final String BAD_REQUEST_EXIT =
       ERROR_HEAD

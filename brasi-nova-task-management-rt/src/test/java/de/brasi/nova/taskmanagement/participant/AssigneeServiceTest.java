@@ -1403,6 +1403,9 @@ class AssigneeServiceTest {
             any(),
             eq(ACTOR_REF));
     assertThat(existingTarget.isAssigneeFlag()).as("bleibt Assignee").isTrue();
+    // Keine neue Zuweisung (war schon aktiver Assignee): nur reactivate, der Mute bleibt (#158).
+    verify(userStateService).reactivate(eq(taskId), eq(t1), eq(TENANT_ID));
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
   }
 
   @Test
@@ -2258,7 +2261,8 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "mute_handover_ziel_wird_entstummt: HANDOVER-Ziel mit stummem State -> IS_MUTED=false")
+      "mute_handover_ziel_wird_entstummt: HANDOVER-Ziel war kein aktiver Assignee (ausgetretener"
+          + " Ex-Assignee mit stummem State) -> IS_MUTED=false")
   void mute_handover_ziel_wird_entstummt() {
     final Long taskId = 702L;
     final UUID taskUuid = UUID.randomUUID();
@@ -2267,6 +2271,13 @@ class AssigneeServiceTest {
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
         .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    // Ziel-Zeile: ausgetretener Ex-Assignee (PERSON, task-tenant) -> wird neu zugewiesen.
+    final TaskParticipant exitedTarget = activeAssignee(taskId, targetRef, false);
+    exitedTarget.setEntityState(EntityState.ACTIVE);
+    exitedTarget.setExitKind(ExitKind.UNSUBSCRIBED);
+    exitedTarget.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, targetRef))
+        .thenReturn(List.of(exitedTarget));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -2282,6 +2293,50 @@ class AssigneeServiceTest {
     assertThat(targetState.isMuted()).as("Uebergabe hebt Mute des Ziels auf").isFalse();
     assertThat(targetState.getUnsubscribedAt()).isNull();
     verify(userStateQueryRepository).save(targetState);
+    // HANDOVER ist ohnehin vom Mute ausgenommen und kommt weiterhin an.
+    verify(notificationService)
+        .emit(
+            eq(targetRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.HANDOVER),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  @Test
+  @DisplayName(
+      "mute_handover_ziel_bereits_aktiver_assignee_bleibt_stumm: HANDOVER an eine Person, die"
+          + " schon aktiver Assignee ist, ist keine neue Zuweisung -> IS_MUTED bleibt true")
+  void mute_handover_ziel_bereits_aktiver_assignee_bleibt_stumm() {
+    final Long taskId = 704L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID targetRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    // Ziel-Zeile: bereits aktiver Assignee (PERSON, task-tenant, ACTIVE, kein Austritt).
+    final TaskParticipant activeTarget = activeAssignee(taskId, targetRef, false);
+    activeTarget.setEntityState(EntityState.ACTIVE);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, targetRef))
+        .thenReturn(List.of(activeTarget));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final TaskUserState targetState = mutedState(taskId, targetRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, targetRef))
+        .thenReturn(List.of(targetState));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+
+    serviceWithRealUserState()
+        .exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(targetRef), false));
+
+    assertThat(targetState.isMuted())
+        .as("bereits aktiver Assignee bleibt bei der Uebergabe stumm")
+        .isTrue();
     // HANDOVER ist ohnehin vom Mute ausgenommen und kommt weiterhin an.
     verify(notificationService)
         .emit(
