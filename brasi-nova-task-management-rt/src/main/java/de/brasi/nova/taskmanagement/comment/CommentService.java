@@ -9,6 +9,7 @@ import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
@@ -66,6 +67,7 @@ public class CommentService {
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
+  private final NotificationMuteFilter muteFilter;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -79,7 +81,8 @@ public class CommentService {
       final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter,
-      final TaskMembershipGuard membershipGuard) {
+      final TaskMembershipGuard membershipGuard,
+      final NotificationMuteFilter muteFilter) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -91,6 +94,7 @@ public class CommentService {
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
+    this.muteFilter = muteFilter;
   }
 
   /**
@@ -211,12 +215,18 @@ public class CommentService {
     // COMMENT-Empfaenger (Intake #136) VOR dem TASK-save bestimmen: aktive PERSON-Assignees der
     // Aufgabe. Nur fuer Top-Level-Kommentare (parentComment == null) relevant; der Read laeuft
     // dennoch im Lock-Order-Block (keine zusaetzlichen Reads nach dem save).
+    // Intake #158: Personen, die die Aufgabe stummgeschaltet haben, erhalten kein COMMENT. Die
+    // Mute-Zustaende werden gebuendelt (eine Query) ebenfalls VOR dem TASK-save gelesen; MENTION
+    // und REPLY sind von der Regel ausgenommen und bleiben unberuehrt (NotificationMuteFilter).
     final List<UUID> assigneeRefs;
     if (parentComment == null) {
       assigneeRefs =
-          participantQueryRepository.findActiveAssigneesByTaskId(taskId).stream()
-              .map(TaskParticipant::getParticipantRef)
-              .toList();
+          muteFilter.withoutMuted(
+              taskId,
+              NotificationTypeCodes.COMMENT,
+              participantQueryRepository.findActiveAssigneesByTaskId(taskId).stream()
+                  .map(TaskParticipant::getParticipantRef)
+                  .toList());
     } else {
       assigneeRefs = List.of();
     }

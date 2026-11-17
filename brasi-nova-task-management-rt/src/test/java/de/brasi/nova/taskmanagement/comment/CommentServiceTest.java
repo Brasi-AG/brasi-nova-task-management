@@ -20,6 +20,7 @@ import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationSeverityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
+import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
@@ -111,7 +112,8 @@ class CommentServiceTest {
             userReadRepository,
             userAccessor,
             new AuditTimeConverter("Europe/Berlin"),
-            membershipGuard);
+            membershipGuard,
+            new NotificationMuteFilter(userStateQueryRepository));
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -994,6 +996,95 @@ class CommentServiceTest {
         .emit(any(), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
   }
 
+  // ===========================================================================================
+  // Intake #158: Stummgeschaltete Aufgabe unterdrueckt COMMENT, nicht aber MENTION und REPLY
+  // ===========================================================================================
+
+  @Test
+  @DisplayName(
+      "mute_top_level: stummer Assignee erhaelt KEIN COMMENT, lauter Assignee schon;"
+          + " Mute-Lesung gebuendelt (1 Query) VOR dem TASK-save")
+  void mute_top_level_kommentar_unterdrueckt_comment_fuer_stummen_assignee() {
+    final Long taskId = 88L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    stubSave();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(assigneeWith(ALICE_UUID), assigneeWith(BOB_UUID)));
+    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+        .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Top-Level, bob ist stumm.", null, List.of()));
+
+    verify(notificationService, times(1))
+        .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(BOB_UUID), any(), any(), any(), any(), any(), any());
+    final org.mockito.InOrder inOrder =
+        org.mockito.Mockito.inOrder(userStateQueryRepository, taskRepository);
+    inOrder
+        .verify(userStateQueryRepository, times(1))
+        .findMutedByTaskIdAndUserRefs(eq(taskId), any());
+    inOrder.verify(taskRepository).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "mute_mention: stummer Assignee, der erwaehnt wird, erhaelt die MENTION (Ausnahme),"
+          + " aber kein COMMENT")
+  void mute_mention_kommt_trotz_mute_an() {
+    final Long taskId = 89L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    stubSave();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(assigneeWith(BOB_UUID)));
+    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+        .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("@bob trotz Mute.", null, List.of(BOB_UUID)));
+
+    verify(notificationService, times(1))
+        .emit(eq(BOB_UUID), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(BOB_UUID), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "mute_reply: stummer Eltern-Autor erhaelt die REPLY (Ausnahme); fuer Antworten wird der"
+          + " Mute-Zustand gar nicht gelesen")
+  void mute_reply_kommt_trotz_mute_an() {
+    final Long taskId = 90L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 1);
+    final UUID parentUuid = UUID.randomUUID();
+    final TaskComment parent = commentWithId(92L, taskId, ALICE_UUID, parentUuid);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(commentRepository.findByUuid(parentUuid.toString())).thenReturn(Optional.of(parent));
+    stubSave();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(userStateQueryRepository.findMutedByTaskIdAndUserRefs(eq(taskId), any()))
+        .thenReturn(List.of(mutedState(ALICE_UUID, taskId)));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Antwort an stumme alice.", parentUuid, List.of()));
+
+    verify(notificationService, times(1))
+        .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
+    verify(userStateQueryRepository, never()).findMutedByTaskIdAndUserRefs(any(), any());
+  }
+
   // ---- InOrder (Codex-Hinweis: GETRENNTE Aufrufe!): Reads VOR taskRepository.save --------------
 
   @Test
@@ -1112,6 +1203,13 @@ class CommentServiceTest {
     state.setTenantId(TENANT_ID);
     state.setTaskId(taskId);
     state.setUserRef(userRef);
+    return state;
+  }
+
+  /** Aktiver, stummgeschalteter UserState (Intake #158). */
+  private static TaskUserState mutedState(final UUID userRef, final Long taskId) {
+    final TaskUserState state = stateWithUserRef(userRef, taskId);
+    state.setMuted(true);
     return state;
   }
 

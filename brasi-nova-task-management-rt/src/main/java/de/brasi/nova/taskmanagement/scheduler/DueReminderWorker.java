@@ -2,6 +2,8 @@ package de.brasi.nova.taskmanagement.scheduler;
 
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.refentity.Firm;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
@@ -13,6 +15,7 @@ import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,20 +27,18 @@ import org.springframework.stereotype.Component;
 /**
  * Due-Reminder-Scheduler (arch-v2 §5, plan-v3 Task 16).
  *
- * <p>Zwei-Stufen-Steuerung (arch-v2 §5): Die Bean existiert nur bei
- * {@code task.scheduler.worker-enabled=true} (dann registriert {@code @EnableScheduling} auf der
- * Anwendung das {@code @Scheduled}); der Lauf selbst bricht beim Laufzeit-Flag
- * {@code task.scheduler.enabled=false} frueh ab. Beide sind per Default aus -> der Scheduler ist
- * inert.
+ * <p>Zwei-Stufen-Steuerung (arch-v2 §5): Die Bean existiert nur bei {@code
+ * task.scheduler.worker-enabled=true} (dann registriert {@code @EnableScheduling} auf der Anwendung
+ * das {@code @Scheduled}); der Lauf selbst bricht beim Laufzeit-Flag {@code
+ * task.scheduler.enabled=false} frueh ab. Beide sind per Default aus -> der Scheduler ist inert.
  *
  * <p>Ablauf je Lauf: {@code runAsSystem} -> {@link TaskKeysetQueryRepository#findDueOpenTasks}
  * (global, ohne {@code :tenantId}) -> pro Treffer {@code runWithTenant(tenantOf(row))} -> aktive
- * Assignees -> pro Empfaenger {@link DueReminderEmitter#emitOnce} (eigene
- * {@code REQUIRES_NEW}-Transaktion). Der UNIQUE-Konflikt auf der Idempotenz-Quittung wird von KSF
- * als {@link BusinessRuleException} (HTTP 409) gemeldet und hier (ausserhalb der
- * Emitter-Transaktion) als "bereits erledigt" verschluckt - idempotent, kein zweites DUE. Die
- * einzige {@code BusinessRuleException}-Quelle in {@code emitOnce} ist dieser
- * Quittungs-UNIQUE-Konflikt.
+ * Assignees -> pro Empfaenger {@link DueReminderEmitter#emitOnce} (eigene {@code
+ * REQUIRES_NEW}-Transaktion). Der UNIQUE-Konflikt auf der Idempotenz-Quittung wird von KSF als
+ * {@link BusinessRuleException} (HTTP 409) gemeldet und hier (ausserhalb der Emitter-Transaktion)
+ * als "bereits erledigt" verschluckt - idempotent, kein zweites DUE. Die einzige {@code
+ * BusinessRuleException}-Quelle in {@code emitOnce} ist dieser Quittungs-UNIQUE-Konflikt.
  */
 @Component
 @ConditionalOnProperty(
@@ -56,10 +57,11 @@ public class DueReminderWorker {
   private final DictionaryCodeResolver resolver;
   private final IdMappingService idMappingService;
   private final AuditTimeConverter auditTimeConverter;
+  private final NotificationMuteFilter muteFilter;
 
   /**
-   * Konstruktor-Injektion. Das Laufzeit-Flag kommt direkt per {@code @Value}
-   * ({@code task.scheduler.enabled}, Default {@code false}) - die Bean-Existenz regelt separat
+   * Konstruktor-Injektion. Das Laufzeit-Flag kommt direkt per {@code @Value} ({@code
+   * task.scheduler.enabled}, Default {@code false}) - die Bean-Existenz regelt separat
    * {@code @ConditionalOnProperty(task.scheduler.worker-enabled)}.
    */
   public DueReminderWorker(
@@ -69,7 +71,8 @@ public class DueReminderWorker {
       final DueReminderEmitter emitter,
       final DictionaryCodeResolver resolver,
       final IdMappingService idMappingService,
-      final AuditTimeConverter auditTimeConverter) {
+      final AuditTimeConverter auditTimeConverter,
+      final NotificationMuteFilter muteFilter) {
     this.enabled = enabled;
     this.taskQueryRepository = taskQueryRepository;
     this.participantRepository = participantRepository;
@@ -77,6 +80,7 @@ public class DueReminderWorker {
     this.resolver = resolver;
     this.idMappingService = idMappingService;
     this.auditTimeConverter = auditTimeConverter;
+    this.muteFilter = muteFilter;
   }
 
   /** Geplanter Einstieg; das Laufzeit-Flag {@code enabled} entscheidet, ob ein Lauf stattfindet. */
@@ -117,6 +121,13 @@ public class DueReminderWorker {
         () -> {
           final List<TaskParticipant> assignees =
               participantRepository.findActiveAssigneesByTaskId(task.getId());
+          // Intake #158: Mute-Zustaende aller Assignees gebuendelt (eine Query je Aufgabe) lesen;
+          // stumme Empfaenger erhalten keine DUE-Benachrichtigung (Regel: NotificationMuteFilter).
+          final Set<UUID> muted =
+              muteFilter.findMuted(
+                  task.getId(),
+                  NotificationTypeCodes.DUE,
+                  assignees.stream().map(TaskParticipant::getParticipantRef).toList());
           for (final TaskParticipant assignee : assignees) {
             try {
               emitter.emitOnce(
@@ -124,7 +135,8 @@ public class DueReminderWorker {
                   task.getId(),
                   assignee.getParticipantRef(),
                   today,
-                  task.getTitle());
+                  task.getTitle(),
+                  muted.contains(assignee.getParticipantRef()));
             } catch (BusinessRuleException alreadyEmitted) {
               // UNIQUE-Konflikt auf der Idempotenz-Quittung (KSF -> 409): bereits erledigt.
               log.debug(

@@ -568,7 +568,9 @@ class CommentConcurrencyIT {
           userReadRepository,
           userAccessor,
           auditTimeConverter,
-          membershipGuard);
+          membershipGuard,
+          new de.brasi.nova.taskmanagement.notification.NotificationMuteFilter(
+              userStateQueryRepository));
     }
 
     void armTaskSaveInjector(final Runnable injector) {

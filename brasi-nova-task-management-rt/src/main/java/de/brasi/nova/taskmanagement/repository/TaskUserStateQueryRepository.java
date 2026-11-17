@@ -10,8 +10,8 @@ import org.springframework.data.repository.query.Param;
 /**
  * Erweiterung des generierten {@link BaseTaskUserStateRepository} mit benutzerscoped Abfragen.
  *
- * <p>Kein {@code tenantId}-Parameter: {@code :tenantId} wird automatisch vom
- * KSF-{@code NovaQueryTenantValidator} aus dem {@code TenantContextHolder} gebunden.
+ * <p>Kein {@code tenantId}-Parameter: {@code :tenantId} wird automatisch vom KSF-{@code
+ * NovaQueryTenantValidator} aus dem {@code TenantContextHolder} gebunden.
  */
 public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepository {
 
@@ -20,7 +20,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
    *
    * <p>Gibt maximal einen Eintrag zurueck (UNIQUE-Constraint auf TASK_ID + USER_REF).
    *
-   * @param taskId  interne Aufgaben-ID
+   * @param taskId interne Aufgaben-ID
    * @param userRef UUID des Benutzers
    * @return Liste mit 0 oder 1 Eintraegen
    */
@@ -66,9 +66,9 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
   /**
    * Liefert alle aktiven Teilnehmer einer Aufgabe (UNSUBSCRIBED_AT IS NULL).
    *
-   * <p>Wird von {@link de.brasi.nova.taskmanagement.task.TaskCommandService#patch} verwendet,
-   * um nach einem Commit alle betroffenen Benutzer-Inboxen zu invalidieren.
-   * Kein {@code tenantId}-Parameter: automatisch vom KSF-NovaQueryTenantValidator gebunden.
+   * <p>Wird von {@link de.brasi.nova.taskmanagement.task.TaskCommandService#patch} verwendet, um
+   * nach einem Commit alle betroffenen Benutzer-Inboxen zu invalidieren. Kein {@code
+   * tenantId}-Parameter: automatisch vom KSF-NovaQueryTenantValidator gebunden.
    *
    * @param taskId interne Aufgaben-ID
    * @return alle aktiven (nicht abgemeldeten) Teilnehmer-Zustandseintraege
@@ -91,17 +91,18 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
   List<TaskUserState> findActiveUserRefsByTaskId(@Param("taskId") Long taskId);
 
   /**
-   * Batch-Variante fuer die Inbox-Read-Anreicherung (BE-1): liefert die aktiven
-   * {@link TaskUserState}-Rows des ANFRAGERS ({@code userRef}) fuer die uebergebene Aufgaben-Seite in
+   * Batch-Variante fuer die Inbox-Read-Anreicherung (BE-1): liefert die aktiven {@link
+   * TaskUserState}-Rows des ANFRAGERS ({@code userRef}) fuer die uebergebene Aufgaben-Seite in
    * EINER Abfrage (konstante Query-Zahl, kein N+1). Pro (Aufgabe, Benutzer) existiert maximal eine
    * aktive Row (UNIQUE TASK_ID + USER_REF), daher je Aufgabe hoechstens ein Eintrag.
    *
-   * <p>Liefert die persoenlichen Marker ({@code IS_PINNED/IS_FLAGGED/IS_MUTED}) sowie
-   * {@code UNSUBSCRIBED_AT} (+ geerbtes {@code ANGELEGT_AM}) fuer die asOf-gebundene
-   * Marker-/{@code exit}-Ableitung des Anfragers.
+   * <p>Liefert die persoenlichen Marker ({@code IS_PINNED/IS_FLAGGED/IS_MUTED}) sowie {@code
+   * UNSUBSCRIBED_AT} (+ geerbtes {@code ANGELEGT_AM}) fuer die asOf-gebundene Marker-/{@code
+   * exit}-Ableitung des Anfragers.
    *
-   * <p>{@code taskIds} darf NIE leer sein (MSSQL {@code IN ()} -> Syntaxfehler); der Service guardet
-   * die leere Seite. {@code :tenantId} wird automatisch vom KSF-NovaQueryTenantValidator gebunden.
+   * <p>{@code taskIds} darf NIE leer sein (MSSQL {@code IN ()} -> Syntaxfehler); der Service
+   * guardet die leere Seite. {@code :tenantId} wird automatisch vom KSF-NovaQueryTenantValidator
+   * gebunden.
    *
    * @param taskIds interne Aufgaben-IDs der Seite (nicht leer)
    * @param userRef UUID des Anfragers (Actor)
@@ -124,4 +125,39 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskUserState> findByTaskIdsAndUserRef(
       @Param("taskIds") Collection<Long> taskIds, @Param("userRef") UUID userRef);
+
+  /**
+   * Batch-Lesung fuer die Stummschalt-Regel der Benachrichtigungen (Intake #158): liefert die
+   * aktiven {@link TaskUserState}-Rows einer Aufgabe, deren Benutzer in {@code userRefs} liegt und
+   * die Aufgabe stummgeschaltet hat ({@code IS_MUTED = 1}). Eine Abfrage je Ereignis, kein N+1.
+   *
+   * <p>Benutzer ohne aktive Row fehlen im Ergebnis und gelten damit als nicht stumm.
+   *
+   * <p>{@code userRefs} darf NIE leer sein (MSSQL {@code IN ()} -> Syntaxfehler); der Aufrufer
+   * ({@code NotificationMuteFilter}) guardet die leere Menge. {@code :tenantId} wird automatisch
+   * vom KSF-NovaQueryTenantValidator gebunden.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRefs UUIDs der Empfaenger-Kandidaten (nicht leer)
+   * @return die stummgeschalteten aktiven Rows dieser Kandidaten (hoechstens eine je Benutzer)
+   */
+  @NovaQuery(
+      value =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM TASK_USER_STATE "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND USER_REF IN (:userRefs) "
+              + "AND IS_MUTED = 1 "
+              + "AND ENTITY_STATUS = 'ACTIVE'",
+      mssql =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM [dbo].[TASK_USER_STATE] "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND USER_REF IN (:userRefs) "
+              + "AND IS_MUTED = 1 "
+              + "AND ENTITY_STATUS = 'ACTIVE'")
+  List<TaskUserState> findMutedByTaskIdAndUserRefs(
+      @Param("taskId") Long taskId, @Param("userRefs") Collection<UUID> userRefs);
 }
