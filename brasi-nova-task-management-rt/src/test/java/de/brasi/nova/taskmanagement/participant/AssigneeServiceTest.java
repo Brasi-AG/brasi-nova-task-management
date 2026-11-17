@@ -267,6 +267,38 @@ class AssigneeServiceTest {
     verify(taskRepository).save(task);
   }
 
+  @Test
+  @DisplayName(
+      "lock_order_update_assignees_state_read_vor_task_save (Intake #156): die Lesung der aktiven"
+          + " States fuer das Signal laeuft VOR taskRepository.save, danach erst der sortierte Bump"
+          + " (Mitgliedschaft vor Aufgabe; sonst wartet die Lesung unter dem TASK-Lock auf eine"
+          + " Aufnahme per Kommentar, die ihrerseits die Aufgabe will -> Deadlock)")
+  void lock_order_update_assignees_state_read_vor_task_save() {
+    final Long taskId = 43L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ASSIGNEE_REF)));
+
+    final InOrder order =
+        inOrder(
+            participantQueryRepository,
+            userStateQueryRepository,
+            taskRepository,
+            inboxGenerationService);
+    order.verify(participantQueryRepository).save(any(TaskParticipant.class));
+    order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
+    order.verify(taskRepository).save(task);
+    order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
+  }
+
   // ---- Test 2: exit HANDOVER -> EXIT_KIND/EXIT_AT + HANDOVER-Notification + invalidate
   // -----------
 
@@ -1497,6 +1529,183 @@ class AssigneeServiceTest {
   // ============================================================================================
   // BE-6: addParticipants (additiv, idempotent, ausschliesslich Teilnehmer-Rolle)
   // ============================================================================================
+
+  // ---- Intake #156: gemeinsamer Aufnahme-Kern (Kommentar mit Erwaehnung nutzt ihn mit) ----------
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_neuer_ref: legt reinen Teilnehmer samt State an und meldet ihn zurueck;"
+          + " KEINE Benachrichtigung, KEIN Bump, KEIN Signal, KEIN Task-Save (das erledigt der"
+          + " Aufrufer in seiner Lock-Reihenfolge)")
+  void addAsParticipants_neuer_ref() {
+    final Long taskId = 210L;
+    final UUID ref = UUID.randomUUID();
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final List<UUID> affected = service.addAsParticipants(taskId, TENANT_ID, List.of(ref));
+
+    assertThat(affected).containsExactly(ref);
+    final ArgumentCaptor<TaskParticipant> saved = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository).save(saved.capture());
+    assertThat(saved.getValue().isParticipantFlag()).isTrue();
+    assertThat(saved.getValue().isAssigneeFlag()).as("nie Assignee").isFalse();
+    assertThat(saved.getValue().isCreatorFlag()).isFalse();
+    assertThat(saved.getValue().getParticipantKind()).isEqualTo(ParticipantKind.PERSON);
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+    verify(taskRepository, never()).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_ausgetretener_ref: reaktiviert als reiner Teilnehmer (Ex-Assignee ohne"
+          + " Assignee-Flag) per reactivate, nie reactivateAsAssignee (ein Mute bleibt)")
+  void addAsParticipants_ausgetretener_ref() {
+    final Long taskId = 211L;
+    final UUID ref = UUID.randomUUID();
+    final TaskParticipant exitedAssignee = new TaskParticipant();
+    exitedAssignee.setId(4L);
+    exitedAssignee.setTaskId(taskId);
+    exitedAssignee.setParticipantRef(ref);
+    exitedAssignee.setAssigneeFlag(true);
+    exitedAssignee.setParticipantFlag(true);
+    exitedAssignee.setExitKind(ExitKind.UNSUBSCRIBED);
+    exitedAssignee.setExitAt(java.time.LocalDateTime.now().minusDays(1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+        .thenReturn(List.of(exitedAssignee));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final List<UUID> affected = service.addAsParticipants(taskId, TENANT_ID, List.of(ref));
+
+    assertThat(affected).containsExactly(ref);
+    assertThat(exitedAssignee.isAssigneeFlag()).as("Assignee-Flag geloescht").isFalse();
+    assertThat(exitedAssignee.getExitKind()).isNull();
+    assertThat(exitedAssignee.getExitAt()).isNull();
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_aktiver_ref_und_race_verlierer: aktive Zeile und gleichzeitiger Insert"
+          + " (Duplicate-Key, Gewinner aktiv) werden uebersprungen und nicht gemeldet")
+  void addAsParticipants_aktiver_ref_und_race_verlierer() {
+    final Long taskId = 212L;
+    final UUID activeRef = UUID.fromString("00000000-0000-0000-0000-0000000000a1");
+    final UUID raceRef = UUID.fromString("00000000-0000-0000-0000-0000000000a2");
+    final UUID newRef = UUID.fromString("00000000-0000-0000-0000-0000000000a3");
+
+    final TaskParticipant active = new TaskParticipant();
+    active.setId(5L);
+    active.setTaskId(taskId);
+    active.setParticipantRef(activeRef);
+    active.setParticipantFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, activeRef))
+        .thenReturn(List.of(active));
+
+    final TaskParticipant winner = new TaskParticipant();
+    winner.setId(6L);
+    winner.setTaskId(taskId);
+    winner.setParticipantRef(raceRef);
+    winner.setParticipantFlag(true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, raceRef))
+        .thenReturn(List.of(), List.of(winner));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRef))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(
+            inv -> {
+              final TaskParticipant p = inv.getArgument(0);
+              if (raceRef.equals(p.getParticipantRef())) {
+                throw new BusinessRuleException(
+                    "Konflikt", new DuplicateKeyException("UQ_TASK_PARTICIPANT_TASK_USER"));
+              }
+              return p;
+            });
+
+    final List<UUID> affected =
+        service.addAsParticipants(taskId, TENANT_ID, List.of(newRef, raceRef, activeRef));
+
+    assertThat(affected).containsExactly(newRef);
+    verify(userStateService).ensure(eq(taskId), eq(newRef), eq(TENANT_ID));
+    verify(userStateService, never()).ensure(eq(taskId), eq(raceRef), eq(TENANT_ID));
+    verify(userStateService, never()).ensure(eq(taskId), eq(activeRef), eq(TENANT_ID));
+  }
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_dedupliziert_und_sortiert: doppelte Refs einmal, Schreibreihenfolge nach"
+          + " UUID (gleiche Zeilen-Lock-Reihenfolge wie addParticipants)")
+  void addAsParticipants_dedupliziert_und_sortiert() {
+    final Long taskId = 213L;
+    final UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(anyLong(), any()))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final List<UUID> affected =
+        service.addAsParticipants(taskId, TENANT_ID, List.of(second, first, second));
+
+    assertThat(affected).containsExactly(first, second);
+    final ArgumentCaptor<TaskParticipant> saves = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, times(2)).save(saves.capture());
+    assertThat(saves.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList())
+        .containsExactly(first, second);
+  }
+
+  @Test
+  @DisplayName(
+      "mayAddParticipants: spiegelt die Berechtigung des Endpunkts POST /participants"
+          + " (exakte Authority TASK_WRITE)")
+  void mayAddParticipants_spiegelt_task_write() {
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(true);
+    assertThat(service.mayAddParticipants()).isTrue();
+
+    when(permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE))
+        .thenReturn(false);
+    assertThat(service.mayAddParticipants()).isFalse();
+  }
+
+  @Test
+  @DisplayName(
+      "addParticipants_nutzt_gemeinsamen_kern: addParticipants ruft addAsParticipants und"
+          + " benachrichtigt genau die zurueckgemeldeten Personen (PARTICIPANT, Akteur = Ausloeser)")
+  void addParticipants_nutzt_gemeinsamen_kern() {
+    final Long taskId = 214L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final AssigneeService spied = org.mockito.Mockito.spy(service);
+    org.mockito.Mockito.doReturn(List.of(ref))
+        .when(spied)
+        .addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+
+    spied.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    verify(spied).addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(inboxGenerationService).bump(TENANT_ID, ref);
+  }
 
   @Test
   @DisplayName(

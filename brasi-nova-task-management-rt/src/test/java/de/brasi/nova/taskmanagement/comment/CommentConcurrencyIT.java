@@ -104,6 +104,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *       nebenlaeufiger updateAssignees-Gewinner committet und bumpt die TASK-VERSION. Nach der
  *       Fortsetzung trifft der Verlierer beim versionierten TASK-save die stale VERSION -> 409 +
  *       voller Rollback (kein Kommentar, keine Notification, kein After-Commit-Push).
+ *   <li><b>Aufnahme erwaehnter Nicht-Mitglieder (Intake #156):</b> {@link
+ *       #createComment_mit_aufnahme_verliert_version_voller_rollback} belegt, dass die Aufnahme
+ *       (Teilnehmer- und State-Zeile) vor dem TASK-save liegt und bei verlorenem Versions-Wettlauf
+ *       mit zurueckgerollt wird; {@link
+ *       #createComment_mit_aufnahme_vs_updateAssignees_kein_deadlock} laesst Kommentar mit Aufnahme
+ *       und updateAssignees parallel laufen (kein Deadlock, alles oder nichts).
  * </ul>
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
@@ -143,6 +149,9 @@ class CommentConcurrencyIT {
   /** Neues Assignee-Ziel, das der updateAssignees-Gewinner ergaenzt (TASK-VERSION-Bump). */
   private static final UUID TARGET_WIN = UUID.fromString("00000059-00d0-0059-0000-000000000595");
 
+  /** Erwaehnter Mandanten-Nutzer, der noch kein Mitglied ist (Intake #156: wird aufgenommen). */
+  private static final UUID MENTIONED_REF = UUID.fromString("00000059-00e0-0059-0000-000000000595");
+
   private static final long STATUS_OPEN = 101L;
   private static final long PRIORITY_NORMAL = 202L;
   private static final long DIRECTION = 301L;
@@ -155,6 +164,15 @@ class CommentConcurrencyIT {
   private static final long TASK_VERSION_ID = 595102L;
   private static final UUID TASK_VERSION_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000595102");
+
+  // Aufnahme-Verlierer-Aufgabe (mit Seam, Intake #156).
+  private static final long TASK_ADD_LOSER_ID = 595103L;
+  private static final UUID TASK_ADD_LOSER_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000595103");
+  // Aufnahme-Deadlock-Beweis-Aufgabe (ohne Seam, Intake #156).
+  private static final long TASK_ADD_PARALLEL_ID = 595104L;
+  private static final UUID TASK_ADD_PARALLEL_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000595104");
 
   private static final long WINNER_JOIN_TIMEOUT_MS = 60_000L;
 
@@ -205,6 +223,7 @@ class CommentConcurrencyIT {
     seedBenutzer(jt, 595501L, ACTOR_REF, "actor@brasi.de");
     seedBenutzer(jt, 595502L, ASSIGNEE_REF, "assignee@brasi.de");
     seedBenutzer(jt, 595503L, TARGET_WIN, "target-win@brasi.de");
+    seedBenutzer(jt, 595504L, MENTIONED_REF, "mentioned@brasi.de");
 
     // Deadlock-Beweis-Aufgabe: ACTOR (Creator+Assignee) + ASSIGNEE (Assignee) aktiv.
     insertTask(jt, TASK_NODEADLOCK_ID, TASK_NODEADLOCK_UUID, "IT-Concurrency-NoDeadlock");
@@ -215,6 +234,16 @@ class CommentConcurrencyIT {
     insertTask(jt, TASK_VERSION_ID, TASK_VERSION_UUID, "IT-Concurrency-Version");
     insertActiveAssignee(jt, 595203L, TASK_VERSION_ID, ACTOR_REF, true);
     insertActiveAssignee(jt, 595204L, TASK_VERSION_ID, ASSIGNEE_REF, false);
+
+    // Aufnahme-Aufgaben (Intake #156): ACTOR (Creator+Assignee) + ASSIGNEE (Assignee) aktiv,
+    // MENTIONED_REF ist kein Mitglied.
+    insertTask(jt, TASK_ADD_LOSER_ID, TASK_ADD_LOSER_UUID, "IT-Concurrency-Aufnahme-Version");
+    insertActiveAssignee(jt, 595205L, TASK_ADD_LOSER_ID, ACTOR_REF, true);
+    insertActiveAssignee(jt, 595206L, TASK_ADD_LOSER_ID, ASSIGNEE_REF, false);
+    insertTask(
+        jt, TASK_ADD_PARALLEL_ID, TASK_ADD_PARALLEL_UUID, "IT-Concurrency-Aufnahme-Parallel");
+    insertActiveAssignee(jt, 595207L, TASK_ADD_PARALLEL_ID, ACTOR_REF, true);
+    insertActiveAssignee(jt, 595208L, TASK_ADD_PARALLEL_ID, ASSIGNEE_REF, false);
   }
 
   @BeforeEach
@@ -375,6 +404,141 @@ class CommentConcurrencyIT {
         .isZero();
   }
 
+  // ---- Intake #156: Aufnahme erwaehnter Nicht-Mitglieder ----------------------------------------
+
+  @Test
+  @DisplayName(
+      "createComment_mit_aufnahme_verliert_version_voller_rollback (Intake #156): die Aufnahme der"
+          + " erwaehnten Person (Teilnehmer- und State-Zeile) liegt vor dem TASK-save; verliert der"
+          + " Kommentar den Versions-Wettlauf, gibt es 409 und KEINE Teilpersistenz (weder"
+          + " Teilnehmer noch State noch MENTION noch Kommentar)")
+  void createComment_mit_aufnahme_verliert_version_voller_rollback() {
+    final int versionBefore = taskVersion(TASK_ADD_LOSER_UUID);
+    final int commentsBefore = commentRowCount(TASK_ADD_LOSER_ID, ACTOR_REF);
+
+    // Am Seam (nach der Aufnahme, vor dem TASK-save) bumpt ein eigener Thread auf einer
+    // unabhaengigen, sofort committenden Verbindung die TASK-VERSION (im Thread des Verlierers
+    // lief der Update in dessen Transaktion und wuerde mit zurueckgerollt): der versionierte save
+    // des Verlierers trifft die veraltete VERSION.
+    commentService.armTaskSaveInjector(
+        () ->
+            runWinnerOnSeparateThread(
+                () ->
+                    jdbcTemplate.update(
+                        "UPDATE [dbo].[TASK] SET VERSION = VERSION + 1 WHERE ID = ?",
+                        TASK_ADD_LOSER_ID)));
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+    ACTOR_PER_THREAD.set(ACTOR_REF);
+    try {
+      assertThatThrownBy(
+              () ->
+                  commentService.createComment(
+                      TASK_ADD_LOSER_UUID,
+                      new CommentCreateInput(
+                          "Verliert den Versions-Race.", null, List.of(MENTIONED_REF))))
+          .as("Versions-Verlierer -> 409 (BusinessRuleException)")
+          .isInstanceOf(BusinessRuleException.class);
+    } finally {
+      ACTOR_PER_THREAD.remove();
+      TenantContextHolder.clear();
+    }
+
+    assertThat(winnerTimedOut.get()).as("der unabhaengige Bump beendete rechtzeitig").isFalse();
+    assertThat(winnerError.get()).as("der unabhaengige Bump committete fehlerfrei").isNull();
+    assertThat(taskVersion(TASK_ADD_LOSER_UUID))
+        .as("nur der unabhaengige Bump, der Verlierer hat die Aufgabe nicht gespeichert")
+        .isEqualTo(versionBefore + 1);
+    assertThat(commentRowCount(TASK_ADD_LOSER_ID, ACTOR_REF))
+        .as("kein Kommentar persistiert")
+        .isEqualTo(commentsBefore);
+    assertThat(participantRowCount(TASK_ADD_LOSER_ID, MENTIONED_REF))
+        .as("die Aufnahme wurde zurueckgerollt (keine Teilnehmerzeile)")
+        .isZero();
+    assertThat(userStateRowCount(TASK_ADD_LOSER_ID, MENTIONED_REF))
+        .as("kein persoenlicher State")
+        .isZero();
+    assertThat(notificationCountOfRecipient(TASK_ADD_LOSER_ID, MENTIONED_REF))
+        .as("keine MENTION gespeichert")
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "createComment_mit_aufnahme_vs_updateAssignees_kein_deadlock (Intake #156): Kommentar mit"
+          + " Erwaehnung eines Nicht-Mitglieds und updateAssignees mit ueberlappenden Teilnehmern"
+          + " laufen parallel -> kein Deadlock/Timeout; ein Fehler ist hoechstens ein Versions-"
+          + " konflikt (409) mit vollem Rollback, die Aufnahme ist alles oder nichts")
+  void createComment_mit_aufnahme_vs_updateAssignees_kein_deadlock() throws Exception {
+    final AtomicReference<Throwable> winnerErr = new AtomicReference<>();
+    final Thread winner =
+        new Thread(
+            () -> {
+              TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+              ACTOR_PER_THREAD.set(ACTOR_REF);
+              try {
+                assigneeService.updateAssignees(
+                    TASK_ADD_PARALLEL_UUID,
+                    new AssigneeUpdateInput(Set.of(ACTOR_REF, ASSIGNEE_REF, TARGET_WIN)));
+              } catch (final Throwable t) {
+                winnerErr.set(t);
+              } finally {
+                ACTOR_PER_THREAD.remove();
+                TenantContextHolder.clear();
+              }
+            },
+            "concurrency-updateAssignees-aufnahme");
+
+    final AtomicReference<Throwable> commentErr = new AtomicReference<>();
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+    ACTOR_PER_THREAD.set(ACTOR_REF);
+    winner.start();
+    try {
+      commentService.createComment(
+          TASK_ADD_PARALLEL_UUID,
+          new CommentCreateInput(
+              "Parallel, mit Aufnahme.", null, List.of(MENTIONED_REF, ASSIGNEE_REF)));
+    } catch (final Throwable t) {
+      commentErr.set(t);
+    } finally {
+      ACTOR_PER_THREAD.remove();
+      TenantContextHolder.clear();
+    }
+    winner.join(WINNER_JOIN_TIMEOUT_MS);
+
+    assertThat(winner.isAlive())
+        .as("updateAssignees-Thread beendete rechtzeitig (kein Deadlock/Wartezyklus)")
+        .isFalse();
+    if (commentErr.get() != null) {
+      assertThat(commentErr.get())
+          .as("createComment scheitert hoechstens mit VersionConflict (409), nie Deadlock")
+          .isInstanceOf(BusinessRuleException.class);
+    }
+    if (winnerErr.get() != null) {
+      assertThat(winnerErr.get())
+          .as("updateAssignees scheitert hoechstens mit VersionConflict (409), nie Deadlock")
+          .isInstanceOf(BusinessRuleException.class);
+    }
+
+    // Alles oder nichts: Kommentar, Aufnahme und MENTION stehen zusammen oder gar nicht da.
+    final int commentRows = commentRowCount(TASK_ADD_PARALLEL_ID, ACTOR_REF);
+    if (commentErr.get() == null) {
+      assertThat(commentRows).as("erfolgreicher createComment -> genau 1 Kommentar").isEqualTo(1);
+      assertThat(participantRowCount(TASK_ADD_PARALLEL_ID, MENTIONED_REF))
+          .as("die erwaehnte Person ist aufgenommen")
+          .isEqualTo(1);
+      assertThat(notificationCountOfRecipient(TASK_ADD_PARALLEL_ID, MENTIONED_REF))
+          .as("genau die MENTION, keine PARTICIPANT")
+          .isEqualTo(1);
+    } else {
+      assertThat(commentRows).as("fehlgeschlagener createComment -> kein Kommentar").isZero();
+      assertThat(participantRowCount(TASK_ADD_PARALLEL_ID, MENTIONED_REF))
+          .as("fehlgeschlagener createComment -> keine Aufnahme (Rollback)")
+          .isZero();
+      assertThat(notificationCountOfRecipient(TASK_ADD_PARALLEL_ID, MENTIONED_REF)).isZero();
+    }
+  }
+
   /**
    * Startet den Gewinner auf einem eigenen Thread (eigener Tenant/Akteur) und wartet mit Timeout.
    */
@@ -432,6 +596,30 @@ class CommentConcurrencyIT {
         Integer.class,
         taskId,
         TENANT_ID);
+  }
+
+  private int participantRowCount(final long taskId, final UUID ref) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND PARTICIPANT_REF=?",
+        Integer.class,
+        taskId,
+        ref);
+  }
+
+  private int userStateRowCount(final long taskId, final UUID ref) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID=? AND USER_REF=?",
+        Integer.class,
+        taskId,
+        ref);
+  }
+
+  private int notificationCountOfRecipient(final long taskId, final UUID ref) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID=? AND RECIPIENT_REF=?",
+        Integer.class,
+        taskId,
+        ref);
   }
 
   private int activeAssigneeCount(final long taskId, final UUID ref) {
@@ -556,7 +744,8 @@ class CommentConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
-        final TaskMembershipGuard membershipGuard) {
+        final TaskMembershipGuard membershipGuard,
+        final AssigneeService assigneeService) {
       super(
           taskRepository,
           commentRepository,
@@ -570,7 +759,8 @@ class CommentConcurrencyIT {
           auditTimeConverter,
           membershipGuard,
           new de.brasi.nova.taskmanagement.notification.NotificationMuteFilter(
-              userStateQueryRepository));
+              userStateQueryRepository),
+          assigneeService);
     }
 
     void armTaskSaveInjector(final Runnable injector) {
@@ -771,7 +961,8 @@ class CommentConcurrencyIT {
         final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
-        final TaskMembershipGuard membershipGuard) {
+        final TaskMembershipGuard membershipGuard,
+        final AssigneeService assigneeService) {
       return new TestCommentService(
           taskRepository,
           commentRepository,
@@ -783,7 +974,8 @@ class CommentConcurrencyIT {
           userReadRepository,
           userAccessor,
           auditTimeConverter,
-          membershipGuard);
+          membershipGuard,
+          assigneeService);
     }
   }
 }

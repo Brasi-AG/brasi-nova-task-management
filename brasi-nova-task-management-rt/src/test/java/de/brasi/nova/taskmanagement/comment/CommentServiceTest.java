@@ -22,6 +22,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.AssigneeService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
@@ -95,6 +96,7 @@ class CommentServiceTest {
   @Mock private UserReadRepository userReadRepository;
   @Mock private UserAccessor userAccessor;
   @Mock private TaskMembershipGuard membershipGuard;
+  @Mock private AssigneeService assigneeService;
 
   private CommentService service;
 
@@ -113,7 +115,8 @@ class CommentServiceTest {
             userAccessor,
             new AuditTimeConverter("Europe/Berlin"),
             membershipGuard,
-            new NotificationMuteFilter(userStateQueryRepository));
+            new NotificationMuteFilter(userStateQueryRepository),
+            assigneeService);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -1145,6 +1148,238 @@ class CommentServiceTest {
     inOrder.verify(membershipGuard).isWriteMember(taskId, parentAuthorRef, TENANT_ID);
     inOrder.verify(membershipGuard).isWriteMember(taskId, BOB_UUID, TENANT_ID);
     inOrder.verify(taskRepository).save(any(Task.class));
+  }
+
+  // ---- Intake #156: erwaehnte Nicht-Mitglieder werden Beteiligte -------------------------------
+
+  @Test
+  @DisplayName(
+      "mention_nicht_mitglied_mit_recht_wird_beteiligter: bob (aktiver Mandanten-Nutzer, kein"
+          + " Mitglied) wird per addAsParticipants aufgenommen und bekommt NUR die MENTION (keine"
+          + " PARTICIPANT); alice (Mitglied) wird unveraendert benachrichtigt")
+  void mention_nicht_mitglied_mit_recht_wird_beteiligter() {
+    final Long taskId = 150L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ALICE_UUID), userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any()))
+        .thenReturn(List.of(BOB_UUID));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> added = ArgumentCaptor.forClass(Collection.class);
+    verify(assigneeService).addAsParticipants(eq(taskId), eq(TENANT_ID), added.capture());
+    assertThat(added.getValue())
+        .as("nur das Nicht-Mitglied wird aufgenommen")
+        .containsExactly(BOB_UUID);
+
+    verifyMention(ALICE_UUID, taskId);
+    verifyMention(BOB_UUID, taskId);
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.PARTICIPANT), any(), any(), any(), any());
+
+    // Bump und Signal erreichen die neu aufgenommene Person (ihre Inbox aendert sich).
+    verify(inboxGenerationService).bump(TENANT_ID, BOB_UUID);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> signalled = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), signalled.capture());
+    assertThat(signalled.getValue()).contains(BOB_UUID);
+  }
+
+  @Test
+  @DisplayName(
+      "lock_order_aufnahme_erwaehnter: Mitgliedschafts-Reads UND die Aufnahme (Teilnehmer- und"
+          + " State-Writes) laufen VOR taskRepository.save, der sortierte Bump danach")
+  void lock_order_aufnahme_erwaehnter() {
+    final Long taskId = 151L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(assigneeWith(ALICE_UUID)));
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any()))
+        .thenReturn(List.of(BOB_UUID));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Top-Level mit Aufnahme.", null, List.of(BOB_UUID)));
+
+    final org.mockito.InOrder inOrder =
+        org.mockito.Mockito.inOrder(
+            membershipGuard,
+            participantQueryRepository,
+            assigneeService,
+            taskRepository,
+            inboxGenerationService);
+    inOrder.verify(membershipGuard).isWriteMember(taskId, BOB_UUID, TENANT_ID);
+    inOrder.verify(participantQueryRepository).findActiveAssigneesByTaskId(taskId);
+    inOrder.verify(assigneeService).addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+    inOrder.verify(taskRepository).save(any(Task.class));
+    inOrder.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
+  }
+
+  @Test
+  @DisplayName(
+      "mention_nicht_mitglied_ohne_recht_still_verworfen: ohne das Recht von POST /participants"
+          + " bleibt bob Nicht-Mitglied (keine Aufnahme, keine MENTION), alice wird weiter"
+          + " benachrichtigt")
+  void mention_nicht_mitglied_ohne_recht_still_verworfen() {
+    final Long taskId = 152L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ALICE_UUID), userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(assigneeService.mayAddParticipants()).thenReturn(false);
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+
+    verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
+    verifyMention(ALICE_UUID, taskId);
+    verify(notificationService, never())
+        .emit(eq(BOB_UUID), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bump(TENANT_ID, BOB_UUID);
+  }
+
+  @Test
+  @DisplayName(
+      "mention_unbekannte_oder_inaktive_ref_nie_aufgenommen: loest findActiveByUuids nicht auf"
+          + " (unbekannt, inaktiv, fremder Mandant), gibt es weder Aufnahme noch MENTION noch"
+          + " einen Fehler")
+  void mention_unbekannte_oder_inaktive_ref_nie_aufgenommen() {
+    final Long taskId = 153L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of());
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+
+    final CommentModel model =
+        service.createComment(
+            taskUuid, new CommentCreateInput("Hallo.", null, List.of(GHOST_UUID)));
+
+    assertThat(model).isNotNull();
+    verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "mention_akteur_und_reply_empfaenger_nicht_aufgenommen: der Akteur und der Eltern-Autor"
+          + " (aktives Mitglied, bekommt REPLY) sind keine Aufnahme-Kandidaten")
+  void mention_akteur_und_reply_empfaenger_nicht_aufgenommen() {
+    final Long taskId = 154L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    final UUID parentUuid = UUID.randomUUID();
+    when(commentRepository.findByUuid(parentUuid.toString()))
+        .thenReturn(Optional.of(commentWithId(92L, taskId, ALICE_UUID, parentUuid)));
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ACTOR_REF), userWith(ALICE_UUID)));
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(ACTOR_REF, ALICE_UUID)));
+
+    verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "mention_gleichzeitig_aufgenommener_bekommt_mention: meldet addAsParticipants die Person"
+          + " nicht zurueck (anderer Aufruf war schneller), ist sie aber inzwischen WRITE-Mitglied,"
+          + " bekommt sie die MENTION und wird gebumpt")
+  void mention_gleichzeitig_aufgenommener_bekommt_mention() {
+    final Long taskId = 155L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    // Erste Pruefung (vor der Aufnahme): kein Mitglied; zweite (danach): Mitglied.
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID)))
+        .thenReturn(false, true);
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any())).thenReturn(List.of());
+
+    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID)));
+
+    verifyMention(BOB_UUID, taskId);
+    verify(inboxGenerationService).bump(TENANT_ID, BOB_UUID);
+  }
+
+  @Test
+  @DisplayName(
+      "mention_nicht_aufgenommener_bleibt_ohne_mention: wird die Person weder aufgenommen noch ist"
+          + " sie danach Mitglied (etwa TEAM-Zeile), gibt es keine MENTION")
+  void mention_nicht_aufgenommener_bleibt_ohne_mention() {
+    final Long taskId = 156L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any())).thenReturn(List.of());
+
+    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID)));
+
+    verify(notificationService, never())
+        .emit(eq(BOB_UUID), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bump(TENANT_ID, BOB_UUID);
+  }
+
+  @Test
+  @DisplayName(
+      "mention_doppelte_ref_wird_einmal_aufgenommen_und_benachrichtigt: [bob, bob] -> eine"
+          + " Aufnahme, eine MENTION, ein Bump")
+  void mention_doppelte_ref_wird_einmal_aufgenommen_und_benachrichtigt() {
+    final Long taskId = 157L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any()))
+        .thenReturn(List.of(BOB_UUID));
+
+    service.createComment(
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID, BOB_UUID)));
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> added = ArgumentCaptor.forClass(Collection.class);
+    verify(assigneeService, times(1)).addAsParticipants(eq(taskId), eq(TENANT_ID), added.capture());
+    assertThat(added.getValue()).containsExactly(BOB_UUID);
+    verify(notificationService, times(1))
+        .emit(
+            eq(BOB_UUID),
+            eq(taskId),
+            eq(NotificationTypeCodes.MENTION),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(inboxGenerationService, times(1)).bump(TENANT_ID, BOB_UUID);
+  }
+
+  /** Stubt eine offene Aufgabe ohne Leser, ohne Assignees und mit funktionierenden Saves. */
+  private UUID stubOpenTask(final Long taskId) {
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid, 0)));
+    stubSave();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    return taskUuid;
+  }
+
+  /** Genau eine MENTION-Benachrichtigung an die Person, ausgeloest vom Akteur. */
+  private void verifyMention(final UUID recipient, final Long taskId) {
+    verify(notificationService, times(1))
+        .emit(
+            eq(recipient),
+            eq(taskId),
+            eq(NotificationTypeCodes.MENTION),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------
