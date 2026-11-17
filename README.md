@@ -102,12 +102,15 @@ weitere Profil-Gates. Das Customer-Feature-Flag bleibt bis zu diesen Proben aus.
 
 Der PR-Workflow `Validate Task Management PR` prueft den Merge-Stand gegen
 `developer`: Java-Formatierung der im PR geaenderten Runtime-Dateien mit JDK 21
-sowie Build und Unit-Tests mit JDK 25. Er braucht das Repository-Secret
+sowie Build und Unit-Tests mit JDK 25 (Job `validate`) und alle
+Integrationstests gegen einen MSSQL-Container (Jobs `integration-test-shards`
+und `integration-tests`, siehe unten). Er braucht das Repository-Secret
 `KSF_PACKAGES_READ_TOKEN` fuer die KSF-Abhaengigkeiten. Ein fehlendes Secret
 laesst die Pruefung fehlschlagen. Der Workflow baut oder veroeffentlicht keine
 Snapshot-Release.
 
-Ein gruenes PR-Ergebnis ist **kein** MSSQL-Integrationsnachweis. Vor der
+Der Job `validate` allein ist **kein** MSSQL-Integrationsnachweis; den liefert
+der Check `Integration tests`. Vor der
 Integration des Task-Source-Branches muss auf dem finalen Code-Stand der
 `TaskFacadeControllerIT` mit echtem MSSQL und den lokalen
 `BRASI_INT_DB_USER`/`BRASI_INT_DB_PASSWORD` (optional `BRASI_INT_DB_URL`)
@@ -122,3 +125,36 @@ Der native Maven-Exit muss `0` sein; im Failsafe-XML fuer
 `errors` und `skipped` jeweils `0` sein. Der Test erstellt und entfernt seine
 eigene MSSQL-Wegwerf-Datenbank. Ohne DB-Zugang wird der IT uebersprungen und
 erfuellt dieses Gate nicht.
+
+### Integrationstests in der CI
+
+Die `*IT`-Klassen (Failsafe) laufen im PR-Workflow parallel in Shards, je Shard
+gegen einen eigenen MSSQL-Container:
+
+- **Container:** `mcr.microsoft.com/mssql/server:2022-latest` (Variable
+  `MSSQL_IMAGE` im Workflow), Edition Developer, Collation
+  `SQL_Latin1_General_CP1_CI_AS` und Zeitzone `Europe/Berlin` wie der
+  Entwicklungs-SQL-Server. Das SA-Passwort wird je Job zufaellig erzeugt und
+  maskiert; es wird nicht gespeichert. Die ITs lesen `BRASI_INT_DB_USER`,
+  `BRASI_INT_DB_PASSWORD` und `BRASI_INT_DB_URL` (`RefSchemaItEnv`).
+- **Zeitzone:** Audit-Zeiten sind lokale Wanduhr (`app.time.persistence-zone`).
+  JVM, Container und Persistenz-Zone muessen dieselbe Zone haben; der Schritt
+  `Verify MSSQL is ready and time zones match` bricht bei Abweichung ab.
+- **Aufteilung:** `scripts/ci/split-integration-tests.sh <shard> <anzahl>`
+  ermittelt die IT-Klassen aus den Test-Quellen und verteilt sie deterministisch
+  nach Laufzeit-Gewicht (`scripts/ci/integration-test-weights.txt`). Mit `--plan`
+  zeigt es die Verteilung. Neue ITs werden automatisch aufgenommen
+  (Standardgewicht); die Zusammenfassung des Gate-Laufs gibt die gemessenen
+  Zeiten im Format der Gewichtsdatei aus. Die Shard-Anzahl ist die Laenge der
+  Matrix `shard` im Workflow.
+- **Auswahl:** je Shard
+  `mvn -pl brasi-nova-task-management-rt -am verify -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=<Klassen>`
+  (keine Unit-Tests, nur die ITs des Shards).
+- **Gate:** `scripts/ci/check-integration-results.py` scheitert bei 0 Tests, bei
+  Failures/Errors, bei **Skips** (Maven bleibt bei uebersprungenen ITs gruen,
+  etwa ohne DB-Zugang), bei fehlendem Bericht einer erwarteten IT-Klasse und bei
+  Berichten unerwarteter Klassen. Der Job `integration-tests` fasst alle Shards
+  zusammen und prueft, dass jede IT-Klasse des Repositories gelaufen ist. Er
+  ist der Pflicht-Check (`Integration tests`).
+- **Berichte:** Failsafe-Berichte und MSSQL-Log je Shard als Artefakt
+  `failsafe-reports-shard-<n>`.

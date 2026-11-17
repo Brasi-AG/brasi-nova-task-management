@@ -8,6 +8,11 @@ permissions:
   contents: read
   packages: read
 
+# Ein neuer Push auf denselben PR bricht den laufenden (teuren) Lauf ab.
+concurrency:
+  group: validate-task-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -143,3 +148,255 @@ jobs:
               total += counts['tests']
           print(f'Source test gate: {total} tests, zero failures/errors/skips')
           PY
+
+  # Integrationstests (*IT, Failsafe) gegen einen frischen MSSQL-Container. Die ITs legen je Klasse
+  # eine Wegwerf-DB an (RefSchemaItEnv) und ueberspringen sich ohne Zugang; deshalb prueft jeder
+  # Shard und das Sammel-Gate, dass die Tests wirklich gelaufen sind (scripts/ci).
+  integration-test-shards:
+    name: Integration tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # Anzahl der Shards = Laenge dieser Liste (scripts/ci/split-integration-tests.sh).
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      MAVEN_OPTS: -Dfile.encoding=UTF-8 -Xmx2048m
+      GH_PACKAGES_USER: naujoks-stefan
+      GH_PACKAGES_TOKEN: ${{ secrets.KSF_PACKAGES_READ_TOKEN }}
+      # Audit-Zeiten sind lokale Wanduhr (app.time.persistence-zone=Europe/Berlin): JVM-Zone,
+      # SQL-Server-Zone und Persistenz-Zone muessen uebereinstimmen. TZ gilt fuer Maven, die
+      # Failsafe-Fork-JVM und (per docker run) den Container; "Verify MSSQL" prueft es.
+      TZ: Europe/Berlin
+      MSSQL_IMAGE: mcr.microsoft.com/mssql/server:2022-latest
+
+    steps:
+      - name: Check out PR merge result
+        uses: actions/checkout@v4
+
+      - name: Require KSF package credentials
+        run: |
+          if [[ -z "$GH_PACKAGES_TOKEN" ]]; then
+            echo "::error::KSF_PACKAGES_READ_TOKEN is required to resolve the KSF dependencies."
+            exit 1
+          fi
+
+      - name: Start MSSQL container
+        run: |
+          set -euo pipefail
+          # Wegwerf-Passwort nur fuer diesen Container; nie im Log, nie im Repository.
+          password="A$(openssl rand -hex 16)z"
+          echo "::add-mask::$password"
+          {
+            echo "BRASI_INT_DB_USER=sa"
+            echo "BRASI_INT_DB_PASSWORD=$password"
+            echo "BRASI_INT_DB_URL=jdbc:sqlserver://127.0.0.1:1433;databaseName=master;encrypt=true;trustServerCertificate=true"
+          } >> "$GITHUB_ENV"
+          # Collation wie der Entwicklungs-SQL-Server (SQL_Latin1_General_CP1_CI_AS, Docker-Standard).
+          # Host-Zoneninfo einhaengen, damit TZ im Container sicher aufgeloest wird.
+          docker run --detach --name mssql-it \
+            --env ACCEPT_EULA=Y \
+            --env "MSSQL_SA_PASSWORD=$password" \
+            --env MSSQL_PID=Developer \
+            --env MSSQL_COLLATION=SQL_Latin1_General_CP1_CI_AS \
+            --env MSSQL_MEMORY_LIMIT_MB=2048 \
+            --env "TZ=$TZ" \
+            --volume /usr/share/zoneinfo:/usr/share/zoneinfo:ro \
+            --publish 127.0.0.1:1433:1433 \
+            "$MSSQL_IMAGE"
+
+      - name: Configure Maven package repository
+        run: |
+          mkdir -p "$HOME/.m2"
+          cat > "$HOME/.m2/settings.xml" <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>github-keel-spring-framework</id>
+                <username>${env.GH_PACKAGES_USER}</username>
+                <password>${env.GH_PACKAGES_TOKEN}</password>
+              </server>
+            </servers>
+            <profiles>
+              <profile>
+                <id>github-packages</id>
+                <repositories>
+                  <repository>
+                    <id>github-keel-spring-framework</id>
+                    <url>https://maven.pkg.github.com/naujoks-stefan/keel-spring-framework</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>github-keel-spring-framework</id>
+                    <url>https://maven.pkg.github.com/naujoks-stefan/keel-spring-framework</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+            <activeProfiles><activeProfile>github-packages</activeProfile></activeProfiles>
+          </settings>
+          XML
+
+      - name: Set up JDK 25 for integration tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          overwrite-settings: false
+
+      - name: Verify MSSQL is ready and time zones match
+        run: |
+          set -euo pipefail
+          export SQLCMDPASSWORD="$BRASI_INT_DB_PASSWORD"
+          sqlcmd_bin=/opt/mssql-tools18/bin/sqlcmd
+          if ! docker exec mssql-it test -x "$sqlcmd_bin"; then
+            sqlcmd_bin=/opt/mssql-tools/bin/sqlcmd
+          fi
+          query() {
+            docker exec --env SQLCMDPASSWORD mssql-it "$sqlcmd_bin" \
+              -S localhost -U sa -C -b -h -1 -W -Q "SET NOCOUNT ON; $1" | tr -d '\r'
+          }
+
+          ready=false
+          for attempt in $(seq 1 60); do
+            if [[ "$(docker inspect --format '{{.State.Running}}' mssql-it)" != "true" ]]; then
+              echo "::error::The MSSQL container stopped unexpectedly."
+              docker logs mssql-it 2>&1 | tail -n 100
+              exit 1
+            fi
+            if query "SELECT 1" > /dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "::error::MSSQL did not become ready within 120 seconds."
+            docker logs mssql-it 2>&1 | tail -n 100
+            exit 1
+          fi
+
+          echo "SQL Server: $(query "SELECT CAST(SERVERPROPERTY('ProductVersion') AS varchar(40)) + ' / ' + CAST(SERVERPROPERTY('Edition') AS varchar(60)) + ' / ' + CAST(SERVERPROPERTY('Collation') AS varchar(60))")"
+
+          collation="$(query "SELECT CAST(SERVERPROPERTY('Collation') AS varchar(60))")"
+          if [[ "$collation" != "SQL_Latin1_General_CP1_CI_AS" ]]; then
+            echo "::error::Unexpected server collation '$collation'."
+            exit 1
+          fi
+
+          # Erwarteter UTC-Versatz der Persistenz-Zone (TZ=Europe/Berlin): +0100/+0200 = 60/120 Minuten.
+          offset_text="$(date +%z)"
+          expected_offset=$(( ${offset_text:0:1}1 * (10#${offset_text:1:2} * 60 + 10#${offset_text:3:2}) ))
+          db_offset="$(query "SELECT DATEDIFF(minute, SYSUTCDATETIME(), SYSDATETIME())" | tr -d '[:space:]')"
+          if [[ "$db_offset" != "$expected_offset" ]]; then
+            echo "::error::SQL Server local time offset is ${db_offset} min, expected ${expected_offset} min (Europe/Berlin)."
+            exit 1
+          fi
+
+          cat > "$RUNNER_TEMP/ZoneCheck.java" <<'JAVA'
+          public class ZoneCheck {
+            public static void main(String[] args) {
+              System.out.println(java.time.ZoneId.systemDefault());
+            }
+          }
+          JAVA
+          jvm_zone="$(java "$RUNNER_TEMP/ZoneCheck.java")"
+          if [[ "$jvm_zone" != "Europe/Berlin" ]]; then
+            echo "::error::JVM default zone is '$jvm_zone', expected Europe/Berlin."
+            exit 1
+          fi
+          echo "Time zones aligned: JVM $jvm_zone, SQL Server offset ${db_offset} min."
+
+      - name: Select integration tests for this shard
+        id: select
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+        run: |
+          set -euo pipefail
+          classes="$(bash scripts/ci/split-integration-tests.sh "$SHARD" "$SHARD_TOTAL")"
+          echo "classes=$classes" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Shard $SHARD/$SHARD_TOTAL"
+            echo
+            printf '%s\n' "$classes" | tr ',' '\n' | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run integration tests (Failsafe)
+        id: run-its
+        env:
+          IT_CLASSES: ${{ steps.select.outputs.classes }}
+        run: |
+          # -Dtest=NoSuchTest: Surefire findet keine Unit-Tests (und scheitert nicht daran);
+          # Failsafe waehlt die ITs dieses Shards ueber it.test (ersetzt die *IT-Include-Regel).
+          mvn -B -ntp -pl brasi-nova-task-management-rt -am verify \
+            -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false \
+            "-Dit.test=$IT_CLASSES"
+
+      - name: Require integration test results
+        if: ${{ !cancelled() && steps.run-its.outcome != 'skipped' }}
+        env:
+          IT_CLASSES: ${{ steps.select.outputs.classes }}
+        run: |
+          python3 scripts/ci/check-integration-results.py \
+            --reports brasi-nova-task-management-rt/target/failsafe-reports \
+            --expected "$IT_CLASSES"
+
+      - name: Collect failsafe reports and MSSQL log
+        if: ${{ always() }}
+        run: |
+          mkdir -p it-artifacts
+          if [[ -d brasi-nova-task-management-rt/target/failsafe-reports ]]; then
+            cp -r brasi-nova-task-management-rt/target/failsafe-reports it-artifacts/
+          fi
+          docker logs mssql-it > it-artifacts/mssql-container.log 2>&1 || true
+
+      - name: Upload failsafe reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: failsafe-reports-shard-${{ matrix.shard }}
+          path: it-artifacts
+          retention-days: 7
+          if-no-files-found: warn
+
+  # Sammel-Gate und stabiler Check-Name ("Integration tests"). Laeuft auch, wenn ein Shard
+  # fehlschlaegt (sonst gaelte der uebersprungene Check als erfuellt) und prueft ueber alle Shards,
+  # dass jede IT-Klasse gelaufen ist, ohne Fehler und ohne Skips.
+  integration-tests:
+    name: Integration tests
+    needs: integration-test-shards
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out PR merge result
+        uses: actions/checkout@v4
+
+      - name: Require all integration test shards to succeed
+        env:
+          SHARDS_RESULT: ${{ needs.integration-test-shards.result }}
+        run: |
+          if [[ "$SHARDS_RESULT" != "success" ]]; then
+            echo "::error::Integration test shards finished with result '$SHARDS_RESULT'."
+            exit 1
+          fi
+
+      - name: Download failsafe reports of all shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: failsafe-reports-shard-*
+          path: it-reports
+
+      - name: Require complete integration test results
+        run: |
+          python3 scripts/ci/check-integration-results.py \
+            --reports it-reports \
+            --expected-from-source brasi-nova-task-management-rt/src/test/java

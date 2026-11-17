@@ -1,0 +1,4 @@
+# Hilfsskripte der CI muessen auch unter Windows (autocrlf) mit LF ausgecheckt werden.
+scripts/ci/*.sh text eol=lf
+scripts/ci/*.py text eol=lf
+scripts/ci/*.txt text eol=lf
