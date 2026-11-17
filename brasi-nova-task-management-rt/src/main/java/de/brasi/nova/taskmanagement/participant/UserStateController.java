@@ -159,7 +159,18 @@ public class UserStateController {
             @Content(
                 mediaType = "application/json",
                 schema = @Schema(implementation = ApiError.class),
-                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_MUTE)))
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_MUTE))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Nebenlaeufiger Versionskonflikt: der persoenliche Benutzerzustand der Aufgabe wurde"
+                + " zwischenzeitlich durch einen parallelen Schreibzugriff geaendert; die Anfrage"
+                + " gegen den frischen Stand wiederholen.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.CONFLICT_MUTE)))
   })
   @PutMapping("/{id}/mute")
   @HateoasLinkTarget(TaskHateoas.Targets.MUTE)

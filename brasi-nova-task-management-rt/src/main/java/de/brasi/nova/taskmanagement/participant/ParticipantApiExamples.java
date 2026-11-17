@@ -105,6 +105,18 @@ final class ParticipantApiExamples {
           + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
           + "\"details\":[\"value ist Pflichtfeld.\"]}";
 
+  /**
+   * 409 von {@code mute}: nebenlaeufiger Versionskonflikt beim Speichern des versionierten {@code
+   * TaskUserState}.
+   */
+  static final String CONFLICT_MUTE =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_MUTE
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
+
   /** 400 von {@code exit}: unbekanntes oder fremdes Uebergabeziel. */
   static final String BAD_REQUEST_EXIT =
       ERROR_HEAD

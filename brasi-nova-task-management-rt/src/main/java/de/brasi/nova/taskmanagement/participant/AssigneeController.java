@@ -109,9 +109,9 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Versionskonflikt: die Aufgabe wurde zwischenzeitlich durch eine"
-                + " parallele Aenderung der Mitglieder (PUT /assignees, Austritt, Uebergabe)"
-                + " geaendert; die Anfrage gegen den frischen Stand wiederholen.",
+            "Nebenlaeufiger Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B."
+                + " gleichzeitige Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den"
+                + " frischen Stand wiederholen.",
         content =
             @Content(
                 mediaType = "application/json",
