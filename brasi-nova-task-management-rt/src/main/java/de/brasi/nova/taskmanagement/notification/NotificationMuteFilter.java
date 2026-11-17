@@ -48,11 +48,15 @@ import org.springframework.stereotype.Component;
  * emittieren ({@code ASSIGN}/{@code HANDOVER} in {@code TaskCommandService#create} und {@code
  * AssigneeService}), brauchen den Filter nicht; er waere dort ein No-Op ohne Abfrage.
  *
- * <p><b>Mute und (Wieder-)Zuweisung:</b> {@code UserStateService#reactivate} setzt bei einem
- * vorhandenen State nur {@code UNSUBSCRIBED_AT} zurueck, NICHT {@code IS_MUTED}; ein neu angelegter
- * State startet nicht stumm. Eine erneut zugewiesene stumme Person erhaelt die {@code
- * ASSIGN}-Benachrichtigung trotzdem, weil {@code ASSIGN} ausgenommen ist; danach bleibt die Aufgabe
- * fuer sie stumm.
+ * <p><b>Mute und (Wieder-)Zuweisung:</b> Eine NEUE Zuweisung hebt den Mute der Aufgabe fuer die
+ * zugewiesene Person auf: {@code UserStateService#reactivateAsAssignee} setzt {@code IS_MUTED} auf
+ * {@code false} (PUT /assignees fuer neu hinzukommende Personen und Ziele einer Uebergabe per
+ * HANDOVER, die vorher kein aktiver Assignee waren). Die {@code ASSIGN}- bzw. {@code
+ * HANDOVER}-Benachrichtigung kommt ohnehin an, weil beide Typen ausgenommen sind; spaetere
+ * Benachrichtigungen (z.B. {@code COMMENT}) erreichen die Person danach wieder. Unveraendert
+ * bleibende Assignees eines PUT, ein bereits aktiver Assignee als Uebergabeziel, reine Teilnehmer
+ * ({@code UserStateService#reactivate} bei {@code addParticipants}) und die Marker-Pfade lassen den
+ * Mute unveraendert; ein neu angelegter State startet nicht stumm.
  */
 @Component
 public class NotificationMuteFilter {

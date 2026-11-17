@@ -37,12 +37,13 @@ import org.mockito.quality.Strictness;
  * Unit-Tests fuer {@link MarkerService} (gemockt, kein DB-Zugriff).
  *
  * <p>TDD-Rationale: beweist die Kern-Invarianten fuer persoenliche Marker:
+ *
  * <ol>
  *   <li>Marker wird im TaskUserState des richtigen Actors gesetzt (pin/flag/mute)
  *   <li>Zwei verschiedene Benutzer haben unabhaengige Marker (pro-Benutzer-Isolation)
  *   <li>404-Masking bei unbekannter/fremder Task-UUID
- *   <li>UNSUBSCRIBED_AT wird von Marker-Set NICHT veraendert (Inbox-Invariante implizit
- *       via ensure-Aufruf, nicht reactivate)
+ *   <li>UNSUBSCRIBED_AT wird von Marker-Set NICHT veraendert (Inbox-Invariante implizit via
+ *       ensure-Aufruf, nicht reactivate)
  *   <li>Marker kann deaktiviert werden (value=false)
  * </ol>
  */
@@ -124,9 +125,7 @@ class MarkerServiceTest {
 
     // Pro-Benutzer-Isolation: User B hat einen separaten State (simuliert)
     final TaskUserState stateB = stateForUser(TASK_DB_ID, USER_B_REF, TENANT_ID);
-    assertThat(stateB.isPinned())
-        .as("User-B-State ist unabhaengig (initial false)")
-        .isFalse();
+    assertThat(stateB.isPinned()).as("User-B-State ist unabhaengig (initial false)").isFalse();
     assertThat(stateA.getUserRef())
         .as("User-A-State und User-B-State sind verschieden")
         .isNotEqualTo(stateB.getUserRef());
@@ -203,8 +202,7 @@ class MarkerServiceTest {
   // ---- Test 5: 404-Masking bei nicht existenter Task -------------------------------------------
 
   @Test
-  @DisplayName(
-      "pin_nicht_existente_task_liefert_404: EntityNotFoundException bei unbekannter UUID")
+  @DisplayName("pin_nicht_existente_task_liefert_404: EntityNotFoundException bei unbekannter UUID")
   void pin_nicht_existente_task_liefert_404() {
     when(taskRepository.findByUuid(any())).thenReturn(Optional.empty());
 
@@ -274,9 +272,11 @@ class MarkerServiceTest {
 
     // ensure MUSS aufgerufen worden sein
     verify(userStateService).ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID));
-    // reactivate darf NIEMALS aufgerufen werden (wuerde UNSUBSCRIBED_AT loeschen)
-    // Mockito-Default: kein Aufruf = kein Fehler; explizit via verifyNoMoreInteractions
-    // nicht noetig hier, da ensure der einzige zu pruefende Aufruf ist
+    // reactivate darf NIEMALS aufgerufen werden (wuerde UNSUBSCRIBED_AT loeschen);
+    // reactivateAsAssignee
+    // ebenso nicht (wuerde zusaetzlich den Mute aufheben - die Marker-Pfade sind keine Zuweisung).
+    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
   }
 
   // ---- Test 9: P2-3 / Codex #6 - Neuanlage etabliert Membership -> Bump + Invalidate ----------
@@ -299,7 +299,8 @@ class MarkerServiceTest {
 
     markerService.setPinned(TASK_EXTERNAL_ID, true);
 
-    // Codex #6: Membership-Etablierung -> Generation-Bump des Actors ATOMAR in der Tx (Keyset-Effekt:
+    // Codex #6: Membership-Etablierung -> Generation-Bump des Actors ATOMAR in der Tx
+    // (Keyset-Effekt:
     // der neu sichtbare Task begruendet einen alten aktiven Cursor als stale -> 410).
     verify(inboxGenerationService).bump(eq(TENANT_ID), eq(USER_A_REF));
     // und after-commit snapshot-invalidated fuer den Actor.

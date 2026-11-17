@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
@@ -32,6 +33,8 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -74,6 +77,7 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer {@link UserStateController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>PUT pin true -&gt; TASK_USER_STATE.IS_PINNED=1 fuer Actor; anderer Benutzer unberuehrt
  *   <li>PUT flag true -&gt; IS_FLAGGED=1; PUT mute true -&gt; IS_MUTED=1
@@ -129,6 +133,7 @@ class UserStateControllerIT {
 
   /** Zweiter Benutzer im selben Mandanten: fuer Pro-Benutzer-Isolation und Inbox-Invariante. */
   private static final UUID USER_B_REF = UUID.randomUUID();
+
   private static final String USER_B_LOGIN = "user-b-state@brasi.de";
   private static final long USER_B_DB_ID = 522L;
 
@@ -142,6 +147,7 @@ class UserStateControllerIT {
 
   /** Benutzer ohne TASK_READ-Permission fuer 403-Test. */
   private static final UUID USER_NO_PERM_REF = UUID.randomUUID();
+
   private static final String USER_NO_PERM_LOGIN = "no-perm-state@brasi.de";
 
   private static final KeyPair RSA_KEY_PAIR;
@@ -181,8 +187,7 @@ class UserStateControllerIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -228,9 +233,13 @@ class UserStateControllerIT {
     final ObjectMapper om = new ObjectMapper();
 
     // User A legt Task an (wird Creator + UserState)
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String taskId = createTask(mvc, om, tokenA, "Pin-IT-Task");
 
     // User B wird als Assignee hinzugefuegt (bekommt UserState)
@@ -260,9 +269,7 @@ class UserStateControllerIT {
             Integer.class,
             UUID.fromString(taskId),
             USER_A_REF);
-    assertThat(pinnedForA)
-        .as("IS_PINNED=1 muss fuer User A gesetzt sein")
-        .isEqualTo(1);
+    assertThat(pinnedForA).as("IS_PINNED=1 muss fuer User A gesetzt sein").isEqualTo(1);
 
     // Beweis 2: IS_PINNED fuer User B ist unveraendert (0)
     final Integer pinnedForB =
@@ -279,15 +286,20 @@ class UserStateControllerIT {
 
     // Vorher ist B nach DB-Beweis oben IS_PINNED=0; grantfreier PUT muss auf 1 wechseln.
     final String grantFreeB = buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/pin")
-            .header("Authorization", "Bearer " + grantFreeB)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"value\":true}"))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/pin")
+                .header("Authorization", "Bearer " + grantFreeB)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
         .andExpect(status().isNoContent());
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.IS_PINNED = 1",
-        Integer.class, UUID.fromString(taskId), USER_B_REF)).isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ? AND s.USER_REF = ? AND s.IS_PINNED = 1",
+                Integer.class,
+                UUID.fromString(taskId),
+                USER_B_REF))
+        .isEqualTo(1);
   }
 
   // ---- Positiv-IT: flag und mute setzbar -------------------------------------------------------
@@ -298,15 +310,20 @@ class UserStateControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String taskId = createTask(mvc, om, tokenA, "Flag-Mute-IT-Task");
 
-    mvc.perform(put("/api/v1/tasks/" + taskId + "/assignees")
-            .header("Authorization", "Bearer " + tokenA)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_B_REF)))))
         .andExpect(status().isNoContent());
     final String grantFreeB = buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN);
 
@@ -357,9 +374,13 @@ class UserStateControllerIT {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
 
     // Task anlegen (User A = Creator, aktiver UserState ohne UNSUBSCRIBED_AT)
     final String taskId = createTask(mvc, om, tokenA, "Inbox-Invariante-IT-Task");
@@ -394,8 +415,9 @@ class UserStateControllerIT {
             UUID.fromString(taskId),
             USER_A_REF);
     assertThat(activeAfterPin)
-        .as("UNSUBSCRIBED_AT muss nach pin() fuer aktiven Benutzer weiterhin NULL sein"
-            + " (Inbox-Invariante: ensure veraendert UNSUBSCRIBED_AT NICHT)")
+        .as(
+            "UNSUBSCRIBED_AT muss nach pin() fuer aktiven Benutzer weiterhin NULL sein"
+                + " (Inbox-Invariante: ensure veraendert UNSUBSCRIBED_AT NICHT)")
         .isEqualTo(1);
 
     // Abgemeldeter Benutzer: User B wird als Assignee hinzugefuegt, dann abgemeldet
@@ -431,9 +453,13 @@ class UserStateControllerIT {
 
     // Slice 4 (Auflage/Henne-Ei): User B ist jetzt AUSGETRETEN (EXIT_KIND=UNSUBSCRIBED) und damit
     // KEIN WRITE-Member mehr. Der Guard laeuft VOR ensure -> pin durch den Ausgetretenen -> 404.
-    final String tokenB = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_B_REF, USER_B_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_B_REF,
+            USER_B_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/pin")
                 .header("Authorization", "Bearer " + tokenB)
@@ -468,10 +494,11 @@ class UserStateControllerIT {
         .as("IS_PINNED darf fuer den ausgetretenen Benutzer durch den 404-pin NICHT gesetzt werden")
         .isZero();
     for (String marker : List.of("flag", "mute")) {
-      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
-              .header("Authorization", "Bearer " + tokenB)
-              .contentType(MediaType.APPLICATION_JSON)
-              .content("{\"value\":true}"))
+      mvc.perform(
+              put("/api/v1/tasks/" + taskId + "/" + marker)
+                  .header("Authorization", "Bearer " + tokenB)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"value\":true}"))
           .andExpect(status().isNotFound());
     }
   }
@@ -494,33 +521,40 @@ class UserStateControllerIT {
                 .content("{\"value\":true}"))
         .andExpect(status().isUnauthorized());
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_WRITE", "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
     final String taskId = createTask(mvc, om, tokenA, "Fremd-Tenant-Pin-Test");
 
     // 2. Slice 4: pin ist nicht mehr permission-gated. Ein authentifizierter Nutzer OHNE Membership
     // (hier ganz ohne Authorities) auf eine real existierende Fremd-Task -> neutral 404 (kein 403).
-    final String tokenNoPerm = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
-        /* keine Authorities */);
+    final String tokenNoPerm =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
+            /* keine Authorities */ );
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/pin")
                 .header("Authorization", "Bearer " + tokenNoPerm)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":true}"))
         .andExpect(status().isNotFound());
-    assertThat(jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
-            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
-        Integer.class, UUID.fromString(taskId), USER_NO_PERM_REF))
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                    + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+                Integer.class,
+                UUID.fromString(taskId),
+                USER_NO_PERM_REF))
         .as("Non-Member pin darf vor dem Guard keinen UserState anlegen")
         .isZero();
 
     // 3. Fremder Tenant -> 404 (Task gehoert Mandant A)
-    final String tokenC = buildJwtWithAuthority(
-        TENANT_B_UUID, USER_C_REF, USER_C_LOGIN,
-        "task-management:TASK_READ");
+    final String tokenC =
+        buildJwtWithAuthority(TENANT_B_UUID, USER_C_REF, USER_C_LOGIN, "task-management:TASK_READ");
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/pin")
                 .header("Authorization", "Bearer " + tokenC)
@@ -529,16 +563,72 @@ class UserStateControllerIT {
         .andExpect(status().isNotFound());
 
     for (String marker : List.of("flag", "mute")) {
-      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
-              .header("Authorization", "Bearer " + tokenNoPerm)
-              .contentType(MediaType.APPLICATION_JSON)
-              .content("{\"value\":true}"))
+      mvc.perform(
+              put("/api/v1/tasks/" + taskId + "/" + marker)
+                  .header("Authorization", "Bearer " + tokenNoPerm)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"value\":true}"))
           .andExpect(status().isNotFound());
-      mvc.perform(put("/api/v1/tasks/" + taskId + "/" + marker)
-              .header("Authorization", "Bearer " + tokenC)
-              .contentType(MediaType.APPLICATION_JSON)
-              .content("{\"value\":true}"))
+      mvc.perform(
+              put("/api/v1/tasks/" + taskId + "/" + marker)
+                  .header("Authorization", "Bearer " + tokenC)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"value\":true}"))
           .andExpect(status().isNotFound());
+    }
+  }
+
+  // ---- IT: fehlendes oder null-value liefert 400 im dokumentierten Fehlerformat ----------------
+
+  @Test
+  @DisplayName(
+      "mute_ohne_value_liefert_400_im_dokumentierten_format: PUT mute mit {} und mit"
+          + " {\"value\":null} -> 400; Felder und stabile Werte entsprechen dem OpenAPI-Beispiel")
+  void mute_ohne_value_liefert_400_im_dokumentierten_format() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String taskId = createTask(mvc, om, tokenA, "Mute-400-IT-Task");
+    final JsonNode example = om.readTree(ParticipantApiExamples.BAD_REQUEST_MUTE);
+
+    for (final String body : List.of("{}", "{\"value\":null}")) {
+      final JsonNode live =
+          om.readTree(
+              mvc.perform(
+                      put("/api/v1/tasks/" + taskId + "/mute")
+                          .header("Authorization", "Bearer " + tokenA)
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content(body))
+                  .andExpect(status().isBadRequest())
+                  .andReturn()
+                  .getResponse()
+                  .getContentAsString());
+
+      final Set<String> exampleFields = new TreeSet<>();
+      example.fieldNames().forEachRemaining(exampleFields::add);
+      final Set<String> liveFields = new TreeSet<>();
+      live.fieldNames().forEachRemaining(liveFields::add);
+      assertThat(liveFields)
+          .as("Felder der 400-Antwort zu %s: %s", body, live)
+          .isEqualTo(exampleFields);
+      // timestamp, traceId und die Aufgaben-UUID im path sind je Aufruf neu; der Rest ist stabil.
+      for (final String stable : List.of("status", "error", "message", "errorKey")) {
+        assertThat(live.get(stable))
+            .as("400-Feld %s zu %s: %s", stable, body, live)
+            .isEqualTo(example.get(stable));
+      }
+      assertThat(live.get("path").asText()).isEqualTo("/api/v1/tasks/" + taskId + "/mute");
+      if (example.has("details")) {
+        assertThat(live.get("details"))
+            .as("400-Feld details zu %s", body)
+            .isEqualTo(example.get("details"));
+      }
     }
   }
 
@@ -565,9 +655,7 @@ class UserStateControllerIT {
             .andReturn()
             .getResponse()
             .getContentAsString();
-    return om.readValue(response, com.fasterxml.jackson.databind.JsonNode.class)
-        .get("id")
-        .asText();
+    return om.readValue(response, com.fasterxml.jackson.databind.JsonNode.class).get("id").asText();
   }
 
   private static String buildJwtWithAuthority(
@@ -607,7 +695,10 @@ class UserStateControllerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -621,7 +712,11 @@ class UserStateControllerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {

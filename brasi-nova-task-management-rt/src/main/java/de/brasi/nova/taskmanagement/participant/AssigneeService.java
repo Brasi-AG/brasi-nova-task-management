@@ -121,9 +121,11 @@ public class AssigneeService {
    * <ol>
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Aktuelle Assignees laden und mit Ziel-Menge vergleichen.
-   *   <li>Neu zugewiesene Assignees: {@link TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1,
-   *       PARTICIPANT_KIND=PERSON), {@link UserStateService#reactivate} (UserState sichern +
-   *       UNSUBSCRIBED_AT zuruecksetzen), ASSIGN-Notification emittieren.
+   *   <li>Neu zugewiesene Assignees (in der Ziel-Menge, aber noch kein aktiver Assignee): {@link
+   *       TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link
+   *       UserStateService#reactivateAsAssignee} (UserState sichern, UNSUBSCRIBED_AT zuruecksetzen
+   *       und einen Mute dieser Aufgabe aufheben), ASSIGN-Notification emittieren. Unveraendert
+   *       bleibende Assignees werden nicht angefasst, ihr Mute bleibt bestehen.
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
    *       setzen.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer alle betroffenen userRefs.
@@ -236,9 +238,11 @@ public class AssigneeService {
       }
 
       // UserState reaktivieren: UNSUBSCRIBED_AT=null setzen (Reassign-Reaktivierung - MAJOR 3).
-      // reactivate stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT zurueckgesetzt
-      // wird. Damit erscheint der erneut zugewiesene Benutzer wieder in findActivePage.
-      userStateService.reactivate(taskId, assigneeRef, tenantId);
+      // reactivateAsAssignee stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT
+      // zurueckgesetzt wird. Damit erscheint der erneut zugewiesene Benutzer wieder in
+      // findActivePage. Eine NEUE Zuweisung hebt zudem den Mute dieser Aufgabe auf (Folge von
+      // #158); diese Schleife laeuft nur ueber toAdd, unveraenderte Assignees bleiben stumm.
+      userStateService.reactivateAsAssignee(taskId, assigneeRef, tenantId);
 
       // ASSIGN-Notification emittieren
       notificationService.emit(
@@ -479,6 +483,8 @@ public class AssigneeService {
       if (!saveParticipantHandlingRace(p, taskId, ref)) {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }
+      // Reiner Teilnehmer, keine Zuweisung: bewusst reactivate (nicht reactivateAsAssignee), ein
+      // vorhandener Mute dieser Aufgabe bleibt bestehen.
       userStateService.reactivate(taskId, ref, tenantId);
       // Codex #6: Generation-Bump NICHT hier (sofort/ungeordnet), sondern gebuendelt + SORTIERT im
       // Aufrufer (addParticipants) ueber affectedRefs - konsistente Generation-Lock-Ordnung. Der
@@ -604,10 +610,12 @@ public class AssigneeService {
    *       {@code shouldStay} false sein (sonst 400). Nicht-Creator -> EXIT_KIND=UNSUBSCRIBED;
    *       Creator -> 409.
    *   <li><b>HANDOVER:</b> der Akteur uebergibt die Aufgabe an {@code handedOverToIds} (werden
-   *       Assignees). Optionaler Verbleib ({@code shouldStay}) laesst den Akteur reiner Teilnehmer.
-   *       Der Akteur wird IMMER de-assignt (ASSIGNEE_FLAG=false). Nicht-Creator + !shouldStay ->
-   *       EXIT_KIND=HANDOVER + Austritt; Creator -> nur shouldStay=true erlaubt (sonst 409), bleibt
-   *       dann immobiler Teilnehmer (CREATOR+PARTICIPANT + aktiver UserState, ASSIGNEE_FLAG=false).
+   *       Assignees; der Mute dieser Aufgabe wird nur bei Zielen aufgehoben, die vorher kein
+   *       aktiver Assignee waren, siehe {@link UserStateService#reactivateAsAssignee}). Optionaler
+   *       Verbleib ({@code shouldStay}) laesst den Akteur reiner Teilnehmer. Der Akteur wird IMMER
+   *       de-assignt (ASSIGNEE_FLAG=false). Nicht-Creator + !shouldStay -> EXIT_KIND=HANDOVER +
+   *       Austritt; Creator -> nur shouldStay=true erlaubt (sonst 409), bleibt dann immobiler
+   *       Teilnehmer (CREATOR+PARTICIPANT + aktiver UserState, ASSIGNEE_FLAG=false).
    * </ul>
    *
    * <p>Alles in EINER Transaktion: TASK_HANDOVER-Ereignis + Ziele + Rollenwechsel + History +
@@ -771,8 +779,15 @@ public class AssigneeService {
         targetRow.setToRef(targetRef);
         handoverTargetRepository.save(targetRow);
 
-        ensureAssignee(taskId, targetRef, tenantId);
-        userStateService.reactivate(taskId, targetRef, tenantId);
+        final boolean newlyAssigned = ensureAssignee(taskId, targetRef, tenantId);
+        if (newlyAssigned) {
+          // Das Ziel war kein aktiver Assignee und wird es jetzt: wie bei einer neuen Zuweisung per
+          // PUT hebt das den Mute dieser Aufgabe fuer das Ziel auf (Folge von #158).
+          userStateService.reactivateAsAssignee(taskId, targetRef, tenantId);
+        } else {
+          // Das Ziel war bereits aktiver Assignee: keine neue Zuweisung, der Mute bleibt bestehen.
+          userStateService.reactivate(taskId, targetRef, tenantId);
+        }
         notificationService.emit(
             targetRef,
             taskId,
@@ -932,16 +947,22 @@ public class AssigneeService {
    * @param taskId interne Aufgaben-ID
    * @param targetRef UUID des Uebergabeziels
    * @param tenantId Task-Mandant (= PARTICIPANT_TENANT_ID der zu haltenden/neu anzulegenden Zeile)
+   * @return {@code true}, wenn das Ziel vorher KEIN aktiver Assignee war und es durch diesen Aufruf
+   *     (neu angelegt oder reaktiviert) wird, also eine neue Zuweisung vorliegt; {@code false},
+   *     wenn es bereits aktiver Assignee war (aktiv = {@code ASSIGNEE_FLAG=1}, {@code EXIT_KIND}
+   *     null, {@code ENTITY_STATUS='ACTIVE'}, wie {@code findActiveAssigneesByTaskId})
    * @throws BusinessRuleException 409 fail-closed, wenn die Unique-Key-Zeile TEAM ist oder ein
    *     fremdes Basis-{@code TENANT_ID} traegt (Laufzeit-Vertrag, keine Mutation); ODER bei einem
    *     nebenlaeufigen Konflikt, dessen Re-Read die volle Invariante NICHT bestaetigt
    */
-  private void ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
+  private boolean ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
     // Unique-Key-exakter Lookup (ohne Status/EXIT/KIND-Filter) -> <=1 Zeile unabhaengig vom Basis-
     // TENANT_ID; die Klassifikation (reaktivieren vs. 409 vs. INSERT) erfolgt hier.
     final List<TaskParticipant> rows =
         participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
     final TaskParticipant p;
+    // War das Ziel vor diesem Aufruf schon aktiver Assignee? (Zustand VOR der Mutation)
+    boolean wasActiveAssignee = false;
     if (!rows.isEmpty()) {
       final TaskParticipant row = rows.get(0);
       // fail-closed 409: TEAM-Zeile ODER fremdes Basis-TENANT_ID -> KEINE Mutation (ensureAssignee-
@@ -954,6 +975,10 @@ public class AssigneeService {
                 + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
       }
       // PERSON + Basis-TENANT_ID=task-tenant (aktiv/exited/inaktiv egal): VOLL reaktivieren.
+      wasActiveAssignee =
+          row.isAssigneeFlag()
+              && row.getExitKind() == null
+              && row.getEntityState() == EntityState.ACTIVE;
       p = row;
       p.setAssigneeFlag(true);
       p.setParticipantFlag(true);
@@ -999,12 +1024,13 @@ public class AssigneeService {
                 + " idempotenter SKIP (Gewinner erfuellt volle Assignee-Invariante).",
             taskId,
             targetRef);
-        return;
+        return !wasActiveAssignee;
       }
       // z.B. paralleles reines-Teilnehmer-Add (ASSIGNEE_FLAG=false) oder Anomalie-Zeile -> KEIN
       // akzeptabler Zustand fuer ein Handover-Ziel: Konflikt weiterwerfen -> voller Rollback.
       throw conflict;
     }
+    return !wasActiveAssignee;
   }
 
   /**
