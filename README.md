@@ -159,7 +159,12 @@ gegen einen eigenen MSSQL-Container:
   einer aeusseren Klasse mit innerer Testklasse in den Bericht der inneren Klasse
   (`FlywayMigrationIT` meldet selbst `tests="0"`). Der Job `integration-tests`
   fasst alle Shards zusammen und prueft, dass jede IT-Klasse des Repositories
-  gelaufen ist. Er ist der Pflicht-Check (`Integration tests`). Tests fuer
+  gelaufen ist. Sein Check-Name `Integration tests` ist als stabiler Pflicht-Check
+  vorgesehen (nicht die einzelnen Shards). Pflicht wird er erst nach dem Merge
+  dieses Workflows: zuerst laeuft der Job einmal gruen auf einem PR, danach wird
+  er als erforderlicher Check in der Branch-Regel von `developer` und im
+  Repo-Vertrag des Brains eingetragen. Bis dahin ist er sichtbar, aber nicht
+  merge-blockierend; der Merge setzt dann Disziplin voraus. Tests fuer
   Aufteilung und Gate: `python3 -m unittest discover -s scripts/ci -p 'test_*.py'`
   (laufen auch in diesem Job).
 - **Berichte:** Failsafe-Berichte und MSSQL-Log je Shard als Artefakt
