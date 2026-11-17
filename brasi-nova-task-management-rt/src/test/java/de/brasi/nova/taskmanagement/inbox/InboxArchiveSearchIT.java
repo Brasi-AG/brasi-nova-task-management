@@ -190,6 +190,9 @@ class InboxArchiveSearchIT {
   private static final UUID T_ORPHAN = UUID.randomUUID();
   private static final UUID T_LEFT_UNSUB = UUID.randomUUID();
   private static final UUID T_LEFT_EXIT = UUID.randomUUID();
+  private static final UUID T_REN_1 = UUID.randomUUID();
+  private static final UUID T_REN_2 = UUID.randomUUID();
+  private static final UUID T_REN_3 = UUID.randomUUID();
 
   @DynamicPropertySource
   static void configureProperties(final DynamicPropertyRegistry registry) {
@@ -304,6 +307,16 @@ class InboxArchiveSearchIT {
     seedParticipant(jt, ID_BASE + 114, ID_BASE + 14, USER_S_REF, false, true, true, "HANDOVER");
     seedUserState(jt, ID_BASE + 214, ID_BASE + 14, USER_S_REF, null);
 
+    // Live-Stand der Tag-Namen: T_REN_1 und T_REN_3 tragen "Kobalt", T_REN_2 "Neutral".
+    archivedFor(jt, 20, T_REN_1, done, base.plusMinutes(22), "Ren eins", null);
+    archivedFor(jt, 21, T_REN_2, done, base.plusMinutes(21), "Ren zwei", null);
+    archivedFor(jt, 22, T_REN_3, done, base.plusMinutes(20), "Ren drei", null);
+    seedTag(jt, ID_BASE + 910, "Kobalt", "ACTIVE");
+    seedTag(jt, ID_BASE + 911, "Neutral", "ACTIVE");
+    seedTagAssignment(jt, ID_BASE + 960, ID_BASE + 20, ID_BASE + 910, "ACTIVE");
+    seedTagAssignment(jt, ID_BASE + 961, ID_BASE + 21, ID_BASE + 911, "ACTIVE");
+    seedTagAssignment(jt, ID_BASE + 962, ID_BASE + 22, ID_BASE + 910, "ACTIVE");
+
     // Paging-Satz fuer P: fuenf erledigte "Serie"-Aufgaben.
     for (int i = 0; i < 5; i++) {
       final long taskId = ID_BASE + 300 + i;
@@ -400,6 +413,45 @@ class InboxArchiveSearchIT {
     assertThat(pages).isEqualTo(3);
     assertThat(all).hasSize(5).doesNotHaveDuplicates();
 
+    // Cursor ist an Suchbegriff und Filter gebunden: gleiche Suche (normalisiert) 200,
+    // anderer Begriff oder Filter 400.
+    mvc.perform(
+            get(SEARCH_URL)
+                .queryParam("query", "  SERIE ")
+                .queryParam("limit", "2")
+                .queryParam("cursor", firstCursor)
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk());
+    mvc.perform(
+            get(SEARCH_URL)
+                .queryParam("query", "seri")
+                .queryParam("limit", "2")
+                .queryParam("cursor", firstCursor)
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            get(SEARCH_URL)
+                .queryParam("query", "serie")
+                .queryParam("filter", "done")
+                .queryParam("limit", "2")
+                .queryParam("cursor", firstCursor)
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isBadRequest());
+    // Ein Archiv-Cursor (4 Token) gilt in der Suche nicht und umgekehrt.
+    final JsonNode archivePage =
+        getJson(mvc, get("/api/v1/tasks/archive").queryParam("limit", "2"), token);
+    mvc.perform(
+            get(SEARCH_URL)
+                .queryParam("query", "serie")
+                .queryParam("cursor", archivePage.get("nextCursor").asText())
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            get("/api/v1/tasks/archive")
+                .queryParam("cursor", firstCursor)
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isBadRequest());
+
     // Mitgliedschafts-Generation des Anfragers aendert sich -> alter Cursor 410.
     bumpGeneration(USER_P_REF);
     mvc.perform(
@@ -409,6 +461,52 @@ class InboxArchiveSearchIT {
                 .queryParam("cursor", firstCursor)
                 .header("Authorization", "Bearer " + token))
         .andExpect(status().isGone());
+  }
+
+  /**
+   * Dokumentierte Konsistenzgrenze: Tag-Bezeichnungen gelten im Live-Stand. Eine Umbenennung
+   * zwischen zwei Seiten fuehrt weder zu 410 noch zu einer Dublette; sie kann einen Treffer
+   * hinzufuegen (hinter dem Cursor) oder auslassen.
+   */
+  @Test
+  @DisplayName("tag_umbenennung_zwischen_seiten_live_stand_kein_410_keine_dublette")
+  void tag_umbenennung_zwischen_seiten_live_stand_kein_410_keine_dublette() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String token = userS();
+    final List<String> seen = new ArrayList<>();
+
+    final JsonNode page1 =
+        getJson(mvc, get(SEARCH_URL).queryParam("query", "kobalt").queryParam("limit", "1"), token);
+    seen.addAll(idsOf(page1));
+    assertThat(seen).containsExactly(T_REN_1.toString());
+
+    // "Neutral" -> "Kobalt-Neu": T_REN_2 liegt hinter dem Cursor und erscheint jetzt.
+    renameTag(ID_BASE + 911, "Kobalt-Neu");
+    final JsonNode page2 =
+        getJson(
+            mvc,
+            get(SEARCH_URL)
+                .queryParam("query", "kobalt")
+                .queryParam("limit", "1")
+                .queryParam("cursor", page1.get("nextCursor").asText()),
+            token);
+    seen.addAll(idsOf(page2));
+    assertThat(page2.get("hasMore").asBoolean()).isTrue();
+
+    // "Kobalt" -> "Kupfer": T_REN_3 trifft nicht mehr und wird ausgelassen.
+    renameTag(ID_BASE + 910, "Kupfer");
+    final JsonNode page3 =
+        getJson(
+            mvc,
+            get(SEARCH_URL)
+                .queryParam("query", "kobalt")
+                .queryParam("limit", "1")
+                .queryParam("cursor", page2.get("nextCursor").asText()),
+            token);
+    seen.addAll(idsOf(page3));
+    assertThat(page3.get("hasMore").asBoolean()).isFalse();
+
+    assertThat(seen).containsExactly(T_REN_1.toString(), T_REN_2.toString());
   }
 
   @Test
@@ -498,6 +596,10 @@ class InboxArchiveSearchIT {
       ids.add(item.get("id").asText());
     }
     return ids;
+  }
+
+  private void renameTag(final long tagId, final String name) {
+    jdbcTemplate.update("UPDATE [dbo].[TASK_TAG] SET BEZEICHNUNG = ? WHERE ID = ?", name, tagId);
   }
 
   private void bumpGeneration(final UUID userRef) {

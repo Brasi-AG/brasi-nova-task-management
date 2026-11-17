@@ -3,7 +3,12 @@ package de.brasi.nova.taskmanagement.inbox;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import de.brasi.nova.taskmanagement.inbox.model.ArchiveSearchPageSchema;
+import de.brasi.nova.taskmanagement.paging.KeysetCursor;
 import io.keel.framework.api.validation.EntityValidationException;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -53,5 +58,26 @@ class ArchiveSearchTermTest {
   @DisplayName("like_muster_escaped_prozent_unterstrich_klammer_und_escape_zeichen")
   void like_muster_escaped_prozent_unterstrich_klammer_und_escape_zeichen() {
     assertThat(ArchiveSearchTerm.of("50%_[a]!").likePattern()).isEqualTo("%50!%!_![a]!!%");
+  }
+
+  @Test
+  @DisplayName("cursor_scope_normalisiert_begriff_und_unterscheidet_filter")
+  void cursor_scope_normalisiert_begriff_und_unterscheidet_filter() {
+    final String scope = ArchiveSearchTerm.of("Quartal").cursorScope("all");
+    assertThat(scope).hasSize(16).matches("[0-9a-f]{16}");
+    assertThat(ArchiveSearchTerm.of("  qUARTAL ").cursorScope("all")).isEqualTo(scope);
+    assertThat(ArchiveSearchTerm.of("Quartale").cursorScope("all")).isNotEqualTo(scope);
+    assertThat(ArchiveSearchTerm.of("Quartal").cursorScope("done")).isNotEqualTo(scope);
+  }
+
+  @Test
+  @DisplayName("openapi_beispielcursor_ist_gueltig_kodiert_und_passt_zum_scope")
+  void openapi_beispielcursor_ist_gueltig_kodiert_und_passt_zum_scope() {
+    final List<String> tokens = KeysetCursor.decode(ArchiveSearchPageSchema.EXAMPLE_CURSOR, 5);
+    LocalDateTime.parse(tokens.get(0));
+    LocalDateTime.parse(tokens.get(1));
+    UUID.fromString(tokens.get(2));
+    Long.parseLong(tokens.get(3));
+    assertThat(tokens.get(4)).isEqualTo(ArchiveSearchTerm.of("Quartalsbericht").cursorScope("all"));
   }
 }

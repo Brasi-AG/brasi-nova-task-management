@@ -211,7 +211,8 @@ public class InboxSnapshotService {
         new KeysetPage<>(
             snapshotSummaries(membership.pageTasks(), membership.enrichment()),
             membership.hasMore()
-                ? encodeCursor(membership.asOf(), membership.generation(), membership.pageTasks())
+                ? encodeCursor(
+                    membership.asOf(), membership.generation(), membership.pageTasks(), null)
                 : null,
             membership.hasMore(),
             asOfInstant);
@@ -262,7 +263,8 @@ public class InboxSnapshotService {
         effLimit,
         (asOf, lastActivityAt, externalId) ->
             taskQueryRepository.findActivePage(
-                userRef, openStatusId, asOf, lastActivityAt, externalId, effLimit + 1));
+                userRef, openStatusId, asOf, lastActivityAt, externalId, effLimit + 1),
+        null);
   }
 
   /**
@@ -302,7 +304,7 @@ public class InboxSnapshotService {
                     userRef, doneId, cancelledId, asOf, lastActivityAt, externalId, effLimit + 1);
           }
         };
-    return readPage(userRef, cursor, effLimit, fetch);
+    return readPage(userRef, cursor, effLimit, fetch, null);
   }
 
   /**
@@ -317,11 +319,12 @@ public class InboxSnapshotService {
    * @param userRef UUID des Benutzers
    * @param query Suchbegriff (Pflicht; wird getrimmt, 1 bis 200 Zeichen)
    * @param filter {@code all} (Default/null) | {@code done} | {@code left}
-   * @param cursor opaker 4-Token-Cursor (null/blank = erste Seite mit frischem asOf)
+   * @param cursor opaker 5-Token-Cursor (null/blank = erste Seite mit frischem asOf); der fuenfte
+   *     Token bindet ihn an Suchbegriff und Filter ({@link ArchiveSearchTerm#cursorScope})
    * @param limit Seitengroesse (wird geclampt)
    * @return HAL-Collection der gefundenen archivierten Aufgaben
    * @throws EntityValidationException bei fehlendem/zu langem Suchbegriff, ungueltigem Filter oder
-   *     Cursor (HTTP 400)
+   *     Cursor, auch bei einem Cursor zu anderem Suchbegriff oder Filter (HTTP 400)
    * @throws SnapshotExpiredException (HTTP 410) wie {@link #loadActivePage}
    */
   public CursorCollectionModel<TaskSummaryModel> searchArchivePage(
@@ -352,7 +355,8 @@ public class InboxSnapshotService {
                 asOf,
                 lastActivityAt,
                 externalId,
-                effLimit + 1));
+                effLimit + 1),
+        term.cursorScope(resolvedFilter));
   }
 
   // ---- intern ---------------------------------------------------------------------------------
@@ -380,7 +384,10 @@ public class InboxSnapshotService {
     List<Task> fetch(LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId);
   }
 
-  /** Keyset-Fenster: Wasserzeichen + Keyset-Position + Snapshot-Generation. */
+  /**
+   * Keyset-Fenster: Wasserzeichen + Keyset-Position + Snapshot-Generation (+ optionaler
+   * Scope-Token).
+   */
   private record Window(
       LocalDateTime asOf, LocalDateTime lastActivityAt, UUID externalId, long generation) {}
 
@@ -399,9 +406,17 @@ public class InboxSnapshotService {
    * Seite laeuft in beiden Pfaden VOR dem abschliessenden Generation-Read.
    *
    * <p>Slice 4: Liefert {@link CursorCollectionModel} statt {@link KeysetPage}.
+   *
+   * <p>{@code scope} (nur Archivsuche, sonst null) wird als fuenfter Token in den Cursor
+   * geschrieben und beim Folgeaufruf verglichen: ein Cursor gilt nur fuer denselben Suchbegriff und
+   * Filter, sonst 400. Ohne {@code scope} bleibt der Cursor bei 4 Token (Inbox, Archiv).
    */
   private CursorCollectionModel<TaskSummaryModel> readPage(
-      final UUID userRef, final String cursor, final int effLimit, final PageFetch fetch) {
+      final UUID userRef,
+      final String cursor,
+      final int effLimit,
+      final PageFetch fetch,
+      final String scope) {
     if (cursor == null || cursor.isBlank()) {
       // First-Page: Generation-Bracket. Seiten-Query + Anreicherung, dann Generation-Re-Read.
       for (int attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt++) {
@@ -413,14 +428,14 @@ public class InboxSnapshotService {
         final Map<Long, TaskEnrichment> enrichment = enrich(page, userRef, asOf);
         final long g2 = inboxGenerationService.currentGeneration(userRef);
         if (g1 == g2) {
-          return assemblePage(page, hasMore, asOf, g1, enrichment);
+          return assemblePage(page, hasMore, asOf, g1, enrichment, scope);
         }
       }
       throw new SnapshotExpiredException();
     }
 
     // Folgeseite: Page-Query + Anreicherung ZUERST, Generation DANACH (check-AFTER).
-    final Window window = decodeWindow(cursor);
+    final Window window = decodeWindow(cursor, scope);
     final List<Task> raw = fetch.fetch(window.asOf(), window.lastActivityAt(), window.externalId());
     final boolean hasMore = raw.size() > effLimit;
     final List<Task> page = hasMore ? raw.subList(0, effLimit) : raw;
@@ -429,7 +444,7 @@ public class InboxSnapshotService {
     if (current != window.generation()) {
       throw new SnapshotExpiredException();
     }
-    return assemblePage(page, hasMore, window.asOf(), window.generation(), enrichment);
+    return assemblePage(page, hasMore, window.asOf(), window.generation(), enrichment, scope);
   }
 
   /**
@@ -459,12 +474,16 @@ public class InboxSnapshotService {
   }
 
   /**
-   * Dekodiert den 4-Token-Cursor (asOf, lastActivityAt, externalId, generation). Malformed
-   * (Tokenzahl, Datum, UUID, Zahl) -> {@link EntityValidationException} (HTTP 400). Ein alter
-   * 3-Token-Cursor scheitert bereits an der Tokenzahl.
+   * Dekodiert den 4-Token-Cursor (asOf, lastActivityAt, externalId, generation), mit {@code scope}
+   * den 5-Token-Cursor mit Scope-Token am Ende. Malformed (Tokenzahl, Datum, UUID, Zahl) oder ein
+   * abweichender Scope-Token -> {@link EntityValidationException} (HTTP 400). Ein alter
+   * 3-Token-Cursor oder ein Archiv-Cursor in der Suche scheitert bereits an der Tokenzahl.
    */
-  private Window decodeWindow(final String cursor) {
-    final List<String> tokens = KeysetCursor.decode(cursor, 4);
+  private Window decodeWindow(final String cursor, final String scope) {
+    final List<String> tokens = KeysetCursor.decode(cursor, scope == null ? 4 : 5);
+    if (scope != null && !scope.equals(tokens.get(4))) {
+      throw new EntityValidationException("Ungueltiger cursor.");
+    }
     try {
       final LocalDateTime asOf = LocalDateTime.parse(tokens.get(0));
       final LocalDateTime lastActivityAt = LocalDateTime.parse(tokens.get(1));
@@ -489,8 +508,9 @@ public class InboxSnapshotService {
       final boolean hasMore,
       final LocalDateTime asOf,
       final long generation,
-      final Map<Long, TaskEnrichment> enrichment) {
-    final String nextCursor = hasMore ? encodeCursor(asOf, generation, page) : null;
+      final Map<Long, TaskEnrichment> enrichment,
+      final String scope) {
+    final String nextCursor = hasMore ? encodeCursor(asOf, generation, page, scope) : null;
     return CursorCollectionModel.ofTasks(
         enrichedSummaries(page, enrichment),
         nextCursor,
@@ -549,16 +569,24 @@ public class InboxSnapshotService {
         exit);
   }
 
-  /** Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation. */
+  /**
+   * Enkodiert den 4-Token-Cursor aus dem letzten Element der Seite + der Snapshot-Generation; mit
+   * {@code scope} zusaetzlich den Scope-Token als fuenften Token.
+   */
   private String encodeCursor(
-      final LocalDateTime asOf, final long generation, final List<Task> page) {
+      final LocalDateTime asOf, final long generation, final List<Task> page, final String scope) {
     final Task last = page.get(page.size() - 1);
-    return KeysetCursor.encode(
-        List.of(
-            asOf.toString(),
-            last.getLastActivityAt().toString(),
-            last.getUuid().toString(),
-            Long.toString(generation)));
+    final List<String> tokens =
+        new java.util.ArrayList<>(
+            List.of(
+                asOf.toString(),
+                last.getLastActivityAt().toString(),
+                last.getUuid().toString(),
+                Long.toString(generation)));
+    if (scope != null) {
+      tokens.add(scope);
+    }
+    return KeysetCursor.encode(tokens);
   }
 
   /**

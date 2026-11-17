@@ -1,6 +1,10 @@
 package de.brasi.nova.taskmanagement.inbox;
 
 import io.keel.framework.api.validation.EntityValidationException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Locale;
 
 /**
@@ -41,6 +45,28 @@ record ArchiveSearchTerm(String value, String likePattern) {
           "Der Parameter 'query' darf hoechstens " + MAX_LENGTH + " Zeichen lang sein.");
     }
     return new ArchiveSearchTerm(trimmed, "%" + escape(trimmed.toLowerCase(Locale.ROOT)) + "%");
+  }
+
+  /**
+   * Scope-Token des Such-Cursors: die ersten 16 Hex-Zeichen von SHA-256 ueber den aufgeloesten
+   * Filter und den normalisierten (getrimmten, klein geschriebenen) Suchbegriff. Gleiche Suche
+   * (auch mit anderer Gross-/Kleinschreibung oder Leerzeichen aussen) ergibt denselben Token, ein
+   * anderer Begriff oder Filter einen anderen; der Service lehnt dann den Cursor mit 400 ab.
+   *
+   * @param resolvedFilter aufgeloester Filter ({@code all|done|left})
+   * @return Scope-Token (16 Hex-Zeichen)
+   */
+  String cursorScope(final String resolvedFilter) {
+    try {
+      final byte[] digest =
+          MessageDigest.getInstance("SHA-256")
+              .digest(
+                  (resolvedFilter + '\u001f' + value.toLowerCase(Locale.ROOT))
+                      .getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest, 0, 8);
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 nicht verfuegbar.", e);
+    }
   }
 
   /** Stellt Escape-Zeichen, {@code %}, {@code _} und {@code [} das Escape-Zeichen voran. */

@@ -418,6 +418,15 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * case-insensitiv ueber {@code LOWER(...)} gegen das klein geschriebene, mit {@code !} escapte
    * Muster ({@code ESCAPE '!'}).
    *
+   * <p><b>Konsistenzgrenze (bewusst):</b> Titel und Beschreibung sind an das Wasserzeichen
+   * gebunden: jede Aenderung per Patch setzt {@code LAST_ACTIVITY_AT} neu (faellt aus {@code <=
+   * :asOf}) und erhoeht die Generation aller Leser (Folgeseite 410). Tag-Bezeichnungen ({@code
+   * TASK_TAG}) und Personennamen ({@code PROD_BENUTZER}) werden dagegen im Live-Stand verglichen;
+   * eine Umbenennung zwischen zwei Seiten erhoeht keine Generation und kann einen Treffer
+   * verschieben oder auslassen (kein 410, keine Dublette, weil das Keyset die Position festhaelt).
+   * Zuordnungsaenderungen von Tags und Teilnehmern laufen ueber Mutationen mit Generation-Bump
+   * (Patch, Assignees, Participants, exit) und sind damit gebunden.
+   *
    * @param userRef UUID des Benutzers
    * @param doneId aufgeloeste ID fuer "DONE"
    * @param cancelledId aufgeloeste ID fuer "CANCELLED"

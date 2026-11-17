@@ -24,6 +24,15 @@ import java.util.UUID;
  */
 public final class ArchiveSearchPageSchema {
 
+  /**
+   * Gueltig kodierter Beispiel-Cursor der Archivsuche fuer die OpenAPI-Doku (5 Token: asOf,
+   * lastActivityAt, externalId, Generation, Scope-Token fuer query "Quartalsbericht" und filter
+   * "all"). Mit dem echten Codec ({@code KeysetCursor}) erzeugt; {@code ArchiveSearchTermTest}
+   * prueft, dass er dekodierbar ist und zum Scope passt.
+   */
+  public static final String EXAMPLE_CURSOR =
+      "MjAyNi0xMS0xN1QxMTowMDowMC4xMjM0NTYfMjAyNi0xMS0xNlQwOTozMDowMC41MDAfM2YyYjdjMWUtOGE0ZC00ZTU5LTljM2EtMGIxZDJlM2Y0YTViHzMfMjAyOWIzYjlhODAwMjRhNA";
+
   private ArchiveSearchPageSchema() {}
 
   /**
@@ -54,7 +63,7 @@ public final class ArchiveSearchPageSchema {
       @Schema(
               description =
                   "Opaker Cursor der naechsten Seite; null, wenn keine weitere Seite existiert.",
-              example = "MjAyNi0xMS0xN1QxMDowMDowMHwyMDI2LTExLTE2VDA5OjMwOjAwfGFiY3wy")
+              example = EXAMPLE_CURSOR)
           String nextCursor,
       @Schema(description = "Ob eine weitere Seite existiert.", example = "false") boolean hasMore,
       @Schema(

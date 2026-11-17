@@ -162,8 +162,12 @@ public class InboxSnapshotController {
               + " aktiven Teilnehmers (Ersteller, Zugewiesene, Beteiligte) den Suchbegriff als"
               + " Teilstring enthaelt; Gross- und Kleinschreibung spielen keine Rolle, die Zeichen"
               + " %, _ und [ gelten woertlich. Jede Aufgabe erscheint hoechstens einmal. filter,"
-              + " cursor und limit wirken wie beim Archiv; der Cursor gilt nur zusammen mit"
-              + " demselben Suchbegriff und Filter.")
+              + " cursor und limit wirken wie beim Archiv; der Cursor ist an Suchbegriff (ohne"
+              + " Gross-/Kleinschreibung und Leerzeichen aussen) und Filter gebunden, ein Cursor zu"
+              + " anderem Begriff oder Filter ist 400. Titel und Beschreibung sind ueber das"
+              + " asOf-Wasserzeichen gebunden (jede Aenderung erzeugt fuer Folgeseiten 410)."
+              + " Tag-Bezeichnungen und Personennamen gelten dagegen im Live-Stand: eine Umbenennung"
+              + " zwischen zwei Seiten kann einen Treffer verschieben oder auslassen, ohne 410.")
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",
@@ -197,7 +201,9 @@ public class InboxSnapshotController {
                                 + "[\"6a1e2b3c-4d5e-4f60-8172-93a4b5c6d7e8\"]}}]},"
                                 + "\"_links\":{\"create\":{\"href\":\"/api/v1/tasks\"}},"
                                 + "\"nextCursor\":"
-                                + "\"MjAyNi0xMS0xN1QxMDowMDowMHwyMDI2LTExLTE2VDA5OjMwOjAwfGFiY3wy\","
+                                + "\""
+                                + ArchiveSearchPageSchema.EXAMPLE_CURSOR
+                                + "\","
                                 + "\"hasMore\":true,"
                                 + "\"asOf\":\"2026-11-17T10:00:00Z\"}"))),
     @ApiResponse(
@@ -260,7 +266,10 @@ public class InboxSnapshotController {
               example = "all")
           @RequestParam(required = false)
           final String filter,
-      @Parameter(description = "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite).")
+      @Parameter(
+              description =
+                  "Opaker Keyset-Cursor fuer die naechste Seite (leer = erste Seite); gilt nur mit"
+                      + " demselben query und filter, sonst 400.")
           @RequestParam(required = false)
           final String cursor,
       @Parameter(description = "Seitengroesse, geclampt auf [1, 100]. Standard: 50.")

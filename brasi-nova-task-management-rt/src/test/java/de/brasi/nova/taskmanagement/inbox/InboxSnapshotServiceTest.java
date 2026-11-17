@@ -682,7 +682,12 @@ class InboxSnapshotServiceTest {
     final UUID lastExternal = UUID.randomUUID();
     final String cursor =
         KeysetCursor.encode(
-            List.of(asOf.toString(), lastActivity.toString(), lastExternal.toString(), "2"));
+            List.of(
+                asOf.toString(),
+                lastActivity.toString(),
+                lastExternal.toString(),
+                "2",
+                ArchiveSearchTerm.of("abc").cursorScope("all")));
     when(taskQueryRepository.findArchiveSearchPage(
             eq(USER_REF),
             eq(DONE_ID),
@@ -702,6 +707,34 @@ class InboxSnapshotServiceTest {
     when(inboxGenerationService.currentGeneration(USER_REF)).thenReturn(3L);
     assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "abc", "all", cursor, 5))
         .isInstanceOf(SnapshotExpiredException.class);
+  }
+
+  @Test
+  @DisplayName("searchArchivePage_cursor_zu_anderem_begriff_filter_oder_archiv_cursor_wirft_400")
+  void searchArchivePage_cursor_zu_anderem_begriff_filter_oder_archiv_cursor_wirft_400() {
+    final List<String> window =
+        List.of(
+            LocalDateTime.of(2026, 10, 17, 10, 0).toString(),
+            LocalDateTime.of(2026, 10, 16, 9, 30).toString(),
+            UUID.randomUUID().toString(),
+            "0");
+    final List<String> scoped = new ArrayList<>(window);
+    scoped.add(ArchiveSearchTerm.of("abc").cursorScope("all"));
+    final String cursor = KeysetCursor.encode(scoped);
+
+    // Gleiche Suche (Gross-/Kleinschreibung, Leerzeichen aussen) bleibt gueltig.
+    assertThat(items(service.searchArchivePage(USER_REF, " ABC ", null, cursor, 5))).isEmpty();
+    // Anderer Begriff, anderer Filter, Archiv-Cursor ohne Scope -> 400.
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "abd", "all", cursor, 5))
+        .isInstanceOf(EntityValidationException.class);
+    assertThatThrownBy(() -> service.searchArchivePage(USER_REF, "abc", "done", cursor, 5))
+        .isInstanceOf(EntityValidationException.class);
+    assertThatThrownBy(
+            () -> service.searchArchivePage(USER_REF, "abc", "all", KeysetCursor.encode(window), 5))
+        .isInstanceOf(EntityValidationException.class);
+    // Umgekehrt: ein Such-Cursor ist im Archiv ungueltig (Archiv-Cursor bleibt 4 Token).
+    assertThatThrownBy(() -> service.loadArchivePage(USER_REF, "all", cursor, 5))
+        .isInstanceOf(EntityValidationException.class);
   }
 
   // ---- BE-1: currentUserId + Anreicherung + N+1-Sentinel + Enrichment-im-Bracket --------------
