@@ -145,6 +145,7 @@ class TaskCommandServiceTest {
     when(resolver.resolveTaskStatus(TaskStatusCodes.DONE)).thenReturn(STATUS_ID_DONE);
     when(resolver.resolveTaskStatus(TaskStatusCodes.CANCELLED)).thenReturn(STATUS_ID_CANCELLED);
     when(resolver.resolveTaskStatusDone()).thenReturn(STATUS_ID_DONE);
+    when(resolver.resolveTaskStatusCancelled()).thenReturn(STATUS_ID_CANCELLED);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL)).thenReturn(PRIORITY_ID_NORMAL);
 
     // Codex #6: Der Service bumpt Multi-Ref-Mengen jetzt ueber den zentralen Helfer bumpSorted;
@@ -1534,10 +1535,151 @@ class TaskCommandServiceTest {
 
   @Test
   @DisplayName(
-      "patch_status_nach_abgebrochen_loest_keine_done_benachrichtigung_aus: OPEN -> CANCELLED")
+      "patch_status_nach_abgebrochen_loest_keine_done_benachrichtigung_aus: OPEN -> CANCELLED"
+          + " (Intake #157: stattdessen CANCELLED, nie DONE)")
   void patch_status_nach_abgebrochen_loest_keine_done_benachrichtigung_aus() {
     final Long taskId = 158L;
     final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    stubCreatorAndActor();
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_CANCELLED);
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.DONE), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus: DONE -> OPEN (Reopen)")
+  void patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus() {
+    final Long taskId = 159L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_DONE);
+    stubCreatorAndActor();
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.OPEN));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_OPEN);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  // ---- Intake #157: CANCELLED-Benachrichtigung beim Abbrechen einer Aufgabe ---------------------
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_cancelled_benachrichtigt_jeden_aktiven_beteiligten_ausser_akteur:"
+          + " Ersteller, Zugewiesene und Beteiligte erhalten genau eine CANCELLED-Benachrichtigung,"
+          + " der Akteur keine")
+  void patch_status_nach_cancelled_benachrichtigt_jeden_aktiven_beteiligten_ausser_akteur() {
+    final Long taskId = 171L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID assigneeRef = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(assigneeRef, false, true, true, null),
+                participantRow(participantRef, false, false, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    assertThat(task.getTaskStatusId()).isEqualTo(STATUS_ID_CANCELLED);
+    for (final UUID recipientRef : List.of(creatorRef, assigneeRef, participantRef)) {
+      verify(notificationService, times(1))
+          .emit(
+              eq(recipientRef),
+              eq(taskId),
+              eq(NotificationTypeCodes.CANCELLED),
+              eq(NotificationSeverityCodes.INFO),
+              eq("Die Aufgabe wurde abgebrochen."),
+              eq("Jahresabschluss"),
+              eq(USER_REF));
+    }
+    verify(notificationService, never())
+        .emit(eq(USER_REF), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(3)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_cancelled_benachrichtigt_ausgetretene_und_abgemeldete_nicht: EXIT_KIND"
+          + " gesetzt oder UNSUBSCRIBED_AT (Archiv-Leser) -> keine CANCELLED-Benachrichtigung"
+          + " (gemeinsame Empfaengerermittlung mit DONE)")
+  void patch_status_nach_cancelled_benachrichtigt_ausgetretene_und_abgemeldete_nicht() {
+    final Long taskId = 172L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID unsubscribedRef = UUID.randomUUID();
+    final UUID handedOverRef = UUID.randomUUID();
+    final UUID leftRef = UUID.randomUUID();
+    final TaskParticipant leftRow = participantRow(leftRef, false, true, true, null);
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(unsubscribedRef, false, false, true, ExitKind.UNSUBSCRIBED),
+                participantRow(handedOverRef, false, false, true, ExitKind.HANDOVER),
+                leftRow));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(leftRow));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.CANCELLED),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_nach_cancelled_liest_beteiligte_vor_task_save_und_emittiert_danach:"
+          + " Lock-Reihenfolge (Membership-Read vor TASK-save) bleibt gewahrt")
+  void patch_status_nach_cancelled_liest_beteiligte_vor_task_save_und_emittiert_danach() {
+    final Long taskId = 173L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    final org.mockito.InOrder order =
+        inOrder(participantQueryRepository, taskRepository, notificationService);
+    order.verify(participantQueryRepository).findActiveByTaskIds(any());
+    order.verify(taskRepository).save(task);
+    order
+        .verify(notificationService)
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.CANCELLED),
+            any(),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_cancelled_bei_bereits_abgebrochener_aufgabe_loest_keine_benachrichtigung_aus:"
+          + " CANCELLED -> CANCELLED ist kein Uebergang")
+  void patch_status_cancelled_bei_bereits_abgebrochener_aufgabe_loest_keine_benachrichtigung_aus() {
+    final Long taskId = 174L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_CANCELLED);
     stubCreatorAndActor();
 
     service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
@@ -1548,10 +1690,67 @@ class TaskCommandServiceTest {
 
   @Test
   @DisplayName(
-      "patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus: DONE -> OPEN (Reopen)")
-  void patch_status_wiederoeffnen_loest_keine_done_benachrichtigung_aus() {
-    final Long taskId = 159L;
+      "patch_status_von_done_nach_cancelled_loest_cancelled_benachrichtigung_aus: jeder Uebergang"
+          + " in CANCELLED zaehlt (wie bei DONE), genau eine CANCELLED, keine DONE")
+  void patch_status_von_done_nach_cancelled_loest_cancelled_benachrichtigung_aus() {
+    final Long taskId = 175L;
     final Task task = taskWithStatus(taskId, STATUS_ID_DONE);
+    final UUID creatorRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.CANCELLED));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.CANCELLED),
+            eq(NotificationSeverityCodes.INFO),
+            eq("Die Aufgabe wurde abgebrochen."),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_von_cancelled_nach_done_loest_done_benachrichtigung_aus: bestehende"
+          + " DONE-Logik (jeder Uebergang in DONE) bleibt unveraendert, keine CANCELLED")
+  void patch_status_von_cancelled_nach_done_loest_done_benachrichtigung_aus() {
+    final Long taskId = 176L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_CANCELLED);
+    final UUID creatorRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null)));
+
+    service.patch(task.getUuid(), statusPatch(TaskStatusCodes.DONE));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(creatorRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_status_wiederoeffnen_aus_cancelled_loest_keine_benachrichtigung_aus: CANCELLED ->"
+          + " OPEN (Reopen)")
+  void patch_status_wiederoeffnen_aus_cancelled_loest_keine_benachrichtigung_aus() {
+    final Long taskId = 177L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_CANCELLED);
     stubCreatorAndActor();
 
     service.patch(task.getUuid(), statusPatch(TaskStatusCodes.OPEN));
