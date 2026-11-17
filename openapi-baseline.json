@@ -110,16 +110,6 @@
     "fingerprint": "4d462a9d6221f3e7"
   },
   {
-    "operation": "exit",
-    "rule": "request-example",
-    "fingerprint": "b6d7e40d3d4018e2"
-  },
-  {
-    "operation": "exit",
-    "rule": "response-example",
-    "fingerprint": "b6d7e40d3d4018e2"
-  },
-  {
     "operation": "flag",
     "rule": "request-example",
     "fingerprint": "5a2932e3fbda3101"
@@ -180,16 +170,6 @@
     "fingerprint": "5397f606f0398bd3"
   },
   {
-    "operation": "mute",
-    "rule": "request-example",
-    "fingerprint": "02e9796667e0c0c6"
-  },
-  {
-    "operation": "mute",
-    "rule": "response-example",
-    "fingerprint": "02e9796667e0c0c6"
-  },
-  {
     "operation": "patch",
     "rule": "request-example",
     "fingerprint": "8f16f1cf22f2244d"
@@ -228,16 +208,6 @@
     "operation": "snapshot",
     "rule": "response-example",
     "fingerprint": "ae27a7168854334f"
-  },
-  {
-    "operation": "updateAssignees",
-    "rule": "request-example",
-    "fingerprint": "2b7779141811aa97"
-  },
-  {
-    "operation": "updateAssignees",
-    "rule": "response-example",
-    "fingerprint": "2b7779141811aa97"
   },
   {
     "operation": "updateTag",

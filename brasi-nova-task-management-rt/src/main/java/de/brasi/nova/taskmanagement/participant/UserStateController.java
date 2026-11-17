@@ -1,10 +1,15 @@
 package de.brasi.nova.taskmanagement.participant;
 
+import de.brasi.nova.taskmanagement.inbox.model.ArchiveSearchPageSchema;
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
 import de.brasi.nova.taskmanagement.task.TaskHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
+import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
@@ -99,6 +104,12 @@ public class UserStateController {
   /**
    * Setzt den Muted-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
+   * <p>Eine stummgeschaltete Aufgabe loest fuer den Benutzer keine Benachrichtigungen mehr aus,
+   * ausser {@code MENTION}, {@code REPLY}, {@code ASSIGN} und {@code HANDOVER} ({@code
+   * NotificationMuteFilter}). Eine neue Zuweisung (PUT /assignees fuer neu hinzukommende Personen,
+   * HANDOVER-Ziele von POST /exit) hebt den Mute wieder auf ({@code
+   * UserStateService#reactivateAsAssignee}); dieser Endpunkt selbst ruft das nie auf.
+   *
    * @param id externe UUID der Aufgabe
    * @param input gewuenschter Zielwert ({@code true} = stummgeschaltet, {@code false} = nicht
    *     stumm)
@@ -108,21 +119,64 @@ public class UserStateController {
       summary = "Mute-Marker setzen",
       description =
           "Setzt den persoenlichen Mute-Marker des angemeldeten Benutzers fuer eine Aufgabe."
-              + " true = stummgeschaltet, false = nicht stumm.")
+              + " true = stummgeschaltet, false = nicht stumm."
+              + " Fuer eine stummgeschaltete Aufgabe erhaelt der Benutzer keine Benachrichtigungen"
+              + " mehr, ausser bei einer @-Erwaehnung (MENTION), bei einer Antwort auf einen"
+              + " eigenen Kommentar (REPLY), bei einer Zuweisung (ASSIGN) und bei einer Uebergabe"
+              + " (HANDOVER)."
+              + " Eine neue Zuweisung der Aufgabe an den Benutzer hebt die Stummschaltung"
+              + " automatisch auf: PUT /api/v1/tasks/{id}/assignees fuer neu hinzukommende Personen"
+              + " und POST /api/v1/tasks/{id}/exit fuer die Ziele einer Uebergabe."
+              + " Unveraendert bleibende Assignees und das Hinzufuegen als reiner Teilnehmer"
+              + " (POST /api/v1/tasks/{id}/participants) lassen die Stummschaltung bestehen.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Marker erfolgreich gesetzt."),
-    @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.UNAUTHORIZED))),
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_MUTE)))
   })
   @PutMapping("/{id}/mute")
   @HateoasLinkTarget(TaskHateoas.Targets.MUTE)
   public ResponseEntity<Void> mute(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
-      @RequestBody final MarkerInput input) {
+      @io.swagger.v3.oas.annotations.parameters.RequestBody(
+              description = "Gewuenschter Zielzustand des Mute-Markers.",
+              required = true,
+              content =
+                  @Content(
+                      mediaType = "application/json",
+                      schema = @Schema(implementation = MarkerInput.class),
+                      examples = {
+                        @ExampleObject(
+                            name = "stummschalten",
+                            summary = "Aufgabe stummschalten",
+                            description =
+                                "Benachrichtigungen dieser Aufgabe werden unterdrueckt, ausser"
+                                    + " MENTION, REPLY, ASSIGN und HANDOVER.",
+                            value = "{\"value\":true}"),
+                        @ExampleObject(
+                            name = "laut-schalten",
+                            summary = "Stummschaltung aufheben",
+                            description = "Die Aufgabe benachrichtigt wieder wie gewohnt.",
+                            value = "{\"value\":false}")
+                      }))
+          @RequestBody
+          final MarkerInput input) {
     markerService.setMuted(id, input.value());
     return ResponseEntity.noContent().build();
   }
