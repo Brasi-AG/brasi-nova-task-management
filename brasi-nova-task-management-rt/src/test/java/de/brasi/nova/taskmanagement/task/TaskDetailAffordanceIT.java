@@ -332,11 +332,13 @@ class TaskDetailAffordanceIT {
         new java.util.LinkedHashSet<>(PRE_EXISTING_FIELDS);
     allowedTopLevel.add("modelState");
     allowedTopLevel.add("_links");
+    // Intake #150: additives Feld lastSeenAt (Gesehen-Zeitpunkt, null ohne Marker).
+    allowedTopLevel.add("lastSeenAt");
     final java.util.List<String> actualTopLevel = new java.util.ArrayList<>();
     root.fieldNames().forEachRemaining(actualTopLevel::add);
     assertThat(actualTopLevel)
         .as(
-            "Top-Level-Wire muss GENAU die 21 Alt-Felder + modelState + _links tragen"
+            "Top-Level-Wire muss GENAU die 21 Alt-Felder + modelState + _links + lastSeenAt tragen"
                 + " (kein version:null, kein sonstiges unerwartetes BaseModel-Feld). Ist=%s",
             actualTopLevel)
         .containsExactlyInAnyOrderElementsOf(allowedTopLevel);

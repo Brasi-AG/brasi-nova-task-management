@@ -76,13 +76,20 @@ final class ParticipantApiExamples {
           + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
           + "\"details\":[\"Wert: 'keine-uuid'\"]}";
 
-  /** 404 von {@code seen}: Aufgabe unbekannt, fremder Mandant oder kein Mitglied (maskiert). */
+  /**
+   * 404 von {@code seen}: Aufgabe unbekannt, fremder Mandant oder kein Mitglied (maskiert). Format
+   * gegen die Live-Antwort in {@code TaskSeenMarkerIT} abgesichert (mit {@code traceId} und {@code
+   * details}).
+   */
   static final String NOT_FOUND_SEEN =
       ERROR_HEAD
           + "\"status\":404,\"error\":\"Not Found\",\"message\":\"Aufgabe nicht gefunden.\","
           + "\"path\":\""
           + PATH_SEEN
-          + "\",\"errorKey\":\"NOVA_NOT_FOUND\"}";
+          + "\",\"errorKey\":\"NOVA_NOT_FOUND\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
+          + " Aufgabe nicht gefunden.\"]}";
 
   /**
    * 409 von {@code seen}: nebenlaeufiger Versionskonflikt beim Speichern des versionierten {@code
@@ -94,7 +101,9 @@ final class ParticipantApiExamples {
           + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
           + "\"path\":\""
           + PATH_SEEN
-          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
 
   /** 400 von {@code updateAssignees}: unbekannter Benutzer in der Ziel-Menge. */
   static final String BAD_REQUEST_ASSIGNEES =
