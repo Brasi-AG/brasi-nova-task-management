@@ -112,15 +112,17 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
+            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B. gleichzeitige"
                 + " Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den frischen Stand"
                 + " wiederholen. (2) Die vorhandene Teilnehmerzeile einer neu zuzuweisenden Person"
                 + " ist keine PERSON-Zeile des Mandanten (TEAM-Zeile oder fremder Mandant,"
                 + " Datenfehler); sie wird nicht ueberschrieben und die Anfrage scheitert, bis der"
-                + " Datenbestand bereinigt ist. Ausgetretene Personen oder solche mit deaktivierter"
-                + " Teilnehmerzeile (bei aktivem Benutzer) sind kein Konfliktgrund: sie werden"
-                + " reaktiviert.",
+                + " Datenbestand bereinigt ist. (3) Gleichzeitiger Insert: beim Speichern einer"
+                + " neuen Teilnehmerzeile derselben Person tritt ein Unique- oder Sequenzkonflikt"
+                + " auf, noch bevor die Aufgabe gespeichert wird; die Anfrage wiederholen."
+                + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei"
+                + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert.",
         content =
             @Content(
                 mediaType = "application/json",

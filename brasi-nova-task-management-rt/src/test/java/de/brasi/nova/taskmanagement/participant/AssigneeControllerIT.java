@@ -2166,9 +2166,10 @@ class AssigneeControllerIT {
   @Test
   @DisplayName(
       "i163_put_assignees_team_oder_fremde_zeile_409_ohne_mutation (Intake #163): liegt unter dem"
-          + " Unique-Key eine TEAM-Zeile oder eine PERSON-Zeile mit fremdem Basis-TENANT_ID, liefert"
-          + " PUT 409 und aendert nichts (Zeilen, States, Benachrichtigungen, VERSION; der Ersteller"
-          + " bleibt Assignee)")
+          + " Unique-Key einer spaeter verarbeiteten Person eine TEAM-Zeile oder eine PERSON-Zeile"
+          + " mit fremdem Basis-TENANT_ID, liefert PUT 409 und rollt auch die zuvor in derselben"
+          + " Anfrage erfolgreich bearbeiteten Personen zurueck (neue Zeile, reaktivierte"
+          + " DEACTIVE-Zeile, States, Benachrichtigungen, VERSION; der Ersteller bleibt Assignee)")
   void i163_put_assignees_team_or_foreign_row_409_without_mutation() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -2181,22 +2182,31 @@ class AssigneeControllerIT {
             "task-management:TASK_READ");
     final UUID taskId = createTask(mvc, om, tokenA, "I163-Team-Fremd-409");
     final long dbId = taskDbId(taskId);
+
+    // updateAssignees verarbeitet neue Assignees aufsteigend nach UUID. Die Test-UUIDs sind bei
+    // jedem Lauf zufaellig, daher werden die Rollen nach genau dieser Ordnung vergeben: die beiden
+    // gueltigen Personen kommen VOR der TEAM- bzw. Fremd-Zeile an die Reihe und sind beim 409
+    // bereits geschrieben (Zeile, State, ASSIGN), bevor die Anfrage scheitert.
+    final UUID[] byUuid = {
+      ASSIGNEE_REF, HANDOVER_TARGET_REF, GRANTFREE_REF, GRANTFREE2_REF, WRITE_NON_MEMBER_REF
+    };
+    java.util.Arrays.sort(byUuid);
+    final UUID newRef = byUuid[0]; // ohne Zeile: Insert, danach zurueckgerollt
+    final UUID deactiveRef = byUuid[1]; // DEACTIVE-Zeile: Reaktivierung, danach zurueckgerollt
+    final UUID teamRef = byUuid[2];
+    final UUID foreignRef = byUuid[3];
     insertParticipantRow(
-        526301L,
-        dbId,
-        HANDOVER_TARGET_REF,
-        "TEAM",
-        TENANT_A_ID,
-        TENANT_A_ID,
-        "ACTIVE",
-        false,
-        null);
+        526301L, dbId, teamRef, "TEAM", TENANT_A_ID, TENANT_A_ID, "ACTIVE", false, null);
     insertParticipantRow(
-        526302L, dbId, GRANTFREE2_REF, "PERSON", TENANT_B_ID, TENANT_A_ID, "DEACTIVE", false, null);
+        526302L, dbId, foreignRef, "PERSON", TENANT_B_ID, TENANT_A_ID, "DEACTIVE", false, null);
+    insertParticipantRow(
+        526303L, dbId, deactiveRef, "PERSON", TENANT_A_ID, TENANT_A_ID, "DEACTIVE", false, null);
     final int versionBefore = taskVersion(dbId);
 
-    putAssignees(mvc, om, tokenA, taskId, HANDOVER_TARGET_REF).andExpect(status().isConflict());
-    putAssignees(mvc, om, tokenA, taskId, GRANTFREE2_REF).andExpect(status().isConflict());
+    putAssignees(mvc, om, tokenA, taskId, newRef, deactiveRef, teamRef)
+        .andExpect(status().isConflict());
+    putAssignees(mvc, om, tokenA, taskId, newRef, deactiveRef, foreignRef)
+        .andExpect(status().isConflict());
 
     assertThat(
             count(
@@ -2214,14 +2224,43 @@ class AssigneeControllerIT {
                 TENANT_B_ID))
         .as("Zeile mit fremdem Basis-TENANT_ID unveraendert")
         .isEqualTo(1);
-    for (final UUID ref : List.of(HANDOVER_TARGET_REF, GRANTFREE2_REF)) {
+    // Rueckabwicklung der zuvor erfolgreich bearbeiteten Personen derselben Anfragen.
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ?",
+                dbId,
+                newRef))
+        .as("neu angelegte Teilnehmerzeile zurueckgerollt: keine Zeile fuer %s", newRef)
+        .isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND ENTITY_STATUS = 'DEACTIVE'"
+                    + " AND ASSIGNEE_FLAG = 0 AND EXIT_KIND IS NULL",
+                526303L,
+                dbId,
+                deactiveRef))
+        .as(
+            "Reaktivierung zurueckgerollt: DEACTIVE-Zeile von %s unveraendert, kein Assignee",
+            deactiveRef)
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ?",
+                dbId,
+                deactiveRef))
+        .as("kein zweiter Insert fuer %s", deactiveRef)
+        .isEqualTo(1);
+    for (final UUID ref : List.of(newRef, deactiveRef, teamRef, foreignRef)) {
       assertThat(
               count(
                   "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?"
                       + " AND RECIPIENT_REF = ?",
                   dbId,
                   ref))
-          .as("keine Benachrichtigung an %s", ref)
+          .as("keine Benachrichtigung (insbesondere kein ASSIGN) an %s", ref)
           .isZero();
       assertThat(
               count(
@@ -2238,7 +2277,7 @@ class AssigneeControllerIT {
                     + " AND PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 1",
                 dbId,
                 USER_A_REF))
-        .as("die De-Assign des Erstellers wurde mit zurueckgerollt")
+        .as("der Ersteller bleibt Assignee (sein De-Assign laeuft erst nach den Zuweisungen)")
         .isEqualTo(1);
   }
 

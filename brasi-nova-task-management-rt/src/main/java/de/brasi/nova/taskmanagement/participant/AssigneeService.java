@@ -141,8 +141,10 @@ public class AssigneeService {
    * @param input Ziel-Assignee-Menge
    * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
    * @throws EntityValidationException wenn Input ungueltig
-   * @throws BusinessRuleException (409) nebenlaeufiger Versionskonflikt oder vorhandene
-   *     Teilnehmerzeile einer neu zuzuweisenden Person ist keine PERSON-Zeile des Task-Mandanten
+   * @throws BusinessRuleException (409) nebenlaeufiger Versionskonflikt, Unique- oder
+   *     Sequenzkonflikt beim Speichern einer neuen Teilnehmerzeile (gleichzeitiger Insert) oder
+   *     vorhandene Teilnehmerzeile einer neu zuzuweisenden Person ist keine PERSON-Zeile des
+   *     Task-Mandanten; in allen Faellen rollt die Transaktion alles bisher Geschriebene zurueck
    */
   @Transactional
   public void updateAssignees(final UUID taskExternalId, final AssigneeUpdateInput input) {
