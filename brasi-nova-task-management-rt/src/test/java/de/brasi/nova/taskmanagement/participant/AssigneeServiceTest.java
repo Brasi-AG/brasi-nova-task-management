@@ -3090,6 +3090,500 @@ class AssigneeServiceTest {
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
 
+  // ============================================================================================
+  // Intake #145: DELETE /tasks/{id}/participants/{userId} (Beteiligten entfernen)
+  // ============================================================================================
+
+  @Test
+  @DisplayName(
+      "i145_ersteller_entfernt_assignee: Austritt UNSUBSCRIBED, Zuweisung weg, State abgemeldet,"
+          + " Historie, REMOVED nur an die entfernte Person, Aufgabe gespeichert, Bump und Signal"
+          + " fuer die entfernte Person, die aktiven Leser und die ausgetretenen Archivleser")
+  void i145_creator_removes_assignee() {
+    final Long taskId = 1451L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID otherReader = UUID.randomUUID();
+    final UUID archivedReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant actorRow = activeAssignee(taskId, ACTOR_REF, true);
+    final TaskParticipant target = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actorRow));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(target));
+    final TaskUserState state = userStateFor(taskId, ASSIGNEE_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(state));
+    // Gelesen wird vor dem Austritt (Review #145 Runde 2): die entfernte Person steht noch unter
+    // den aktiven Lesern, unter den Archivlesern nur ein frueher ausgetretener Leser.
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(
+            List.of(
+                userStateFor(taskId, ACTOR_REF),
+                userStateFor(taskId, otherReader),
+                userStateFor(taskId, ASSIGNEE_REF)));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(exitedRow(taskId, archivedReader)));
+
+    service.removeParticipant(taskUuid, ASSIGNEE_REF);
+
+    assertThat(target.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
+    assertThat(target.getExitAt()).isNotNull();
+    assertThat(target.isAssigneeFlag()).as("die Zuweisung entfaellt").isFalse();
+    assertThat(target.isParticipantFlag()).isTrue();
+    assertThat(target.getEntityState())
+        .as("die Zeile bleibt ACTIVE (Archivzugriff)")
+        .isNotEqualTo(EntityState.DEACTIVE);
+    assertThat(state.getUnsubscribedAt()).isNotNull();
+    assertThat(actorRow.getExitKind()).isNull();
+
+    final InOrder order =
+        inOrder(
+            participantQueryRepository,
+            userStateQueryRepository,
+            taskHistoryService,
+            notificationService,
+            taskRepository,
+            inboxGenerationService,
+            inboxSignalService);
+    // Alle Reads vor der ersten Schreibung (Review #145 Runde 2), dann die Schreibungen, dann der
+    // TASK-save, dann Bump und Signal.
+    order.verify(userStateQueryRepository).findByTaskIdAndUserRef(taskId, ASSIGNEE_REF);
+    order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
+    order.verify(participantQueryRepository).findArchiveReadersByTaskId(taskId);
+    order.verify(participantQueryRepository).save(target);
+    order.verify(userStateQueryRepository).save(state);
+    order.verify(taskHistoryService).record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), any(), any());
+    order
+        .verify(notificationService)
+        .emit(
+            eq(ASSIGNEE_REF),
+            eq(taskId),
+            eq(NotificationTypeCodes.REMOVED),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            eq("Testtitel"),
+            eq(ACTOR_REF));
+    order.verify(taskRepository).save(task);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> invalidated = ArgumentCaptor.forClass(Collection.class);
+    order.verify(inboxSignalService).invalidate(eq(TENANT_ID), invalidated.capture());
+    assertThat(bumped.getValue())
+        .as(
+            "entfernte Person, aktive Leser und Archivleser, jede genau einmal (die entfernte"
+                + " Person steht in beiden Lesungen)")
+        .containsExactlyInAnyOrder(ASSIGNEE_REF, ACTOR_REF, otherReader, archivedReader);
+    assertThat(invalidated.getValue())
+        .as("dieselbe Menge wie der Bump")
+        .containsExactlyInAnyOrderElementsOf(bumped.getValue());
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_alle_reads_vor_der_ersten_schreibung: kein Lesezugriff (Aufgabe, Guard,"
+          + " Teilnehmer, States, Benutzer) nach der ersten Teilnehmer-, State-, Historien- oder"
+          + " Benachrichtigungs-Schreibung; der Seam liegt dazwischen; danach TASK-save, Bump, Signal")
+  void i145_removal_reads_before_first_write() {
+    final Long taskId = 14510L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID otherReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(target));
+    final TaskUserState state = userStateFor(taskId, ASSIGNEE_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(state));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(userStateFor(taskId, otherReader), state));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    final Object[] observed = {
+      taskRepository,
+      membershipGuard,
+      participantQueryRepository,
+      userStateQueryRepository,
+      userReadRepository,
+      taskHistoryService,
+      notificationService,
+      inboxGenerationService,
+      inboxSignalService
+    };
+    // Seam-Beobachtung: zum Zeitpunkt des Seams sind alle Reads gelaufen und noch nichts
+    // geschrieben.
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed =
+        new AssigneeService(
+            taskRepository,
+            participantQueryRepository,
+            userStateQueryRepository,
+            userStateService,
+            notificationService,
+            inboxSignalService,
+            userReadRepository,
+            userAccessor,
+            inboxGenerationService,
+            handoverRepository,
+            handoverTargetRepository,
+            taskHistoryService,
+            membershipGuard,
+            permissionEvaluator) {
+          @Override
+          protected void onBeforeRemoveMutationForTest(final Long id, final UUID ref) {
+            orderedCalls(observed).forEach(atSeam::add);
+          }
+        };
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.removeParticipant(taskUuid, ASSIGNEE_REF);
+
+    final List<String> calls = orderedCalls(observed);
+    final Set<String> reads =
+        Set.of(
+            "findByUuid",
+            "requireWriteMember",
+            "findByTaskIdAndParticipantRef",
+            "findByTaskIdAndUserRef",
+            "findActiveByUuids",
+            "findActiveUserRefsByTaskId",
+            "findArchiveReadersByTaskId");
+    final Set<String> membershipWrites = Set.of("save", "record", "emit");
+    int lastRead = -1;
+    int firstWrite = Integer.MAX_VALUE;
+    for (int i = 0; i < calls.size(); i++) {
+      final String method = calls.get(i).substring(calls.get(i).indexOf('#') + 1);
+      if (reads.contains(method)) {
+        lastRead = i;
+      } else if (membershipWrites.contains(method)) {
+        firstWrite = Math.min(firstWrite, i);
+      }
+    }
+    assertThat(lastRead)
+        .as("letzter Read vor der ersten Schreibung, Aufrufe: %s", calls)
+        .isLessThan(firstWrite);
+    assertThat(atSeam)
+        .as("am Seam sind Ziel-State, Namen und beide Leser-Lesungen gelaufen")
+        .contains(
+            "TaskUserStateQueryRepository#findByTaskIdAndUserRef",
+            "UserReadRepository#findActiveByUuids",
+            "TaskUserStateQueryRepository#findActiveUserRefsByTaskId",
+            "TaskParticipantQueryRepository#findArchiveReadersByTaskId");
+    assertThat(atSeam)
+        .as("am Seam ist noch nichts geschrieben")
+        .noneMatch(c -> membershipWrites.contains(c.substring(c.indexOf('#') + 1)));
+    // Schreibreihenfolge: Teilnehmer, State, Historie, Benachrichtigung, Aufgabe, Bump, Signal.
+    assertThat(calls.subList(firstWrite, calls.size()))
+        .containsSubsequence(
+            "TaskParticipantQueryRepository#save",
+            "TaskUserStateQueryRepository#save",
+            "TaskHistoryService#record",
+            "NotificationService#emit",
+            "BaseTaskRepository#save",
+            "InboxGenerationService#bumpSorted",
+            "InboxSignalService#invalidate");
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue())
+        .as("Menge unveraendert: entfernte Person und aktive Leser")
+        .containsExactlyInAnyOrder(ASSIGNEE_REF, otherReader);
+  }
+
+  /**
+   * Alle bisherigen Aufrufe der beobachteten Mocks in globaler Reihenfolge als {@code Typ#methode}
+   * (Mockito-Sequenznummer; Typ ist das gemockte Interface bzw. die Klasse).
+   */
+  private static List<String> orderedCalls(final Object... mocks) {
+    final List<org.mockito.invocation.Invocation> all = new ArrayList<>();
+    for (final Object m : mocks) {
+      all.addAll(org.mockito.Mockito.mockingDetails(m).getInvocations());
+    }
+    all.sort(
+        java.util.Comparator.comparingInt(org.mockito.invocation.Invocation::getSequenceNumber));
+    final List<String> out = new ArrayList<>();
+    for (final org.mockito.invocation.Invocation inv : all) {
+      final Class<?> type =
+          org.mockito.Mockito.mockingDetails(inv.getMock())
+              .getMockCreationSettings()
+              .getTypeToMock();
+      out.add(type.getSimpleName() + "#" + inv.getMethod().getName());
+    }
+    return out;
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_bumpt_entfernte_person_auch_ohne_treffer_in_den_leserlesungen: ohne"
+          + " Archivleser und ohne aktive Leser bleibt die entfernte Person in Bump und Signal,"
+          + " fremde Personen kommen nicht hinzu")
+  void i145_removed_person_is_always_in_affected_set() {
+    final Long taskId = 1459L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = personRow(taskId, participantRef, EntityState.ACTIVE);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef))
+        .thenReturn(List.of(target));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef))
+        .thenReturn(List.of());
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    service.removeParticipant(taskUuid, participantRef);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue()).containsExactly(participantRef);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> invalidated = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), invalidated.capture());
+    assertThat(invalidated.getValue()).containsExactly(participantRef);
+  }
+
+  @Test
+  @DisplayName(
+      "i145_aktiver_assignee_entfernt_reinen_beteiligten: ein Nicht-Ersteller mit aktiver"
+          + " Zuweisung darf entfernen")
+  void i145_active_assignee_removes_pure_participant() {
+    final Long taskId = 1452L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    final TaskParticipant target = personRow(taskId, participantRef, EntityState.ACTIVE);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef))
+        .thenReturn(List.of(target));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef))
+        .thenReturn(List.of());
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.removeParticipant(taskUuid, participantRef);
+
+    assertThat(target.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
+    verify(participantQueryRepository).save(target);
+    verify(notificationService)
+        .emit(
+            eq(participantRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.REMOVED),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(taskRepository).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_stummgeschaltete_person: REMOVED wird trotz IS_MUTED genau einmal emittiert,"
+          + " ohne Mute-Lesung; der Mute-Marker bleibt gesetzt, der State wird abgemeldet")
+  void i145_remove_muted_person_still_emits_removed_and_keeps_mute_marker() {
+    final Long taskId = 1460L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = personRow(taskId, participantRef, EntityState.ACTIVE);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef))
+        .thenReturn(List.of(target));
+    final TaskUserState mutedState = mutedState(taskId, participantRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef))
+        .thenReturn(List.of(mutedState));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    service.removeParticipant(taskUuid, participantRef);
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(participantRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.REMOVED),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    assertThat(mutedState.isMuted()).as("das Entfernen aendert den Mute-Marker nicht").isTrue();
+    assertThat(mutedState.getUnsubscribedAt()).as("der State wird abgemeldet").isNotNull();
+    verify(userStateQueryRepository).save(mutedState);
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
+    assertThat(target.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
+  }
+
+  @Test
+  @DisplayName(
+      "i145_anderes_write_mitglied_403_ohne_mutation: reiner Beteiligter (weder Ersteller noch"
+          + " aktiver Assignee) -> PermissionDeniedException, nichts geschrieben")
+  void i145_other_write_member_403_without_mutation() {
+    final Long taskId = 1453L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(personRow(taskId, ACTOR_REF, EntityState.ACTIVE)));
+    final TaskParticipant target = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(target));
+
+    assertThatThrownBy(() -> service.removeParticipant(taskUuid, ASSIGNEE_REF))
+        .isInstanceOf(PermissionDeniedException.class);
+
+    assertThat(target.getExitKind()).isNull();
+    assertThat(target.isAssigneeFlag()).isTrue();
+    assertNoRemovalMutation();
+  }
+
+  @Test
+  @DisplayName("i145_ersteller_als_ziel_409: der Ersteller kann nicht entfernt werden")
+  void i145_creator_target_409() {
+    final Long taskId = 1454L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID creatorRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    final TaskParticipant creator = activeAssignee(taskId, creatorRef, true);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, creatorRef))
+        .thenReturn(List.of(creator));
+
+    assertThatThrownBy(() -> service.removeParticipant(taskUuid, creatorRef))
+        .isInstanceOf(BusinessRuleException.class)
+        .hasMessageContaining("Ersteller");
+
+    assertThat(creator.getExitKind()).isNull();
+    assertThat(creator.isAssigneeFlag()).isTrue();
+    assertNoRemovalMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "i145_sich_selbst_entfernen_400: Hinweis auf POST /exit, vor der Rechtepruefung, ohne"
+          + " Mutation")
+  void i145_self_removal_400() {
+    final Long taskId = 1455L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(personRow(taskId, ACTOR_REF, EntityState.ACTIVE)));
+
+    assertThatThrownBy(() -> service.removeParticipant(taskUuid, ACTOR_REF))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessageContaining("/exit");
+
+    assertNoRemovalMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "i145_idempotent: unbekannte Person, nie beteiligt oder schon ausgetreten -> keine"
+          + " Mutation, keine Benachrichtigung, kein Signal")
+  void i145_idempotent_unknown_or_exited() {
+    final Long taskId = 1456L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID unknownRef = UUID.randomUUID();
+    final UUID exitedRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, unknownRef))
+        .thenReturn(List.of());
+    final TaskParticipant exited = activeAssignee(taskId, exitedRef, false);
+    exited.setExitKind(ExitKind.UNSUBSCRIBED);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, exitedRef))
+        .thenReturn(List.of(exited));
+
+    service.removeParticipant(taskUuid, unknownRef);
+    service.removeParticipant(taskUuid, exitedRef);
+
+    assertThat(exited.isAssigneeFlag()).as("ausgetretene Zeile unveraendert").isTrue();
+    assertNoRemovalMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "i145_guard_404_vor_allem: kein WRITE-Mitglied -> 404, weder Rechte- noch Ziellesung")
+  void i145_guard_404_first() {
+    final Long taskId = 1457L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(taskId, ACTOR_REF, TENANT_ID);
+
+    assertThatThrownBy(() -> service.removeParticipant(taskUuid, ACTOR_REF))
+        .isInstanceOf(EntityNotFoundException.class);
+
+    verify(participantQueryRepository, never()).findByTaskIdAndParticipantRef(any(), any());
+    assertNoRemovalMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "i145_put_weglassen_unveraendert: das Weglassen in PUT /assignees nutzt denselben"
+          + " Austrittskern, behaelt aber sein Verhalten (ASSIGNEE_FLAG bleibt, keine Historie, kein"
+          + " REMOVED)")
+  void i145_put_omission_behaviour_unchanged() {
+    final Long taskId = 1458L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant removed = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(removed));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(removed));
+    final TaskUserState state = userStateFor(taskId, ASSIGNEE_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(state));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of()));
+
+    assertThat(removed.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
+    assertThat(removed.getExitAt()).isNotNull();
+    assertThat(removed.isAssigneeFlag()).isTrue();
+    assertThat(state.getUnsubscribedAt()).isNotNull();
+    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.REMOVED), any(), any(), any(), any());
+    verify(taskRepository).save(task);
+  }
+
+  /** Kein Schreibzugriff, keine Benachrichtigung, kein Bump und kein Signal des Entfernens. */
+  private void assertNoRemovalMutation() {
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateQueryRepository, never()).save(any(TaskUserState.class));
+    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
+    verify(participantQueryRepository, never()).findArchiveReadersByTaskId(any());
+    verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
+  }
+
   // ---- Hilfsmethode ---------------------------------------------------------------------------
 
   /** Service mit ECHTEM {@link UserStateService} auf dem gemockten State-Repository. */
@@ -3146,6 +3640,17 @@ class AssigneeServiceTest {
     p.setParticipantKind(ParticipantKind.PERSON);
     p.setParticipantFlag(true);
     p.setEntityState(entityState);
+    return p;
+  }
+
+  /**
+   * Ausgetretene (UNSUBSCRIBED) PERSON-Teilnehmerzeile, die {@code ACTIVE} bleibt: ein Archivleser
+   * (READ-Mitglied, Archiv "verlassen").
+   */
+  private static TaskParticipant exitedRow(final Long taskId, final UUID ref) {
+    final TaskParticipant p = personRow(taskId, ref, EntityState.ACTIVE);
+    p.setExitKind(ExitKind.UNSUBSCRIBED);
+    p.setExitAt(java.time.LocalDateTime.now().minusDays(1));
     return p;
   }
 

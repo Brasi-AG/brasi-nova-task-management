@@ -67,6 +67,21 @@ public class AssigneeService {
 
   private static final Logger log = LoggerFactory.getLogger(AssigneeService.class);
 
+  /**
+   * Meldung der 400 beim Versuch, sich selbst zu entfernen (Intake #145, auch OpenAPI-Beispiel).
+   */
+  static final String SELF_REMOVE_MESSAGE =
+      "Sich selbst aus der Aufgabe zu entfernen ist nicht moeglich. Zum Verlassen der"
+          + " Aufgabe POST /api/v1/tasks/{id}/exit verwenden.";
+
+  /** Meldung der 403, wenn der Akteur weder Ersteller noch aktiver Assignee ist (Intake #145). */
+  static final String REMOVE_ROLE_MESSAGE =
+      "Beteiligte entfernen duerfen nur der Ersteller und aktive Assignees der Aufgabe.";
+
+  /** Meldung der 409, wenn der Ersteller entfernt werden soll (Intake #145). */
+  static final String REMOVE_CREATOR_MESSAGE =
+      "Der Ersteller kann nicht aus der Aufgabe entfernt werden.";
+
   private final BaseTaskRepository taskRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
@@ -313,19 +328,9 @@ public class AssigneeService {
             actorRef,
             tenantId);
       } else {
-        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt).
-        p.setExitKind(ExitKind.UNSUBSCRIBED);
-        p.setExitAt(LocalDateTime.now());
-        participantQueryRepository.save(p);
-
-        // UNSUBSCRIBED_AT auch im UserState setzen
-        final List<TaskUserState> states =
-            userStateQueryRepository.findByTaskIdAndUserRef(taskId, removedRef);
-        if (!states.isEmpty()) {
-          final TaskUserState state = states.get(0);
-          state.setUnsubscribedAt(LocalDateTime.now());
-          userStateQueryRepository.save(state);
-        }
+        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt) samt UNSUBSCRIBED_AT im
+        // UserState; gemeinsamer Kern mit removeParticipant (Intake #145).
+        unsubscribe(taskId, p);
         log.info(
             "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
                 + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
@@ -383,6 +388,274 @@ public class AssigneeService {
       inboxGenerationService.bumpSorted(tenantId, affectedRefs);
 
       inboxSignalService.invalidate(tenantId, toInvalidate);
+    }
+  }
+
+  /**
+   * Entfernt eine Person aus einer Aufgabe (Intake #145, {@code DELETE
+   * /api/v1/tasks/{id}/participants/{userId}}).
+   *
+   * <p>Ablauf (Reihenfolge ist Vertrag):
+   *
+   * <ol>
+   *   <li>Aufgabe tenant-scoped laden, dann WRITE-Member-Guard des Akteurs: fremd, unbekannt oder
+   *       kein aktives Mitglied ergibt die neutrale 404, vor jeder weiteren Pruefung.
+   *   <li>Sich selbst entfernen ist 400 mit Hinweis auf {@code POST /api/v1/tasks/{id}/exit}; der
+   *       eigene Austritt hat dort seine eigenen Regeln (Ersteller, Uebergabe).
+   *   <li>Rechtegrenze: entfernen duerfen nur der Ersteller und aktive Assignees der Aufgabe. Ein
+   *       anderes WRITE-Mitglied bekommt 403 ohne Mutation; das ist kein Existenz-Leck, weil der
+   *       Akteur bestaetigtes Mitglied ist (Muster der Handover-Rechtegrenze in {@link #exit}). Das
+   *       grobe Recht TASK_WRITE prueft der Controller.
+   *   <li>Ziel lesen (aktive PERSON-Zeile des Task-Mandanten, Austritt beliebig): keine Zeile
+   *       (unbekannte Person, nie beteiligt, deaktivierte Zeile) oder schon ausgetreten ergibt
+   *       idempotent 204 ohne Aenderung, ohne Benachrichtigung und ohne Signal. Der Ersteller ist
+   *       dauerhaftes Mitglied und nicht entfernbar (409).
+   *   <li>Restliche Reads, alle VOR der ersten Schreibung (Review #145 Runde 2): State-Zeile der
+   *       entfernten Person, Namen-Snapshot fuer die Historie und die Leser fuer Bump und Signal
+   *       ({@link #collectRemovalReaders}: die entfernte Person, alle aktiven Leser und alle
+   *       ausgetretenen Archivleser der Aufgabe). Nach der ersten Schreibung liest der Pfad keine
+   *       Teilnehmer-, State- oder Benutzerzeile mehr; so kann eine parallele Entfernung einer
+   *       anderen Person nicht ueberkreuz warten (Deadlock 1205 unter sperrendem READ COMMITTED).
+   *   <li>Wirkung wie das Weglassen eines Nicht-Erstellers in {@link #updateAssignees}: derselbe
+   *       Austrittskern ({@link #saveUnsubscribedParticipant}, {@link #unsubscribeState}:
+   *       EXIT_KIND=UNSUBSCRIBED, EXIT_AT, UNSUBSCRIBED_AT im UserState), nur mit vorab gelesenem
+   *       State; zusaetzlich verliert ein entfernter Assignee seine Zuweisung
+   *       (ASSIGNEE_FLAG=false). Die Zeile bleibt ACTIVE, damit der READ-Guard das Archiv-Detail
+   *       weiter zulaesst. Keine neue Austrittsart.
+   *   <li>Historieneintrag mit Namen-Snapshot der entfernten Person, dann REMOVED-Benachrichtigung
+   *       an sie (nie an den Akteur; der Selbstfall ist oben schon 400). REMOVED ist von der
+   *       Stummschaltung ausgenommen (Begruendung in {@code NotificationMuteFilter}), daher keine
+   *       Filter-Lesung.
+   *   <li>Versionierter TASK-save: der VERSION-Bump serialisiert gegen parallele PUT/exit/Entfernen
+   *       (Verlierer 409, voller Rollback). Danach Generation-Bump (sortiert) und after-commit
+   *       Signal fuer die vorab gelesene Menge. LAST_ACTIVITY_AT bleibt wie beim PUT unveraendert,
+   *       die Keyset-Position der Aufgabe verschiebt sich nicht.
+   * </ol>
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @param participantRef UUID der zu entfernenden Person
+   * @throws EntityNotFoundException Aufgabe unbekannt, fremd, deaktiviert oder Akteur kein aktives
+   *     WRITE-Mitglied (404, neutral)
+   * @throws EntityValidationException der Akteur will sich selbst entfernen (400)
+   * @throws PermissionDeniedException der Akteur ist weder Ersteller noch aktiver Assignee (403)
+   * @throws BusinessRuleException Ziel ist der Ersteller, nebenlaeufiger Versionskonflikt oder
+   *     Sequenzkonflikt beim Anlegen von Historieneintrag oder Benachrichtigung (409)
+   */
+  @Transactional
+  public void removeParticipant(final UUID taskExternalId, final UUID participantRef) {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    final long tenantId = actor.tenant().id();
+    final UUID actorRef = actor.user().id();
+
+    final Task task = requireTask(taskExternalId, tenantId);
+    final Long taskId = task.getId();
+
+    // Guard GANZ VORNE (vor Selbst-, Rechte- und Zielpruefung): kein Existenz-Leck ueber
+    // 400/403/409.
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
+    if (participantRef.equals(actorRef)) {
+      throw new EntityValidationException(SELF_REMOVE_MESSAGE);
+    }
+
+    // Rechtegrenze: nur Ersteller und aktive Assignees. Der Guard hat die aktive, nicht
+    // ausgetretene PERSON-Zeile des Akteurs bereits bestaetigt.
+    final List<TaskParticipant> actorRows =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef);
+    final boolean mayRemove =
+        !actorRows.isEmpty()
+            && actorRows.get(0).getExitKind() == null
+            && (actorRows.get(0).isCreatorFlag() || actorRows.get(0).isAssigneeFlag());
+    if (!mayRemove) {
+      throw new PermissionDeniedException(
+          "Ersteller oder aktiver Assignee der Aufgabe", REMOVE_ROLE_MESSAGE);
+    }
+
+    final List<TaskParticipant> rows =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef);
+    if (rows.isEmpty()) {
+      log.debug(
+          "AssigneeService.removeParticipant: Person {} ist kein Teilnehmer der Aufgabe {}"
+              + " - idempotent ohne Aenderung.",
+          participantRef,
+          taskExternalId);
+      return;
+    }
+    final TaskParticipant target = rows.get(0);
+    if (target.isCreatorFlag()) {
+      throw new BusinessRuleException(REMOVE_CREATOR_MESSAGE);
+    }
+    if (target.getExitKind() != null) {
+      log.debug(
+          "AssigneeService.removeParticipant: Person {} ist aus der Aufgabe {} bereits"
+              + " ausgetreten - idempotent ohne Aenderung.",
+          participantRef,
+          taskExternalId);
+      return;
+    }
+
+    // Review #145 Runde 2: ALLE Reads stehen vor der ersten Schreibung (Lock-Reihenfolge, Karte
+    // participants-actions). Zwei gleichzeitige Entfernungen verschiedener Personen derselben
+    // Aufgabe schreiben je ihre eigene Teilnehmer- und State-Zeile; laege eine Lesung ueber alle
+    // States oder Teilnehmer der Aufgabe hinter der eigenen Schreibung, wartete unter sperrendem
+    // READ COMMITTED jede auf die X-gesperrte Zeile der anderen (Deadlock 1205), bevor der
+    // TASK-Versionskonflikt greift. So wartet hoechstens eine Lesung auf eine fremde Schreibung,
+    // ohne selbst Schreibsperren zu halten.
+    // (a) State-Zeile der entfernten Person (vorher erst nach dem Speichern der Teilnehmerzeile).
+    final List<TaskUserState> targetStates =
+        userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef);
+    // (b) Namen-Snapshot fuer die Historie (Benutzerstamm, keine Mitgliedschaftszeile).
+    final Map<UUID, String> names = resolveNames(Set.of(participantRef), actorRef);
+    // (c) Leser fuer Bump und Signal; die entfernte Person ist ausdruecklich in der Menge.
+    final Set<UUID> affected = collectRemovalReaders(taskId, participantRef);
+
+    // Test-Seam: Synchronisation der Nebenlaeufigkeits-ITs NACH allen Reads und VOR der ersten
+    // Schreibung (zu diesem Zeitpunkt haelt die Transaktion keine Schreibsperren). Produktiv No-Op.
+    onBeforeRemoveMutationForTest(taskId, participantRef);
+
+    // Ab hier nur noch Schreibungen: Teilnehmer, State, Historie, Benachrichtigung, Aufgabe. Die
+    // Benachrichtigung liest nur noch Katalog-Codes (Cache des DictionaryCodeResolver, sonst die
+    // Katalogtabelle, die kein Pfad schreibt); die Sequenz-Vergabe laeuft in eigener Transaktion.
+    final boolean wasAssignee = target.isAssigneeFlag();
+    target.setAssigneeFlag(false);
+    saveUnsubscribedParticipant(target);
+    unsubscribeState(targetStates);
+
+    taskHistoryService.record(
+        taskId,
+        tenantId,
+        actorRef,
+        "hat einen Beteiligten entfernt",
+        names.getOrDefault(participantRef, participantRef.toString()));
+
+    notificationService.emit(
+        participantRef,
+        taskId,
+        NotificationTypeCodes.REMOVED,
+        NotificationSeverityCodes.INFO,
+        "Du wurdest aus der Aufgabe entfernt.",
+        task.getTitle(),
+        actorRef);
+
+    // Versionierter TASK-save serialisiert gegen parallele PUT/exit/Entfernen (Verlierer 409,
+    // voller
+    // Rollback). Danach Bump und Signal fuer die oben gelesene Menge.
+    taskRepository.save(task);
+
+    inboxGenerationService.bumpSorted(tenantId, affected);
+    inboxSignalService.invalidate(tenantId, affected);
+
+    log.info(
+        "AssigneeService.removeParticipant: Person {} aus Aufgabe {} (id={}) entfernt"
+            + " (EXIT_KIND=UNSUBSCRIBED, vorher Assignee={}) von Akteur {} in Mandant {}.",
+        participantRef,
+        taskExternalId,
+        taskId,
+        wasAssignee,
+        actorRef,
+        tenantId);
+  }
+
+  /**
+   * Ermittelt die Leser, deren Inbox-Sicht durch das Entfernen einer Person ({@link
+   * #removeParticipant}) veraltet: genau sie bekommen den Generation-Bump und das Signal nach
+   * Commit.
+   *
+   * <p>Die Menge ist die Vereinigung aus
+   *
+   * <ul>
+   *   <li><b>der entfernten Person</b>: die Aufgabe verlaesst ihre aktive Inbox und erscheint im
+   *       Archiv "verlassen". Gelesen wird vor dem Austritt; ob sie dabei als aktiver Leser
+   *       erscheint, haengt an ihrem State (fehlt er, fehlt sie). Sie wird deshalb immer
+   *       ausdruecklich aufgenommen;
+   *   <li><b>allen aktiven Lesern</b> ({@link
+   *       TaskUserStateQueryRepository#findActiveUserRefsByTaskId}, States ohne {@code
+   *       UNSUBSCRIBED_AT}): die Archivsuche trifft auch den Anzeigenamen aktiver PERSON-Teilnehmer
+   *       ({@code TaskKeysetQueryRepository#findArchiveSearchPage}); mit dem Austritt faellt der
+   *       Name der entfernten Person aus dem Treffer-Praedikat, und die Treffer jedes Lesers, der
+   *       die Aufgabe im Archiv sieht (erledigte oder abgebrochene Aufgabe mit aktivem State),
+   *       aendern sich. Ein alter Suchcursor lieferte sonst weiter 200 statt 410. Die
+   *       Teilnehmer-Zusammenfassungen aendern sich fuer jeden aktiven Leser ohnehin. Bei einer
+   *       offenen Aufgabe sieht ein aktiver Leser sie nicht im Archiv; der Bump kostet dort nur ein
+   *       Neuladen und haelt die Menge einheitlich mit {@link #exit} und dem Patch;
+   *   <li><b>allen ausgetretenen Archivlesern</b> ({@link
+   *       TaskParticipantQueryRepository#findArchiveReadersByTaskId}, aktive PERSON-Zeile mit
+   *       {@code EXIT_KIND} oder abgemeldetem State): sie sehen die Aufgabe im Archiv "verlassen"
+   *       und in dessen Suche, ihre Treffer aendern sich aus demselben Grund. Sie fehlen in der
+   *       State-Lesung (abgemeldet) und bekamen bisher weder Bump noch Signal. Die entfernte Person
+   *       ist beim Lesen noch nicht ausgetreten und steht nur ueber die ausdrueckliche Aufnahme in
+   *       der Menge.
+   * </ul>
+   *
+   * <p>Nicht betroffen sind Personen ohne aktive PERSON-Zeile (kein READ-Mitglied) und aktive
+   * Mitglieder ohne State: sie sehen die Aufgabe weder in der aktiven Inbox noch im Archiv.
+   *
+   * <p>Die Lesung steht VOR jeder Schreibung dieser Transaktion (Review #145 Runde 2). Da die
+   * Transaktion nur die Zeilen der entfernten Person aendert und diese ausdruecklich aufgenommen
+   * wird, ergibt die Lesung vor dem Austritt dieselbe Menge wie danach. Eine Lesung nach der
+   * eigenen Schreibung wartete bei einer parallelen Entfernung einer anderen Person auf deren
+   * X-gesperrte Zeile, waehrend diese auf die eigene wartet (Deadlock 1205). Den sortierten Bump
+   * uebernimmt {@link InboxGenerationService#bumpSorted}.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param removedRef UUID der entfernten Person
+   * @return die zu bumpenden und zu signalisierenden Benutzer (nie leer, enthaelt {@code
+   *     removedRef})
+   */
+  private Set<UUID> collectRemovalReaders(final Long taskId, final UUID removedRef) {
+    final Set<UUID> readers = new HashSet<>();
+    readers.add(removedRef);
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(readers::add);
+    participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+        .map(TaskParticipant::getParticipantRef)
+        .forEach(readers::add);
+    return readers;
+  }
+
+  /**
+   * Austritt beim Abwaehlen eines Nicht-Erstellers in {@link #updateAssignees}: der gemeinsame
+   * Austrittskern ({@link #saveUnsubscribedParticipant}, dann {@link #unsubscribeState}) mit der
+   * bisherigen Reihenfolge des PUT (Teilnehmerzeile speichern, danach den State lesen und
+   * abmelden). {@link #removeParticipant} nutzt denselben Kern, liest den State aber vor der ersten
+   * Schreibung (Review #145 Runde 2).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param participant die aktive, nicht ausgetretene Teilnehmerzeile eines Nicht-Erstellers
+   */
+  private void unsubscribe(final Long taskId, final TaskParticipant participant) {
+    saveUnsubscribedParticipant(participant);
+    unsubscribeState(
+        userStateQueryRepository.findByTaskIdAndUserRef(taskId, participant.getParticipantRef()));
+  }
+
+  /**
+   * Austrittskern, Teil 1 (Intake #145): setzt {@code EXIT_KIND=UNSUBSCRIBED} und {@code EXIT_AT}
+   * und speichert die Teilnehmerzeile. Rollenflags und {@code ENTITY_STATUS} bleiben unberuehrt;
+   * die Zeile bleibt ACTIVE (Archivzugriff). Liest nichts.
+   *
+   * @param participant die aktive, nicht ausgetretene Teilnehmerzeile eines Nicht-Erstellers
+   */
+  private void saveUnsubscribedParticipant(final TaskParticipant participant) {
+    participant.setExitKind(ExitKind.UNSUBSCRIBED);
+    participant.setExitAt(LocalDateTime.now());
+    participantQueryRepository.save(participant);
+  }
+
+  /**
+   * Austrittskern, Teil 2 (Intake #145): setzt im aktiven UserState der Person {@code
+   * UNSUBSCRIBED_AT} und speichert ihn; fehlt er, bleibt es bei der Teilnehmerzeile. Liest nichts,
+   * die State-Zeile kommt vom Aufrufer.
+   *
+   * @param states Ergebnis von {@link TaskUserStateQueryRepository#findByTaskIdAndUserRef} fuer die
+   *     austretende Person (leer, wenn sie keinen State hat)
+   */
+  private void unsubscribeState(final List<TaskUserState> states) {
+    if (!states.isEmpty()) {
+      final TaskUserState state = states.get(0);
+      state.setUnsubscribedAt(LocalDateTime.now());
+      userStateQueryRepository.save(state);
     }
   }
 
@@ -1255,6 +1528,21 @@ public class AssigneeService {
    * @param taskId interne Aufgaben-ID
    */
   protected void onBeforeExitMutationForTest(final Long taskId) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op): Haken in {@link #removeParticipant} NACH allen Reads (Akteur, Ziel,
+   * State der entfernten Person, Namen, Leser fuer Bump und Signal) und VOR der ersten Schreibung.
+   * Die Transaktion haelt hier keine Schreibsperren. Ermoeglicht dem Nebenlaeufigkeits-IT (Review
+   * #145 Runde 2), zwei Entfernungen verschiedener Personen derselben Aufgabe an diesem Punkt zu
+   * synchronisieren und so zu belegen, dass nach der ersten Schreibung keine Lesung mehr auf die
+   * Zeilen der anderen wartet. Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param participantRef UUID der zu entfernenden Person
+   */
+  protected void onBeforeRemoveMutationForTest(final Long taskId, final UUID participantRef) {
     // No-Op im Produktivbetrieb.
   }
 
