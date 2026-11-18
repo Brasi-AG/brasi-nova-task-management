@@ -2,22 +2,22 @@
   {
     "operation": "activeTasks",
     "rule": "property-description",
-    "fingerprint": "5e4704822cc71e17"
+    "fingerprint": "645b55c3e65dab5b"
   },
   {
     "operation": "activeTasks",
     "rule": "response-example",
-    "fingerprint": "5e4704822cc71e17"
+    "fingerprint": "645b55c3e65dab5b"
   },
   {
     "operation": "archiveTasks",
     "rule": "property-description",
-    "fingerprint": "018ad9140a1d387f"
+    "fingerprint": "e79f312d02a4686c"
   },
   {
     "operation": "archiveTasks",
     "rule": "response-example",
-    "fingerprint": "018ad9140a1d387f"
+    "fingerprint": "e79f312d02a4686c"
   },
   {
     "operation": "create",
@@ -77,12 +77,12 @@
   {
     "operation": "detail",
     "rule": "property-description",
-    "fingerprint": "4d462a9d6221f3e7"
+    "fingerprint": "551c74d9fbf95888"
   },
   {
     "operation": "detail",
     "rule": "response-example",
-    "fingerprint": "4d462a9d6221f3e7"
+    "fingerprint": "551c74d9fbf95888"
   },
   {
     "operation": "flag",
@@ -172,12 +172,12 @@
   {
     "operation": "snapshot",
     "rule": "property-description",
-    "fingerprint": "ae27a7168854334f"
+    "fingerprint": "55db486ec79317ce"
   },
   {
     "operation": "snapshot",
     "rule": "response-example",
-    "fingerprint": "ae27a7168854334f"
+    "fingerprint": "55db486ec79317ce"
   },
   {
     "operation": "updateTag",
