@@ -420,12 +420,12 @@ public class AssigneeService {
    *       Stummschaltung ausgenommen (Begruendung in {@code NotificationMuteFilter}), daher keine
    *       Filter-Lesung.
    *   <li>Lock-Reihenfolge wie {@link #updateAssignees}: alle Mitgliedschafts-Reads und -Writes
-   *       einschliesslich der aktiven States fuer das Signal VOR dem versionierten TASK-save; der
+   *       einschliesslich der Leser fuer Bump und Signal VOR dem versionierten TASK-save; der
    *       VERSION-Bump serialisiert gegen parallele PUT/exit/Entfernen (Verlierer 409, voller
-   *       Rollback). Danach Generation-Bump genau der entfernten Person (ihre Inbox-Sicht aendert
-   *       sich; LAST_ACTIVITY_AT bleibt wie beim PUT unveraendert, die Keyset-Position der anderen
-   *       verschiebt sich nicht) und after-commit Signal an sie und alle aktiven Leser
-   *       (Teilnehmer-Zusammenfassungen aendern sich).
+   *       Rollback). Danach Generation-Bump und after-commit Signal fuer dieselbe Menge, sortiert
+   *       gebumpt: die entfernte Person, alle aktiven Leser und alle ausgetretenen Archivleser der
+   *       Aufgabe ({@link #collectRemovalReaders} begruendet die Menge). LAST_ACTIVITY_AT bleibt
+   *       wie beim PUT unveraendert, die Keyset-Position der Aufgabe verschiebt sich nicht.
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
@@ -434,7 +434,8 @@ public class AssigneeService {
    *     WRITE-Mitglied (404, neutral)
    * @throws EntityValidationException der Akteur will sich selbst entfernen (400)
    * @throws PermissionDeniedException der Akteur ist weder Ersteller noch aktiver Assignee (403)
-   * @throws BusinessRuleException Ziel ist der Ersteller oder nebenlaeufiger Versionskonflikt (409)
+   * @throws BusinessRuleException Ziel ist der Ersteller, nebenlaeufiger Versionskonflikt oder
+   *     Sequenzkonflikt beim Anlegen von Historieneintrag oder Benachrichtigung (409)
    */
   @Transactional
   public void removeParticipant(final UUID taskExternalId, final UUID participantRef) {
@@ -510,17 +511,14 @@ public class AssigneeService {
         task.getTitle(),
         actorRef);
 
-    // Signal-Menge VOR dem TASK-save lesen (Mitgliedschaft vor Aufgabe, wie updateAssignees).
-    final Set<UUID> toInvalidate = new HashSet<>();
-    toInvalidate.add(participantRef);
-    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
-        .map(TaskUserState::getUserRef)
-        .forEach(toInvalidate::add);
+    // Betroffene Leser VOR dem TASK-save lesen (Mitgliedschaft vor Aufgabe, wie updateAssignees und
+    // exit). Dieselbe Menge dient dem Generation-Bump und dem Signal nach Commit.
+    final Set<UUID> affected = collectRemovalReaders(taskId, participantRef);
 
     taskRepository.save(task);
 
-    inboxGenerationService.bumpSorted(tenantId, List.of(participantRef));
-    inboxSignalService.invalidate(tenantId, toInvalidate);
+    inboxGenerationService.bumpSorted(tenantId, affected);
+    inboxSignalService.invalidate(tenantId, affected);
 
     log.info(
         "AssigneeService.removeParticipant: Person {} aus Aufgabe {} (id={}) entfernt"
@@ -531,6 +529,60 @@ public class AssigneeService {
         wasAssignee,
         actorRef,
         tenantId);
+  }
+
+  /**
+   * Ermittelt die Leser, deren Inbox-Sicht durch das Entfernen einer Person ({@link
+   * #removeParticipant}) veraltet: genau sie bekommen den Generation-Bump und das Signal nach
+   * Commit.
+   *
+   * <p>Die Menge ist die Vereinigung aus
+   *
+   * <ul>
+   *   <li><b>der entfernten Person</b>: die Aufgabe verlaesst ihre aktive Inbox und erscheint im
+   *       Archiv "verlassen". Ihr State ist beim Lesen schon abgemeldet ({@code UNSUBSCRIBED_AT}),
+   *       sie fehlt deshalb in der State-Lesung und wird ausdruecklich aufgenommen;
+   *   <li><b>allen aktiven Lesern</b> ({@link
+   *       TaskUserStateQueryRepository#findActiveUserRefsByTaskId}, States ohne {@code
+   *       UNSUBSCRIBED_AT}): die Archivsuche trifft auch den Anzeigenamen aktiver PERSON-Teilnehmer
+   *       ({@code TaskKeysetQueryRepository#findArchiveSearchPage}); mit dem Austritt faellt der
+   *       Name der entfernten Person aus dem Treffer-Praedikat, und die Treffer jedes Lesers, der
+   *       die Aufgabe im Archiv sieht (erledigte oder abgebrochene Aufgabe mit aktivem State),
+   *       aendern sich. Ein alter Suchcursor lieferte sonst weiter 200 statt 410. Die
+   *       Teilnehmer-Zusammenfassungen aendern sich fuer jeden aktiven Leser ohnehin. Bei einer
+   *       offenen Aufgabe sieht ein aktiver Leser sie nicht im Archiv; der Bump kostet dort nur ein
+   *       Neuladen und haelt die Menge einheitlich mit {@link #exit} und dem Patch;
+   *   <li><b>allen ausgetretenen Archivlesern</b> ({@link
+   *       TaskParticipantQueryRepository#findArchiveReadersByTaskId}, aktive PERSON-Zeile mit
+   *       {@code EXIT_KIND} oder abgemeldetem State): sie sehen die Aufgabe im Archiv "verlassen"
+   *       und in dessen Suche, ihre Treffer aendern sich aus demselben Grund. Sie fehlen in der
+   *       State-Lesung (abgemeldet) und bekamen bisher weder Bump noch Signal. Die entfernte Person
+   *       ist nach dem Austritt ebenfalls darunter.
+   * </ul>
+   *
+   * <p>Nicht betroffen sind Personen ohne aktive PERSON-Zeile (kein READ-Mitglied) und aktive
+   * Mitglieder ohne State: sie sehen die Aufgabe weder in der aktiven Inbox noch im Archiv.
+   *
+   * <p>Die Lesung steht nach den Austrittsschreibungen dieser Transaktion (sie sind sichtbar) und
+   * VOR dem TASK-save: Mitgliedschaft vor Aufgabe, damit keine Lesung unter dem TASK-Lock auf eine
+   * fremde, noch nicht committete Mitgliedschaftszeile wartet. Den sortierten Bump uebernimmt
+   * {@link InboxGenerationService#bumpSorted}.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param removedRef UUID der entfernten Person
+   * @return die zu bumpenden und zu signalisierenden Benutzer (nie leer, enthaelt {@code
+   *     removedRef})
+   */
+  private Set<UUID> collectRemovalReaders(final Long taskId, final UUID removedRef) {
+    final Set<UUID> readers = new HashSet<>();
+    readers.add(removedRef);
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(readers::add);
+    participantQueryRepository.findArchiveReadersByTaskId(taskId).stream()
+        .map(TaskParticipant::getParticipantRef)
+        .forEach(readers::add);
+    return readers;
   }
 
   /**

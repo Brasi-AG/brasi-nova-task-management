@@ -1,6 +1,9 @@
 package de.brasi.nova.taskmanagement.inbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,6 +42,7 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +53,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
@@ -246,6 +251,14 @@ class InboxSnapshotControllerIT {
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private TaskParticipantQueryRepository participantQueryRepository;
+
+  /**
+   * Spy auf den echten {@link InboxSignalService}: haelt fest, an wen eine Mutation das Signal
+   * {@code snapshot-invalidated} nach dem Commit sendet (Intake #145, Entfernen). Der Spy ruft die
+   * echte Methode auf und ersetzt das Bean an Ort und Stelle.
+   */
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private InboxSignalService inboxSignalServiceSpy;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -1515,6 +1528,178 @@ class InboxSnapshotControllerIT {
     }
   }
 
+  // ---- IT: Entfernen einer Person (Intake #145) bumpt alle Leser der Aufgabe --------------------
+
+  /**
+   * Intake #145 (Review Runde 1): Die Archivsuche trifft den Anzeigenamen aktiver
+   * PERSON-Teilnehmer. Wird eine Person entfernt, faellt ihr Name aus dem Treffer-Praedikat und die
+   * Treffer ANDERER Leser aendern sich. Beweist end-to-end gegen echtes MSSQL: ein ECHTES {@code
+   * DELETE /tasks/{id}/participants/{userId}} bumpt die Generation der entfernten Person, eines
+   * anderen aktiven Lesers, eines frueher ausgetretenen Archivlesers und des Akteurs (nicht die
+   * eines Nicht-Mitglieds); die alten Suchcursor beider Leser liefern danach 410 (vorher 200); die
+   * frische Suche findet die Aufgabe nicht mehr ueber den Namen; und alle vier erhalten das Signal.
+   *
+   * <p>TDD-Rigor: bumpt das Entfernen nur die entfernte Person, bleiben beide Cursor 200 (stale
+   * Seite 2 ohne die Aufgabe) und dieser Test faellt an {@code 410}.
+   */
+  @Test
+  @DisplayName("i145_entfernen_bumpt_aktiven_leser_und_archivleser_alter_suchcursor_410_und_signal")
+  void i145_remove_bumps_active_and_archive_readers_old_search_cursor_410() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final long doneId = statusId("DONE");
+    final long normalId = priorityId("NORMAL");
+    final long directionId = directionId("CUSTOMER_INTERNAL");
+    final String term = "zephyrine";
+
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID removedRef = UUID.randomUUID();
+    final UUID activeRef = UUID.randomUUID();
+    final UUID archiveRef = UUID.randomUUID();
+    final String creatorLogin = "i145-creator@brasi.de";
+    final String activeLogin = "i145-active-reader@brasi.de";
+    final String archiveLogin = "i145-archive-reader@brasi.de";
+    seedBenutzerIfAbsent(
+        jdbcTemplate, ID_BASE + 1700, creatorRef, creatorLogin, TENANT_A_ID, "Cora Ersteller");
+    // Der Name der entfernten Person ist der einzige Treffer der Zielaufgabe fuer "zephyrine".
+    seedBenutzerIfAbsent(
+        jdbcTemplate,
+        ID_BASE + 1701,
+        removedRef,
+        "i145-removed@brasi.de",
+        TENANT_A_ID,
+        "Zephyrine Entfernbar");
+    seedBenutzerIfAbsent(
+        jdbcTemplate, ID_BASE + 1702, activeRef, activeLogin, TENANT_A_ID, "Anton Leser");
+    seedBenutzerIfAbsent(
+        jdbcTemplate, ID_BASE + 1703, archiveRef, archiveLogin, TENANT_A_ID, "Berta Archiv");
+
+    // Zielaufgabe T1 (erledigt, aelter): trifft nur ueber den Namen der entfernten Person.
+    // Zweite Aufgabe T2 (erledigt, neuer): trifft ueber den Titel; sie macht aus limit=1 eine
+    // Folgeseite mit Cursor. Beide Leser sehen beide Aufgaben im Archiv.
+    final long t1Id = ID_BASE + 1710;
+    final long t2Id = ID_BASE + 1711;
+    final UUID t1Uuid = UUID.randomUUID();
+    final UUID t2Uuid = UUID.randomUUID();
+    final LocalDateTime oldActivity = LocalDateTime.of(2020, 3, 1, 12, 0);
+    seedTask(
+        jdbcTemplate,
+        t1Id,
+        t1Uuid,
+        TENANT_A_ID,
+        doneId,
+        normalId,
+        directionId,
+        oldActivity,
+        "I145 Entfernen Ziel");
+    seedTask(
+        jdbcTemplate,
+        t2Id,
+        t2Uuid,
+        TENANT_A_ID,
+        doneId,
+        normalId,
+        directionId,
+        oldActivity.plusMinutes(1),
+        "Zephyrine Pauschal");
+    // T1: Ersteller, entfernte Person (Assignee), aktiver Leser, ausgetretener Archivleser.
+    final String exited = "UNSUBSCRIBED";
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1720, t1Id, creatorRef, TENANT_A_ID, true, true, true, null);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1721, t1Id, removedRef, TENANT_A_ID, false, true, true, null);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1722, t1Id, activeRef, TENANT_A_ID, false, false, true, null);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1723, t1Id, archiveRef, TENANT_A_ID, false, false, true, exited);
+    seedUserState(jdbcTemplate, ID_BASE + 1730, t1Id, creatorRef, TENANT_A_ID, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1731, t1Id, removedRef, TENANT_A_ID, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1732, t1Id, activeRef, TENANT_A_ID, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1733, t1Id, archiveRef, TENANT_A_ID, null);
+    // T2: dieselben Leser ohne die entfernte Person.
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1724, t2Id, creatorRef, TENANT_A_ID, true, true, true, null);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1725, t2Id, activeRef, TENANT_A_ID, false, false, true, null);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1726, t2Id, archiveRef, TENANT_A_ID, false, false, true, exited);
+    seedUserState(jdbcTemplate, ID_BASE + 1734, t2Id, creatorRef, TENANT_A_ID, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1735, t2Id, activeRef, TENANT_A_ID, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1736, t2Id, archiveRef, TENANT_A_ID, null);
+    // Der Archivleser hat sich auch im persoenlichen State abgemeldet (Austrittskern: beides).
+    for (final long stateId : List.of(ID_BASE + 1733, ID_BASE + 1736)) {
+      jdbcTemplate.update(
+          "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              + " WHERE ID = ? AND TENANT_ID = ?",
+          stateId,
+          TENANT_A_ID);
+    }
+
+    final String creatorToken =
+        jwt(
+            TENANT_A_UUID,
+            creatorRef,
+            creatorLogin,
+            "task-management:TASK_READ",
+            "task-management:TASK_WRITE");
+    final String activeToken = jwt(TENANT_A_UUID, activeRef, activeLogin);
+    final String archiveToken = jwt(TENANT_A_UUID, archiveRef, archiveLogin);
+
+    // Vorher: beide Leser finden beide Aufgaben; T1 nur ueber den Namen der Person.
+    for (final String token : List.of(activeToken, archiveToken)) {
+      assertThat(idsOf(searchArchive(mvc, token, term, 10)))
+          .containsExactly(t2Uuid.toString(), t1Uuid.toString());
+    }
+    final String activeCursor = searchFirstPageCursor(mvc, activeToken, term, t2Uuid);
+    final String archiveCursor = searchFirstPageCursor(mvc, archiveToken, term, t2Uuid);
+    assertThat(searchStatusWithCursor(mvc, activeToken, term, activeCursor))
+        .as("vor dem Entfernen liefert der Cursor des aktiven Lesers Seite 2")
+        .isEqualTo(200);
+    assertThat(searchStatusWithCursor(mvc, archiveToken, term, archiveCursor))
+        .as("vor dem Entfernen liefert der Cursor des Archivlesers Seite 2")
+        .isEqualTo(200);
+
+    final List<UUID> bumped = List.of(creatorRef, removedRef, activeRef, archiveRef);
+    final Map<UUID, Long> generationBefore = new java.util.LinkedHashMap<>();
+    for (final UUID ref : bumped) {
+      generationBefore.put(ref, inboxGeneration(ref));
+    }
+    final long outsiderBefore = inboxGeneration(USER_B_REF);
+
+    // Aktion: der Ersteller entfernt die Person (Anzeigename faellt aus dem Treffer-Praedikat).
+    mvc.perform(
+            delete("/api/v1/tasks/" + t1Uuid + "/participants/" + removedRef)
+                .header("Authorization", "Bearer " + creatorToken))
+        .andExpect(status().isNoContent());
+
+    for (final UUID ref : bumped) {
+      assertThat(inboxGeneration(ref))
+          .as("Generation von %s steigt", ref)
+          .isGreaterThan(generationBefore.get(ref));
+    }
+    assertThat(inboxGeneration(USER_B_REF))
+        .as("ein Nicht-Mitglied der Aufgabe bleibt unberuehrt")
+        .isEqualTo(outsiderBefore);
+
+    // Nachher: beide alten Cursor sind ungueltig (410), nicht mehr 200 mit einer Seite, die die
+    // Zielaufgabe stillschweigend auslaesst.
+    assertThat(searchStatusWithCursor(mvc, activeToken, term, activeCursor))
+        .as("alter Suchcursor des anderen aktiven Lesers")
+        .isEqualTo(410);
+    assertThat(searchStatusWithCursor(mvc, archiveToken, term, archiveCursor))
+        .as("alter Suchcursor des ausgetretenen Archivlesers")
+        .isEqualTo(410);
+    // Die frische Suche zeigt den neuen Stand: T1 trifft ueber den Namen nicht mehr.
+    for (final String token : List.of(activeToken, archiveToken)) {
+      assertThat(idsOf(searchArchive(mvc, token, term, 10))).containsExactly(t2Uuid.toString());
+    }
+
+    // Signal nach Commit an dieselbe Menge, den ausgetretenen Archivleser eingeschlossen.
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> signalled = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalServiceSpy).invalidate(eq(TENANT_A_ID), signalled.capture());
+    assertThat(signalled.getValue()).containsExactlyInAnyOrderElementsOf(bumped);
+  }
+
   // ---- IT 4: Creator-Invariante (T8-Auflage): POST -> snapshot zeigt Task --------------------
 
   @Test
@@ -1851,6 +2036,63 @@ class InboxSnapshotControllerIT {
         .build();
   }
 
+  /** {@code GET /api/v1/tasks/archive/search} (Filter {@code all}); erwartet 200. */
+  private JsonNode searchArchive(
+      final MockMvc mvc, final String token, final String term, final int limit) throws Exception {
+    return new ObjectMapper()
+        .readTree(
+            mvc.perform(
+                    get("/api/v1/tasks/archive/search")
+                        .queryParam("query", term)
+                        .queryParam("filter", "all")
+                        .queryParam("limit", String.valueOf(limit))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+  }
+
+  /**
+   * Erste Suchseite mit {@code limit=1}: erwartet genau die Aufgabe {@code expectedFirst} und eine
+   * Folgeseite; liefert deren Cursor.
+   */
+  private String searchFirstPageCursor(
+      final MockMvc mvc, final String token, final String term, final UUID expectedFirst)
+      throws Exception {
+    final JsonNode page = searchArchive(mvc, token, term, 1);
+    assertThat(idsOf(page)).containsExactly(expectedFirst.toString());
+    assertThat(page.get("hasMore").asBoolean()).isTrue();
+    assertThat(page.hasNonNull("nextCursor")).isTrue();
+    return page.get("nextCursor").asText();
+  }
+
+  /** HTTP-Status der Folgeseite einer Archivsuche mit dem gegebenen Cursor. */
+  private int searchStatusWithCursor(
+      final MockMvc mvc, final String token, final String term, final String cursor)
+      throws Exception {
+    return mvc.perform(
+            get("/api/v1/tasks/archive/search")
+                .queryParam("query", term)
+                .queryParam("filter", "all")
+                .queryParam("limit", "1")
+                .queryParam("cursor", cursor)
+                .header("Authorization", "Bearer " + token))
+        .andReturn()
+        .getResponse()
+        .getStatus();
+  }
+
+  /** Aktuelle Inbox-Generation eines Benutzers in Mandant A (0, wenn noch keine Zeile). */
+  private long inboxGeneration(final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COALESCE(MAX(GENERATION), 0) FROM [dbo].[TASK_INBOX_GENERATION]"
+            + " WHERE TENANT_ID = ? AND USER_REF = ?",
+        Long.class,
+        TENANT_A_ID,
+        userRef);
+  }
+
   /**
    * Liefert die IDs der Items einer HAL-Collection-Seite (Slice-4-Migration: items unter {@code
    * _embedded.tasks} statt top-level {@code items}).
@@ -2078,16 +2320,28 @@ class InboxSnapshotControllerIT {
       final UUID externalId,
       final String loginName,
       final long tenantId) {
+    seedBenutzerIfAbsent(jt, id, externalId, loginName, tenantId, "IT Test User");
+  }
+
+  /** Wie oben, mit eigenem Anzeigenamen (die Archivsuche trifft den Namen aktiver Teilnehmer). */
+  private static void seedBenutzerIfAbsent(
+      final JdbcTemplate jt,
+      final long id,
+      final UUID externalId,
+      final String loginName,
+      final long tenantId,
+      final String fullName) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_BENUTZER] WHERE ID = ?) "
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
-            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
+            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
         id,
         id,
         externalId,
         tenantId,
-        loginName);
+        loginName,
+        fullName);
   }
 
   private static String toPem(final byte[] der) {

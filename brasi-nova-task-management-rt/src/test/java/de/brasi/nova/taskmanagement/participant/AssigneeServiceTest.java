@@ -3097,12 +3097,13 @@ class AssigneeServiceTest {
   @Test
   @DisplayName(
       "i145_ersteller_entfernt_assignee: Austritt UNSUBSCRIBED, Zuweisung weg, State abgemeldet,"
-          + " Historie, REMOVED nur an die entfernte Person, Aufgabe gespeichert, Bump nur fuer sie,"
-          + " Signal an sie und die aktiven Leser")
+          + " Historie, REMOVED nur an die entfernte Person, Aufgabe gespeichert, Bump und Signal"
+          + " fuer die entfernte Person, die aktiven Leser und die ausgetretenen Archivleser")
   void i145_creator_removes_assignee() {
     final Long taskId = 1451L;
     final UUID taskUuid = UUID.randomUUID();
     final UUID otherReader = UUID.randomUUID();
+    final UUID archivedReader = UUID.randomUUID();
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
     final TaskParticipant actorRow = activeAssignee(taskId, ACTOR_REF, true);
@@ -3116,6 +3117,10 @@ class AssigneeServiceTest {
         .thenReturn(List.of(state));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(List.of(userStateFor(taskId, ACTOR_REF), userStateFor(taskId, otherReader)));
+    // Nach dem Austritt zaehlt auch die entfernte Person selbst zu den Archivlesern (EXIT_KIND
+    // gesetzt, Zeile ACTIVE); dazu ein frueher ausgetretener Leser.
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(target, exitedRow(taskId, archivedReader)));
 
     service.removeParticipant(taskUuid, ASSIGNEE_REF);
 
@@ -3151,17 +3156,60 @@ class AssigneeServiceTest {
             any(),
             eq("Testtitel"),
             eq(ACTOR_REF));
+    // Beide Leser-Lesungen VOR dem TASK-save (Mitgliedschaft vor Aufgabe), Bump danach.
     order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
+    order.verify(participantQueryRepository).findArchiveReadersByTaskId(taskId);
     order.verify(taskRepository).save(task);
-    order.verify(inboxGenerationService).bumpSorted(TENANT_ID, List.of(ASSIGNEE_REF));
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> invalidated = ArgumentCaptor.forClass(Collection.class);
     order.verify(inboxSignalService).invalidate(eq(TENANT_ID), invalidated.capture());
+    assertThat(bumped.getValue())
+        .as(
+            "entfernte Person, aktive Leser und Archivleser, jede genau einmal (die entfernte"
+                + " Person steht in beiden Lesungen)")
+        .containsExactlyInAnyOrder(ASSIGNEE_REF, ACTOR_REF, otherReader, archivedReader);
     assertThat(invalidated.getValue())
-        .containsExactlyInAnyOrder(ASSIGNEE_REF, ACTOR_REF, otherReader);
+        .as("dieselbe Menge wie der Bump")
+        .containsExactlyInAnyOrderElementsOf(bumped.getValue());
     verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
     verify(notificationService, never())
         .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_bumpt_entfernte_person_auch_ohne_treffer_in_den_leserlesungen: ohne"
+          + " Archivleser und ohne aktive Leser bleibt die entfernte Person in Bump und Signal,"
+          + " fremde Personen kommen nicht hinzu")
+  void i145_removed_person_is_always_in_affected_set() {
+    final Long taskId = 1459L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = personRow(taskId, participantRef, EntityState.ACTIVE);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef))
+        .thenReturn(List.of(target));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef))
+        .thenReturn(List.of());
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    service.removeParticipant(taskUuid, participantRef);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue()).containsExactly(participantRef);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> invalidated = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), invalidated.capture());
+    assertThat(invalidated.getValue()).containsExactly(participantRef);
   }
 
   @Test
@@ -3349,6 +3397,8 @@ class AssigneeServiceTest {
     verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
     verify(taskRepository, never()).save(any(Task.class));
+    verify(userStateQueryRepository, never()).findActiveUserRefsByTaskId(any());
+    verify(participantQueryRepository, never()).findArchiveReadersByTaskId(any());
     verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
   }
@@ -3409,6 +3459,17 @@ class AssigneeServiceTest {
     p.setParticipantKind(ParticipantKind.PERSON);
     p.setParticipantFlag(true);
     p.setEntityState(entityState);
+    return p;
+  }
+
+  /**
+   * Ausgetretene (UNSUBSCRIBED) PERSON-Teilnehmerzeile, die {@code ACTIVE} bleibt: ein Archivleser
+   * (READ-Mitglied, Archiv "verlassen").
+   */
+  private static TaskParticipant exitedRow(final Long taskId, final UUID ref) {
+    final TaskParticipant p = personRow(taskId, ref, EntityState.ACTIVE);
+    p.setExitKind(ExitKind.UNSUBSCRIBED);
+    p.setExitAt(java.time.LocalDateTime.now().minusDays(1));
     return p;
   }
 

@@ -517,11 +517,14 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Die Person ist der"
+            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Die Person ist der"
                 + " Ersteller der Aufgabe; er bleibt dauerhaft Mitglied. (2) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe oder die"
                 + " Teilnehmerzeile, z. B. gleichzeitige Mitgliederaenderung oder Austritt; die"
-                + " Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent).",
+                + " Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent). (3)"
+                + " Gleichzeitiger Insert: beim Anlegen des Historieneintrags oder der"
+                + " Benachrichtigung tritt ein Sequenzkonflikt auf, noch bevor die Aufgabe"
+                + " gespeichert wird; die Anfrage wiederholen.",
         content =
             @Content(
                 mediaType = "application/json",
