@@ -52,7 +52,8 @@ public class AssigneeController {
    *
    * <p>Neue Assignees erhalten eine ASSIGN-Notification und werden fuer diese Aufgabe entstummt
    * (der Mute-Marker wird zurueckgesetzt, Folge von Intake #158); unveraendert bleibende Assignees
-   * behalten ihren Mute. Abgewaehlte werden mit EXIT_KIND=UNSUBSCRIBED markiert.
+   * behalten ihren Mute. Abgewaehlte werden mit EXIT_KIND=UNSUBSCRIBED markiert. Eine ausgetretene
+   * oder deaktivierte Teilnehmerzeile einer neu zugewiesenen Person wird reaktiviert (Intake #163).
    *
    * @param id externe UUID der Aufgabe
    * @param input Ziel-Assignee-Menge
@@ -68,6 +69,8 @@ public class AssigneeController {
               + " zuvor ausgetretene oder als reine Teilnehmer gefuehrte Benutzer, die jetzt"
               + " zugewiesen werden. Assignees, die in der Ziel-Menge unveraendert bleiben, behalten"
               + " ihre Stummschaltung."
+              + " Zuvor ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (der"
+              + " Benutzer selbst ist aktiv) werden dabei wieder als Assignee aufgenommen."
               + " Ein ausgelassener Creator wird nur de-assigned und bleibt Mitglied der Aufgabe"
               + " (kein Austritt).")
   @ApiResponses({
@@ -109,9 +112,15 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B."
-                + " gleichzeitige Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den"
-                + " frischen Stand wiederholen.",
+            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
+                + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B. gleichzeitige"
+                + " Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den frischen Stand"
+                + " wiederholen. (2) Die vorhandene Teilnehmerzeile einer neu zuzuweisenden Person"
+                + " ist keine PERSON-Zeile des Mandanten (TEAM-Zeile oder fremder Mandant,"
+                + " Datenfehler); sie wird nicht ueberschrieben und die Anfrage scheitert, bis der"
+                + " Datenbestand bereinigt ist. Ausgetretene Personen oder solche mit deaktivierter"
+                + " Teilnehmerzeile (bei aktivem Benutzer) sind kein Konfliktgrund: sie werden"
+                + " reaktiviert.",
         content =
             @Content(
                 mediaType = "application/json",
