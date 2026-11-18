@@ -42,6 +42,11 @@ import lombok.experimental.Accessors;
  * fachlichen Grund, {@code version} am Detail zu exponieren -> minimaler, zum Alt-Vertrag
  * deckungsgleicher Wire.
  *
+ * <p>Intake #150 (additiv): {@code lastSeenAt} ist der Gesehen-Zeitpunkt des Anfragers ({@code
+ * TASK_USER_STATE.SEEN_AT}, gesetzt nur ueber {@code PUT /api/v1/tasks/{id}/seen}) als UTC-Instant,
+ * {@code null} ohne Marker. Das Feld wird ueber den fluent-Setter gesetzt, damit der
+ * Voll-Konstruktor unveraendert bleibt.
+ *
  * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
  * ({@code title()}, {@code isPinned()}, {@code source()}, ...), sodass bestehende Java-Konsumenten
  * (z.B. {@code TaskDetailServiceTest}) unveraendert weiterlaufen.
@@ -169,6 +174,16 @@ public class TaskDetailModel extends BaseModel<TaskDetailModel> {
   @JsonProperty("source")
   @Schema(description = "Quellkontext, sofern vorhanden; href nur bei registriertem Typ.")
   private TaskSourceModel source;
+
+  @JsonProperty("lastSeenAt")
+  @Schema(
+      description =
+          "Gesehen-Zeitpunkt des Anfragers (ISO 8601, UTC), gesetzt nur ueber PUT"
+              + " /api/v1/tasks/{id}/seen; null, solange er die Aufgabe nie als gesehen markiert"
+              + " hat. Lesende Aufrufe veraendern ihn nicht.",
+      example = "2026-11-17T09:30:00Z",
+      nullable = true)
+  private Instant lastSeenAt;
 
   /** Parameterloser Konstruktor (Jackson/Framework). */
   public TaskDetailModel() {

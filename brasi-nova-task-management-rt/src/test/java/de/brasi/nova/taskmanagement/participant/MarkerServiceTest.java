@@ -380,6 +380,95 @@ class MarkerServiceTest {
     verify(userStateQueryRepository).save(any());
   }
 
+  // ---- Intake #150: Gesehen-Marker ------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "#150 markSeen: READ-Guard vor ensure, SEEN_AT auf jetzt, UNSUBSCRIBED_AT und Marker"
+          + " unberuehrt, kein Bump bei vorhandenem State")
+  void mark_seen_setzt_seen_at_read_guard_vor_ensure_ohne_bump() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+    final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    final java.time.LocalDateTime unsubscribedAt = java.time.LocalDateTime.of(2026, 1, 1, 8, 0);
+    stateA.setUnsubscribedAt(unsubscribedAt);
+    stateA.setPinned(true);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+        .thenReturn(List.of(stateA));
+    when(userStateService.ensure(TASK_DB_ID, USER_A_REF, TENANT_ID)).thenReturn(false);
+
+    final java.time.LocalDateTime before = java.time.LocalDateTime.now().minusSeconds(1);
+    markerService.markSeen(TASK_EXTERNAL_ID);
+
+    final org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(membershipGuard, userStateService, userStateQueryRepository);
+    order.verify(membershipGuard).requireReadMember(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    order.verify(userStateService).ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID));
+    order.verify(userStateQueryRepository).save(stateA);
+    verify(membershipGuard, never()).requireWriteMember(any(Long.class), any(), any(Long.class));
+
+    assertThat(stateA.getSeenAt()).isNotNull().isAfter(before);
+    assertThat(stateA.getUnsubscribedAt()).isEqualTo(unsubscribedAt);
+    assertThat(stateA.isPinned()).isTrue();
+    assertThat(stateA.getReadAt()).isNull();
+    verify(inboxGenerationService, never()).bump(any(Long.class), any());
+    verify(inboxSignalService, never()).invalidate(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName("#150 markSeen: neu angelegter State -> Bump + Invalidate wie bei pin/flag/mute")
+  void mark_seen_neuer_state_bumpt() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+    final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+        .thenReturn(List.of(stateA));
+    when(userStateService.ensure(TASK_DB_ID, USER_A_REF, TENANT_ID)).thenReturn(true);
+
+    markerService.markSeen(TASK_EXTERNAL_ID);
+
+    assertThat(stateA.getSeenAt()).isNotNull();
+    verify(inboxGenerationService).bump(TENANT_ID, USER_A_REF);
+    verify(inboxSignalService).invalidate(TENANT_ID, List.of(USER_A_REF));
+  }
+
+  @Test
+  @DisplayName("#150 markSeen: Nicht-Mitglied -> 404 ohne ensure, ohne save, ohne Bump")
+  void mark_seen_non_member_404_kein_ensure() {
+    final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireReadMember(TASK_DB_ID, USER_A_REF, TENANT_ID);
+
+    assertThatThrownBy(() -> markerService.markSeen(TASK_EXTERNAL_ID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    verify(userStateService, never()).ensure(any(Long.class), any(), any(Long.class));
+    verify(userStateQueryRepository, never()).save(any());
+    verify(inboxGenerationService, never()).bump(any(Long.class), any());
+  }
+
+  @Test
+  @DisplayName("#150 markSeen: unbekannte und fremde Aufgabe -> neutrale 404 ohne Guard")
+  void mark_seen_unbekannt_und_fremd_404() {
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> markerService.markSeen(TASK_EXTERNAL_ID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    final Task foreign = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
+    foreign.setTenantId(999L);
+    when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(foreign));
+    assertThatThrownBy(() -> markerService.markSeen(TASK_EXTERNAL_ID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    verify(membershipGuard, never()).requireReadMember(any(Long.class), any(), any(Long.class));
+    verify(userStateService, never()).ensure(any(Long.class), any(), any(Long.class));
+  }
+
   // ---- Hilfsmethoden --------------------------------------------------------------------------
 
   private static Task taskWithId(final Long id, final UUID uuid) {

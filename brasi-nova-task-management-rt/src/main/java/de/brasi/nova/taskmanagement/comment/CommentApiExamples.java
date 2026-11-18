@@ -52,7 +52,7 @@ final class CommentApiExamples {
           + "\",\"authorRef\":\"880e8400-e29b-41d4-a716-446655440003\",\"parentCommentId\":\""
           + PARENT_COMMENT_REF
           + "\",\"text\":\"Erledigt, danke.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T10:00:00Z\"}";
+          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":false}";
 
   /** 201: der neue Kommentar ohne Eltern-Kommentar ({@code parentCommentId} ist {@code null}). */
   static final String CREATED_TOP_LEVEL =
@@ -62,13 +62,35 @@ final class CommentApiExamples {
           + TASK_REF
           + "\",\"authorRef\":\"880e8400-e29b-41d4-a716-446655440003\",\"parentCommentId\":null,"
           + "\"text\":\"Bitte bis Ende der Woche erledigen.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T09:00:00Z\"}";
+          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false}";
+
+  /** Beispiel-UUID eines anderen Kommentar-Autors als des Anfragers (Liste). */
+  private static final String OTHER_AUTHOR_REF = "990e8400-e29b-41d4-a716-446655440004";
 
   /**
    * 200 von {@code getComments}: chronologisch aufsteigend, ein Kommentar ohne und eine Antwort
-   * darauf.
+   * darauf, beide von einer anderen Person als dem Anfrager. Der Anfrager hat die Aufgabe zwischen
+   * beiden Kommentaren als gesehen markiert: der erste ist nicht mehr neu, die Antwort danach ist
+   * neu ({@code isNew}, Intake #150).
    */
-  static final String LIST_COMMENTS = "[" + CREATED_TOP_LEVEL + "," + CREATED_REPLY + "]";
+  static final String LIST_COMMENTS =
+      "[{\"id\":\""
+          + PARENT_COMMENT_REF
+          + "\",\"taskId\":\""
+          + TASK_REF
+          + "\",\"authorRef\":\""
+          + OTHER_AUTHOR_REF
+          + "\",\"parentCommentId\":null,"
+          + "\"text\":\"Bitte bis Ende der Woche erledigen.\",\"edited\":false,"
+          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false},"
+          + "{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"taskId\":\""
+          + TASK_REF
+          + "\",\"authorRef\":\""
+          + OTHER_AUTHOR_REF
+          + "\",\"parentCommentId\":\""
+          + PARENT_COMMENT_REF
+          + "\",\"text\":\"Erledigt, danke.\",\"edited\":false,"
+          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":true}]";
 
   /** Pfad von {@code GET /api/v1/tasks/{id}/comments} bei einer ungueltigen UUID im Pfad. */
   private static final String PATH_INVALID_ID = "/api/v1/tasks/keine-uuid/comments";

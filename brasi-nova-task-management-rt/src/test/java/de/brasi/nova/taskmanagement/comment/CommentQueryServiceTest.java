@@ -10,8 +10,10 @@ import static org.mockito.Mockito.when;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskCommentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -50,6 +52,7 @@ class CommentQueryServiceTest {
   private UserAccessor userAccessor;
   private AuditTimeConverter auditTimeConverter;
   private TaskMembershipGuard membershipGuard;
+  private TaskUserStateQueryRepository userStateQueryRepository;
   private CommentQueryService service;
 
   @BeforeEach
@@ -59,13 +62,15 @@ class CommentQueryServiceTest {
     userAccessor = mock(UserAccessor.class);
     auditTimeConverter = new AuditTimeConverter("Europe/Berlin");
     membershipGuard = mock(TaskMembershipGuard.class);
+    userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
     service =
         new CommentQueryService(
             taskRepository,
             commentQueryRepository,
             userAccessor,
             auditTimeConverter,
-            membershipGuard);
+            membershipGuard,
+            userStateQueryRepository);
 
     TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
     when(userAccessor.requireCurrentUser()).thenReturn(new AuthUser(AUTHOR, "it-user"));
@@ -96,6 +101,60 @@ class CommentQueryServiceTest {
     assertThat(result.get(0).text()).isEqualTo("top");
     assertThat(result.get(0).createdAt()).isNotNull();
     assertThat(result.get(0).edited()).isFalse();
+  }
+
+  // ---- Intake #150: isNew -------------------------------------------------------------------
+
+  private static final UUID OTHER = UUID.fromString("00000059-000b-0059-0000-00000000059b");
+  private static final UUID C3_UUID = UUID.fromString("00000059-0c03-0059-0000-000000000c03");
+
+  @Test
+  @DisplayName(
+      "#150 isNew: fremd und nach SEEN_AT -> true; fremd vor/gleich SEEN_AT -> false; eigen -> false")
+  void is_new_nach_seen_at_und_nicht_eigen() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    final TaskUserState state = new TaskUserState();
+    state.setSeenAt(T1);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(anyLong(), any()))
+        .thenReturn(List.of(state));
+    final TaskComment before = comment(1L, C1_UUID, null, "vorher", T1);
+    before.setAuthorRef(OTHER);
+    final TaskComment after = comment(2L, C2_UUID, null, "danach", T2);
+    after.setAuthorRef(OTHER);
+    final TaskComment own = comment(3L, C3_UUID, null, "eigen", T2);
+    when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
+        .thenReturn(List.of(before, after, own));
+
+    final List<CommentModel> result = service.getComments(TASK_UUID);
+
+    assertThat(result).extracting(CommentModel::isNew).containsExactly(false, true, false);
+    // Lesen veraendert den Gesehen-Zeitpunkt nie.
+    org.mockito.Mockito.verify(userStateQueryRepository, org.mockito.Mockito.never()).save(any());
+    assertThat(state.getSeenAt()).isEqualTo(T1);
+  }
+
+  @Test
+  @DisplayName(
+      "#150 isNew ohne Marker (erster Besuch, kein State oder SEEN_AT null): alle fremden neu,"
+          + " eigene nie")
+  void is_new_ohne_marker_alle_fremden_neu() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    final TaskComment other = comment(1L, C1_UUID, null, "fremd", T1);
+    other.setAuthorRef(OTHER);
+    final TaskComment own = comment(2L, C2_UUID, null, "eigen", T2);
+    when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
+        .thenReturn(List.of(other, own));
+
+    when(userStateQueryRepository.findByTaskIdAndUserRef(anyLong(), any())).thenReturn(List.of());
+    assertThat(service.getComments(TASK_UUID))
+        .extracting(CommentModel::isNew)
+        .containsExactly(true, false);
+
+    when(userStateQueryRepository.findByTaskIdAndUserRef(anyLong(), any()))
+        .thenReturn(List.of(new TaskUserState()));
+    assertThat(service.getComments(TASK_UUID))
+        .extracting(CommentModel::isNew)
+        .containsExactly(true, false);
   }
 
   @Test

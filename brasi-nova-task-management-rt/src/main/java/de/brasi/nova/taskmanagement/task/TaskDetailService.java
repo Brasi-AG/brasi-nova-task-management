@@ -191,7 +191,10 @@ public class TaskDetailService {
     final ExitModel exit =
         enrichment.exitKind() == null
             ? null
-            : new ExitModel(enrichment.exitKind(), enrichment.handedOverToIds());
+            : new ExitModel(
+                enrichment.exitKind(),
+                enrichment.handedOverToIds(),
+                auditTimeConverter.toInstant(enrichment.exitedAt()));
 
     final TaskSourceModel source;
     if (task.getSourceModule() != null
@@ -239,6 +242,17 @@ public class TaskDetailService {
     // (entityClass + refId werden daraus gesetzt) sowie einen expliziten modelState. Die daraus
     // erzeugten _links (self) sind rein additiv und veraendern den fachlichen Wire NICHT; die
     // objekt-level Enforcement (requireReadMember oben) bleibt die alleinige Autorisierung.
+    // Intake #150: Gesehen-Zeitpunkt des Anfragers aus der bereits geladenen State-Zeile (kein
+    // weiterer Read). Nur lesen: dieser Pfad setzt SEEN_AT nie (anders als READ_AT im Controller).
+    model.lastSeenAt(
+        actorStateRows.stream()
+            .filter(s -> task.getId().equals(s.getTaskId()))
+            .map(TaskUserState::getSeenAt)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .map(auditTimeConverter::toInstant)
+            .orElse(null));
+
     model.setEntity(task);
     model.setModelState(
         task.getEntityState() != null

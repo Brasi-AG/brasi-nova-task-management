@@ -13,7 +13,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** Benutzerspezifischer Zustand einer Aufgabe (Pinned, Flagged, Muted, gelesen). */
+/**
+ * Benutzerspezifischer Zustand einer Aufgabe (Pinned, Flagged, Muted, gelesen, gesehen).
+ */
 @NovaTable(name = "TASK_USER_STATE")
 @ScaffoldSchemaConfig(
     openApiGroupId = TaskManagementOpenApiGroups.TASK_MANAGEMENT,
@@ -56,4 +58,14 @@ public class TaskUserState extends NovaEntity<TaskUserState> {
   /** Optionaler Zeitpunkt des Abmeldens. */
   @NovaColumn(name = "UNSUBSCRIBED_AT", nullable = true)
   private LocalDateTime unsubscribedAt;
+
+  /**
+   * Optionaler Gesehen-Zeitpunkt (Intake #150): wann der Benutzer die Aufgabe zuletzt ausdruecklich
+   * als gesehen markiert hat ({@code PUT /api/v1/tasks/{id}/seen}). Grundlage der Kennzeichnung
+   * neuer Kommentare. Anders als {@code READ_AT} setzt kein lesender Aufruf diesen Wert. Lokale
+   * Wanduhr der Persistenz-Zone wie die Nachbarspalten und die Audit-Zeit der Kommentare, mit der
+   * er verglichen wird; nach aussen wird er als UTC geliefert.
+   */
+  @NovaColumn(name = "SEEN_AT", nullable = true)
+  private LocalDateTime seenAt;
 }

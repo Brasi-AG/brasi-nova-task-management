@@ -382,7 +382,9 @@ public class CommentService {
         input.parentCommentId(),
         input.text(),
         false,
-        createdAt);
+        createdAt,
+        // Eigener Kommentar: fuer den Autor nie neu (Intake #150).
+        false);
   }
 
   /**

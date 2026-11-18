@@ -184,6 +184,7 @@ public final class ArchiveSearchPageSchema {
    *
    * @param kind Austrittsart
    * @param handedOverToIds Uebergabeziele
+   * @param exitedAt Austrittszeitpunkt (UTC)
    */
   @Schema(name = "ArchiveSearchExit", description = "Austritts-Info des Anfragers.")
   public record Exit(
@@ -198,7 +199,14 @@ public final class ArchiveSearchPageSchema {
                           "Uebergabeziele bei Handover; leer bei Abmeldung oder Handover ohne"
                               + " Ziele."),
               schema = @Schema(description = "UUID eines Uebergabeziels."))
-          List<UUID> handedOverToIds) {}
+          List<UUID> handedOverToIds,
+      @Schema(
+              description =
+                  "Zeitpunkt des Austritts (ISO 8601, UTC) bei Uebergabe und Abmeldung. null nur"
+                      + " bei Altdaten, fuer die kein Austrittszeitpunkt erfasst ist.",
+              example = "2026-11-17T09:30:00Z",
+              nullable = true)
+          Instant exitedAt) {}
 
   /**
    * problem+json-Antwort der Security-Filterkette bei fehlender Anmeldung (401).

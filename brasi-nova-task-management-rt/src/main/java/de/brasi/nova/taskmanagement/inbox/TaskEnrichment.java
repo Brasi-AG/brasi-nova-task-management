@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.inbox;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,6 +22,9 @@ import java.util.UUID;
  * @param handedOverToIds Uebergabeziele (BE-7) des sichtbaren Austritts-Handover-Ereignisses des
  *                       Anfragers; nur bei {@code exitKind="handover"} gefuellt (ggf. leer bei
  *                       Selbst-Handover ohne Ziele), sonst leer. Nie {@code null}.
+ * @param exitedAt       Austrittszeitpunkt des Anfragers (Intake #150, lokale Wanduhr der
+ *                       Persistenz-Zone): {@code EXIT_AT} der Teilnehmerzeile, ersatzweise
+ *                       {@code UNSUBSCRIBED_AT} des States; {@code null} ohne Austritt
  */
 public record TaskEnrichment(
     UUID createdById,
@@ -31,10 +35,11 @@ public record TaskEnrichment(
     boolean isFlagged,
     boolean isMuted,
     String exitKind,
-    List<UUID> handedOverToIds) {
+    List<UUID> handedOverToIds,
+    LocalDateTime exitedAt) {
 
   /** Anreicherung einer Aufgabe ohne jegliche Rows (leere Listen, keine Marker, kein Austritt). */
   public static final TaskEnrichment EMPTY =
       new TaskEnrichment(
-          null, List.of(), List.of(), List.of(), false, false, false, null, List.of());
+          null, List.of(), List.of(), List.of(), false, false, false, null, List.of(), null);
 }

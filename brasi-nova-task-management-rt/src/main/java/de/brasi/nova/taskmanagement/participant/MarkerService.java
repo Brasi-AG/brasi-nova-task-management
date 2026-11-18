@@ -9,6 +9,7 @@ import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Transaktionale Kommando-Operationen fuer persoenliche Marker (pin/flag/mute) eines Benutzers.
+ * Transaktionale Kommando-Operationen fuer persoenliche Marker (pin/flag/mute/seen) eines Benutzers.
  *
  * <p>Jede Methode laedt den Actor aus dem Security-Context, prueft die Mandantenzugehoerigkeit
  * der Aufgabe (404-Masking) und stellt den {@link TaskUserState} via
@@ -103,6 +104,61 @@ public class MarkerService {
   public void setMuted(final UUID taskUuid, final boolean value) {
     applyMarker(taskUuid, state -> state.setMuted(value));
     log.debug("MarkerService.setMuted: IS_MUTED={} fuer Task {}.", value, taskUuid);
+  }
+
+  /**
+   * Markiert die Aufgabe fuer den aktuellen Benutzer als gesehen (Intake #150): setzt {@code
+   * TASK_USER_STATE.SEEN_AT} auf jetzt. Idempotent im Sinne von PUT: jeder Aufruf setzt den
+   * Zeitpunkt erneut auf jetzt, ohne weitere Wirkung.
+   *
+   * <p>Berechtigung exakt wie {@code GET /api/v1/tasks/{id}}: READ-Member ({@code
+   * requireReadMember}, ausgetretene Mitglieder eingeschlossen, damit sie ihr Archiv-Detail als
+   * gesehen markieren koennen). Unbekannte Aufgabe, fremder Mandant, deaktivierte Aufgabe und
+   * Nicht-Mitglied ergeben dieselbe neutrale 404. Der Guard steht vor {@code ensure}, sodass ein
+   * Nicht-Mitglied keine State-Zeile anlegt.
+   *
+   * <p>{@code ensure} legt den State nur an, wenn er fehlt, und aendert {@code UNSUBSCRIBED_AT} nie
+   * (ein Ausgetretener bleibt ausgetreten). Keine Benachrichtigung.
+   *
+   * <p>Inbox-Generation: kein Bump bei vorhandenem State. {@code SEEN_AT} ist ein rein
+   * persoenlicher Wert ohne Keyset- oder Mitgliedschaftswirkung: er aendert weder {@code
+   * LAST_ACTIVITY_AT} noch Teilnehmer- oder Austrittsspalten und ist in keiner Inbox- oder
+   * Archiv-Query Praedikat; die Seiten-Anreicherung der Inbox liefert ihn nicht aus. Ein offener
+   * Cursor bleibt damit gueltig (Karte inbox-snapshot: reine Zustandsaenderung, kein Bump). Nur wenn
+   * {@code ensure} den State erstmals anlegt, wird wie bei pin/flag/mute gebumpt und invalidiert,
+   * weil eine neue State-Zeile Inbox-Sichtbarkeit herstellen kann.
+   *
+   * <p>Zeitbasis: {@code LocalDateTime.now()} wie {@code READ_AT} und wie die KSF-Audit-Zeit
+   * {@code ANGELEGT_AM} der Kommentare, mit der {@code SEEN_AT} verglichen wird (lokale Wanduhr der
+   * Persistenz-Zone, Lesson audit-time-zone).
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @throws EntityNotFoundException bei unbekannter, fremder oder deaktivierter Aufgabe sowie fuer
+   *     Nicht-Mitglieder (HTTP 404, neutral)
+   */
+  @Transactional
+  public void markSeen(final UUID taskExternalId) {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    final long tenantId = actor.tenant().id();
+    final UUID userRef = actor.user().id();
+
+    final Task task = requireTask(taskExternalId, tenantId);
+    final Long taskId = task.getId();
+
+    // READ-Guard wie GET /tasks/{id}, VOR ensure (kein Orphan-State fuer Nicht-Mitglieder).
+    membershipGuard.requireReadMember(taskId, userRef, tenantId);
+
+    final boolean created = userStateService.ensure(taskId, userRef, tenantId);
+    final TaskUserState state =
+        userStateQueryRepository.findByTaskIdAndUserRef(taskId, userRef).get(0);
+    state.setSeenAt(LocalDateTime.now());
+    userStateQueryRepository.save(state);
+    log.debug("MarkerService.markSeen: SEEN_AT gesetzt fuer Task {}.", taskExternalId);
+
+    if (created) {
+      inboxGenerationService.bump(tenantId, userRef);
+      inboxSignalService.invalidate(tenantId, List.of(userRef));
+    }
   }
 
   /**

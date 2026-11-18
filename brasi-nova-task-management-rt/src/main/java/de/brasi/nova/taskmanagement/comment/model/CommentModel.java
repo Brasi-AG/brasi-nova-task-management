@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.comment.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.UUID;
@@ -15,6 +16,10 @@ import java.util.UUID;
  * @param text Kommentartext
  * @param edited Kennzeichen: wurde der Kommentar nachtraeglich bearbeitet
  * @param createdAt Erstellungszeitpunkt
+ * @param isNew Kennzeichen fuer den Anfrager (Intake #150): {@code true}, wenn der Kommentar nach
+ *     seinem Gesehen-Zeitpunkt ({@code PUT /api/v1/tasks/{id}/seen}) erstellt wurde und nicht von
+ *     ihm selbst stammt; ohne Gesehen-Zeitpunkt (erster Besuch) sind alle Kommentare anderer neu.
+ *     In der Antwort auf das Anlegen stets {@code false} (eigener Kommentar).
  */
 public record CommentModel(
     @Schema(
@@ -42,4 +47,13 @@ public record CommentModel(
             example = "false")
         boolean edited,
     @Schema(description = "Erstellungszeitpunkt (UTC).", example = "2026-10-18T08:00:00Z")
-        Instant createdAt) {}
+        Instant createdAt,
+    @JsonProperty("isNew")
+        @Schema(
+            description =
+                "true, wenn der Kommentar fuer den Anfrager neu ist: erstellt nach dessen"
+                    + " Gesehen-Zeitpunkt (PUT /api/v1/tasks/{id}/seen) und nicht vom Anfrager"
+                    + " selbst. Ohne Gesehen-Zeitpunkt (erster Besuch) gelten alle Kommentare"
+                    + " anderer als neu, eigene nie. In der Antwort auf das Anlegen stets false.",
+            example = "true")
+        boolean isNew) {}

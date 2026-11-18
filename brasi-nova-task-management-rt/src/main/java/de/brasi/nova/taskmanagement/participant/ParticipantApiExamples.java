@@ -1,8 +1,8 @@
 package de.brasi.nova.taskmanagement.participant;
 
 /**
- * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code mute}, {@code updateAssignees}, {@code
- * exit} und {@code addParticipants}.
+ * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code mute}, {@code seen}, {@code
+ * updateAssignees}, {@code exit} und {@code addParticipants}.
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -23,6 +23,12 @@ final class ParticipantApiExamples {
 
   /** Pfad von {@code PUT /api/v1/tasks/{id}/mute} in den Fehlerbeispielen. */
   private static final String PATH_MUTE = "/api/v1/tasks/3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b/mute";
+
+  /** Pfad von {@code PUT /api/v1/tasks/{id}/seen} in den Fehlerbeispielen. */
+  private static final String PATH_SEEN = "/api/v1/tasks/3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b/seen";
+
+  /** Pfad von {@code PUT /api/v1/tasks/{id}/seen} bei einer ungueltigen UUID im Pfad. */
+  private static final String PATH_SEEN_INVALID_ID = "/api/v1/tasks/keine-uuid/seen";
 
   /** Pfad von {@code PUT /api/v1/tasks/{id}/assignees} in den Fehlerbeispielen. */
   private static final String PATH_ASSIGNEES =
@@ -55,6 +61,40 @@ final class ParticipantApiExamples {
           + "\"path\":\""
           + PATH_MUTE
           + "\",\"errorKey\":\"NOVA_NOT_FOUND\"}";
+
+  /**
+   * 400 von {@code seen}: keine gueltige UUID im Pfad. Format gegen die Live-Antwort in {@code
+   * TaskSeenMarkerIT} abgesichert.
+   */
+  static final String BAD_REQUEST_SEEN =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der URL-Parameter 'id' hat einen ung\u00fcltigen Wert. Ein Wert vom Typ"
+          + " 'UUID' wird erwartet.\",\"path\":\""
+          + PATH_SEEN_INVALID_ID
+          + "\",\"errorKey\":\"NOVA_TYPE_MISMATCH\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"Wert: 'keine-uuid'\"]}";
+
+  /** 404 von {@code seen}: Aufgabe unbekannt, fremder Mandant oder kein Mitglied (maskiert). */
+  static final String NOT_FOUND_SEEN =
+      ERROR_HEAD
+          + "\"status\":404,\"error\":\"Not Found\",\"message\":\"Aufgabe nicht gefunden.\","
+          + "\"path\":\""
+          + PATH_SEEN
+          + "\",\"errorKey\":\"NOVA_NOT_FOUND\"}";
+
+  /**
+   * 409 von {@code seen}: nebenlaeufiger Versionskonflikt beim Speichern des versionierten {@code
+   * TaskUserState}.
+   */
+  static final String CONFLICT_SEEN =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_SEEN
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
 
   /** 400 von {@code updateAssignees}: unbekannter Benutzer in der Ziel-Menge. */
   static final String BAD_REQUEST_ASSIGNEES =

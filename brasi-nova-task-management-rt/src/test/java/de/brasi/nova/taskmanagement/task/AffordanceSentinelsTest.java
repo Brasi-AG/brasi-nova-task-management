@@ -116,6 +116,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  *       {@code TaskFacadeController#patch} (TaskCommandService.requireWriteMember)
  *   <li>{@code UserStateControllerIT.anonym_401_falsche_permission_403_fremder_tenant_404} ->
  *       {@code UserStateController#pin/flag/mute} (MarkerService -> requireWriteMember)
+ *   <li>{@code TaskSeenMarkerIT.seen_404_fuer_unbekannt_fremd_und_nicht_mitglied_ohne_state} ->
+ *       {@code UserStateController#seen} (MarkerService -> requireReadMember, Intake #150)
  *   <li>{@code CommentControllerIT.comment_membership_guard_wire_und_keine_verweigerten_writes} ->
  *       {@code CommentController#createComment} (CommentService.requireWriteMember)
  *   <li>{@code AssigneeControllerIT.s4_exit_non_member_404} und
@@ -204,6 +206,7 @@ class AffordanceSentinelsTest {
           "UserStateController#pin", "markerService", //     MarkerService -> requireWriteMember
           "UserStateController#flag", "markerService",
           "UserStateController#mute", "markerService",
+          "UserStateController#seen", "markerService", // MarkerService -> requireReadMember
           "CommentController#createComment", "commentService", // CommentService.requireWriteMember
           "AssigneeController#exit", "assigneeService"); //      AssigneeService.requireWriteMember
 

@@ -141,7 +141,9 @@ public class InboxEnrichmentAssembler {
       final boolean pinned = state != null && state.isPinned();
       final boolean flagged = state != null && state.isFlagged();
       final boolean muted = state != null && state.isMuted();
-      final String exitKind = deriveExitKind(ps, state, userRef, asOf);
+      final ActorExit actorExit = deriveExit(ps, state, userRef, asOf);
+      final String exitKind = actorExit == null ? null : actorExit.kind();
+      final LocalDateTime exitedAt = actorExit == null ? null : actorExit.exitedAt();
 
       // BE-7: Uebergabeziele NUR bei sichtbarem Handover-Austritt. Die Rows sind vom Service bereits
       // actor-/asOf-/SHOULD_STAY=false-gescoped; die Praezedenz (HANDOVER vor UNSUBSCRIBED) wird hier
@@ -165,39 +167,82 @@ public class InboxEnrichmentAssembler {
               flagged,
               muted,
               exitKind,
-              handedOverToIds));
+              handedOverToIds,
+              exitedAt));
     }
     return result;
   }
 
   /**
-   * Leitet den asOf-gebundenen Austritt des Anfragers ab (deckungsgleich mit dem
-   * {@code findArchiveLeftPage}-Praedikat). HANDOVER hat Vorrang vor UNSUBSCRIBED.
+   * Leitet den asOf-gebundenen Austritt des Anfragers samt Austrittszeitpunkt ab (deckungsgleich mit
+   * dem {@code findArchiveLeftPage}-Praedikat). HANDOVER hat Vorrang vor UNSUBSCRIBED.
+   *
+   * <p>Austrittszeitpunkt (Intake #150): {@code EXIT_AT} der Teilnehmerzeile, die den Austritt
+   * belegt. Fehlt er dort (Altdaten; {@code isActorExit} laesst {@code EXIT_AT = null} zu) oder
+   * belegt nur der {@link TaskUserState} die Abmeldung ({@code UNSUBSCRIBED_AT}, ohne
+   * Austritts-Teilnehmerzeile), gilt {@code UNSUBSCRIBED_AT} des States. Beide Werte setzt jeder
+   * Austrittspfad gemeinsam ({@code AssigneeService}); der Rueckgriff greift nur bei Altdaten. Fehlen
+   * beide, bleibt der Zeitpunkt {@code null}, nie erfunden.
+   *
+   * @return Austritt oder {@code null} (aktives Mitglied bzw. kein Austritt bis {@code asOf})
    */
-  private String deriveExitKind(
+  private ActorExit deriveExit(
       final List<TaskParticipant> ps,
       final TaskUserState state,
       final UUID userRef,
       final LocalDateTime asOf) {
 
-    final boolean handover =
-        ps.stream().anyMatch(p -> isActorExit(p, userRef, ExitKind.HANDOVER, asOf));
-    if (handover) {
-      return EXIT_HANDOVER;
+    final LocalDateTime stateUnsubscribedAt = state == null ? null : state.getUnsubscribedAt();
+
+    final TaskParticipant handover = findActorExit(ps, userRef, ExitKind.HANDOVER, asOf);
+    if (handover != null) {
+      return new ActorExit(EXIT_HANDOVER, firstNonNull(handover.getExitAt(), stateUnsubscribedAt));
     }
 
-    final boolean unsubscribedByParticipant =
-        ps.stream().anyMatch(p -> isActorExit(p, userRef, ExitKind.UNSUBSCRIBED, asOf));
+    final TaskParticipant unsubscribed = findActorExit(ps, userRef, ExitKind.UNSUBSCRIBED, asOf);
+    if (unsubscribed != null) {
+      return new ActorExit(
+          EXIT_UNSUBSCRIBED, firstNonNull(unsubscribed.getExitAt(), stateUnsubscribedAt));
+    }
     final boolean unsubscribedByState =
         state != null
             && notAfter(state.getCreatedAt(), asOf)
-            && state.getUnsubscribedAt() != null
-            && notAfter(state.getUnsubscribedAt(), asOf);
-    if (unsubscribedByParticipant || unsubscribedByState) {
-      return EXIT_UNSUBSCRIBED;
+            && stateUnsubscribedAt != null
+            && notAfter(stateUnsubscribedAt, asOf);
+    if (unsubscribedByState) {
+      return new ActorExit(EXIT_UNSUBSCRIBED, stateUnsubscribedAt);
     }
     return null;
   }
+
+  /**
+   * Erste Austritts-Teilnehmerzeile des Anfragers mit der gegebenen Art ({@link #isActorExit}) oder
+   * {@code null}. Je (Aufgabe, Person) gibt es hoechstens eine Zeile (Unique-Key aus V3).
+   */
+  private TaskParticipant findActorExit(
+      final List<TaskParticipant> ps,
+      final UUID userRef,
+      final ExitKind kind,
+      final LocalDateTime asOf) {
+    return ps.stream()
+        .filter(p -> isActorExit(p, userRef, kind, asOf))
+        .findFirst()
+        .orElse(null);
+  }
+
+  /** Liefert {@code first}, falls gesetzt, sonst {@code second} (beide duerfen null sein). */
+  private static LocalDateTime firstNonNull(final LocalDateTime first, final LocalDateTime second) {
+    return first != null ? first : second;
+  }
+
+  /**
+   * Abgeleiteter Austritt des Anfragers.
+   *
+   * @param kind Austrittsart in der Wire-Form ({@link #EXIT_HANDOVER} oder {@link
+   *     #EXIT_UNSUBSCRIBED})
+   * @param exitedAt Austrittszeitpunkt (lokale Wanduhr der Persistenz-Zone) oder {@code null}
+   */
+  private record ActorExit(String kind, LocalDateTime exitedAt) {}
 
   /**
    * Actor-Austritts-Row mit bestimmter Art, asOf-gebunden: {@code PARTICIPANT_REF = userRef},

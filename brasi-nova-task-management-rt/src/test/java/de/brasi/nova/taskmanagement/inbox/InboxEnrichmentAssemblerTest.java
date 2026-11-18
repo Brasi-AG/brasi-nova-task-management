@@ -292,6 +292,74 @@ class InboxEnrichmentAssemblerTest {
     assertThat(e.handedOverToIds()).isNotNull().isEmpty();
   }
 
+  // ---- Intake #150: Austrittszeitpunkt exitedAt --------------------------------------------
+
+  @Test
+  @DisplayName("#150 exitedAt bei handover und unsubscribed aus EXIT_AT der Teilnehmerzeile")
+  void exited_at_aus_exit_at_der_teilnehmerzeile() {
+    final LocalDateTime exitAt = LocalDateTime.of(2026, 1, 1, 9, 15, 0);
+    final LocalDateTime stateUnsub = LocalDateTime.of(2026, 1, 1, 9, 45, 0);
+    final TaskUserState st = withTask(userState(ACTOR, false, false, false, stateUnsub, BEFORE), TASK);
+
+    final List<TaskParticipant> handover =
+        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, exitAt, BEFORE));
+    final TaskEnrichment eh =
+        assembler.assemble(List.of(TASK), handover, List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+    assertThat(eh.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
+    assertThat(eh.exitedAt()).as("EXIT_AT hat Vorrang vor UNSUBSCRIBED_AT").isEqualTo(exitAt);
+
+    final List<TaskParticipant> unsub =
+        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.UNSUBSCRIBED, exitAt, BEFORE));
+    final TaskEnrichment eu =
+        assembler.assemble(List.of(TASK), unsub, List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+    assertThat(eu.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+    assertThat(eu.exitedAt()).isEqualTo(exitAt);
+  }
+
+  @Test
+  @DisplayName(
+      "#150 exitedAt faellt auf UNSUBSCRIBED_AT zurueck (Altdaten: EXIT_AT null oder nur State)")
+  void exited_at_rueckgriff_auf_unsubscribed_at() {
+    final LocalDateTime stateUnsub = LocalDateTime.of(2026, 1, 1, 9, 45, 0);
+    final TaskUserState st = withTask(userState(ACTOR, false, false, false, stateUnsub, BEFORE), TASK);
+
+    final List<TaskParticipant> handoverOhneExitAt =
+        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, null, BEFORE));
+    assertThat(
+            assembler
+                .assemble(List.of(TASK), handoverOhneExitAt, List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isEqualTo(stateUnsub);
+
+    final TaskEnrichment nurState =
+        assembler.assemble(List.of(TASK), List.of(), List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+    assertThat(nurState.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+    assertThat(nurState.exitedAt()).isEqualTo(stateUnsub);
+
+    // Weder EXIT_AT noch UNSUBSCRIBED_AT: Zeitpunkt bleibt null (nie erfunden).
+    assertThat(
+            assembler
+                .assemble(List.of(TASK), handoverOhneExitAt, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isNull();
+  }
+
+  @Test
+  @DisplayName("#150 ohne Austritt (aktiv oder wieder eingetreten) -> exitedAt null")
+  void exited_at_null_ohne_austritt() {
+    // Wiedereintritt setzt EXIT_KIND/EXIT_AT und UNSUBSCRIBED_AT zurueck -> aktives Mitglied.
+    final List<TaskParticipant> aktiv =
+        List.of(participant(ACTOR, ParticipantKind.PERSON, false, true, true, null, null, BEFORE));
+    final TaskUserState st = withTask(userState(ACTOR, false, false, false, null, BEFORE), TASK);
+    final TaskEnrichment e =
+        assembler.assemble(List.of(TASK), aktiv, List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+    assertThat(e.exitKind()).isNull();
+    assertThat(e.exitedAt()).isNull();
+    assertThat(TaskEnrichment.EMPTY.exitedAt()).isNull();
+  }
+
   // ---- Hilfs-Builder -------------------------------------------------------------------------
 
   private static TaskParticipant participant(
