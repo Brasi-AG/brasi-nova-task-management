@@ -230,6 +230,10 @@ public class AssigneeService {
       }
     }
 
+    // Test-Seam (Intake #167): nach den Vorab-Reads, vor der ersten Mitgliedschafts-Schreibung.
+    // Produktiv No-Op.
+    onBeforeMembershipWritesForTest(taskId);
+
     final List<UUID> affectedRefs = new ArrayList<>();
 
     // Neue Assignees anlegen
@@ -347,6 +351,10 @@ public class AssigneeService {
       // werden. Ref in affectedRefs gesammelt; der (sortierte) Bump erfolgt gebuendelt NACH dem
       // TASK-save (Codex #6).
     }
+
+    // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor TASK-save
+    // und Bump. Produktiv No-Op.
+    onAfterMembershipWritesForTest(taskId);
 
     // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).
     // Idempotente No-Op-PUTs (Ziel-Menge == aktueller Stand, inkl. Creator-Schutz-No-Ops) duerfen
@@ -736,7 +744,11 @@ public class AssigneeService {
     // Gemeinsamer Aufnahme-Kern (auch von CommentService#createComment genutzt, Intake #156): legt
     // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie und liefert die tatsaechlich
     // aufgenommenen Refs. Benachrichtigung, Bump und Signal bleiben hier beim Aufrufer.
+    // Test-Seams (Intake #167) davor und danach: vor der ersten und nach der letzten
+    // Mitgliedschafts-Schreibung (vor Benachrichtigung und Bump). Produktiv No-Op.
+    onBeforeMembershipWritesForTest(taskId);
     final List<UUID> affectedRefs = addAsParticipants(taskId, tenantId, refs);
+    onAfterMembershipWritesForTest(taskId);
 
     // Intake #147: PARTICIPANT-Benachrichtigung nur an tatsaechlich neu hinzugefuegte oder aus dem
     // Austritt reaktivierte Personen (affectedRefs: aktive Zeilen und Race-Verlierer sind schon
@@ -1157,6 +1169,10 @@ public class AssigneeService {
       throw new BusinessRuleException("Der Ersteller kann die Aufgabe nicht verlassen.");
     }
 
+    // Test-Seam (Intake #167): nach den Vorab-Reads, vor der ersten Schreibung (Handover-Ereignis
+    // bzw. Teilnehmerzeile des Akteurs). Produktiv No-Op.
+    onBeforeMembershipWritesForTest(taskId);
+
     final LocalDateTime now = LocalDateTime.now();
     final List<UUID> notifyTargets = new ArrayList<>();
 
@@ -1235,6 +1251,10 @@ public class AssigneeService {
         userStateQueryRepository.save(state);
       }
     }
+
+    // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor Historie,
+    // TASK-save und Bump. Produktiv No-Op.
+    onAfterMembershipWritesForTest(taskId);
 
     // (7) History (Namen-Snapshot): "<AkteurName> -> <Ziel-Namen>".
     recordHandoverHistory(taskId, tenantId, actorRef, dedupedTargets, handover, shouldStay);
@@ -1543,6 +1563,36 @@ public class AssigneeService {
    * @param participantRef UUID der zu entfernenden Person
    */
   protected void onBeforeRemoveMutationForTest(final Long taskId, final UUID participantRef) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op, Intake #167): Haken in {@link #updateAssignees}, {@link
+   * #addParticipants} und {@link #exit} NACH den Vorab-Reads und VOR der ersten Schreibung
+   * (Teilnehmer, State, Handover-Ereignis). Nach der Lock-Reihenfolge der Karte {@code
+   * participants-actions} stehen hier alle Reads hinter dem Akteur, auch die Leser fuer Bump und
+   * Signal; die Transaktion haelt noch keine Schreibsperren. Der Nebenlaeufigkeits-IT ({@code
+   * MembershipConcurrencyIT}) synchronisiert zwei Aufrufe fuer verschiedene Personen derselben
+   * Aufgabe an diesem Punkt (Sync 1). Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   */
+  protected void onBeforeMembershipWritesForTest(final Long taskId) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op, Intake #167): Haken in {@link #updateAssignees}, {@link
+   * #addParticipants} und {@link #exit} NACH den eigenen Teilnehmer- und State-Schreibungen und VOR
+   * Historie, Benachrichtigung, TASK-save und Generation-Bump. Die Transaktion haelt hier ihre
+   * X-Sperren auf den eigenen Mitgliedschafts-Zeilen. Der Nebenlaeufigkeits-IT ({@code
+   * MembershipConcurrencyIT}) laesst an diesem Punkt (Sync 2) beide Transaktionen ihre Sperren
+   * gleichzeitig halten; danach darf keine Lesung mehr auf die Zeilen der anderen warten, sonst
+   * verklemmen beide (Deadlock 1205). Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   */
+  protected void onAfterMembershipWritesForTest(final Long taskId) {
     // No-Op im Produktivbetrieb.
   }
 
