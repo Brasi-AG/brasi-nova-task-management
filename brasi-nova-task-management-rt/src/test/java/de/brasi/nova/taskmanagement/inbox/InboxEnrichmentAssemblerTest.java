@@ -37,7 +37,8 @@ class InboxEnrichmentAssemblerTest {
   private final InboxEnrichmentAssembler assembler = new InboxEnrichmentAssembler();
 
   @Test
-  @DisplayName("gruppiert creator/assignees/participants PERSON-only, participant minus assignee/creator")
+  @DisplayName(
+      "gruppiert creator/assignees/participants PERSON-only, participant minus assignee/creator")
   void gruppiert_rollen_korrekt() {
     final List<TaskParticipant> ps =
         List.of(
@@ -64,8 +65,24 @@ class InboxEnrichmentAssemblerTest {
     final List<TaskParticipant> ps =
         List.of(
             participant(ACTOR, ParticipantKind.PERSON, true, false, false, null, null, BEFORE),
-            participant(USER_B, ParticipantKind.PERSON, false, true, false, ExitKind.HANDOVER, BEFORE, BEFORE),
-            participant(USER_C, ParticipantKind.PERSON, false, false, true, ExitKind.UNSUBSCRIBED, BEFORE, BEFORE));
+            participant(
+                USER_B,
+                ParticipantKind.PERSON,
+                false,
+                true,
+                false,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE),
+            participant(
+                USER_C,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                BEFORE,
+                BEFORE));
 
     final Map<Long, TaskEnrichment> out =
         assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF);
@@ -79,10 +96,14 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("Tags je Aufgabe aus der Projektion gruppiert (inkl. mehrere Aufgaben)")
   void tags_je_aufgabe_gruppiert() {
     final List<TaskTagUuidRow> tagRows =
-        List.of(new TaskTagUuidRow(1L, TAG_1), new TaskTagUuidRow(1L, TAG_2), new TaskTagUuidRow(2L, TAG_1));
+        List.of(
+            new TaskTagUuidRow(1L, TAG_1),
+            new TaskTagUuidRow(1L, TAG_2),
+            new TaskTagUuidRow(2L, TAG_1));
 
     final Map<Long, TaskEnrichment> out =
-        assembler.assemble(List.of(1L, 2L, 3L), List.of(), tagRows, List.of(), List.of(), ACTOR, AS_OF);
+        assembler.assemble(
+            List.of(1L, 2L, 3L), List.of(), tagRows, List.of(), List.of(), ACTOR, AS_OF);
 
     assertThat(out.get(1L).tagIds()).containsExactlyInAnyOrder(TAG_1, TAG_2);
     assertThat(out.get(2L).tagIds()).containsExactly(TAG_1);
@@ -95,7 +116,14 @@ class InboxEnrichmentAssemblerTest {
     final TaskUserState st = userState(ACTOR, true, false, true, null, BEFORE);
 
     final Map<Long, TaskEnrichment> out =
-        assembler.assemble(List.of(1L, 2L), List.of(), List.of(), List.of(withTask(st, 1L)), List.of(), ACTOR, AS_OF);
+        assembler.assemble(
+            List.of(1L, 2L),
+            List.of(),
+            List.of(),
+            List.of(withTask(st, 1L)),
+            List.of(),
+            ACTOR,
+            AS_OF);
 
     assertThat(out.get(1L).isPinned()).isTrue();
     assertThat(out.get(1L).isFlagged()).isFalse();
@@ -110,9 +138,20 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("exit=handover: Actor-Participant EXIT_KIND=HANDOVER, createdAt<=asOf, exitAt<=asOf")
   void exit_handover() {
     final List<TaskParticipant> ps =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, BEFORE, BEFORE));
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE));
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
   }
 
@@ -120,9 +159,20 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("exit=handover auch bei EXIT_AT=null, solange createdAt<=asOf")
   void exit_handover_null_exit_at() {
     final List<TaskParticipant> ps =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, null, BEFORE));
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                null,
+                BEFORE));
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
   }
 
@@ -130,9 +180,20 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("exit=unsubscribed via Participant EXIT_KIND=UNSUBSCRIBED")
   void exit_unsubscribed_participant() {
     final List<TaskParticipant> ps =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.UNSUBSCRIBED, BEFORE, BEFORE));
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                BEFORE,
+                BEFORE));
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
   }
 
@@ -141,7 +202,9 @@ class InboxEnrichmentAssemblerTest {
   void exit_unsubscribed_userstate() {
     final TaskUserState st = withTask(userState(ACTOR, false, false, false, BEFORE, BEFORE), TASK);
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), List.of(), List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), List.of(), List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
   }
 
@@ -149,10 +212,21 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("Praezedenz: HANDOVER vor UNSUBSCRIBED bei gleichzeitigen Signalen")
   void exit_praezedenz_handover_vor_unsubscribed() {
     final List<TaskParticipant> ps =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, BEFORE, BEFORE));
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE));
     final TaskUserState st = withTask(userState(ACTOR, false, false, false, BEFORE, BEFORE), TASK);
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(st), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
   }
 
@@ -161,19 +235,50 @@ class InboxEnrichmentAssemblerTest {
   void exit_null_wenn_signale_nach_asof() {
     // EXIT_AT nach asOf -> kein Handover
     final List<TaskParticipant> psExitAfter =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, AFTER, BEFORE));
-    assertThat(assembler.assemble(List.of(TASK), psExitAfter, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK).exitKind())
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                AFTER,
+                BEFORE));
+    assertThat(
+            assembler
+                .assemble(List.of(TASK), psExitAfter, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+                .get(TASK)
+                .exitKind())
         .isNull();
 
     // ANGELEGT_AM nach asOf -> Mitgliedschaft existierte beim Wasserzeichen noch nicht
     final List<TaskParticipant> psJoinAfter =
-        List.of(participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, null, AFTER));
-    assertThat(assembler.assemble(List.of(TASK), psJoinAfter, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK).exitKind())
+        List.of(
+            participant(
+                ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, null, AFTER));
+    assertThat(
+            assembler
+                .assemble(List.of(TASK), psJoinAfter, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+                .get(TASK)
+                .exitKind())
         .isNull();
 
     // UNSUBSCRIBED_AT nach asOf -> noch nicht abgemeldet
-    final TaskUserState stUnsubAfter = withTask(userState(ACTOR, false, false, false, AFTER, BEFORE), TASK);
-    assertThat(assembler.assemble(List.of(TASK), List.of(), List.of(), List.of(stUnsubAfter), List.of(), ACTOR, AS_OF).get(TASK).exitKind())
+    final TaskUserState stUnsubAfter =
+        withTask(userState(ACTOR, false, false, false, AFTER, BEFORE), TASK);
+    assertThat(
+            assembler
+                .assemble(
+                    List.of(TASK),
+                    List.of(),
+                    List.of(),
+                    List.of(stUnsubAfter),
+                    List.of(),
+                    ACTOR,
+                    AS_OF)
+                .get(TASK)
+                .exitKind())
         .isNull();
   }
 
@@ -181,14 +286,26 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("Actor-Exit NICHT auf PERSON eingeschraenkt (deckungsgleich mit left-SQL)")
   void actor_exit_nicht_person_beschraenkt() {
     final List<TaskParticipant> ps =
-        List.of(participant(ACTOR, ParticipantKind.TEAM, false, false, true, ExitKind.HANDOVER, BEFORE, BEFORE));
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.TEAM,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE));
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
   }
 
   @Test
-  @DisplayName("participantIds schliesst Assignees UND Ersteller aus (auch bei zusaetzlichem PARTICIPANT_FLAG)")
+  @DisplayName(
+      "participantIds schliesst Assignees UND Ersteller aus (auch bei zusaetzlichem PARTICIPANT_FLAG)")
   void participant_minus_assignee_und_creator() {
     final List<TaskParticipant> ps =
         List.of(
@@ -200,7 +317,9 @@ class InboxEnrichmentAssemblerTest {
             participant(USER_C, ParticipantKind.PERSON, false, false, true, null, null, BEFORE));
 
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), ps, List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.createdById()).isEqualTo(ACTOR);
     assertThat(e.assigneeIds()).containsExactly(USER_B);
     assertThat(e.participantIds()).containsExactly(USER_C);
@@ -210,7 +329,9 @@ class InboxEnrichmentAssemblerTest {
   @DisplayName("leere Seite / Aufgabe ohne Rows -> EMPTY-Anreicherung")
   void leere_aufgabe_empty() {
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), List.of(), List.of(), List.of(), List.of(), ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), List.of(), List.of(), List.of(), List.of(), ACTOR, AS_OF)
+            .get(TASK);
     assertThat(e.createdById()).isNull();
     assertThat(e.assigneeIds()).isEmpty();
     assertThat(e.participantIds()).isEmpty();
@@ -228,7 +349,15 @@ class InboxEnrichmentAssemblerTest {
   void be7_handover_targets_gemappt() {
     final List<TaskParticipant> ps =
         List.of(
-            participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, BEFORE, BEFORE));
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE));
     final UUID targetHi = UUID.fromString("ffffffff-0000-0000-0000-00000000aaaa");
     final UUID targetLo = UUID.fromString("00000000-0000-0000-0000-00000000bbbb");
     // Mit Duplikat -> distinct.
@@ -250,7 +379,15 @@ class InboxEnrichmentAssemblerTest {
   void be7_handover_ohne_ziele_leer() {
     final List<TaskParticipant> ps =
         List.of(
-            participant(ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.HANDOVER, BEFORE, BEFORE));
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                BEFORE,
+                BEFORE));
     // LEFT-JOIN-Zeile ohne Ziel: toRef=null.
     final List<HandoverTargetRow> rows = List.of(new HandoverTargetRow(TASK, null));
 
@@ -268,7 +405,14 @@ class InboxEnrichmentAssemblerTest {
     final List<TaskParticipant> ps =
         List.of(
             participant(
-                ACTOR, ParticipantKind.PERSON, false, false, true, ExitKind.UNSUBSCRIBED, BEFORE, BEFORE));
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                BEFORE,
+                BEFORE));
     final UUID stray = UUID.fromString("00000000-0000-0000-0000-00000000cccc");
     final List<HandoverTargetRow> rows = List.of(new HandoverTargetRow(TASK, stray));
 
@@ -286,10 +430,186 @@ class InboxEnrichmentAssemblerTest {
     final List<HandoverTargetRow> rows = List.of(new HandoverTargetRow(TASK, stray));
 
     final TaskEnrichment e =
-        assembler.assemble(List.of(TASK), List.of(), List.of(), List.of(), rows, ACTOR, AS_OF).get(TASK);
+        assembler
+            .assemble(List.of(TASK), List.of(), List.of(), List.of(), rows, ACTOR, AS_OF)
+            .get(TASK);
 
     assertThat(e.exitKind()).isNull();
     assertThat(e.handedOverToIds()).isNotNull().isEmpty();
+  }
+
+  // ---- Intake #150: Austrittszeitpunkt exitedAt --------------------------------------------
+
+  @Test
+  @DisplayName("#150 exitedAt bei handover und unsubscribed aus EXIT_AT der Teilnehmerzeile")
+  void exited_at_aus_exit_at_der_teilnehmerzeile() {
+    final LocalDateTime exitAt = LocalDateTime.of(2026, 1, 1, 9, 15, 0);
+    final LocalDateTime stateUnsub = LocalDateTime.of(2026, 1, 1, 9, 45, 0);
+    final TaskUserState st =
+        withTask(userState(ACTOR, false, false, false, stateUnsub, BEFORE), TASK);
+
+    final List<TaskParticipant> handover =
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                exitAt,
+                BEFORE));
+    final TaskEnrichment eh =
+        assembler
+            .assemble(List.of(TASK), handover, List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
+    assertThat(eh.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_HANDOVER);
+    assertThat(eh.exitedAt()).as("EXIT_AT hat Vorrang vor UNSUBSCRIBED_AT").isEqualTo(exitAt);
+
+    final List<TaskParticipant> unsub =
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                exitAt,
+                BEFORE));
+    final TaskEnrichment eu =
+        assembler
+            .assemble(List.of(TASK), unsub, List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
+    assertThat(eu.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+    assertThat(eu.exitedAt()).isEqualTo(exitAt);
+  }
+
+  @Test
+  @DisplayName(
+      "#150 exitedAt faellt auf UNSUBSCRIBED_AT zurueck (Altdaten: EXIT_AT null oder nur State)")
+  void exited_at_rueckgriff_auf_unsubscribed_at() {
+    final LocalDateTime stateUnsub = LocalDateTime.of(2026, 1, 1, 9, 45, 0);
+    final TaskUserState st =
+        withTask(userState(ACTOR, false, false, false, stateUnsub, BEFORE), TASK);
+
+    final List<TaskParticipant> handoverOhneExitAt =
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.HANDOVER,
+                null,
+                BEFORE));
+    assertThat(
+            assembler
+                .assemble(
+                    List.of(TASK),
+                    handoverOhneExitAt,
+                    List.of(),
+                    List.of(st),
+                    List.of(),
+                    ACTOR,
+                    AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isEqualTo(stateUnsub);
+
+    final TaskEnrichment nurState =
+        assembler
+            .assemble(List.of(TASK), List.of(), List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
+    assertThat(nurState.exitKind()).isEqualTo(InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+    assertThat(nurState.exitedAt()).isEqualTo(stateUnsub);
+
+    // Weder EXIT_AT noch UNSUBSCRIBED_AT: Zeitpunkt bleibt null (nie erfunden).
+    assertThat(
+            assembler
+                .assemble(
+                    List.of(TASK),
+                    handoverOhneExitAt,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    ACTOR,
+                    AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isNull();
+  }
+
+  @Test
+  @DisplayName(
+      "#150 Rueckgriff auf UNSUBSCRIBED_AT nach asOf -> Austritt sichtbar, exitedAt null (nie"
+          + " nach dem Wasserzeichen)")
+  void exited_at_rueckgriff_nicht_nach_as_of() {
+    // Altzeile ohne EXIT_AT belegt den Austritt bis asOf; der State traegt eine spaetere Abmeldung.
+    final TaskUserState spaeter =
+        withTask(userState(ACTOR, false, false, false, AFTER, BEFORE), TASK);
+    for (final ExitKind kind : List.of(ExitKind.HANDOVER, ExitKind.UNSUBSCRIBED)) {
+      final List<TaskParticipant> ohneExitAt =
+          List.of(
+              participant(ACTOR, ParticipantKind.PERSON, false, false, true, kind, null, BEFORE));
+      final TaskEnrichment e =
+          assembler
+              .assemble(
+                  List.of(TASK), ohneExitAt, List.of(), List.of(spaeter), List.of(), ACTOR, AS_OF)
+              .get(TASK);
+      assertThat(e.exitKind())
+          .as("%s bleibt sichtbar", kind)
+          .isEqualTo(
+              kind == ExitKind.HANDOVER
+                  ? InboxEnrichmentAssembler.EXIT_HANDOVER
+                  : InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+      assertThat(e.exitedAt()).as("%s: kein Zeitpunkt nach asOf", kind).isNull();
+    }
+
+    // Genau auf dem Wasserzeichen ist der Rueckgriff noch zulaessig (nicht nach asOf).
+    final TaskUserState aufAsOf =
+        withTask(userState(ACTOR, false, false, false, AS_OF, BEFORE), TASK);
+    final List<TaskParticipant> unsubOhneExitAt =
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                null,
+                BEFORE));
+    assertThat(
+            assembler
+                .assemble(
+                    List.of(TASK),
+                    unsubOhneExitAt,
+                    List.of(),
+                    List.of(aufAsOf),
+                    List.of(),
+                    ACTOR,
+                    AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isEqualTo(AS_OF);
+  }
+
+  @Test
+  @DisplayName("#150 ohne Austritt (aktiv oder wieder eingetreten) -> exitedAt null")
+  void exited_at_null_ohne_austritt() {
+    // Wiedereintritt setzt EXIT_KIND/EXIT_AT und UNSUBSCRIBED_AT zurueck -> aktives Mitglied.
+    final List<TaskParticipant> aktiv =
+        List.of(participant(ACTOR, ParticipantKind.PERSON, false, true, true, null, null, BEFORE));
+    final TaskUserState st = withTask(userState(ACTOR, false, false, false, null, BEFORE), TASK);
+    final TaskEnrichment e =
+        assembler
+            .assemble(List.of(TASK), aktiv, List.of(), List.of(st), List.of(), ACTOR, AS_OF)
+            .get(TASK);
+    assertThat(e.exitKind()).isNull();
+    assertThat(e.exitedAt()).isNull();
+    assertThat(TaskEnrichment.EMPTY.exitedAt()).isNull();
   }
 
   // ---- Hilfs-Builder -------------------------------------------------------------------------

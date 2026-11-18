@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Handgeschriebener Facade-Controller fuer persoenliche Marker (pin/flag/mute) (arch-v2 §7).
+ * Handgeschriebener Facade-Controller fuer persoenliche Marker (pin/flag/mute/seen) (arch-v2 §7).
  *
  * <p>Alle drei Handler sind Standard-Selfservice (authenticated-only via KSF-Filter-Chain); die
  * Autorisierung erfolgt objekt-level ueber den {@code TaskMembershipGuard} im {@link MarkerService}
@@ -29,6 +29,9 @@ import org.springframework.web.bind.annotation.RestController;
  * Fremd-Task legt keine Orphan-state-Zeile mehr an; Non-/Ex-Member -> neutrale 404). Die fachliche
  * Logik (Actor-Aufloesung, 404-Masking, Inbox-Invariante, Persistenz) liegt ausschliesslich im
  * {@link MarkerService}.
+ *
+ * <p>Ausnahme {@code seen} (Intake #150): Berechtigung exakt wie {@code GET /api/v1/tasks/{id}}
+ * (READ-Member, ausgetretene eingeschlossen), weil das Gesehen-Markieren zum Lesen gehoert.
  */
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -201,6 +204,74 @@ public class UserStateController {
           @RequestBody
           final MarkerInput input) {
     markerService.setMuted(id, input.value());
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Markiert eine Aufgabe fuer den aktuellen Benutzer als gesehen (Intake #150).
+   *
+   * <p>Setzt {@code TASK_USER_STATE.SEEN_AT} des Anfragers auf jetzt; daraus leitet {@code GET
+   * /api/v1/tasks/{id}/comments} das Feld {@code isNew} ab, {@code GET /api/v1/tasks/{id}} liefert
+   * ihn als {@code lastSeenAt}. Kein Request-Body, keine Benachrichtigung. Kein HATEOAS-Link: die
+   * Aktion gehoert zum Lesen (jedes READ-Mitglied darf sie, wer das Detail sieht, darf sie also
+   * immer), ein bedingter Link traegt fuer die UI keine Information; die Karte affordance-links
+   * verlangt keinen Link je Operation.
+   *
+   * <p>Kein 409 dokumentiert (anders als {@code mute}): die State-Zeile wird vor dem Speichern per
+   * Update-Sperre gelesen und bis zum Commit gehalten, ein Versionskonflikt ist damit praktisch
+   * nicht erreichbar (Begruendung: {@code MarkerService#markSeen}).
+   *
+   * @param id externe UUID der Aufgabe
+   * @return 204 No Content
+   */
+  @Operation(
+      summary = "Aufgabe als gesehen markieren",
+      description =
+          "Setzt den persoenlichen Gesehen-Zeitpunkt des angemeldeten Benutzers fuer eine Aufgabe"
+              + " auf jetzt (ohne Request-Body). Kommentare anderer Personen, die danach entstehen,"
+              + " liefert GET /api/v1/tasks/{id}/comments mit isNew=true; GET /api/v1/tasks/{id}"
+              + " liefert den Zeitpunkt als lastSeenAt. Wiederholbar: jeder Aufruf setzt den"
+              + " Zeitpunkt erneut auf jetzt, ohne Fehler und ohne weitere Wirkung. Lesende Aufrufe"
+              + " veraendern den Gesehen-Zeitpunkt nie."
+              + " Berechtigt ist wie beim Lesen der Aufgabe jedes Mitglied, auch nach Austritt;"
+              + " fuer alle anderen ist die Aufgabe nicht sichtbar (404). Keine Benachrichtigung.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "204",
+        description = "Gesehen-Zeitpunkt gesetzt (kein Inhalt).",
+        content = @Content),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Ungueltige Anfrage: keine gueltige UUID im Pfad.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.BAD_REQUEST_SEEN))),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.UNAUTHORIZED))),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant, deaktiviert oder kein Mitglied (neutral"
+                + " maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_SEEN)))
+  })
+  @PutMapping("/{id}/seen")
+  public ResponseEntity<Void> seen(
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id) {
+    markerService.markSeen(id);
     return ResponseEntity.noContent().build();
   }
 }

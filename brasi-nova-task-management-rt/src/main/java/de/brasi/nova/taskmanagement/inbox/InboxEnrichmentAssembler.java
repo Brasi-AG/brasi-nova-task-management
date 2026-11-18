@@ -19,12 +19,14 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
- * Rein funktionaler Assembler der Inbox-Read-Anreicherung (BE-1): gruppiert die drei Batch-Row-Mengen
- * ({@link TaskParticipant}, {@link TaskTagUuidRow}, {@link TaskUserState}) der FIXEN Seite je Aufgabe
- * und leitet pro Aufgabe das {@link TaskEnrichment} ab. KEINE DB-Zugriffe, keine KSF-Abhaengigkeiten;
- * der {@code InboxSnapshotService} ruft die Batch-Querys auf und uebergibt die Ergebnisse.
+ * Rein funktionaler Assembler der Inbox-Read-Anreicherung (BE-1): gruppiert die drei
+ * Batch-Row-Mengen ({@link TaskParticipant}, {@link TaskTagUuidRow}, {@link TaskUserState}) der
+ * FIXEN Seite je Aufgabe und leitet pro Aufgabe das {@link TaskEnrichment} ab. KEINE DB-Zugriffe,
+ * keine KSF-Abhaengigkeiten; der {@code InboxSnapshotService} ruft die Batch-Querys auf und
+ * uebergibt die Ergebnisse.
  *
  * <p>Konsistenz zur Keyset-/Archiv-Mechanik (SPEC O-1/O-2):
+ *
  * <ul>
  *   <li>Anzeigelisten (Ersteller/Assignees/Teilnehmer) sind PERSON-only ({@code PARTICIPANT_KIND}),
  *       Team-Aufloesung folgt mit BE-T.
@@ -49,16 +51,16 @@ public class InboxEnrichmentAssembler {
    * Baut je uebergebener Aufgaben-ID genau einen {@link TaskEnrichment}-Eintrag (auch leer, wenn
    * keine Rows vorliegen). Reihenfolge der Ergebnis-Map = Reihenfolge von {@code taskIds}.
    *
-   * @param taskIds          interne IDs der Seiten-Aufgaben (Reihenfolge wird beibehalten)
-   * @param participantRows  alle aktiven Teilnehmer-Rows der Seite (inkl. Austritts-Rows)
-   * @param tagRows          {@code (taskId, tagUuid)}-Projektionen der Seite (inkl. inaktiver Tags)
-   * @param actorStateRows   aktive {@link TaskUserState}-Rows des Anfragers (max. eine je Aufgabe)
-   * @param handoverRows     {@code (taskId, toRef)}-Zeilen des sichtbaren Austritts-Handover-
+   * @param taskIds interne IDs der Seiten-Aufgaben (Reihenfolge wird beibehalten)
+   * @param participantRows alle aktiven Teilnehmer-Rows der Seite (inkl. Austritts-Rows)
+   * @param tagRows {@code (taskId, tagUuid)}-Projektionen der Seite (inkl. inaktiver Tags)
+   * @param actorStateRows aktive {@link TaskUserState}-Rows des Anfragers (max. eine je Aufgabe)
+   * @param handoverRows {@code (taskId, toRef)}-Zeilen des sichtbaren Austritts-Handover-
    *     Ereignisses des Anfragers je Aufgabe (BE-7, aus {@code findVisibleHandoverTargets}; bereits
    *     actor-/asOf-gescoped). {@code toRef} kann {@code null} sein (Handover ohne Ziele). KEIN
    *     DB-Zugriff hier; der Service laedt sie vor.
-   * @param userRef          UUID des Anfragers (Actor)
-   * @param asOf             Wasserzeichen des Fensters (NICHT {@code now()})
+   * @param userRef UUID des Anfragers (Actor)
+   * @param asOf Wasserzeichen des Fensters (NICHT {@code now()})
    * @return Map taskId -&gt; Anreicherung (vollstaendig fuer alle {@code taskIds})
    */
   public Map<Long, TaskEnrichment> assemble(
@@ -133,18 +135,19 @@ public class InboxEnrichmentAssembler {
               .toList();
 
       final List<UUID> tagIds =
-          tagsByTask.getOrDefault(taskId, List.of()).stream()
-              .distinct()
-              .sorted(BY_STRING)
-              .toList();
+          tagsByTask.getOrDefault(taskId, List.of()).stream().distinct().sorted(BY_STRING).toList();
 
       final boolean pinned = state != null && state.isPinned();
       final boolean flagged = state != null && state.isFlagged();
       final boolean muted = state != null && state.isMuted();
-      final String exitKind = deriveExitKind(ps, state, userRef, asOf);
+      final ActorExit actorExit = deriveExit(ps, state, userRef, asOf);
+      final String exitKind = actorExit == null ? null : actorExit.kind();
+      final LocalDateTime exitedAt = actorExit == null ? null : actorExit.exitedAt();
 
-      // BE-7: Uebergabeziele NUR bei sichtbarem Handover-Austritt. Die Rows sind vom Service bereits
-      // actor-/asOf-/SHOULD_STAY=false-gescoped; die Praezedenz (HANDOVER vor UNSUBSCRIBED) wird hier
+      // BE-7: Uebergabeziele NUR bei sichtbarem Handover-Austritt. Die Rows sind vom Service
+      // bereits
+      // actor-/asOf-/SHOULD_STAY=false-gescoped; die Praezedenz (HANDOVER vor UNSUBSCRIBED) wird
+      // hier
       // ueber exitKind durchgesetzt -> bei "unsubscribed"/null bleiben die Ziele leer (kein Leak).
       final List<UUID> handedOverToIds;
       if (EXIT_HANDOVER.equals(exitKind)) {
@@ -165,51 +168,106 @@ public class InboxEnrichmentAssembler {
               flagged,
               muted,
               exitKind,
-              handedOverToIds));
+              handedOverToIds,
+              exitedAt));
     }
     return result;
   }
 
   /**
-   * Leitet den asOf-gebundenen Austritt des Anfragers ab (deckungsgleich mit dem
-   * {@code findArchiveLeftPage}-Praedikat). HANDOVER hat Vorrang vor UNSUBSCRIBED.
+   * Leitet den asOf-gebundenen Austritt des Anfragers samt Austrittszeitpunkt ab (deckungsgleich
+   * mit dem {@code findArchiveLeftPage}-Praedikat). HANDOVER hat Vorrang vor UNSUBSCRIBED.
+   *
+   * <p>Austrittszeitpunkt (Intake #150): {@code EXIT_AT} der Teilnehmerzeile, die den Austritt
+   * belegt. Fehlt er dort (Altdaten; {@code isActorExit} laesst {@code EXIT_AT = null} zu) oder
+   * belegt nur der {@link TaskUserState} die Abmeldung ({@code UNSUBSCRIBED_AT}, ohne
+   * Austritts-Teilnehmerzeile), gilt {@code UNSUBSCRIBED_AT} des States. Beide Werte setzt jeder
+   * Austrittspfad gemeinsam ({@code AssigneeService}); der Rueckgriff greift nur bei Altdaten.
+   * Fehlen beide, bleibt der Zeitpunkt {@code null}, nie erfunden.
+   *
+   * <p>Der Rueckgriff ist wie jedes Signal hier an {@code asOf} gebunden: ein {@code
+   * UNSUBSCRIBED_AT} nach dem Wasserzeichen gehoert nicht zum Stand der Seite (er stammt aus einer
+   * spaeteren Abmeldung, etwa nach Wiedereintritt) und wird nicht ausgegeben. Der Austritt selbst
+   * bleibt sichtbar, weil die Teilnehmerzeile ihn bis {@code asOf} belegt ({@code EXIT_AT null}
+   * laesst {@link #isActorExit} zu); sein Zeitpunkt ist dann unbekannt und bleibt {@code null}, wie
+   * wenn beide Werte fehlten. Auf {@code asOf} zu kappen hiesse, einen Zeitpunkt zu erfinden.
+   *
+   * @return Austritt oder {@code null} (aktives Mitglied bzw. kein Austritt bis {@code asOf})
    */
-  private String deriveExitKind(
+  private ActorExit deriveExit(
       final List<TaskParticipant> ps,
       final TaskUserState state,
       final UUID userRef,
       final LocalDateTime asOf) {
 
-    final boolean handover =
-        ps.stream().anyMatch(p -> isActorExit(p, userRef, ExitKind.HANDOVER, asOf));
-    if (handover) {
-      return EXIT_HANDOVER;
+    final LocalDateTime stateUnsubscribedAt = state == null ? null : state.getUnsubscribedAt();
+
+    final TaskParticipant handover = findActorExit(ps, userRef, ExitKind.HANDOVER, asOf);
+    if (handover != null) {
+      return new ActorExit(
+          EXIT_HANDOVER, exitTime(handover.getExitAt(), stateUnsubscribedAt, asOf));
     }
 
-    final boolean unsubscribedByParticipant =
-        ps.stream().anyMatch(p -> isActorExit(p, userRef, ExitKind.UNSUBSCRIBED, asOf));
+    final TaskParticipant unsubscribed = findActorExit(ps, userRef, ExitKind.UNSUBSCRIBED, asOf);
+    if (unsubscribed != null) {
+      return new ActorExit(
+          EXIT_UNSUBSCRIBED, exitTime(unsubscribed.getExitAt(), stateUnsubscribedAt, asOf));
+    }
     final boolean unsubscribedByState =
         state != null
             && notAfter(state.getCreatedAt(), asOf)
-            && state.getUnsubscribedAt() != null
-            && notAfter(state.getUnsubscribedAt(), asOf);
-    if (unsubscribedByParticipant || unsubscribedByState) {
-      return EXIT_UNSUBSCRIBED;
+            && stateUnsubscribedAt != null
+            && notAfter(stateUnsubscribedAt, asOf);
+    if (unsubscribedByState) {
+      return new ActorExit(EXIT_UNSUBSCRIBED, stateUnsubscribedAt);
     }
     return null;
   }
 
   /**
-   * Actor-Austritts-Row mit bestimmter Art, asOf-gebunden: {@code PARTICIPANT_REF = userRef},
-   * {@code EXIT_KIND = kind}, beigetreten vor dem Wasserzeichen ({@code ANGELEGT_AM <= asOf}) und
-   * ausgetreten spaetestens zum Wasserzeichen ({@code EXIT_AT null ODER <= asOf}). Nicht auf
-   * {@code PARTICIPANT_KIND} eingeschraenkt (deckungsgleich mit dem left-SQL).
+   * Erste Austritts-Teilnehmerzeile des Anfragers mit der gegebenen Art ({@link #isActorExit}) oder
+   * {@code null}. Je (Aufgabe, Person) gibt es hoechstens eine Zeile (Unique-Key aus V3).
    */
-  private boolean isActorExit(
-      final TaskParticipant p,
+  private TaskParticipant findActorExit(
+      final List<TaskParticipant> ps,
       final UUID userRef,
       final ExitKind kind,
       final LocalDateTime asOf) {
+    return ps.stream().filter(p -> isActorExit(p, userRef, kind, asOf)).findFirst().orElse(null);
+  }
+
+  /**
+   * Austrittszeitpunkt einer Austritts-Teilnehmerzeile: {@code exitAt}, falls gesetzt ({@link
+   * #isActorExit} hat ihn schon auf {@code asOf} begrenzt), sonst {@code stateUnsubscribedAt}, aber
+   * nur, wenn er nicht nach {@code asOf} liegt; sonst {@code null}.
+   */
+  private static LocalDateTime exitTime(
+      final LocalDateTime exitAt,
+      final LocalDateTime stateUnsubscribedAt,
+      final LocalDateTime asOf) {
+    if (exitAt != null) {
+      return exitAt;
+    }
+    return notAfter(stateUnsubscribedAt, asOf) ? stateUnsubscribedAt : null;
+  }
+
+  /**
+   * Abgeleiteter Austritt des Anfragers.
+   *
+   * @param kind Austrittsart in der Wire-Form ({@link #EXIT_HANDOVER} oder {@link
+   *     #EXIT_UNSUBSCRIBED})
+   * @param exitedAt Austrittszeitpunkt (lokale Wanduhr der Persistenz-Zone) oder {@code null}
+   */
+  private record ActorExit(String kind, LocalDateTime exitedAt) {}
+
+  /**
+   * Actor-Austritts-Row mit bestimmter Art, asOf-gebunden: {@code PARTICIPANT_REF = userRef},
+   * {@code EXIT_KIND = kind}, beigetreten vor dem Wasserzeichen ({@code ANGELEGT_AM <= asOf}) und
+   * ausgetreten spaetestens zum Wasserzeichen ({@code EXIT_AT null ODER <= asOf}). Nicht auf {@code
+   * PARTICIPANT_KIND} eingeschraenkt (deckungsgleich mit dem left-SQL).
+   */
+  private boolean isActorExit(
+      final TaskParticipant p, final UUID userRef, final ExitKind kind, final LocalDateTime asOf) {
     return userRef.equals(p.getParticipantRef())
         && p.getExitKind() == kind
         && notAfter(p.getCreatedAt(), asOf)

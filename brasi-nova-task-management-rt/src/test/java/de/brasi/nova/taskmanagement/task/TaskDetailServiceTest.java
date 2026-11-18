@@ -271,6 +271,60 @@ class TaskDetailServiceTest {
   }
 
   @Test
+  @DisplayName(
+      "#150 detail_exit_exited_at_und_last_seen_at: exit.exitedAt aus EXIT_AT (UTC),"
+          + " lastSeenAt aus SEEN_AT (UTC)")
+  void detail_exit_exited_at_und_last_seen_at() {
+    final long taskId = 1011L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+    final TaskParticipant exited =
+        participantRow(taskId, USER_REF, false, false, true, ExitKind.UNSUBSCRIBED);
+    // Berlin im Winter: UTC+1.
+    exited.setExitAt(LocalDateTime.of(2026, 1, 10, 9, 30, 0));
+    when(participantQueryRepository.findActiveByTaskIds(List.of(taskId)))
+        .thenReturn(List.of(exited));
+    final TaskUserState state = userState(taskId, USER_REF, false, false, false);
+    state.setSeenAt(LocalDateTime.of(2026, 1, 11, 8, 0, 0));
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
+        .thenReturn(List.of(state));
+
+    final TaskDetailModel detail = service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF);
+
+    assertThat(detail.exit()).isNotNull();
+    assertThat(detail.exit().kind()).isEqualTo("unsubscribed");
+    assertThat(detail.exit().exitedAt()).isEqualTo(java.time.Instant.parse("2026-01-10T08:30:00Z"));
+    assertThat(detail.lastSeenAt()).isEqualTo(java.time.Instant.parse("2026-01-11T07:00:00Z"));
+  }
+
+  @Test
+  @DisplayName(
+      "#150 detail_ohne_marker_last_seen_at_null: State ohne SEEN_AT und ohne State -> null")
+  void detail_ohne_marker_last_seen_at_null() {
+    final long taskId = 1012L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(task(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
+    when(tagAssignmentQueryRepository.findActiveTagUuidsByTaskId(taskId)).thenReturn(List.of());
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
+        .thenReturn(List.of(userState(taskId, USER_REF, false, false, false)));
+
+    assertThat(service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF).lastSeenAt())
+        .isNull();
+
+    when(userStateQueryRepository.findByTaskIdsAndUserRef(List.of(taskId), USER_REF))
+        .thenReturn(List.of());
+    assertThat(service.loadDetail(taskUuid, TENANT_ID, TENANT_UUID, USER_REF).lastSeenAt())
+        .isNull();
+    // Der Detail-Read schreibt keinen State (SEEN_AT bleibt unberuehrt).
+    org.mockito.Mockito.verify(userStateQueryRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
   @DisplayName("BE-7: detail handover ohne Ziele -> exit.handedOverToIds leer")
   void detail_handover_ohne_ziele_leere_targets() {
     final long taskId = 1004L;

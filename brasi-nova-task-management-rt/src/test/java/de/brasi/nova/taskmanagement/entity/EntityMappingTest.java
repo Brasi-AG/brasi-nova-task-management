@@ -280,6 +280,7 @@ class EntityMappingTest {
     assertColumnName(TaskUserState.class, "isMuted", "IS_MUTED");
     assertColumnName(TaskUserState.class, "readAt", "READ_AT");
     assertColumnName(TaskUserState.class, "unsubscribedAt", "UNSUBSCRIBED_AT");
+    assertColumnName(TaskUserState.class, "seenAt", "SEEN_AT");
   }
 
   // ---------------------------------------------------------------------------

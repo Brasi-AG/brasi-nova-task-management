@@ -547,7 +547,10 @@ public class InboxSnapshotService {
   private TaskSummaryInfoModel toSnapshotSummary(final Task task, final TaskEnrichment e) {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
     final ExitModel exit =
-        e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
+        e.exitKind() == null
+            ? null
+            : new ExitModel(
+                e.exitKind(), e.handedOverToIds(), auditTimeConverter.toInstant(e.exitedAt()));
     return new TaskSummaryInfoModel(
         task.getUuid(),
         task.getTitle(),
@@ -599,7 +602,10 @@ public class InboxSnapshotService {
   private TaskSummaryModel toEnrichedSummary(final Task task, final TaskEnrichment e) {
     final String statusCode = resolver.resolveTaskStatusCode(task.getTaskStatusId());
     final ExitModel exit =
-        e.exitKind() == null ? null : new ExitModel(e.exitKind(), e.handedOverToIds());
+        e.exitKind() == null
+            ? null
+            : new ExitModel(
+                e.exitKind(), e.handedOverToIds(), auditTimeConverter.toInstant(e.exitedAt()));
     final TaskSummaryModel model =
         new TaskSummaryModel(
             task.getUuid(),

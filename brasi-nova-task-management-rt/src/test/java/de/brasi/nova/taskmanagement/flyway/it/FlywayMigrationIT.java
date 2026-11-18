@@ -509,6 +509,40 @@ class FlywayMigrationIT {
         "DIC_TAG_SEVERITY", "PRIMARY", "66666601-0000-0000-0000-000000000000");
   }
 
+  // ---- 9. V13: Gesehen-Marker SEEN_AT (Intake #150) ---
+
+  @Test
+  @DisplayName(
+      "v13_legt_seen_at_nullable_datetime2_an: V13 in der History, Spalte SEEN_AT nullable"
+          + " datetime2(7), bestehende Zeile behaelt NULL")
+  void v13_legt_seen_at_nullable_datetime2_an() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    assertThat(rows.stream().anyMatch(r -> "13".equals(String.valueOf(r.get("version")))))
+        .as("V13 in flyway_schema_history")
+        .isTrue();
+
+    final Map<String, Object> col =
+        jdbcTemplate.queryForMap(
+            "SELECT DATA_TYPE, IS_NULLABLE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS"
+                + " WHERE TABLE_NAME = 'TASK_USER_STATE' AND COLUMN_NAME = 'SEEN_AT'");
+    assertThat(col.get("DATA_TYPE")).isEqualTo("datetime2");
+    assertThat(col.get("IS_NULLABLE")).isEqualTo("YES");
+    assertThat(((Number) col.get("DATETIME_PRECISION")).intValue()).isEqualTo(7);
+
+    // Insert ohne SEEN_AT (wie jeder Alt-Schreiber) bleibt gueltig und liefert NULL.
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_USER_STATE] (ID, ANGELEGT_VON, TENANT_ID, TASK_ID, USER_REF,"
+            + " USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED)"
+            + " VALUES (8401, 'it', 500, 9601, '77777777-0000-0000-0000-0000000000a1', 500, 0, 0,"
+            + " 0)");
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT SEEN_AT FROM [dbo].[TASK_USER_STATE] WHERE ID = 8401", Object.class))
+        .isNull();
+  }
+
   // ---- Hilfsmethoden ---
 
   private void assertIndexExists(final String tableName, final String indexName) {

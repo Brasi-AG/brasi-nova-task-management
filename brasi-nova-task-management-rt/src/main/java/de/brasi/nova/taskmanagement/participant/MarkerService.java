@@ -3,12 +3,13 @@ package de.brasi.nova.taskmanagement.participant;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
-import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.user.UserAccessor;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,22 +20,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Transaktionale Kommando-Operationen fuer persoenliche Marker (pin/flag/mute) eines Benutzers.
+ * Transaktionale Kommando-Operationen fuer persoenliche Marker (pin/flag/mute/seen) eines
+ * Benutzers.
  *
- * <p>Jede Methode laedt den Actor aus dem Security-Context, prueft die Mandantenzugehoerigkeit
- * der Aufgabe (404-Masking) und stellt den {@link TaskUserState} via
- * {@link UserStateService#ensure} sicher, ohne {@code UNSUBSCRIBED_AT} zu veraendern
- * (Inbox-Invariante).
+ * <p>Jede Methode laedt den Actor aus dem Security-Context, prueft die Mandantenzugehoerigkeit der
+ * Aufgabe (404-Masking) und stellt den {@link TaskUserState} via {@link UserStateService#ensure}
+ * sicher, ohne {@code UNSUBSCRIBED_AT} zu veraendern (Inbox-Invariante).
  *
- * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}),
- * NIEMALS aus Client-Eingabedaten.
+ * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}), NIEMALS aus
+ * Client-Eingabedaten.
  */
 @Service
 public class MarkerService {
 
   private static final Logger log = LoggerFactory.getLogger(MarkerService.class);
 
-  private final BaseTaskRepository taskRepository;
+  private final TaskKeysetQueryRepository taskRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final UserStateService userStateService;
   private final InboxSignalService inboxSignalService;
@@ -44,7 +45,7 @@ public class MarkerService {
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public MarkerService(
-      final BaseTaskRepository taskRepository,
+      final TaskKeysetQueryRepository taskRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
       final UserStateService userStateService,
       final InboxSignalService inboxSignalService,
@@ -63,11 +64,11 @@ public class MarkerService {
   /**
    * Setzt den Pinned-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure).
-   * {@code UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
+   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure). {@code
+   * UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
    *
    * @param taskUuid externe UUID der Aufgabe
-   * @param value    gewuenschter Zielwert ({@code true} = angepinnt)
+   * @param value gewuenschter Zielwert ({@code true} = angepinnt)
    */
   @Transactional
   public void setPinned(final UUID taskUuid, final boolean value) {
@@ -78,11 +79,11 @@ public class MarkerService {
   /**
    * Setzt den Flagged-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure).
-   * {@code UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
+   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure). {@code
+   * UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
    *
    * @param taskUuid externe UUID der Aufgabe
-   * @param value    gewuenschter Zielwert ({@code true} = markiert)
+   * @param value gewuenschter Zielwert ({@code true} = markiert)
    */
   @Transactional
   public void setFlagged(final UUID taskUuid, final boolean value) {
@@ -93,11 +94,11 @@ public class MarkerService {
   /**
    * Setzt den Muted-Marker des aktuellen Benutzers fuer eine Aufgabe.
    *
-   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure).
-   * {@code UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
+   * <p>Legt den {@link TaskUserState} bei Bedarf an (idempotent via ensure). {@code
+   * UNSUBSCRIBED_AT} bleibt unveraendert (Inbox-Invariante).
    *
    * @param taskUuid externe UUID der Aufgabe
-   * @param value    gewuenschter Zielwert ({@code true} = stummgeschaltet)
+   * @param value gewuenschter Zielwert ({@code true} = stummgeschaltet)
    */
   @Transactional
   public void setMuted(final UUID taskUuid, final boolean value) {
@@ -106,12 +107,97 @@ public class MarkerService {
   }
 
   /**
+   * Markiert die Aufgabe fuer den aktuellen Benutzer als gesehen (Intake #150): setzt {@code
+   * TASK_USER_STATE.SEEN_AT} auf jetzt. Wiederholbar: jeder Aufruf setzt den Zeitpunkt erneut auf
+   * jetzt, ohne Fehler und ohne weitere Wirkung.
+   *
+   * <p>Berechtigung exakt wie {@code GET /api/v1/tasks/{id}}: READ-Member ({@code
+   * requireReadMember}, ausgetretene Mitglieder eingeschlossen, damit sie ihr Archiv-Detail als
+   * gesehen markieren koennen). Unbekannte Aufgabe, fremder Mandant, deaktivierte Aufgabe und
+   * Nicht-Mitglied ergeben dieselbe neutrale 404. Der Guard steht vor {@code ensure}, sodass ein
+   * Nicht-Mitglied keine State-Zeile anlegt.
+   *
+   * <p>{@code ensure} legt den State nur an, wenn er fehlt, und aendert {@code UNSUBSCRIBED_AT} nie
+   * (ein Ausgetretener bleibt ausgetreten). Keine Benachrichtigung.
+   *
+   * <p>Inbox-Generation: kein Bump bei vorhandenem State. {@code SEEN_AT} ist ein rein
+   * persoenlicher Wert ohne Keyset- oder Mitgliedschaftswirkung: er aendert weder {@code
+   * LAST_ACTIVITY_AT} noch Teilnehmer- oder Austrittsspalten und ist in keiner Inbox- oder
+   * Archiv-Query Praedikat; die Seiten-Anreicherung der Inbox liefert ihn nicht aus. Ein offener
+   * Cursor bleibt damit gueltig (Karte inbox-snapshot: reine Zustandsaenderung, kein Bump). Nur
+   * wenn {@code ensure} den State erstmals anlegt, wird wie bei pin/flag/mute gebumpt und
+   * invalidiert, weil eine neue State-Zeile Inbox-Sichtbarkeit herstellen kann.
+   *
+   * <p>Serialisierung mit {@code CommentService#createComment} (Review #150): {@code isNew}
+   * vergleicht {@code ANGELEGT_AM} des Kommentars mit {@code SEEN_AT}. Ohne Sperre koennte ein
+   * Kommentar mit frueherem Zeitstempel erst nach diesem Commit sichtbar werden und faelschlich als
+   * gesehen gelten. Deshalb stempelt markSeen {@code SEEN_AT} erst unter einer Update-Sperre auf
+   * der Aufgabenzeile ({@code TaskKeysetQueryRepository#lockById}); createComment stempelt seinen
+   * Kommentar erst nach seinem {@code TASK}-save, also unter der Schreibsperre derselben Zeile.
+   * Beide Abschnitte (Zeitstempel bis Commit) schliessen sich damit aus: ein laufender Kommentar
+   * wird vollstaendig abgewartet und gilt danach als gesehen, ein spaeter beginnender bekommt einen
+   * Zeitstempel nach {@code SEEN_AT} und gilt als neu.
+   *
+   * <p>Sperrfolge wie alle Schreibpfade (Karte participants-actions): erst Teilnehmer- und
+   * State-Zeilen, dann die Aufgabe, dann die Generation. Die eigene State-Zeile wird deshalb vor
+   * der Aufgabe per Update-Sperre gelesen ({@code lockByTaskIdAndUserRef}), obwohl sie erst danach
+   * geschrieben wird; sonst wartete markSeen mit gehaltener Aufgabensperre auf eine State-Zeile,
+   * die etwa {@code updateAssignees} vor seinem {@code TASK}-save haelt (Deadlock). Die
+   * Update-Sperren blockieren reine Leser nicht und wirken auch unter {@code
+   * READ_COMMITTED_SNAPSHOT}.
+   *
+   * <p>Kein Versionskonflikt (HTTP 409) moeglich: die State-Zeile ist ab dem Sperr-Read bis zum
+   * Commit gesperrt, der {@code save} sieht also immer die gelesene Version; konkurrierende
+   * Schreiber (pin/flag/mute, Teilnehmeraktionen) warten und verlieren selbst. Bei der Erstanlage
+   * faengt {@code ensure} einen Unique-Konflikt durch Neu-Lesen ab; State-Zeilen werden nie
+   * deaktiviert, das Neu-Lesen findet die Zeile also immer. Deshalb dokumentiert {@code
+   * UserStateController#seen} keinen 409.
+   *
+   * <p>Zeitbasis: {@code LocalDateTime.now()} wie {@code READ_AT} und wie die KSF-Audit-Zeit {@code
+   * ANGELEGT_AM} der Kommentare, mit der {@code SEEN_AT} verglichen wird (lokale Wanduhr der
+   * Persistenz-Zone, Lesson audit-time-zone).
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @throws EntityNotFoundException bei unbekannter, fremder oder deaktivierter Aufgabe sowie fuer
+   *     Nicht-Mitglieder (HTTP 404, neutral)
+   */
+  @Transactional
+  public void markSeen(final UUID taskExternalId) {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    final long tenantId = actor.tenant().id();
+    final UUID userRef = actor.user().id();
+
+    final Task task = requireTask(taskExternalId, tenantId);
+    final Long taskId = task.getId();
+
+    // READ-Guard wie GET /tasks/{id}, VOR ensure (kein Orphan-State fuer Nicht-Mitglieder).
+    membershipGuard.requireReadMember(taskId, userRef, tenantId);
+
+    final boolean created = userStateService.ensure(taskId, userRef, tenantId);
+    // Sperrfolge State vor Aufgabe (siehe Javadoc): erst die eigene State-Zeile, dann die Aufgabe.
+    final TaskUserState state =
+        userStateQueryRepository.lockByTaskIdAndUserRef(taskId, userRef).get(0);
+    // Wartet einen laufenden Kommentar (TASK-save gehalten) bis zu dessen Commit ab; SEEN_AT wird
+    // erst danach gestempelt.
+    taskRepository.lockById(taskId);
+    state.setSeenAt(LocalDateTime.now());
+    userStateQueryRepository.save(state);
+    log.debug("MarkerService.markSeen: SEEN_AT gesetzt fuer Task {}.", taskExternalId);
+
+    if (created) {
+      inboxGenerationService.bump(tenantId, userRef);
+      inboxSignalService.invalidate(tenantId, List.of(userRef));
+    }
+  }
+
+  /**
    * Gemeinsame Marker-Set-Logik:
+   *
    * <ol>
    *   <li>Actor aus dem Security-Context laden.
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
-   *   <li>{@link TaskUserState} sicherstellen via {@link UserStateService#ensure}
-   *       (legt an falls nicht vorhanden; aendert UNSUBSCRIBED_AT NICHT - Inbox-Invariante).
+   *   <li>{@link TaskUserState} sicherstellen via {@link UserStateService#ensure} (legt an falls
+   *       nicht vorhanden; aendert UNSUBSCRIBED_AT NICHT - Inbox-Invariante).
    *   <li>Marker-Setter ausfuehren und speichern.
    *   <li>Nur bei Neuanlage eines aktiven {@link TaskUserState} (Membership-Etablierung):
    *       Inbox-Generation des Benutzers ATOMAR in dieser Tx bumpen + after-commit invalidieren
@@ -119,11 +205,10 @@ public class MarkerService {
    * </ol>
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param markerSetter   setzt den gewuenschten Marker am {@link TaskUserState}
+   * @param markerSetter setzt den gewuenschten Marker am {@link TaskUserState}
    */
   private void applyMarker(
-      final UUID taskExternalId,
-      final java.util.function.Consumer<TaskUserState> markerSetter) {
+      final UUID taskExternalId, final java.util.function.Consumer<TaskUserState> markerSetter) {
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
     final UUID userRef = actor.user().id();
@@ -171,11 +256,11 @@ public class MarkerService {
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
    * <p>Beide Fehlerfaelle (nicht gefunden / fremder Mandant) liefern eine identische, neutrale
-   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
-   * (arch-v2 §8 / Cross-Tenant-Disclosure-Schutz).
+   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben (arch-v2
+   * §8 / Cross-Tenant-Disclosure-Schutz).
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * @param tenantId       erwarteter Mandanten-Schluessel
+   * @param tenantId erwarteter Mandanten-Schluessel
    * @return die gefundene Aufgabe
    * @throws EntityNotFoundException wenn nicht gefunden oder fremdem Tenant zugehoerig (HTTP 404)
    */

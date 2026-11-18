@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.repository.query.Param;
 
 /**
  * Hand-geschriebenes Repository fuer mandanten-scoped Keyset-Paginierungsabfragen auf TASK.
@@ -735,4 +736,29 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
               + "   AND pm.TENANT_ID = :tenantId AND pm.PARTICIPANT_TENANT_ID = :tenantId"
               + " )")
   long countArchiveLeft(UUID userRef, LocalDateTime asOf);
+
+  // ---- Zeilensperre fuer Schreibpfade -----------------------------------------------------
+
+  /**
+   * Sperrt die Aufgabenzeile bis zum Ende der umgebenden Transaktion (Intake #150). Auf MSSQL nimmt
+   * {@code UPDLOCK, ROWLOCK} eine Update-Sperre auf genau diese Zeile: sie wartet auf jede offene
+   * Schreibsperre der Zeile (etwa den {@code TASK}-save eines laufenden Kommentars) und haelt jeden
+   * spaeteren Schreiber bis zum Commit auf; reine Leser blockiert sie nicht. Der Hinweis wirkt auch
+   * unter {@code READ_COMMITTED_SNAPSHOT}, wo ein gewoehnlicher SELECT nicht wartet.
+   *
+   * <p>Steht hier, weil KSF je Entity nur die abgeleiteten (finalen) Repository-Interfaces als Bean
+   * registriert; dieses Interface bedient bereits alle {@link BaseTaskRepository}-Injektionen.
+   *
+   * <p>Aufrufer muessen die Sperrfolge der Karte participants-actions einhalten: erst Teilnehmer-
+   * und State-Zeilen, dann die Aufgabe ({@code MarkerService#markSeen}).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @return die gesperrte Aufgabe (leer, wenn es sie im Mandanten nicht gibt)
+   */
+  @NovaQuery(
+      value = "SELECT * FROM TASK WHERE TENANT_ID = :tenantId AND ID = :taskId",
+      mssql =
+          "SELECT * FROM [dbo].[TASK] WITH (UPDLOCK, ROWLOCK)"
+              + " WHERE TENANT_ID = :tenantId AND ID = :taskId")
+  List<Task> lockById(@Param("taskId") Long taskId);
 }

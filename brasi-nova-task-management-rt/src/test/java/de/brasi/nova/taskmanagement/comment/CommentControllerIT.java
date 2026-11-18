@@ -1419,6 +1419,9 @@ class CommentControllerIT {
         .as("parentCommentId null wie im Beispiel: %s", live)
         .isEqualTo(example.get("parentCommentId").isNull());
     soft.assertThat(live.get("edited").asBoolean()).isEqualTo(example.get("edited").asBoolean());
+    // Intake #150: isNew ist in Live-Antwort und Beispiel ein boolesches Feld.
+    soft.assertThat(live.get("isNew").isBoolean()).as("isNew boolesch: %s", live).isTrue();
+    soft.assertThat(example.get("isNew").isBoolean()).as("isNew boolesch: %s", example).isTrue();
     soft.assertThat(live.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
     soft.assertThat(example.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
   }
