@@ -301,7 +301,8 @@ class TaskDetailServiceTest {
   }
 
   @Test
-  @DisplayName("#150 detail_ohne_marker_last_seen_at_null: State ohne SEEN_AT und ohne State -> null")
+  @DisplayName(
+      "#150 detail_ohne_marker_last_seen_at_null: State ohne SEEN_AT und ohne State -> null")
   void detail_ohne_marker_last_seen_at_null() {
     final long taskId = 1012L;
     final UUID taskUuid = UUID.randomUUID();

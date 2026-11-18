@@ -89,7 +89,8 @@ import org.springframework.web.context.WebApplicationContext;
  * <ul>
  *   <li>{@code PUT /api/v1/tasks/{id}/seen}: 204, idempotent, setzt {@code SEEN_AT} des Anfragers;
  *       neutrale 404 fuer unbekannte und fremde Aufgabe sowie Nicht-Mitglieder (ohne State-Zeile);
- *       401 ohne JWT, 400 ohne UUID im Pfad; die Fehlerantworten entsprechen den OpenAPI-Beispielen.
+ *       401 ohne JWT, 400 ohne UUID im Pfad; die Fehlerantworten entsprechen den
+ *       OpenAPI-Beispielen.
  *   <li>{@code isNew} in {@code GET /comments}: erster Besuch alle fremden neu, eigene nie, nach
  *       dem Markieren nur spaetere fremde Kommentare.
  *   <li>{@code lastSeenAt} im Detail; lesende Aufrufe (Detail, Kommentare, Snapshot, Archiv)
@@ -272,8 +273,7 @@ class TaskSeenMarkerIT {
     // PUT seen -> 204 ohne Inhalt, SEEN_AT gesetzt.
     mvc.perform(put("/api/v1/tasks/" + taskUuid + "/seen").header("Authorization", bearer(tokenB)))
         .andExpect(status().isNoContent())
-        .andExpect(
-            result -> assertThat(result.getResponse().getContentAsString()).isEmpty());
+        .andExpect(result -> assertThat(result.getResponse().getContentAsString()).isEmpty());
     final LocalDateTime firstSeen = seenAt(taskUuid, USER_B_REF);
     assertThat(firstSeen).isNotNull();
 
@@ -290,7 +290,8 @@ class TaskSeenMarkerIT {
         .isEqualTo(auditTimeConverter.toInstant(secondSeen));
     assertThat(detail.get("lastSeenAt").asText()).endsWith("Z");
 
-    // Nach dem Markieren: alter fremder Kommentar nicht mehr neu, spaeterer fremder neu, eigene nie.
+    // Nach dem Markieren: alter fremder Kommentar nicht mehr neu, spaeterer fremder neu, eigene
+    // nie.
     final UUID fromA2 = postComment(mvc, tokenA, taskUuid, "Kommentar von A nach dem Markieren");
     final UUID ownB2 = postComment(mvc, tokenB, taskUuid, "zweiter eigener Kommentar von B");
     final Map<UUID, Boolean> afterSeen = isNewById(getComments(mvc, tokenB, taskUuid));
@@ -466,7 +467,9 @@ class TaskSeenMarkerIT {
     // Wiedereintritt per Zuweisung: exit (samt exitedAt) ist null, Historie bleibt erhalten.
     putAssignees(mvc, tokenA, taskUuid, USER_A_REF, USER_B_REF);
     final JsonNode reentered = getDetail(mvc, tokenB, taskUuid);
-    assertThat(reentered.get("exit").isNull()).as("exit nach Wiedereintritt: %s", reentered).isTrue();
+    assertThat(reentered.get("exit").isNull())
+        .as("exit nach Wiedereintritt: %s", reentered)
+        .isTrue();
     assertThat(reentered.get("history").size()).isGreaterThanOrEqualTo(historyAfterExit);
     assertThat(exitAt(taskUuid, USER_B_REF)).isNull();
   }
@@ -658,8 +661,8 @@ class TaskSeenMarkerIT {
 
   private LocalDateTime exitAt(final UUID taskUuid, final UUID userRef) {
     return jdbcTemplate.queryForObject(
-            "SELECT p.EXIT_AT FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t"
-                + " ON p.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        "SELECT p.EXIT_AT FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t"
+            + " ON p.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
         LocalDateTime.class,
         taskUuid,
         userRef);

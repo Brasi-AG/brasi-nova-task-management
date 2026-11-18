@@ -24,11 +24,12 @@ import org.springframework.stereotype.Service;
 
 /**
  * Lese-Service fuer die Kommentare einer Aufgabe (BE-2): liefert die flache, chronologische
- * Kommentarliste, aus der das Frontend den Antwort-Baum ueber {@code parentCommentId} rekonstruiert.
+ * Kommentarliste, aus der das Frontend den Antwort-Baum ueber {@code parentCommentId}
+ * rekonstruiert.
  *
  * <p>Autorisierung task-scoped wie {@code TaskDetailService.loadDetail}: Standard-Selfservice
- * (Slice 2/Auflage 3) ersetzt das grobe {@code TASK_READ}-Gate durch den objekt-level
- * {@link TaskMembershipGuard}. Nach der Mandanten-/ACTIVE-Pruefung (404-Maskierung bei fremder/
+ * (Slice 2/Auflage 3) ersetzt das grobe {@code TASK_READ}-Gate durch den objekt-level {@link
+ * TaskMembershipGuard}. Nach der Mandanten-/ACTIVE-Pruefung (404-Maskierung bei fremder/
  * fehlender/deaktivierter Aufgabe) wird {@code requireReadMember} erzwungen - konsistent mit dem
  * begleitenden {@code GET /tasks/{id}}: nur READ-Member (aktive PERSON-Zeile im Task-Mandanten,
  * ausgetretene eingeschlossen) sehen die Kommentare; Non-Member -> neutrale 404.
@@ -67,13 +68,12 @@ public class CommentQueryService {
    * Liefert alle aktiven Kommentare einer Aufgabe als flache, chronologische Liste.
    *
    * @param taskExternalId externe UUID der Aufgabe
-   * <p>{@code isNew} je Kommentar: {@code true}, wenn der Kommentar nicht vom Anfrager stammt und
-   * nach dessen Gesehen-Zeitpunkt erstellt wurde. Ohne Gesehen-Zeitpunkt (erster Besuch, kein
-   * {@code SEEN_AT} oder kein persoenlicher State) gelten alle Kommentare anderer als neu; eigene
-   * Kommentare sind nie neu. Verglichen wird die Audit-Zeit {@code ANGELEGT_AM} des Kommentars mit
-   * {@code SEEN_AT}; beide sind lokale Wanduhr derselben Persistenz-Zone. Dieser Lesepfad schreibt
-   * nichts, auch nicht den Gesehen-Zeitpunkt.
-   *
+   *     <p>{@code isNew} je Kommentar: {@code true}, wenn der Kommentar nicht vom Anfrager stammt
+   *     und nach dessen Gesehen-Zeitpunkt erstellt wurde. Ohne Gesehen-Zeitpunkt (erster Besuch,
+   *     kein {@code SEEN_AT} oder kein persoenlicher State) gelten alle Kommentare anderer als neu;
+   *     eigene Kommentare sind nie neu. Verglichen wird die Audit-Zeit {@code ANGELEGT_AM} des
+   *     Kommentars mit {@code SEEN_AT}; beide sind lokale Wanduhr derselben Persistenz-Zone. Dieser
+   *     Lesepfad schreibt nichts, auch nicht den Gesehen-Zeitpunkt.
    * @return Kommentare (chronologisch aufsteigend); {@code parentCommentId} als externe UUID des
    *     Eltern-Kommentars oder {@code null} (Top-Level ODER Eltern nicht mehr aktiv)
    * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden, fremdem Mandanten zugehoerig
@@ -135,7 +135,9 @@ public class CommentQueryService {
     return comment.getCreatedAt() != null && comment.getCreatedAt().isAfter(seenAt);
   }
 
-  /** Mappt eine {@link TaskComment}-Entity auf das {@link CommentModel} (parentId intern -> UUID). */
+  /**
+   * Mappt eine {@link TaskComment}-Entity auf das {@link CommentModel} (parentId intern -> UUID).
+   */
   private CommentModel toModel(
       final TaskComment comment,
       final UUID taskExternalId,
@@ -157,8 +159,8 @@ public class CommentQueryService {
   /**
    * Laedt eine Aufgabe anhand ihrer externen UUID und prueft die Mandantenzugehoerigkeit.
    *
-   * <p>Nicht gefunden / fremder Mandant / DEACTIVE liefern eine identische, neutrale
-   * {@link EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
+   * <p>Nicht gefunden / fremder Mandant / DEACTIVE liefern eine identische, neutrale {@link
+   * EntityNotFoundException} (HTTP 404), um keine Existenz-Information preiszugeben
    * (Cross-Tenant-Disclosure-Schutz; Muster wie {@code CommentService.requireTask}).
    */
   private Task requireTask(final UUID taskExternalId, final long tenantId) {

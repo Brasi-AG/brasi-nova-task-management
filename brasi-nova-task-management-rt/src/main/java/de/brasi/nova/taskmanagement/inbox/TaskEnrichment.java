@@ -6,25 +6,25 @@ import java.util.UUID;
 
 /**
  * Interner Anreicherungs-Satz einer Aufgabe fuer die Inbox-Read-Projektion (BE-1), erzeugt vom
- * {@link InboxEnrichmentAssembler} und vom {@code InboxSnapshotService} in das
- * {@code TaskSummaryModel} gemappt. Bewusst KEIN Wire-Modell.
+ * {@link InboxEnrichmentAssembler} und vom {@code InboxSnapshotService} in das {@code
+ * TaskSummaryModel} gemappt. Bewusst KEIN Wire-Modell.
  *
- * @param createdById    UUID des Erstellers ({@code CREATOR_FLAG}, PERSON) oder {@code null}
- * @param assigneeIds    PERSON-UUIDs mit {@code ASSIGNEE_FLAG} und ohne Austritt (stabil sortiert)
+ * @param createdById UUID des Erstellers ({@code CREATOR_FLAG}, PERSON) oder {@code null}
+ * @param assigneeIds PERSON-UUIDs mit {@code ASSIGNEE_FLAG} und ohne Austritt (stabil sortiert)
  * @param participantIds PERSON-UUIDs mit {@code PARTICIPANT_FLAG} ohne Austritt, MINUS Assignees
- *                       MINUS Ersteller (stabil sortiert)
- * @param tagIds         zugeordnete Tag-UUIDs (inkl. katalog-inaktiver; stabil sortiert)
- * @param isPinned       Actor-Marker aus {@code TASK_USER_STATE}
- * @param isFlagged      Actor-Marker aus {@code TASK_USER_STATE}
- * @param isMuted        Actor-Marker aus {@code TASK_USER_STATE}
- * @param exitKind       asOf-gebundener Austritt des Anfragers: {@code "handover"},
- *                       {@code "unsubscribed"} oder {@code null} (aktives Mitglied)
+ *     MINUS Ersteller (stabil sortiert)
+ * @param tagIds zugeordnete Tag-UUIDs (inkl. katalog-inaktiver; stabil sortiert)
+ * @param isPinned Actor-Marker aus {@code TASK_USER_STATE}
+ * @param isFlagged Actor-Marker aus {@code TASK_USER_STATE}
+ * @param isMuted Actor-Marker aus {@code TASK_USER_STATE}
+ * @param exitKind asOf-gebundener Austritt des Anfragers: {@code "handover"}, {@code
+ *     "unsubscribed"} oder {@code null} (aktives Mitglied)
  * @param handedOverToIds Uebergabeziele (BE-7) des sichtbaren Austritts-Handover-Ereignisses des
- *                       Anfragers; nur bei {@code exitKind="handover"} gefuellt (ggf. leer bei
- *                       Selbst-Handover ohne Ziele), sonst leer. Nie {@code null}.
- * @param exitedAt       Austrittszeitpunkt des Anfragers (Intake #150, lokale Wanduhr der
- *                       Persistenz-Zone): {@code EXIT_AT} der Teilnehmerzeile, ersatzweise
- *                       {@code UNSUBSCRIBED_AT} des States; {@code null} ohne Austritt
+ *     Anfragers; nur bei {@code exitKind="handover"} gefuellt (ggf. leer bei Selbst-Handover ohne
+ *     Ziele), sonst leer. Nie {@code null}.
+ * @param exitedAt Austrittszeitpunkt des Anfragers (Intake #150, lokale Wanduhr der
+ *     Persistenz-Zone): {@code EXIT_AT} der Teilnehmerzeile, ersatzweise {@code UNSUBSCRIBED_AT}
+ *     des States; {@code null} ohne Austritt
  */
 public record TaskEnrichment(
     UUID createdById,

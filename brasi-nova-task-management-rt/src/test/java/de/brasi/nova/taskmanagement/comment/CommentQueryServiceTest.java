@@ -87,9 +87,7 @@ class CommentQueryServiceTest {
     taskFound(EntityState.ACTIVE, TENANT_ID);
     when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
         .thenReturn(
-            List.of(
-                comment(1L, C1_UUID, null, "top", T1),
-                comment(2L, C2_UUID, 1L, "reply", T2)));
+            List.of(comment(1L, C1_UUID, null, "top", T1), comment(2L, C2_UUID, 1L, "reply", T2)));
 
     final List<CommentModel> result = service.getComments(TASK_UUID);
 
@@ -228,7 +226,8 @@ class CommentQueryServiceTest {
   @DisplayName("read_member_200: Guard passt (auch Ex-Member/Archiv) -> Kommentare werden gelesen")
   void read_member_200() {
     taskFound(EntityState.ACTIVE, TENANT_ID);
-    // membershipGuard.requireReadMember wirft nicht (Default-Mock) -> READ-Member (inkl. Ex-Member).
+    // membershipGuard.requireReadMember wirft nicht (Default-Mock) -> READ-Member (inkl.
+    // Ex-Member).
     when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
         .thenReturn(List.of(comment(1L, C1_UUID, null, "top", T1)));
 

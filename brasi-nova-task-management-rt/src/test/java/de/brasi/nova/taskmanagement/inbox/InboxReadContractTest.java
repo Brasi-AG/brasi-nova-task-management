@@ -20,14 +20,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * P2.5-Vertragstest (BE-1): fixiert die JSON-/Wire-Form der additiv erweiterten Lese-Modelle VOR der
- * Service-Verdrahtung. Insbesondere die FE-erwarteten Schluesselnamen der booleschen Felder
- * ({@code isPinned/isFlagged/isMuted/isDone}), {@code createdAt} als ISO-8601-Instant,
- * {@code exit{kind}} und {@code currentUserId} im Snapshot.
+ * P2.5-Vertragstest (BE-1): fixiert die JSON-/Wire-Form der additiv erweiterten Lese-Modelle VOR
+ * der Service-Verdrahtung. Insbesondere die FE-erwarteten Schluesselnamen der booleschen Felder
+ * ({@code isPinned/isFlagged/isMuted/isDone}), {@code createdAt} als ISO-8601-Instant, {@code
+ * exit{kind}} und {@code currentUserId} im Snapshot.
  *
- * <p>Die Status-{@code ->}{@code isDone}-Ableitung (DONE/CANCELLED) und die asOf-gebundene
- * {@code exit}-Ableitung sind in {@link InboxEnrichmentAssemblerTest} (exit) bzw.
- * {@code InboxSnapshotServiceTest} (isDone-Mapping) verankert; hier wird nur die serialisierte Form
+ * <p>Die Status-{@code ->}{@code isDone}-Ableitung (DONE/CANCELLED) und die asOf-gebundene {@code
+ * exit}-Ableitung sind in {@link InboxEnrichmentAssemblerTest} (exit) bzw. {@code
+ * InboxSnapshotServiceTest} (isDone-Mapping) verankert; hier wird nur die serialisierte Form
  * festgezurrt.
  */
 class InboxReadContractTest {
@@ -45,7 +45,8 @@ class InboxReadContractTest {
   private static final UUID CURRENT_USER = UUID.fromString("99999999-9999-9999-9999-999999999999");
 
   @Test
-  @DisplayName("TaskSummaryModel JSON-Form: alle additiven Felder + FE-Schluesselnamen (is-Praefix)")
+  @DisplayName(
+      "TaskSummaryModel JSON-Form: alle additiven Felder + FE-Schluesselnamen (is-Praefix)")
   void task_summary_wire_form() throws Exception {
     final TaskSummaryModel m =
         new TaskSummaryModel(
@@ -110,9 +111,23 @@ class InboxReadContractTest {
   void exit_model_wire_form() throws Exception {
     final TaskSummaryModel m =
         new TaskSummaryModel(
-            ID, "T", "DONE", "NORMAL", null, Instant.parse("2026-10-18T08:00:00Z"), 0,
-            null, Instant.parse("2026-10-01T06:30:00Z"), null,
-            List.of(), List.of(), List.of(), false, false, false, true,
+            ID,
+            "T",
+            "DONE",
+            "NORMAL",
+            null,
+            Instant.parse("2026-10-18T08:00:00Z"),
+            0,
+            null,
+            Instant.parse("2026-10-01T06:30:00Z"),
+            null,
+            List.of(),
+            List.of(),
+            List.of(),
+            false,
+            false,
+            false,
+            true,
             new ExitModel(
                 InboxEnrichmentAssembler.EXIT_HANDOVER,
                 List.of(),

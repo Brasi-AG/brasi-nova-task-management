@@ -11,23 +11,19 @@ import java.util.UUID;
  * Anfrager die Aufgabe zum {@code asOf}-Wasserzeichen verlassen hatte; sonst ist das umschliessende
  * Feld {@code TaskSummaryModel.exit} {@code null}.
  *
- * <p>{@code handedOverToIds} (Uebergabeziele, BE-7) ist nur bei {@code kind="handover"} relevant und
- * dann niemals {@code null}: die Ziele des sichtbaren Austritts-Handover-Ereignisses (ggf. leer bei
- * einem Selbst-Handover ohne Ziele). Bei {@code kind="unsubscribed"} ist die Liste stets leer.
+ * <p>{@code handedOverToIds} (Uebergabeziele, BE-7) ist nur bei {@code kind="handover"} relevant
+ * und dann niemals {@code null}: die Ziele des sichtbaren Austritts-Handover-Ereignisses (ggf. leer
+ * bei einem Selbst-Handover ohne Ziele). Bei {@code kind="unsubscribed"} ist die Liste stets leer.
  *
- * @param kind            Austrittsart: {@code "handover"} (Uebergabe) oder {@code "unsubscribed"}
- *     (Abmeldung)
- * <p>{@code exitedAt} (Intake #150) ist der Austrittszeitpunkt aus {@code EXIT_AT} der
- * Teilnehmerzeile, gesetzt bei {@code handover} und {@code unsubscribed}. Nach einem Wiedereintritt
- * (Zuweisung oder Aufnahme als Teilnehmer) ist das gesamte Feld {@code exit} wieder {@code null};
- * die Historie der Aufgabe bleibt davon unberuehrt.
- *
- * @param kind            Austrittsart: {@code "handover"} (Uebergabe) oder {@code "unsubscribed"}
- *     (Abmeldung)
+ * @param kind Austrittsart: {@code "handover"} (Uebergabe) oder {@code "unsubscribed"} (Abmeldung)
+ *     <p>{@code exitedAt} (Intake #150) ist der Austrittszeitpunkt aus {@code EXIT_AT} der
+ *     Teilnehmerzeile, gesetzt bei {@code handover} und {@code unsubscribed}. Nach einem
+ *     Wiedereintritt (Zuweisung oder Aufnahme als Teilnehmer) ist das gesamte Feld {@code exit}
+ *     wieder {@code null}; die Historie der Aufgabe bleibt davon unberuehrt.
+ * @param kind Austrittsart: {@code "handover"} (Uebergabe) oder {@code "unsubscribed"} (Abmeldung)
  * @param handedOverToIds Uebergabeziele (UUIDs) bei Handover; leer bei Unsubscribed oder Handover
  *     ohne Ziele, nie {@code null}
- * @param exitedAt        Austrittszeitpunkt (UTC); {@code null} nur bei Altdaten ohne erfassten
- *     Zeitpunkt
+ * @param exitedAt Austrittszeitpunkt (UTC); {@code null} nur bei Altdaten ohne erfassten Zeitpunkt
  */
 public record ExitModel(
     @Schema(
