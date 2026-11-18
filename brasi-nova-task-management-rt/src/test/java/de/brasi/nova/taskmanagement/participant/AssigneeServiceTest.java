@@ -3115,12 +3115,16 @@ class AssigneeServiceTest {
     final TaskUserState state = userStateFor(taskId, ASSIGNEE_REF);
     when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
         .thenReturn(List.of(state));
+    // Gelesen wird vor dem Austritt (Review #145 Runde 2): die entfernte Person steht noch unter
+    // den aktiven Lesern, unter den Archivlesern nur ein frueher ausgetretener Leser.
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
-        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF), userStateFor(taskId, otherReader)));
-    // Nach dem Austritt zaehlt auch die entfernte Person selbst zu den Archivlesern (EXIT_KIND
-    // gesetzt, Zeile ACTIVE); dazu ein frueher ausgetretener Leser.
+        .thenReturn(
+            List.of(
+                userStateFor(taskId, ACTOR_REF),
+                userStateFor(taskId, otherReader),
+                userStateFor(taskId, ASSIGNEE_REF)));
     when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
-        .thenReturn(List.of(target, exitedRow(taskId, archivedReader)));
+        .thenReturn(List.of(exitedRow(taskId, archivedReader)));
 
     service.removeParticipant(taskUuid, ASSIGNEE_REF);
 
@@ -3143,6 +3147,11 @@ class AssigneeServiceTest {
             taskRepository,
             inboxGenerationService,
             inboxSignalService);
+    // Alle Reads vor der ersten Schreibung (Review #145 Runde 2), dann die Schreibungen, dann der
+    // TASK-save, dann Bump und Signal.
+    order.verify(userStateQueryRepository).findByTaskIdAndUserRef(taskId, ASSIGNEE_REF);
+    order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
+    order.verify(participantQueryRepository).findArchiveReadersByTaskId(taskId);
     order.verify(participantQueryRepository).save(target);
     order.verify(userStateQueryRepository).save(state);
     order.verify(taskHistoryService).record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), any(), any());
@@ -3156,9 +3165,6 @@ class AssigneeServiceTest {
             any(),
             eq("Testtitel"),
             eq(ACTOR_REF));
-    // Beide Leser-Lesungen VOR dem TASK-save (Mitgliedschaft vor Aufgabe), Bump danach.
-    order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
-    order.verify(participantQueryRepository).findArchiveReadersByTaskId(taskId);
     order.verify(taskRepository).save(task);
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
@@ -3177,6 +3183,142 @@ class AssigneeServiceTest {
     verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
     verify(notificationService, never())
         .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_alle_reads_vor_der_ersten_schreibung: kein Lesezugriff (Aufgabe, Guard,"
+          + " Teilnehmer, States, Benutzer) nach der ersten Teilnehmer-, State-, Historien- oder"
+          + " Benachrichtigungs-Schreibung; der Seam liegt dazwischen; danach TASK-save, Bump, Signal")
+  void i145_removal_reads_before_first_write() {
+    final Long taskId = 14510L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID otherReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(target));
+    final TaskUserState state = userStateFor(taskId, ASSIGNEE_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(state));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(userStateFor(taskId, otherReader), state));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    final Object[] observed = {
+      taskRepository,
+      membershipGuard,
+      participantQueryRepository,
+      userStateQueryRepository,
+      userReadRepository,
+      taskHistoryService,
+      notificationService,
+      inboxGenerationService,
+      inboxSignalService
+    };
+    // Seam-Beobachtung: zum Zeitpunkt des Seams sind alle Reads gelaufen und noch nichts
+    // geschrieben.
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed =
+        new AssigneeService(
+            taskRepository,
+            participantQueryRepository,
+            userStateQueryRepository,
+            userStateService,
+            notificationService,
+            inboxSignalService,
+            userReadRepository,
+            userAccessor,
+            inboxGenerationService,
+            handoverRepository,
+            handoverTargetRepository,
+            taskHistoryService,
+            membershipGuard,
+            permissionEvaluator) {
+          @Override
+          protected void onBeforeRemoveMutationForTest(final Long id, final UUID ref) {
+            orderedCalls(observed).forEach(atSeam::add);
+          }
+        };
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.removeParticipant(taskUuid, ASSIGNEE_REF);
+
+    final List<String> calls = orderedCalls(observed);
+    final Set<String> reads =
+        Set.of(
+            "findByUuid",
+            "requireWriteMember",
+            "findByTaskIdAndParticipantRef",
+            "findByTaskIdAndUserRef",
+            "findActiveByUuids",
+            "findActiveUserRefsByTaskId",
+            "findArchiveReadersByTaskId");
+    final Set<String> membershipWrites = Set.of("save", "record", "emit");
+    int lastRead = -1;
+    int firstWrite = Integer.MAX_VALUE;
+    for (int i = 0; i < calls.size(); i++) {
+      final String method = calls.get(i).substring(calls.get(i).indexOf('#') + 1);
+      if (reads.contains(method)) {
+        lastRead = i;
+      } else if (membershipWrites.contains(method)) {
+        firstWrite = Math.min(firstWrite, i);
+      }
+    }
+    assertThat(lastRead)
+        .as("letzter Read vor der ersten Schreibung, Aufrufe: %s", calls)
+        .isLessThan(firstWrite);
+    assertThat(atSeam)
+        .as("am Seam sind Ziel-State, Namen und beide Leser-Lesungen gelaufen")
+        .contains(
+            "TaskUserStateQueryRepository#findByTaskIdAndUserRef",
+            "UserReadRepository#findActiveByUuids",
+            "TaskUserStateQueryRepository#findActiveUserRefsByTaskId",
+            "TaskParticipantQueryRepository#findArchiveReadersByTaskId");
+    assertThat(atSeam)
+        .as("am Seam ist noch nichts geschrieben")
+        .noneMatch(c -> membershipWrites.contains(c.substring(c.indexOf('#') + 1)));
+    // Schreibreihenfolge: Teilnehmer, State, Historie, Benachrichtigung, Aufgabe, Bump, Signal.
+    assertThat(calls.subList(firstWrite, calls.size()))
+        .containsSubsequence(
+            "TaskParticipantQueryRepository#save",
+            "TaskUserStateQueryRepository#save",
+            "TaskHistoryService#record",
+            "NotificationService#emit",
+            "BaseTaskRepository#save",
+            "InboxGenerationService#bumpSorted",
+            "InboxSignalService#invalidate");
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue())
+        .as("Menge unveraendert: entfernte Person und aktive Leser")
+        .containsExactlyInAnyOrder(ASSIGNEE_REF, otherReader);
+  }
+
+  /**
+   * Alle bisherigen Aufrufe der beobachteten Mocks in globaler Reihenfolge als {@code Typ#methode}
+   * (Mockito-Sequenznummer; Typ ist das gemockte Interface bzw. die Klasse).
+   */
+  private static List<String> orderedCalls(final Object... mocks) {
+    final List<org.mockito.invocation.Invocation> all = new ArrayList<>();
+    for (final Object m : mocks) {
+      all.addAll(org.mockito.Mockito.mockingDetails(m).getInvocations());
+    }
+    all.sort(
+        java.util.Comparator.comparingInt(org.mockito.invocation.Invocation::getSequenceNumber));
+    final List<String> out = new ArrayList<>();
+    for (final org.mockito.invocation.Invocation inv : all) {
+      final Class<?> type =
+          org.mockito.Mockito.mockingDetails(inv.getMock())
+              .getMockCreationSettings()
+              .getTypeToMock();
+      out.add(type.getSimpleName() + "#" + inv.getMethod().getName());
+    }
+    return out;
   }
 
   @Test
