@@ -185,6 +185,13 @@ public class InboxEnrichmentAssembler {
    * Austrittspfad gemeinsam ({@code AssigneeService}); der Rueckgriff greift nur bei Altdaten.
    * Fehlen beide, bleibt der Zeitpunkt {@code null}, nie erfunden.
    *
+   * <p>Der Rueckgriff ist wie jedes Signal hier an {@code asOf} gebunden: ein {@code
+   * UNSUBSCRIBED_AT} nach dem Wasserzeichen gehoert nicht zum Stand der Seite (er stammt aus einer
+   * spaeteren Abmeldung, etwa nach Wiedereintritt) und wird nicht ausgegeben. Der Austritt selbst
+   * bleibt sichtbar, weil die Teilnehmerzeile ihn bis {@code asOf} belegt ({@code EXIT_AT null}
+   * laesst {@link #isActorExit} zu); sein Zeitpunkt ist dann unbekannt und bleibt {@code null}, wie
+   * wenn beide Werte fehlten. Auf {@code asOf} zu kappen hiesse, einen Zeitpunkt zu erfinden.
+   *
    * @return Austritt oder {@code null} (aktives Mitglied bzw. kein Austritt bis {@code asOf})
    */
   private ActorExit deriveExit(
@@ -197,13 +204,14 @@ public class InboxEnrichmentAssembler {
 
     final TaskParticipant handover = findActorExit(ps, userRef, ExitKind.HANDOVER, asOf);
     if (handover != null) {
-      return new ActorExit(EXIT_HANDOVER, firstNonNull(handover.getExitAt(), stateUnsubscribedAt));
+      return new ActorExit(
+          EXIT_HANDOVER, exitTime(handover.getExitAt(), stateUnsubscribedAt, asOf));
     }
 
     final TaskParticipant unsubscribed = findActorExit(ps, userRef, ExitKind.UNSUBSCRIBED, asOf);
     if (unsubscribed != null) {
       return new ActorExit(
-          EXIT_UNSUBSCRIBED, firstNonNull(unsubscribed.getExitAt(), stateUnsubscribedAt));
+          EXIT_UNSUBSCRIBED, exitTime(unsubscribed.getExitAt(), stateUnsubscribedAt, asOf));
     }
     final boolean unsubscribedByState =
         state != null
@@ -228,9 +236,19 @@ public class InboxEnrichmentAssembler {
     return ps.stream().filter(p -> isActorExit(p, userRef, kind, asOf)).findFirst().orElse(null);
   }
 
-  /** Liefert {@code first}, falls gesetzt, sonst {@code second} (beide duerfen null sein). */
-  private static LocalDateTime firstNonNull(final LocalDateTime first, final LocalDateTime second) {
-    return first != null ? first : second;
+  /**
+   * Austrittszeitpunkt einer Austritts-Teilnehmerzeile: {@code exitAt}, falls gesetzt ({@link
+   * #isActorExit} hat ihn schon auf {@code asOf} begrenzt), sonst {@code stateUnsubscribedAt}, aber
+   * nur, wenn er nicht nach {@code asOf} liegt; sonst {@code null}.
+   */
+  private static LocalDateTime exitTime(
+      final LocalDateTime exitAt,
+      final LocalDateTime stateUnsubscribedAt,
+      final LocalDateTime asOf) {
+    if (exitAt != null) {
+      return exitAt;
+    }
+    return notAfter(stateUnsubscribedAt, asOf) ? stateUnsubscribedAt : null;
   }
 
   /**

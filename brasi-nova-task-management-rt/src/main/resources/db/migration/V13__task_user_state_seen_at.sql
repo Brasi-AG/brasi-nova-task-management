@@ -18,6 +18,9 @@
 -- (Aufgabe, Benutzer) (UQ_TASK_USER_STATE_TASK_USER).
 --
 -- Versionsnummer: V12 ist fuer ein paralleles Thema (Intake #145) reserviert.
+-- #145 (V12) landet vor diesem Thema, beide werden gemeinsam ausgerollt; V13
+-- darf nie vor V12 auf eine Datenbank kommen, sonst laesst Flyway V12 ohne
+-- outOfOrder nicht mehr regulaer nachziehen.
 --
 -- Idempotent: die Spalte wird nur angelegt, wenn sie fehlt. V1..V11 bleiben
 -- unangetastet (Flyway-Checksum).

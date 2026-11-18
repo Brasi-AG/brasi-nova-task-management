@@ -542,6 +542,61 @@ class InboxEnrichmentAssemblerTest {
   }
 
   @Test
+  @DisplayName(
+      "#150 Rueckgriff auf UNSUBSCRIBED_AT nach asOf -> Austritt sichtbar, exitedAt null (nie"
+          + " nach dem Wasserzeichen)")
+  void exited_at_rueckgriff_nicht_nach_as_of() {
+    // Altzeile ohne EXIT_AT belegt den Austritt bis asOf; der State traegt eine spaetere Abmeldung.
+    final TaskUserState spaeter =
+        withTask(userState(ACTOR, false, false, false, AFTER, BEFORE), TASK);
+    for (final ExitKind kind : List.of(ExitKind.HANDOVER, ExitKind.UNSUBSCRIBED)) {
+      final List<TaskParticipant> ohneExitAt =
+          List.of(
+              participant(ACTOR, ParticipantKind.PERSON, false, false, true, kind, null, BEFORE));
+      final TaskEnrichment e =
+          assembler
+              .assemble(
+                  List.of(TASK), ohneExitAt, List.of(), List.of(spaeter), List.of(), ACTOR, AS_OF)
+              .get(TASK);
+      assertThat(e.exitKind())
+          .as("%s bleibt sichtbar", kind)
+          .isEqualTo(
+              kind == ExitKind.HANDOVER
+                  ? InboxEnrichmentAssembler.EXIT_HANDOVER
+                  : InboxEnrichmentAssembler.EXIT_UNSUBSCRIBED);
+      assertThat(e.exitedAt()).as("%s: kein Zeitpunkt nach asOf", kind).isNull();
+    }
+
+    // Genau auf dem Wasserzeichen ist der Rueckgriff noch zulaessig (nicht nach asOf).
+    final TaskUserState aufAsOf =
+        withTask(userState(ACTOR, false, false, false, AS_OF, BEFORE), TASK);
+    final List<TaskParticipant> unsubOhneExitAt =
+        List.of(
+            participant(
+                ACTOR,
+                ParticipantKind.PERSON,
+                false,
+                false,
+                true,
+                ExitKind.UNSUBSCRIBED,
+                null,
+                BEFORE));
+    assertThat(
+            assembler
+                .assemble(
+                    List.of(TASK),
+                    unsubOhneExitAt,
+                    List.of(),
+                    List.of(aufAsOf),
+                    List.of(),
+                    ACTOR,
+                    AS_OF)
+                .get(TASK)
+                .exitedAt())
+        .isEqualTo(AS_OF);
+  }
+
+  @Test
   @DisplayName("#150 ohne Austritt (aktiv oder wieder eingetreten) -> exitedAt null")
   void exited_at_null_ohne_austritt() {
     // Wiedereintritt setzt EXIT_KIND/EXIT_AT und UNSUBSCRIBED_AT zurueck -> aktives Mitglied.

@@ -226,8 +226,9 @@ public class UserStateController {
           "Setzt den persoenlichen Gesehen-Zeitpunkt des angemeldeten Benutzers fuer eine Aufgabe"
               + " auf jetzt (ohne Request-Body). Kommentare anderer Personen, die danach entstehen,"
               + " liefert GET /api/v1/tasks/{id}/comments mit isNew=true; GET /api/v1/tasks/{id}"
-              + " liefert den Zeitpunkt als lastSeenAt. Idempotent: jeder Aufruf setzt den Zeitpunkt"
-              + " erneut auf jetzt. Lesende Aufrufe veraendern den Gesehen-Zeitpunkt nie."
+              + " liefert den Zeitpunkt als lastSeenAt. Wiederholbar: jeder Aufruf setzt den"
+              + " Zeitpunkt erneut auf jetzt, ohne Fehler und ohne weitere Wirkung. Lesende Aufrufe"
+              + " veraendern den Gesehen-Zeitpunkt nie."
               + " Berechtigt ist wie beim Lesen der Aufgabe jedes Mitglied, auch nach Austritt;"
               + " fuer alle anderen ist die Aufgabe nicht sichtbar (404). Keine Benachrichtigung.")
   @ApiResponses({
