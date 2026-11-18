@@ -146,6 +146,13 @@ public class MarkerService {
    * Update-Sperren blockieren reine Leser nicht und wirken auch unter {@code
    * READ_COMMITTED_SNAPSHOT}.
    *
+   * <p>Kein Versionskonflikt (HTTP 409) moeglich: die State-Zeile ist ab dem Sperr-Read bis zum
+   * Commit gesperrt, der {@code save} sieht also immer die gelesene Version; konkurrierende
+   * Schreiber (pin/flag/mute, Teilnehmeraktionen) warten und verlieren selbst. Bei der Erstanlage
+   * faengt {@code ensure} einen Unique-Konflikt durch Neu-Lesen ab; State-Zeilen werden nie
+   * deaktiviert, das Neu-Lesen findet die Zeile also immer. Deshalb dokumentiert {@code
+   * UserStateController#seen} keinen 409.
+   *
    * <p>Zeitbasis: {@code LocalDateTime.now()} wie {@code READ_AT} und wie die KSF-Audit-Zeit {@code
    * ANGELEGT_AM} der Kommentare, mit der {@code SEEN_AT} verglichen wird (lokale Wanduhr der
    * Persistenz-Zone, Lesson audit-time-zone).

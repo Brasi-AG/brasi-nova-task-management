@@ -91,20 +91,6 @@ final class ParticipantApiExamples {
           + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
           + " Aufgabe nicht gefunden.\"]}";
 
-  /**
-   * 409 von {@code seen}: nebenlaeufiger Versionskonflikt beim Speichern des versionierten {@code
-   * TaskUserState}.
-   */
-  static final String CONFLICT_SEEN =
-      ERROR_HEAD
-          + "\"status\":409,\"error\":\"Conflict\","
-          + "\"message\":\"Datensatz wurde zwischenzeitlich ge\u00e4ndert (Versionskonflikt).\","
-          + "\"path\":\""
-          + PATH_SEEN
-          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
-          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
-          + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
-
   /** 400 von {@code updateAssignees}: unbekannter Benutzer in der Ziel-Menge. */
   static final String BAD_REQUEST_ASSIGNEES =
       ERROR_HEAD

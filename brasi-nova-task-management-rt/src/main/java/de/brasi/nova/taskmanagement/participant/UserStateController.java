@@ -217,6 +217,10 @@ public class UserStateController {
    * immer), ein bedingter Link traegt fuer die UI keine Information; die Karte affordance-links
    * verlangt keinen Link je Operation.
    *
+   * <p>Kein 409 dokumentiert (anders als {@code mute}): die State-Zeile wird vor dem Speichern per
+   * Update-Sperre gelesen und bis zum Commit gehalten, ein Versionskonflikt ist damit praktisch
+   * nicht erreichbar (Begruendung: {@code MarkerService#markSeen}).
+   *
    * @param id externe UUID der Aufgabe
    * @return 204 No Content
    */
@@ -261,18 +265,7 @@ public class UserStateController {
             @Content(
                 mediaType = "application/json",
                 schema = @Schema(implementation = ApiError.class),
-                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_SEEN))),
-    @ApiResponse(
-        responseCode = "409",
-        description =
-            "Nebenlaeufiger Versionskonflikt: der persoenliche Benutzerzustand der Aufgabe wurde"
-                + " zwischenzeitlich durch einen parallelen Schreibzugriff geaendert; die Anfrage"
-                + " wiederholen.",
-        content =
-            @Content(
-                mediaType = "application/json",
-                schema = @Schema(implementation = ApiError.class),
-                examples = @ExampleObject(value = ParticipantApiExamples.CONFLICT_SEEN)))
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_SEEN)))
   })
   @PutMapping("/{id}/seen")
   public ResponseEntity<Void> seen(
