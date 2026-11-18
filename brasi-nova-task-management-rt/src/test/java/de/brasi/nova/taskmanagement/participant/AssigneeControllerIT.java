@@ -2083,6 +2083,249 @@ class AssigneeControllerIT {
         .isEqualTo(USER_A_REF.toString());
   }
 
+  // ---- Intake #163: PUT /assignees und DEACTIVE-Teilnehmerzeile ------------------------------
+
+  @Test
+  @DisplayName(
+      "i163_put_assignees_reaktiviert_deactive_person_zeile (Intake #163): ASSIGNEE_REF hat eine"
+          + " DEACTIVE-PERSON-Zeile (Unique-Key belegt, vom ACTIVE-Lookup nicht gesehen) und einen"
+          + " stummen, abgemeldeten State. PUT mit ASSIGNEE_REF -> 204 statt 409; dieselbe Zeile ist"
+          + " wieder ACTIVE und Assignee, der State entstummt und angemeldet, genau ein weiteres"
+          + " ASSIGN, Generation und Aufgaben-VERSION gebumpt")
+  void i163_put_assignees_reactivates_deactive_person_row() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I163-Deactive-Zeile");
+    putAssignees(mvc, om, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+    final long dbId = taskDbId(taskId);
+
+    // Ausgangslage: die Teilnehmerzeile ist DEACTIVE (der Benutzer selbst bleibt aktiv), der
+    // persoenliche Zustand stumm und abgemeldet.
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_PARTICIPANT] SET ENTITY_STATUS = 'DEACTIVE'"
+            + " WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+        dbId,
+        ASSIGNEE_REF);
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_USER_STATE] SET IS_MUTED = 1, UNSUBSCRIBED_AT = GETDATE()"
+            + " WHERE TASK_ID = ? AND USER_REF = ?",
+        dbId,
+        ASSIGNEE_REF);
+    final Long rowId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+            Long.class,
+            dbId,
+            ASSIGNEE_REF);
+    final int assignBefore = countNotifications(dbId, ASSIGNEE_REF, "ASSIGN");
+    final long generationBefore = inboxGeneration(ASSIGNEE_REF);
+    final int versionBefore = taskVersion(dbId);
+
+    putAssignees(mvc, om, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ?",
+                dbId,
+                ASSIGNEE_REF))
+        .as("dieselbe Zeile reaktiviert, kein zweiter Insert")
+        .isEqualTo(1);
+    final Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT ENTITY_STATUS, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT"
+                + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?",
+            rowId);
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(row.get("ASSIGNEE_FLAG")).isEqualTo(true);
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("EXIT_KIND")).isNull();
+    assertThat(row.get("EXIT_AT")).isNull();
+    final Map<String, Object> state =
+        jdbcTemplate.queryForMap(
+            "SELECT IS_MUTED, UNSUBSCRIBED_AT FROM [dbo].[TASK_USER_STATE]"
+                + " WHERE TASK_ID = ? AND USER_REF = ?",
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(state.get("IS_MUTED")).as("neue Zuweisung hebt den Mute auf").isEqualTo(false);
+    assertThat(state.get("UNSUBSCRIBED_AT")).as("wieder in der aktiven Inbox").isNull();
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "ASSIGN"))
+        .as("genau ein weiteres ASSIGN")
+        .isEqualTo(assignBefore + 1);
+    assertThat(inboxGeneration(ASSIGNEE_REF)).isGreaterThan(generationBefore);
+    assertThat(taskVersion(dbId)).as("Aufgaben-VERSION gebumpt").isGreaterThan(versionBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i163_put_assignees_team_oder_fremde_zeile_409_ohne_mutation (Intake #163): liegt unter dem"
+          + " Unique-Key einer spaeter verarbeiteten Person eine TEAM-Zeile oder eine PERSON-Zeile"
+          + " mit fremdem Basis-TENANT_ID, liefert PUT 409 und rollt auch die zuvor in derselben"
+          + " Anfrage erfolgreich bearbeiteten Personen zurueck (neue Zeile, reaktivierte"
+          + " DEACTIVE-Zeile, States, Benachrichtigungen, VERSION; der Ersteller bleibt Assignee)")
+  void i163_put_assignees_team_or_foreign_row_409_without_mutation() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I163-Team-Fremd-409");
+    final long dbId = taskDbId(taskId);
+
+    // updateAssignees verarbeitet neue Assignees aufsteigend nach UUID. Die Test-UUIDs sind bei
+    // jedem Lauf zufaellig, daher werden die Rollen nach genau dieser Ordnung vergeben: die beiden
+    // gueltigen Personen kommen VOR der TEAM- bzw. Fremd-Zeile an die Reihe und sind beim 409
+    // bereits geschrieben (Zeile, State, ASSIGN), bevor die Anfrage scheitert.
+    final UUID[] byUuid = {
+      ASSIGNEE_REF, HANDOVER_TARGET_REF, GRANTFREE_REF, GRANTFREE2_REF, WRITE_NON_MEMBER_REF
+    };
+    java.util.Arrays.sort(byUuid);
+    final UUID newRef = byUuid[0]; // ohne Zeile: Insert, danach zurueckgerollt
+    final UUID deactiveRef = byUuid[1]; // DEACTIVE-Zeile: Reaktivierung, danach zurueckgerollt
+    final UUID teamRef = byUuid[2];
+    final UUID foreignRef = byUuid[3];
+    insertParticipantRow(
+        526301L, dbId, teamRef, "TEAM", TENANT_A_ID, TENANT_A_ID, "ACTIVE", false, null);
+    insertParticipantRow(
+        526302L, dbId, foreignRef, "PERSON", TENANT_B_ID, TENANT_A_ID, "DEACTIVE", false, null);
+    insertParticipantRow(
+        526303L, dbId, deactiveRef, "PERSON", TENANT_A_ID, TENANT_A_ID, "DEACTIVE", false, null);
+    final int versionBefore = taskVersion(dbId);
+
+    putAssignees(mvc, om, tokenA, taskId, newRef, deactiveRef, teamRef)
+        .andExpect(status().isConflict());
+    putAssignees(mvc, om, tokenA, taskId, newRef, deactiveRef, foreignRef)
+        .andExpect(status().isConflict());
+
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?"
+                    + " AND PARTICIPANT_KIND = 'TEAM' AND ASSIGNEE_FLAG = 0"
+                    + " AND ENTITY_STATUS = 'ACTIVE'",
+                526301L))
+        .as("TEAM-Zeile unveraendert")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND TENANT_ID = ?"
+                    + " AND ASSIGNEE_FLAG = 0 AND ENTITY_STATUS = 'DEACTIVE'",
+                526302L,
+                TENANT_B_ID))
+        .as("Zeile mit fremdem Basis-TENANT_ID unveraendert")
+        .isEqualTo(1);
+    // Rueckabwicklung der zuvor erfolgreich bearbeiteten Personen derselben Anfragen.
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ?",
+                dbId,
+                newRef))
+        .as("neu angelegte Teilnehmerzeile zurueckgerollt: keine Zeile fuer %s", newRef)
+        .isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ? AND TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND ENTITY_STATUS = 'DEACTIVE'"
+                    + " AND ASSIGNEE_FLAG = 0 AND EXIT_KIND IS NULL",
+                526303L,
+                dbId,
+                deactiveRef))
+        .as(
+            "Reaktivierung zurueckgerollt: DEACTIVE-Zeile von %s unveraendert, kein Assignee",
+            deactiveRef)
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ?",
+                dbId,
+                deactiveRef))
+        .as("kein zweiter Insert fuer %s", deactiveRef)
+        .isEqualTo(1);
+    for (final UUID ref : List.of(newRef, deactiveRef, teamRef, foreignRef)) {
+      assertThat(
+              count(
+                  "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] WHERE TASK_ID = ?"
+                      + " AND RECIPIENT_REF = ?",
+                  dbId,
+                  ref))
+          .as("keine Benachrichtigung (insbesondere kein ASSIGN) an %s", ref)
+          .isZero();
+      assertThat(
+              count(
+                  "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?",
+                  dbId,
+                  ref))
+          .as("kein State fuer %s", ref)
+          .isZero();
+    }
+    assertThat(taskVersion(dbId)).as("Aufgabe nicht gespeichert").isEqualTo(versionBefore);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 1",
+                dbId,
+                USER_A_REF))
+        .as("der Ersteller bleibt Assignee (sein De-Assign laeuft erst nach den Zuweisungen)")
+        .isEqualTo(1);
+  }
+
+  /** {@code PUT /assignees} mit genau den gegebenen Assignees (Status prueft der Aufrufer). */
+  private org.springframework.test.web.servlet.ResultActions putAssignees(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskId,
+      final UUID... assignees)
+      throws Exception {
+    return mvc.perform(
+        put("/api/v1/tasks/" + taskId + "/assignees")
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                om.writeValueAsString(
+                    Map.of(
+                        "assignees",
+                        java.util.Arrays.stream(assignees).map(UUID::toString).toList()))));
+  }
+
+  /** Anzahl der Benachrichtigungen eines Typs (Dictionary-CODE) an einen Empfaenger je Aufgabe. */
+  private int countNotifications(final long taskDbId, final UUID recipientRef, final String code) {
+    return count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE n.TASK_ID = ? AND n.RECIPIENT_REF = ? AND d.CODE = ?",
+        taskDbId,
+        recipientRef,
+        code);
+  }
+
+  /** Aktuelle Inbox-Generation eines Benutzers in Mandant A (0, wenn noch keine Zeile). */
+  private long inboxGeneration(final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COALESCE(MAX(GENERATION), 0) FROM [dbo].[TASK_INBOX_GENERATION]"
+            + " WHERE TENANT_ID = ? AND USER_REF = ?",
+        Long.class,
+        TENANT_A_ID,
+        userRef);
+  }
+
+  /** VERSION der Aufgabe (optimistischer Lock; steigt bei jedem TASK-save). */
+  private int taskVersion(final long taskDbId) {
+    return count("SELECT VERSION FROM [dbo].[TASK] WHERE ID = ?", taskDbId);
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
 
   private Integer count(final String sql, final Object... args) {

@@ -123,11 +123,15 @@ public class AssigneeService {
    * <ol>
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Aktuelle Assignees laden und mit Ziel-Menge vergleichen.
-   *   <li>Neu zugewiesene Assignees (in der Ziel-Menge, aber noch kein aktiver Assignee): {@link
-   *       TaskParticipant} anlegen/reaktivieren (ASSIGNEE_FLAG=1, PARTICIPANT_KIND=PERSON), {@link
-   *       UserStateService#reactivateAsAssignee} (UserState sichern, UNSUBSCRIBED_AT zuruecksetzen
-   *       und einen Mute dieser Aufgabe aufheben), ASSIGN-Notification emittieren. Unveraendert
-   *       bleibende Assignees werden nicht angefasst, ihr Mute bleibt bestehen.
+   *   <li>Neu zugewiesene Assignees (in der Ziel-Menge, aber noch kein aktiver Assignee), nach UUID
+   *       aufsteigend: die Zeile Unique-Key-exakt suchen ({@link #findPersonRowByUniqueKey}, findet
+   *       auch ausgetretene und DEACTIVE-Zeilen, Intake #163) und voll als Assignee reaktivieren
+   *       (ASSIGNEE_FLAG=PARTICIPANT_FLAG=1, Austritt geloescht, ENTITY_STATUS=ACTIVE) bzw. ohne
+   *       Zeile neu anlegen (PARTICIPANT_KIND=PERSON); TEAM-Zeile oder fremdes Basis-TENANT_ID ->
+   *       409 ohne Mutation. Danach {@link UserStateService#reactivateAsAssignee} (UserState
+   *       sichern, UNSUBSCRIBED_AT zuruecksetzen und einen Mute dieser Aufgabe aufheben),
+   *       ASSIGN-Notification emittieren. Unveraendert bleibende Assignees werden nicht angefasst,
+   *       ihr Mute bleibt bestehen.
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
    *       setzen.
    *   <li>Nach Commit: {@link InboxSignalService#invalidate} fuer alle betroffenen userRefs.
@@ -137,6 +141,10 @@ public class AssigneeService {
    * @param input Ziel-Assignee-Menge
    * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
    * @throws EntityValidationException wenn Input ungueltig
+   * @throws BusinessRuleException (409) nebenlaeufiger Versionskonflikt, Unique- oder
+   *     Sequenzkonflikt beim Speichern einer neuen Teilnehmerzeile (gleichzeitiger Insert) oder
+   *     vorhandene Teilnehmerzeile einer neu zuzuweisenden Person ist keine PERSON-Zeile des
+   *     Task-Mandanten; in allen Faellen rollt die Transaktion alles bisher Geschriebene zurueck
    */
   @Transactional
   public void updateAssignees(final UUID taskExternalId, final AssigneeUpdateInput input) {
@@ -216,16 +224,23 @@ public class AssigneeService {
       // (Reihenfolge-Beweis gegen die Aufnahme per Erwaehnung). Produktiv No-Op.
       onBeforeAssigneeAddForTest(taskId, assigneeRef);
 
-      // Pruefen ob bereits ein Participant-Eintrag existiert (z.B. als Beobachter oder CREATOR)
-      final List<TaskParticipant> existing =
-          participantQueryRepository.findByTaskIdAndParticipantRef(taskId, assigneeRef);
+      // Vorhandene Zeile Unique-Key-exakt suchen (Intake #163, wie addParticipants seit #156 und
+      // die Uebergabe): auch DEACTIVE- und ausgetretene PERSON-Zeilen (z.B. Beobachter, Ersteller,
+      // Ex-Assignee). Der fruehere ACTIVE-Lookup uebersah DEACTIVE-Zeilen, der Insert brach dann
+      // den V3-Unique-Key und der ganze PUT endete mit 409. TEAM-Zeile oder fremdes Basis-
+      // TENANT_ID -> 409 ohne Mutation (die Transaktion rollt alles bisher Geschriebene zurueck).
+      final Optional<TaskParticipant> existing =
+          findPersonRowByUniqueKey(
+              taskId,
+              assigneeRef,
+              tenantId,
+              "Die Person kann nicht als Assignee gefuehrt werden: die vorhandene"
+                  + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
 
-      if (!existing.isEmpty()) {
-        // Bestehenden Eintrag reaktivieren: ASSIGNEE_FLAG setzen, EXIT_KIND loeschen
-        final TaskParticipant p = existing.get(0);
-        p.setAssigneeFlag(true);
-        p.setExitKind(null);
-        p.setExitAt(null);
+      if (existing.isPresent()) {
+        // Bestehende Zeile reaktivieren: Assignee und Teilnehmer, Austritt geloescht, ACTIVE.
+        final TaskParticipant p = existing.get();
+        activateAsAssignee(p);
         participantQueryRepository.save(p);
         log.debug(
             "AssigneeService.updateAssignees: Participant {} fuer Task {} reaktiviert als Assignee.",
@@ -233,16 +248,7 @@ public class AssigneeService {
             taskExternalId);
       } else {
         // Neuen Participant-Eintrag anlegen
-        final TaskParticipant p = new TaskParticipant();
-        p.setTenantId(tenantId);
-        p.setTaskId(taskId);
-        p.setParticipantRef(assigneeRef);
-        p.setParticipantKind(ParticipantKind.PERSON);
-        p.setParticipantTenantId(tenantId);
-        p.setCreatorFlag(false);
-        p.setAssigneeFlag(true);
-        p.setParticipantFlag(true);
-        participantQueryRepository.save(p);
+        participantQueryRepository.save(newPersonRow(taskId, assigneeRef, tenantId, true));
         log.debug(
             "AssigneeService.updateAssignees: Neuer Assignee-Participant {} fuer Task {} angelegt.",
             assigneeRef,
@@ -572,16 +578,15 @@ public class AssigneeService {
    *     #ensureAssignee}); ein PERSON-Insert waere per Unique-Key unmoeglich
    */
   private boolean addSingleParticipant(final Long taskId, final UUID ref, final long tenantId) {
-    final List<TaskParticipant> existing =
-        participantQueryRepository.findRowByUniqueKey(taskId, ref);
-    if (!existing.isEmpty()) {
-      final TaskParticipant p = existing.get(0);
-      if (p.getParticipantKind() != ParticipantKind.PERSON
-          || !Objects.equals(tenantId, p.getTenantId())) {
-        throw new BusinessRuleException(
+    final Optional<TaskParticipant> existing =
+        findPersonRowByUniqueKey(
+            taskId,
+            ref,
+            tenantId,
             "Die Person kann nicht als Beteiligter gefuehrt werden: die vorhandene"
                 + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
-      }
+    if (existing.isPresent()) {
+      final TaskParticipant p = existing.get();
       if (p.getExitKind() == null && p.getEntityState() == EntityState.ACTIVE) {
         // (a) aktive Zeile (Creator / Assignee / Teilnehmer) -> idempotenter SKIP, keine Mutation.
         return false;
@@ -611,15 +616,7 @@ public class AssigneeService {
     }
     // (c) keine Zeile -> neuen reinen Teilnehmer anlegen (PERSON, PARTICIPANT_FLAG=1,
     // ASSIGNEE_FLAG=0, CREATOR_FLAG=0).
-    final TaskParticipant p = new TaskParticipant();
-    p.setTenantId(tenantId);
-    p.setTaskId(taskId);
-    p.setParticipantRef(ref);
-    p.setParticipantKind(ParticipantKind.PERSON);
-    p.setParticipantTenantId(tenantId);
-    p.setCreatorFlag(false);
-    p.setAssigneeFlag(false);
-    p.setParticipantFlag(true);
+    final TaskParticipant p = newPersonRow(taskId, ref, tenantId, false);
     if (!saveParticipantHandlingRace(p, taskId, ref)) {
       return false;
     }
@@ -1091,45 +1088,32 @@ public class AssigneeService {
   private boolean ensureAssignee(final Long taskId, final UUID targetRef, final long tenantId) {
     // Unique-Key-exakter Lookup (ohne Status/EXIT/KIND-Filter) -> <=1 Zeile unabhaengig vom Basis-
     // TENANT_ID; die Klassifikation (reaktivieren vs. 409 vs. INSERT) erfolgt hier.
-    final List<TaskParticipant> rows =
-        participantQueryRepository.findRowByUniqueKey(taskId, targetRef);
+    // fail-closed 409 im gemeinsamen Lookup: TEAM-Zeile ODER fremdes Basis-TENANT_ID -> KEINE
+    // Mutation (ensureAssignee-Auswahlvertrag). Ein PERSON-Insert waere per Unique-Key unmoeglich;
+    // stilles Flippen wuerde ungueltige Membership hinterlassen.
+    final Optional<TaskParticipant> existing =
+        findPersonRowByUniqueKey(
+            taskId,
+            targetRef,
+            tenantId,
+            "Das Uebergabeziel kann nicht als Assignee gefuehrt werden: die vorhandene"
+                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
     final TaskParticipant p;
     // War das Ziel vor diesem Aufruf schon aktiver Assignee? (Zustand VOR der Mutation)
     boolean wasActiveAssignee = false;
-    if (!rows.isEmpty()) {
-      final TaskParticipant row = rows.get(0);
-      // fail-closed 409: TEAM-Zeile ODER fremdes Basis-TENANT_ID -> KEINE Mutation (ensureAssignee-
-      // Auswahlvertrag). Ein PERSON-Insert waere per Unique-Key unmoeglich; stilles Flippen wuerde
-      // ungueltige Membership hinterlassen.
-      if (row.getParticipantKind() != ParticipantKind.PERSON
-          || !Objects.equals(tenantId, row.getTenantId())) {
-        throw new BusinessRuleException(
-            "Das Uebergabeziel kann nicht als Assignee gefuehrt werden: die vorhandene"
-                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
-      }
+    if (existing.isPresent()) {
+      final TaskParticipant row = existing.get();
       // PERSON + Basis-TENANT_ID=task-tenant (aktiv/exited/inaktiv egal): VOLL reaktivieren.
       wasActiveAssignee =
           row.isAssigneeFlag()
               && row.getExitKind() == null
               && row.getEntityState() == EntityState.ACTIVE;
       p = row;
-      p.setAssigneeFlag(true);
-      p.setParticipantFlag(true);
-      p.setExitKind(null);
-      p.setExitAt(null);
-      p.setEntityState(EntityState.ACTIVE);
+      activateAsAssignee(p);
     } else {
       // Unique-Key frei -> neue PERSON-Assignee-Zeile (TENANT_ID = PARTICIPANT_TENANT_ID =
       // task-tenant).
-      p = new TaskParticipant();
-      p.setTenantId(tenantId);
-      p.setTaskId(taskId);
-      p.setParticipantRef(targetRef);
-      p.setParticipantKind(ParticipantKind.PERSON);
-      p.setParticipantTenantId(tenantId);
-      p.setCreatorFlag(false);
-      p.setAssigneeFlag(true);
-      p.setParticipantFlag(true);
+      p = newPersonRow(taskId, targetRef, tenantId, true);
     }
     // Test-Seam: deterministische Synchronisation der Ziel-Race-ITs ZWISCHEN Vorab-Read und save.
     onBeforeHandoverAssigneeSaveForTest(taskId, targetRef);
@@ -1164,6 +1148,88 @@ public class AssigneeService {
       throw conflict;
     }
     return !wasActiveAssignee;
+  }
+
+  /**
+   * Gemeinsamer Zeilen-Lookup aller Pfade, die eine Person zur Aufgabe aufnehmen oder ihr die
+   * Assignee-Rolle geben ({@link #updateAssignees}, {@link #addSingleParticipant} und {@link
+   * #ensureAssignee}; Intake #156 und #163).
+   *
+   * <p>Sucht Unique-Key-exakt ueber {@link TaskParticipantQueryRepository#findRowByUniqueKey}
+   * ({@code TASK_ID, PARTICIPANT_TENANT_ID = Task-Mandant, PARTICIPANT_REF}, ohne {@code
+   * ENTITY_STATUS}-, {@code EXIT_KIND}- und {@code PARTICIPANT_KIND}-Filter), damit auch eine
+   * ausgetretene oder {@code DEACTIVE}-Zeile gefunden wird. Der lose Lookup {@code
+   * findByTaskIdAndParticipantRef} liest nur {@code ENTITY_STATUS='ACTIVE'}; mit ihm bliebe eine
+   * {@code DEACTIVE}-Zeile unsichtbar, der folgende Insert braeche den V3-Unique-Key und der ganze
+   * Aufruf endete mit 409.
+   *
+   * <p>Eine gefundene Zeile, die keine PERSON-Zeile des Task-Mandanten ist (TEAM-Zeile oder fremdes
+   * Basis-{@code TENANT_ID}), wird nicht angefasst: der Aufruf scheitert fail-closed mit 409, denn
+   * ein PERSON-Insert waere per Unique-Key unmoeglich und ein stilles Umschreiben hinterliesse eine
+   * ungueltige Mitgliedschaft. Die Klassifikation der gueltigen Zeile (aktiv, ausgetreten, inaktiv)
+   * und die Folgen bleiben beim Aufrufer.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der Person
+   * @param tenantId Task-Mandant
+   * @param rejectionMessage Meldung der 409, wenn die vorhandene Zeile keine PERSON-Zeile des
+   *     Task-Mandanten ist
+   * @return die vorhandene PERSON-Zeile des Task-Mandanten (Status und Austritt beliebig) oder
+   *     leer, wenn der Unique-Key frei ist
+   * @throws BusinessRuleException 409 ohne Mutation bei TEAM-Zeile oder fremdem Basis-{@code
+   *     TENANT_ID}
+   */
+  private Optional<TaskParticipant> findPersonRowByUniqueKey(
+      final Long taskId, final UUID ref, final long tenantId, final String rejectionMessage) {
+    final List<TaskParticipant> rows = participantQueryRepository.findRowByUniqueKey(taskId, ref);
+    if (rows.isEmpty()) {
+      return Optional.empty();
+    }
+    final TaskParticipant row = rows.get(0);
+    if (row.getParticipantKind() != ParticipantKind.PERSON
+        || !Objects.equals(tenantId, row.getTenantId())) {
+      throw new BusinessRuleException(rejectionMessage);
+    }
+    return Optional.of(row);
+  }
+
+  /**
+   * Hebt eine vorhandene PERSON-Zeile voll auf aktiven Assignee: {@code ASSIGNEE_FLAG} und {@code
+   * PARTICIPANT_FLAG} gesetzt, Austritt geloescht, {@code ENTITY_STATUS='ACTIVE'}. Speichert nicht;
+   * genutzt von {@link #updateAssignees} und {@link #ensureAssignee}.
+   *
+   * @param p die zu reaktivierende Teilnehmerzeile
+   */
+  private static void activateAsAssignee(final TaskParticipant p) {
+    p.setAssigneeFlag(true);
+    p.setParticipantFlag(true);
+    p.setExitKind(null);
+    p.setExitAt(null);
+    p.setEntityState(EntityState.ACTIVE);
+  }
+
+  /**
+   * Neue PERSON-Teilnehmerzeile im Task-Mandanten ({@code TENANT_ID = PARTICIPANT_TENANT_ID}), nie
+   * Ersteller, immer Teilnehmer; Assignee nach {@code assignee}. Speichert nicht.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der Person
+   * @param tenantId Task-Mandant
+   * @param assignee {@code true} fuer eine Zuweisung, {@code false} fuer einen reinen Teilnehmer
+   * @return die neue, ungespeicherte Zeile
+   */
+  private static TaskParticipant newPersonRow(
+      final Long taskId, final UUID ref, final long tenantId, final boolean assignee) {
+    final TaskParticipant p = new TaskParticipant();
+    p.setTenantId(tenantId);
+    p.setTaskId(taskId);
+    p.setParticipantRef(ref);
+    p.setParticipantKind(ParticipantKind.PERSON);
+    p.setParticipantTenantId(tenantId);
+    p.setCreatorFlag(false);
+    p.setAssigneeFlag(assignee);
+    p.setParticipantFlag(true);
+    return p;
   }
 
   /**
