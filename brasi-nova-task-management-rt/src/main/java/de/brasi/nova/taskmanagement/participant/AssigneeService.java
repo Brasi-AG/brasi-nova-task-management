@@ -406,6 +406,9 @@ public class AssigneeService {
     // (Namen aktiver Teilnehmer) aendern sich fuer JEDEN Leser - deshalb Bump und Signal fuer die
     // Vereinigung aus geaenderten Refs (affectedRefs) und allen vorab gelesenen Lesern (aktive
     // States und ausgetretene Archivleser), dieselbe Menge wie beim Entfernen.
+    // Das ist eine bewusste fachliche Entscheidung zu Intake #166, einheitlich mit Austritt,
+    // Aendern und Entfernen. Mehrlast: je Aenderung ein Inbox-Neuladen fuer jeden Leser der
+    // Aufgabe, auch bei offenen Aufgaben.
     if (!affectedRefs.isEmpty()) {
       // Whole-Branch-Re-Gate P2 #3: Nebenlaeufige PUT-Set-Ersetzungen serialisieren. Zwei parallele
       // Ersetzungen ab demselben Ist-Stand ({creator} -> {creator,A} bzw. {creator,B}) koennten
@@ -663,6 +666,11 @@ public class AssigneeService {
    * #addParticipants}, {@link #exit} und {@link #removeParticipant}; die Aufrufer ergaenzen die
    * geaenderten Personen selbst.
    *
+   * <p>Dass jede Mitgliedschaftsaenderung ALLE diese Leser bumpt und signalisiert, ist eine
+   * bewusste fachliche Entscheidung zu Intake #166, einheitlich mit Austritt, Aendern und
+   * Entfernen. Mehrlast: je Aenderung ein Inbox-Neuladen fuer jeden Leser der Aufgabe, auch bei
+   * offenen Aufgaben, die kein Leser im Archiv sieht.
+   *
    * <p>Muss VOR der ersten Teilnehmer-, State-, Historien- oder Benachrichtigungs-Schreibung der
    * Transaktion laufen (Intake #167): danach wartete die Lesung unter sperrendem READ COMMITTED auf
    * die X-gesperrten Zeilen eines parallelen Aufrufs fuer eine andere Person derselben Aufgabe,
@@ -845,7 +853,9 @@ public class AssigneeService {
 
     // Intake #166: Bump und Signal fuer die geaenderten Personen und alle vorab gelesenen Leser
     // (dieselbe Menge wie beim Entfernen), sortiert ueber den zentralen Helfer NACH dem TASK-save
-    // (Codex #6: einheitliche Save-dann-Bump-Ordnung).
+    // (Codex #6: einheitliche Save-dann-Bump-Ordnung). Das ist eine bewusste fachliche
+    // Entscheidung zu Intake #166, einheitlich mit Austritt, Aendern und Entfernen. Mehrlast: je
+    // Aenderung ein Inbox-Neuladen fuer jeden Leser der Aufgabe, auch bei offenen Aufgaben.
     final Set<UUID> readersAndChanged = new HashSet<>(readers);
     readersAndChanged.addAll(affectedRefs);
     inboxGenerationService.bumpSorted(tenantId, readersAndChanged);

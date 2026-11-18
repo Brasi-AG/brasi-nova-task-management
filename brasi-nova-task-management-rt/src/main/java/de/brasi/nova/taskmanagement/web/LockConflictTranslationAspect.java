@@ -36,6 +36,15 @@ import org.springframework.stereotype.Component;
  * die bekannten Deadlocks; die Uebersetzung ist die Absicherung fuer unbekannte Faelle, damit ein
  * Client nie 500 fuer einen wiederholbaren Konflikt bekommt. Der Ordnungswert stellt den Aspekt vor
  * alle anderen Advices der Controller-Methode.
+ *
+ * <p><b>Sonderfall {@code TaskFacadeController#createFromSource}:</b> Bei einem Unique-Konflikt der
+ * Quittung laeuft danach eine zweite, rein lesende Transaktion ({@code
+ * TaskSourceCreateTransaction#replayAfterConflict}, REQUIRES_NEW, readOnly). Ein Sperrkonflikt dort
+ * meldet ebenfalls 409; "nichts geaendert" gilt fuer diesen Request. Die parallele Gewinnerin hat
+ * die Aufgabe angelegt, ein Retry mit demselben Schluessel liefert das Replay.
+ *
+ * <p><b>Sequenzvergabe:</b> Die Vergabe der KSF ({@code SequenceGenerator}, REQUIRES_NEW) laeuft in
+ * eigener Transaktion; bei einem Rollback hinterlaesst sie nur eine Luecke in den IDs.
  */
 @Aspect
 @Component
