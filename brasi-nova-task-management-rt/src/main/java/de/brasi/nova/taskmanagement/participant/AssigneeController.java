@@ -294,7 +294,8 @@ public class AssigneeController {
           "Fuegt die angegebenen Benutzer additiv als Teilnehmer der Aufgabe hinzu (idempotent)."
               + " Verleiht ausschliesslich die Teilnehmer-Rolle, nicht die Assignee-Rolle."
               + " Bereits aktive Mitglieder der Aufgabe werden uebersprungen; ein leeres Array ist"
-              + " ein No-Op. Zuvor ausgetretene oder inaktive Personen werden als reine Teilnehmer"
+              + " ein No-Op. Zuvor ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile"
+              + " (der Benutzer selbst ist aktiv) werden als reine Teilnehmer"
               + " reaktiviert."
               + " Jede Person, die dabei tatsaechlich neu hinzukommt oder reaktiviert wird, erhaelt"
               + " eine Benachrichtigung vom Typ PARTICIPANT (gespeichert, abrufbar ueber"
@@ -368,7 +369,8 @@ public class AssigneeController {
                 + " (2) Die vorhandene Teilnehmerzeile einer Person ist keine PERSON-Zeile des"
                 + " Mandanten (TEAM-Zeile oder fremder Mandant, Datenfehler); sie wird nicht"
                 + " ueberschrieben und die Anfrage scheitert, bis der Datenbestand bereinigt ist."
-                + " Ausgetretene oder inaktive Personen sind kein Konfliktgrund: sie werden"
+                + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei aktivem"
+                + " Benutzer) sind kein Konfliktgrund: sie werden"
                 + " reaktiviert.",
         content =
             @Content(
