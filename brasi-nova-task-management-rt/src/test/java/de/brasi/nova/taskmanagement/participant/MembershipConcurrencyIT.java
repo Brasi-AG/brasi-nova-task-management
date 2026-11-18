@@ -144,6 +144,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * Gewinnerin haelt nichts, worauf sie selbst wartet), kein Zyklus; der gemeinsame Aufnahme-Kern
  * {@code addAsParticipants} liest seine Zeilen bewusst erst nach Sync 1.
  *
+ * <p><b>Aufnahme zu zweit, verzahnt (Codex-Review):</b> der gemeinsame Kern {@code
+ * addAsParticipants} liest Teilnehmerzeile und State jeder Person erst nach der Schreibung der
+ * vorigen. Das Szenario {@code ADD_PAIRS} laesst beide Transaktionen nach Sync 1 gleichzeitig
+ * schreiben und trifft sie am Seam {@code onAfterParticipantAddForTest} nach ihrer ersten Person;
+ * erst dann liest jede die Zeilen ihrer zweiten, waehrend die andere ihre erste X-gesperrt haelt.
+ *
  * <p>Voraussetzung: die Wegwerf-DB laeuft mit sperrendem READ COMMITTED (kein RCSI), sonst warten
  * Lesungen nicht auf Schreibsperren und der Test bewiese nichts; das prueft jedes Szenario zuerst.
  *
@@ -198,6 +204,16 @@ class MembershipConcurrencyIT {
   /** Von beiden Transaktionen gleichzeitig aufzunehmende Person (ausgetreten). */
   private static final UUID SAME_P = UUID.fromString("00000059-00e0-0059-0000-000000000597");
 
+  /**
+   * Vier ausgetretene Personen fuer die Aufnahme zu zweit (Codex-Review #167), nach UUID sortiert
+   * P1 &lt; P2 &lt; P3 &lt; P4: die Gewinnerin nimmt {P1, P3} auf, die Verliererin {P2, P4}.
+   */
+  private static final UUID PAIR_P1 = UUID.fromString("00000059-00f1-0059-0000-000000000597");
+
+  private static final UUID PAIR_P2 = UUID.fromString("00000059-00f2-0059-0000-000000000597");
+  private static final UUID PAIR_P3 = UUID.fromString("00000059-00f3-0059-0000-000000000597");
+  private static final UUID PAIR_P4 = UUID.fromString("00000059-00f4-0059-0000-000000000597");
+
   private static final long STATUS_OPEN = 101L;
   private static final long PRIORITY_NORMAL = 202L;
   private static final long DIRECTION = 301L;
@@ -209,6 +225,7 @@ class MembershipConcurrencyIT {
   private static final int ADD_ADD = 3;
   private static final int PUT_EXIT = 4;
   private static final int ADD_SAME = 5;
+  private static final int ADD_PAIRS = 6;
 
   /** Fremdzeilen je Tabelle (Phase mit Fremdzeilen, siehe Klassen-Javadoc). */
   private static final int PADDING_ROWS = 2000;
@@ -307,6 +324,10 @@ class MembershipConcurrencyIT {
     seedBenutzer(jt, 597505L, NEW_P1, "new-p1@brasi.de");
     seedBenutzer(jt, 597506L, NEW_P2, "new-p2@brasi.de");
     seedBenutzer(jt, 597507L, SAME_P, "same-p@brasi.de");
+    seedBenutzer(jt, 597508L, PAIR_P1, "pair-p1@brasi.de");
+    seedBenutzer(jt, 597509L, PAIR_P2, "pair-p2@brasi.de");
+    seedBenutzer(jt, 597510L, PAIR_P3, "pair-p3@brasi.de");
+    seedBenutzer(jt, 597511L, PAIR_P4, "pair-p4@brasi.de");
     for (final Phase phase : Phase.values()) {
       // PUT x PUT: Ersteller, A, B und C sind aktive Assignees.
       seedMembers(
@@ -352,6 +373,17 @@ class MembershipConcurrencyIT {
           member(CREATOR_REF, true, true, false),
           member(ACTOR_A_REF, false, true, false),
           member(SAME_P, false, false, true));
+      // add x add zu zweit: Ersteller und A aktiv, P1 bis P4 ausgetreten.
+      seedMembers(
+          jt,
+          phase,
+          ADD_PAIRS,
+          member(CREATOR_REF, true, true, false),
+          member(ACTOR_A_REF, false, true, false),
+          member(PAIR_P1, false, false, true),
+          member(PAIR_P2, false, false, true),
+          member(PAIR_P3, false, false, true),
+          member(PAIR_P4, false, false, true));
     }
   }
 
@@ -392,6 +424,15 @@ class MembershipConcurrencyIT {
       "i167_ohne_fremdzeilen_add_derselben_person: beide 204, eine Benachrichtigung, nie 1205")
   void i167_unpadded_add_same_person() {
     addSamePerson(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(6)
+  @DisplayName(
+      "i167_ohne_fremdzeilen_add_x_add_zu_zweit: {P1,P3} gegen {P2,P4} verzahnt, eine 204, eine"
+          + " 409, nie 1205/500")
+  void i167_unpadded_add_pairs() {
+    addPairs(Phase.UNPADDED);
   }
 
   // ---- Szenarien mit Fremdzeilen (Index-Seeks wie im Betrieb)
@@ -445,6 +486,17 @@ class MembershipConcurrencyIT {
   void i167_parallel_add_of_same_person_both_204() {
     ensurePadded();
     addSamePerson(Phase.PADDED);
+  }
+
+  @Test
+  @Order(16)
+  @DisplayName(
+      "i167_add_x_add_zu_zweit (Codex-Review): zwei POST /participants mit je zwei Personen,"
+          + " {P1,P3} gegen {P2,P4}; jede liest ihre zweite Person, waehrend die andere ihre erste"
+          + " X-gesperrt haelt -> eine 204, eine 409 (voller Rollback), nie 1205/500")
+  void i167_parallel_add_of_two_persons_each_interleaved_never_deadlock() {
+    ensurePadded();
+    addPairs(Phase.PADDED);
   }
 
   // ---- Szenario-Ablaeufe
@@ -593,6 +645,70 @@ class MembershipConcurrencyIT {
     assertSingleSignalContaining(SAME_P);
   }
 
+  /**
+   * Aufnahme zu zweit, verzahnt (Codex-Review #167): die Gewinnerin nimmt {P1, P3} auf, die
+   * Verliererin {P2, P4}. Beide treffen sich nach Sync 1 (ohne Vorlauf der Gewinnerin), schreiben
+   * je ihre erste Person (P1 bzw. P2) und treffen sich am Seam {@code onAfterParticipantAddForTest}
+   * ein zweites Mal. Erst dann lesen beide die Zeilen ihrer zweiten Person (P3 bzw. P4), waehrend
+   * die andere ihre erste Person X-gesperrt haelt. Liest der Kern dabei die Zeilen der anderen,
+   * wartet jede auf die andere (Deadlock 1205). Danach Sync 2 wie in den anderen Szenarien.
+   */
+  private void addPairs(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(ADD_PAIRS);
+    final UUID taskUuid = phase.taskUuid(ADD_PAIRS);
+    final int taskVersionBefore = taskVersion(taskId);
+    final List<UUID> loserRefs = List.of(PAIR_P2, PAIR_P4);
+    final List<Integer> participantVersionsBefore = new ArrayList<>();
+    final List<Integer> stateVersionsBefore = new ArrayList<>();
+    for (final UUID ref : loserRefs) {
+      participantVersionsBefore.add(participantVersion(taskId, ref));
+      stateVersionsBefore.add(userStateVersion(taskId, ref));
+    }
+
+    final Outcome outcome =
+        runPair(
+            "i167-add-pairs-" + phase,
+            true,
+            CREATOR_REF,
+            () ->
+                service.addParticipants(
+                    taskUuid, new ParticipantAddInput(List.of(PAIR_P1, PAIR_P3))),
+            ACTOR_A_REF,
+            () ->
+                service.addParticipants(
+                    taskUuid, new ParticipantAddInput(List.of(PAIR_P2, PAIR_P4))));
+
+    assertNoDeadlock(outcome, phase);
+    assertThat(outcome.gates().betweenPersonsReached.get())
+        .as("beide erreichten den Treffpunkt nach ihrer ersten Person (Verzahnung erreicht)")
+        .isEqualTo(2);
+    if (phase.loserMustNotWait) {
+      assertThat(outcome.gates().blockedBetweenPersons.get())
+          .as(
+              "mit Fremdzeilen wartet nach der ersten Person keine Lesung auf eine X-Sperre der"
+                  + " anderen")
+          .isNull();
+    }
+    assertWinnerCommittedLoserVersionConflict(outcome);
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertAdded(taskId, PAIR_P1);
+    assertAdded(taskId, PAIR_P3);
+    for (int i = 0; i < loserRefs.size(); i++) {
+      final UUID ref = loserRefs.get(i);
+      assertThat(exitedUnsubscribed(taskId, ref)).as("%s weiter ausgetreten", ref).isEqualTo(1);
+      assertThat(participantVersion(taskId, ref))
+          .as("Teilnehmerzeile %s unveraendert (voller Rollback)", ref)
+          .isEqualTo(participantVersionsBefore.get(i));
+      assertThat(userStateUnsubscribed(taskId, ref)).as("State %s abgemeldet", ref).isEqualTo(1);
+      assertThat(userStateVersion(taskId, ref))
+          .as("State %s unveraendert (voller Rollback)", ref)
+          .isEqualTo(stateVersionsBefore.get(i));
+      assertThat(notificationCount(taskId, ref)).as("keine Benachrichtigung an %s", ref).isZero();
+    }
+    assertSingleSignalContaining(PAIR_P1);
+  }
+
   // ---- Ablauf und gemeinsame Pruefungen
   // ----------------------------------------------------------
 
@@ -607,9 +723,26 @@ class MembershipConcurrencyIT {
       final Runnable winnerCall,
       final UUID loserActor,
       final Runnable loserCall) {
+    return runPair(label, false, winnerActor, winnerCall, loserActor, loserCall);
+  }
+
+  /**
+   * Fuehrt beide Transaktionen aus.
+   *
+   * @param interleaved {@code false}: die Verliererin schreibt erst, wenn die Gewinnerin Sync 2
+   *     erreicht hat; {@code true}: beide schreiben nach Sync 1 gleichzeitig und treffen sich nach
+   *     ihrer ersten aufgenommenen Person ({@code onAfterParticipantAddForTest}) ein weiteres Mal
+   */
+  private Outcome runPair(
+      final String label,
+      final boolean interleaved,
+      final UUID winnerActor,
+      final Runnable winnerCall,
+      final UUID loserActor,
+      final Runnable loserCall) {
     inboxSignalPort.clear();
     notificationPushPort.clear();
-    final Gates gates = new Gates(jdbcTemplate, new JdbcTemplate(master));
+    final Gates gates = new Gates(jdbcTemplate, new JdbcTemplate(master), interleaved);
     GATES.set(gates);
     final AtomicReference<Throwable> winnerError = new AtomicReference<>();
     final AtomicReference<Throwable> loserError = new AtomicReference<>();
@@ -822,15 +955,52 @@ class MembershipConcurrencyIT {
     private final AtomicBoolean gateTimedOut = new AtomicBoolean(false);
     private final AtomicReference<String> winnerBlockedByLoser = new AtomicReference<>();
     private final AtomicReference<String> loserBlockedByWinner = new AtomicReference<>();
+    private final boolean interleaved;
+    private final CountDownLatch betweenPersonsArrived = new CountDownLatch(2);
+    private final AtomicBoolean winnerPassedBetween = new AtomicBoolean(false);
+    private final AtomicBoolean loserPassedBetween = new AtomicBoolean(false);
+    private final AtomicInteger betweenPersonsReached = new AtomicInteger();
+    private final AtomicReference<String> blockedBetweenPersons = new AtomicReference<>();
 
     /**
      * @param txJdbc JdbcTemplate der Anwendung; im Thread einer Transaktion laeuft er auf deren
      *     Verbindung (fuer {@code @@SPID})
      * @param probe unabhaengige master-Verbindung fuer {@code sys.dm_exec_requests}
+     * @param interleaved {@code true}: kein Vorlauf der Gewinnerin nach Sync 1, dafuer ein
+     *     Treffpunkt nach der ersten aufgenommenen Person ({@link #betweenPersons})
      */
-    Gates(final JdbcTemplate txJdbc, final JdbcTemplate probe) {
+    Gates(final JdbcTemplate txJdbc, final JdbcTemplate probe, final boolean interleaved) {
       this.txJdbc = txJdbc;
       this.probe = probe;
+      this.interleaved = interleaved;
+    }
+
+    /**
+     * Treffpunkt nach der ersten aufgenommenen Person (nur verzahnt, nur beim ersten Aufruf je
+     * Rolle): beide halten jetzt die X-Sperren ihrer ersten Person, erst danach liest eine die
+     * Zeilen ihrer zweiten. Wartet die andere dabei auf eine Sperre der eigenen Sitzung, wird das
+     * vermerkt und der Treffpunkt verlassen.
+     */
+    void betweenPersons() {
+      final String role = ROLE_PER_THREAD.get();
+      if (role == null || !interleaved) {
+        return;
+      }
+      final boolean winner = WINNER.equals(role);
+      if ((winner ? winnerPassedBetween : loserPassedBetween).getAndSet(true)) {
+        return;
+      }
+      betweenPersonsReached.incrementAndGet();
+      betweenPersonsArrived.countDown();
+      final AtomicReference<String> observed = new AtomicReference<>();
+      awaitOrObserveBlock(
+          betweenPersonsArrived,
+          (winner ? loserSession : winnerSession).get(),
+          (winner ? winnerSession : loserSession).get(),
+          observed);
+      if (observed.get() != null) {
+        blockedBetweenPersons.set((winner ? LOSER : WINNER) + " wartete: " + observed.get());
+      }
     }
 
     /** Sync 1: Sitzung merken, beide treffen sich; die Verliererin schreibt erst nach Sync 2. */
@@ -849,7 +1019,7 @@ class MembershipConcurrencyIT {
         Thread.currentThread().interrupt();
         gateTimedOut.set(true);
       }
-      if (LOSER.equals(role)) {
+      if (LOSER.equals(role) && !interleaved) {
         // Die Gewinnerin haelt keine Sperre, auf die die Verliererin hier warten koennte.
         try {
           if (!winnerWritesDone.await(GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
@@ -891,6 +1061,10 @@ class MembershipConcurrencyIT {
         winnerDone.countDown();
       } else {
         loserWritesDone.countDown();
+      }
+      // Brach eine Transaktion vor dem Treffpunkt ab, wartet die andere dort nicht bis zum Ablauf.
+      if (!(WINNER.equals(role) ? winnerPassedBetween : loserPassedBetween).getAndSet(true)) {
+        betweenPersonsArrived.countDown();
       }
       // Brach eine Transaktion vor Sync 1 ab, haengt die andere nicht bis zum Ablauf.
       beforeWrites.reset();
@@ -1247,6 +1421,14 @@ class MembershipConcurrencyIT {
       final Gates gates = GATES.get();
       if (gates != null) {
         gates.afterMembershipWrites();
+      }
+    }
+
+    @Override
+    protected void onAfterParticipantAddForTest(final Long taskId, final UUID ref) {
+      final Gates gates = GATES.get();
+      if (gates != null) {
+        gates.betweenPersons();
       }
     }
   }

@@ -895,6 +895,9 @@ public class AssigneeService {
       if (addSingleParticipant(taskId, ref, tenantId)) {
         affectedRefs.add(ref);
       }
+      // Test-Seam (Codex-Review #167): nach der Aufnahme je Person, vor der naechsten. Produktiv
+      // No-Op.
+      onAfterParticipantAddForTest(taskId, ref);
     }
     return affectedRefs;
   }
@@ -1683,6 +1686,21 @@ public class AssigneeService {
    * @param taskId interne Aufgaben-ID
    */
   protected void onAfterMembershipWritesForTest(final Long taskId) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op, Codex-Review #167): Haken in {@link #addAsParticipants} NACH der
+   * Aufnahme einer Person und VOR den Reads der naechsten (auch nach der letzten). Die Transaktion
+   * haelt hier die X-Sperren der bisher aufgenommenen Personen. Der Nebenlaeufigkeits-IT ({@code
+   * MembershipConcurrencyIT}) verzahnt daran zwei Aufnahmen mit je zwei Personen: beide haben ihre
+   * erste Person geschrieben, bevor eine die Zeilen ihrer zweiten liest. Gilt auch fuer die
+   * Aufnahme per Erwaehnung ({@code CommentService#createComment}). Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der gerade verarbeiteten Person
+   */
+  protected void onAfterParticipantAddForTest(final Long taskId, final UUID ref) {
     // No-Op im Produktivbetrieb.
   }
 
