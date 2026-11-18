@@ -9,6 +9,7 @@ import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.AssigneeService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
+import de.brasi.nova.taskmanagement.participant.MarkerService;
 import de.brasi.nova.taskmanagement.participant.UserStateService;
 import de.brasi.nova.taskmanagement.participant.model.AssigneeUpdateInput;
 import de.brasi.nova.taskmanagement.push.InboxSignalPort;
@@ -19,8 +20,10 @@ import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskHandoverTargetRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskNotificationRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskCommentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskHandoverQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskInboxGenerationQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.repository.dictionary.NotificationSeverityRepository;
@@ -45,6 +48,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfiguration;
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -113,6 +117,11 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *       mit zurueckgerollt wird; {@link
  *       #createComment_mit_aufnahme_vs_updateAssignees_kein_deadlock} laesst Kommentar mit Aufnahme
  *       und updateAssignees parallel laufen (kein Deadlock, alles oder nichts).
+ *   <li><b>Gesehen-Marker (Review #150):</b> {@link
+ *       #createComment_vs_markSeen_kommentar_nach_seen_ist_neu} laesst {@code markSeen} am Seam vor
+ *       dem TASK-save vollstaendig committen; der Kommentar entsteht danach und ist fuer den
+ *       Gesehen-Markierenden neu. Vor dem Fix war der Kommentar an dieser Stelle schon gestempelt
+ *       (aelter als {@code SEEN_AT}) und wurde nach dem Commit faelschlich als gesehen geliefert.
  * </ul>
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
@@ -191,6 +200,11 @@ class CommentConcurrencyIT {
   private static final UUID TASK_ORDER_UUID =
       UUID.fromString("00000059-0000-0059-aaaa-000000595105");
 
+  // Gesehen-Marker-Aufgabe (mit Seam, Review #150).
+  private static final long TASK_SEEN_ID = 595106L;
+  private static final UUID TASK_SEEN_UUID =
+      UUID.fromString("00000059-0000-0059-aaaa-000000595106");
+
   private static final long WINNER_JOIN_TIMEOUT_MS = 60_000L;
 
   private static HikariDataSource master;
@@ -198,6 +212,8 @@ class CommentConcurrencyIT {
 
   @Autowired private TestCommentService commentService;
   @Autowired private TestAssigneeService assigneeService;
+  @Autowired private MarkerService markerService;
+  @Autowired private CommentQueryService commentQueryService;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private RecordingInboxSignalPort inboxSignalPort;
   @Autowired private RecordingNotificationPushPort notificationPushPort;
@@ -273,6 +289,11 @@ class CommentConcurrencyIT {
     insertExitedAssignee(jt, 595212L, TASK_ORDER_ID, EX_HIGH);
     insertExitedUserState(jt, 595401L, TASK_ORDER_ID, EX_LOW);
     insertExitedUserState(jt, 595402L, TASK_ORDER_ID, EX_HIGH);
+
+    // Gesehen-Marker (Review #150): ACTOR kommentiert, ASSIGNEE markiert als gesehen.
+    insertTask(jt, TASK_SEEN_ID, TASK_SEEN_UUID, "IT-Concurrency-Gesehen");
+    insertActiveAssignee(jt, 595213L, TASK_SEEN_ID, ACTOR_REF, true);
+    insertActiveAssignee(jt, 595214L, TASK_SEEN_ID, ASSIGNEE_REF, false);
   }
 
   @BeforeEach
@@ -663,6 +684,73 @@ class CommentConcurrencyIT {
     assertThat(commentRowCount(TASK_ORDER_ID, ACTOR_REF))
         .as("Kommentar nur, wenn er gewann (sonst voller Rollback)")
         .isEqualTo(commentWon ? 1 : 0);
+  }
+
+  // ---- Review #150: Gesehen-Marker gegen laufenden Kommentar ------------------------------------
+
+  @Test
+  @DisplayName(
+      "createComment_vs_markSeen_kommentar_nach_seen_ist_neu (Review #150): markSeen committet,"
+          + " waehrend der Kommentar am Seam vor dem TASK-save offen ist; der Kommentar wird erst"
+          + " danach gestempelt und ist fuer den Gesehen-Markierenden neu (isNew=true)")
+  void createComment_vs_markSeen_kommentar_nach_seen_ist_neu() {
+    // Am Seam haelt createComment seine Transaktion offen; ASSIGNEE markiert auf eigenem Thread als
+    // gesehen und committet, bevor der Kommentar fortsetzt.
+    commentService.armTaskSaveInjector(
+        () ->
+            runWinnerOnSeparateThread(
+                () -> {
+                  ACTOR_PER_THREAD.set(ASSIGNEE_REF);
+                  markerService.markSeen(TASK_SEEN_UUID);
+                }));
+
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+    ACTOR_PER_THREAD.set(ACTOR_REF);
+    final UUID commentId;
+    try {
+      commentId =
+          commentService
+              .createComment(
+                  TASK_SEEN_UUID,
+                  new CommentCreateInput(
+                      "Entsteht waehrend des Gesehen-Markierens.", null, List.of()))
+              .id();
+    } finally {
+      ACTOR_PER_THREAD.remove();
+      TenantContextHolder.clear();
+    }
+
+    assertThat(winnerTimedOut.get()).as("markSeen beendete rechtzeitig (kein Warten)").isFalse();
+    assertThat(winnerError.get()).as("markSeen committet fehlerfrei").isNull();
+
+    final LocalDateTime seenAt =
+        jdbcTemplate.queryForObject(
+            "SELECT SEEN_AT FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID=? AND USER_REF=?",
+            LocalDateTime.class,
+            TASK_SEEN_ID,
+            ASSIGNEE_REF);
+    final LocalDateTime createdAt =
+        jdbcTemplate.queryForObject(
+            "SELECT ANGELEGT_AM FROM [dbo].[TASK_COMMENT] WHERE EXTERNALID=?",
+            LocalDateTime.class,
+            commentId);
+    assertThat(seenAt).as("SEEN_AT gesetzt").isNotNull();
+    assertThat(createdAt).as("Kommentar nach SEEN_AT gestempelt").isAfter(seenAt);
+
+    // Sicht des Gesehen-Markierenden ueber den echten Lesepfad.
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
+    ACTOR_PER_THREAD.set(ASSIGNEE_REF);
+    try {
+      assertThat(commentQueryService.getComments(TASK_SEEN_UUID))
+          .filteredOn(c -> c.id().equals(commentId))
+          .singleElement()
+          .as("der nach SEEN_AT committete Kommentar ist fuer ASSIGNEE neu")
+          .extracting(c -> c.isNew())
+          .isEqualTo(true);
+    } finally {
+      ACTOR_PER_THREAD.remove();
+      TenantContextHolder.clear();
+    }
   }
 
   /**
@@ -1203,6 +1291,42 @@ class CommentConcurrencyIT {
           taskHistoryService,
           membershipGuard,
           permissionEvaluator);
+    }
+
+    @Bean
+    MarkerService markerService(
+        final TaskKeysetQueryRepository taskRepository,
+        final TaskUserStateQueryRepository userStateQueryRepository,
+        final UserStateService userStateService,
+        final InboxSignalService inboxSignalService,
+        final InboxGenerationService inboxGenerationService,
+        final UserAccessor userAccessor,
+        final TaskMembershipGuard membershipGuard) {
+      return new MarkerService(
+          taskRepository,
+          userStateQueryRepository,
+          userStateService,
+          inboxSignalService,
+          inboxGenerationService,
+          userAccessor,
+          membershipGuard);
+    }
+
+    @Bean
+    CommentQueryService commentQueryService(
+        final BaseTaskRepository taskRepository,
+        final TaskCommentQueryRepository commentQueryRepository,
+        final UserAccessor userAccessor,
+        final AuditTimeConverter auditTimeConverter,
+        final TaskMembershipGuard membershipGuard,
+        final TaskUserStateQueryRepository userStateQueryRepository) {
+      return new CommentQueryService(
+          taskRepository,
+          commentQueryRepository,
+          userAccessor,
+          auditTimeConverter,
+          membershipGuard,
+          userStateQueryRepository);
     }
 
     @Bean

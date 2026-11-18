@@ -43,6 +43,35 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
       @Param("taskId") Long taskId, @Param("userRef") UUID userRef);
 
   /**
+   * Wie {@link #findByTaskIdAndUserRef}, sperrt die Zeile aber bis zum Ende der umgebenden
+   * Transaktion (Intake #150). Auf MSSQL nimmt {@code UPDLOCK, ROWLOCK} eine Update-Sperre:
+   * konkurrierende Schreiber derselben Zeile warten bis zum Commit, reine Leser nicht. Dient dazu,
+   * die eigene State-Zeile VOR der Aufgabenzeile zu sperren (Sperrfolge State vor Aufgabe, Karte
+   * participants-actions), wenn sie erst nach der Aufgabensperre geschrieben wird.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers
+   * @return Liste mit 0 oder 1 Eintraegen
+   */
+  @NovaQuery(
+      value =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM TASK_USER_STATE "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND USER_REF = :userRef "
+              + "AND ENTITY_STATUS = 'ACTIVE'",
+      mssql =
+          "/* NOVA:DICTIONARY_VISIBILITY */ "
+              + "SELECT * FROM [dbo].[TASK_USER_STATE] WITH (UPDLOCK, ROWLOCK) "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND USER_REF = :userRef "
+              + "AND ENTITY_STATUS = 'ACTIVE'")
+  List<TaskUserState> lockByTaskIdAndUserRef(
+      @Param("taskId") Long taskId, @Param("userRef") UUID userRef);
+
+  /**
    * Sucht alle {@link TaskUserState}-Eintraege fuer eine Aufgabe.
    *
    * @param taskId interne Aufgaben-ID

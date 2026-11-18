@@ -1118,6 +1118,28 @@ class CommentServiceTest {
 
   @Test
   @DisplayName(
+      "#150 lock_order_kommentar_nach_task_save: der Kommentar (ANGELEGT_AM) entsteht erst nach"
+          + " dem TASK-save, also unter der Schreibsperre der Aufgabenzeile (Serialisierung mit"
+          + " markSeen)")
+  void lock_order_kommentar_nach_task_save() {
+    final Long taskId = 158L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid, 0);
+
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    stubSave();
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+
+    service.createComment(taskUuid, new CommentCreateInput("Nach dem TASK-save.", null, List.of()));
+
+    final org.mockito.InOrder inOrder =
+        org.mockito.Mockito.inOrder(taskRepository, commentRepository);
+    inOrder.verify(taskRepository).save(any(Task.class));
+    inOrder.verify(commentRepository).save(any(TaskComment.class));
+  }
+
+  @Test
+  @DisplayName(
       "lock_order_reply_mit_mention: alle Reads (REPLY-isWriteMember + MENTION-isWriteMember)"
           + " laufen VOR taskRepository.save (Deadlock-Vermeidung, Reply-Pfad)")
   void lock_order_reply_mit_mention() {

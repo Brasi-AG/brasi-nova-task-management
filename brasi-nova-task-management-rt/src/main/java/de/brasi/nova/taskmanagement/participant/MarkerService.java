@@ -3,7 +3,7 @@ package de.brasi.nova.taskmanagement.participant;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
-import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
@@ -35,7 +35,7 @@ public class MarkerService {
 
   private static final Logger log = LoggerFactory.getLogger(MarkerService.class);
 
-  private final BaseTaskRepository taskRepository;
+  private final TaskKeysetQueryRepository taskRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
   private final UserStateService userStateService;
   private final InboxSignalService inboxSignalService;
@@ -45,7 +45,7 @@ public class MarkerService {
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public MarkerService(
-      final BaseTaskRepository taskRepository,
+      final TaskKeysetQueryRepository taskRepository,
       final TaskUserStateQueryRepository userStateQueryRepository,
       final UserStateService userStateService,
       final InboxSignalService inboxSignalService,
@@ -108,8 +108,8 @@ public class MarkerService {
 
   /**
    * Markiert die Aufgabe fuer den aktuellen Benutzer als gesehen (Intake #150): setzt {@code
-   * TASK_USER_STATE.SEEN_AT} auf jetzt. Idempotent im Sinne von PUT: jeder Aufruf setzt den
-   * Zeitpunkt erneut auf jetzt, ohne weitere Wirkung.
+   * TASK_USER_STATE.SEEN_AT} auf jetzt. Wiederholbar: jeder Aufruf setzt den Zeitpunkt erneut auf
+   * jetzt, ohne Fehler und ohne weitere Wirkung.
    *
    * <p>Berechtigung exakt wie {@code GET /api/v1/tasks/{id}}: READ-Member ({@code
    * requireReadMember}, ausgetretene Mitglieder eingeschlossen, damit sie ihr Archiv-Detail als
@@ -127,6 +127,24 @@ public class MarkerService {
    * Cursor bleibt damit gueltig (Karte inbox-snapshot: reine Zustandsaenderung, kein Bump). Nur
    * wenn {@code ensure} den State erstmals anlegt, wird wie bei pin/flag/mute gebumpt und
    * invalidiert, weil eine neue State-Zeile Inbox-Sichtbarkeit herstellen kann.
+   *
+   * <p>Serialisierung mit {@code CommentService#createComment} (Review #150): {@code isNew}
+   * vergleicht {@code ANGELEGT_AM} des Kommentars mit {@code SEEN_AT}. Ohne Sperre koennte ein
+   * Kommentar mit frueherem Zeitstempel erst nach diesem Commit sichtbar werden und faelschlich als
+   * gesehen gelten. Deshalb stempelt markSeen {@code SEEN_AT} erst unter einer Update-Sperre auf
+   * der Aufgabenzeile ({@code TaskKeysetQueryRepository#lockById}); createComment stempelt seinen
+   * Kommentar erst nach seinem {@code TASK}-save, also unter der Schreibsperre derselben Zeile.
+   * Beide Abschnitte (Zeitstempel bis Commit) schliessen sich damit aus: ein laufender Kommentar
+   * wird vollstaendig abgewartet und gilt danach als gesehen, ein spaeter beginnender bekommt einen
+   * Zeitstempel nach {@code SEEN_AT} und gilt als neu.
+   *
+   * <p>Sperrfolge wie alle Schreibpfade (Karte participants-actions): erst Teilnehmer- und
+   * State-Zeilen, dann die Aufgabe, dann die Generation. Die eigene State-Zeile wird deshalb vor
+   * der Aufgabe per Update-Sperre gelesen ({@code lockByTaskIdAndUserRef}), obwohl sie erst danach
+   * geschrieben wird; sonst wartete markSeen mit gehaltener Aufgabensperre auf eine State-Zeile,
+   * die etwa {@code updateAssignees} vor seinem {@code TASK}-save haelt (Deadlock). Die
+   * Update-Sperren blockieren reine Leser nicht und wirken auch unter {@code
+   * READ_COMMITTED_SNAPSHOT}.
    *
    * <p>Zeitbasis: {@code LocalDateTime.now()} wie {@code READ_AT} und wie die KSF-Audit-Zeit {@code
    * ANGELEGT_AM} der Kommentare, mit der {@code SEEN_AT} verglichen wird (lokale Wanduhr der
@@ -149,8 +167,12 @@ public class MarkerService {
     membershipGuard.requireReadMember(taskId, userRef, tenantId);
 
     final boolean created = userStateService.ensure(taskId, userRef, tenantId);
+    // Sperrfolge State vor Aufgabe (siehe Javadoc): erst die eigene State-Zeile, dann die Aufgabe.
     final TaskUserState state =
-        userStateQueryRepository.findByTaskIdAndUserRef(taskId, userRef).get(0);
+        userStateQueryRepository.lockByTaskIdAndUserRef(taskId, userRef).get(0);
+    // Wartet einen laufenden Kommentar (TASK-save gehalten) bis zu dessen Commit ab; SEEN_AT wird
+    // erst danach gestempelt.
+    taskRepository.lockById(taskId);
     state.setSeenAt(LocalDateTime.now());
     userStateQueryRepository.save(state);
     log.debug("MarkerService.markSeen: SEEN_AT gesetzt fuer Task {}.", taskExternalId);

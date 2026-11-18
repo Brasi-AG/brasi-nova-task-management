@@ -114,8 +114,11 @@ public class CommentService {
    *   <li>Mentions aufloesen (aktive Mandanten-Nutzer); Mitglieder sind MENTION-Ziele. Nicht-
    *       Mitglieder werden als Beteiligte aufgenommen, wenn der Kommentierende das Recht von
    *       {@code POST /participants} hat (Intake #156), sonst still verworfen.
-   *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false).
-   *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT aktualisieren.
+   *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT aktualisieren (versionierter TASK-save, Schreibsperre
+   *       der Aufgabenzeile bis zum Commit).
+   *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false); erst nach
+   *       dem TASK-save, damit ANGELEGT_AM unter der Aufgabensperre entsteht und sich mit {@code
+   *       MarkerService#markSeen} serialisiert (Review #150).
    *   <li>REPLY/MENTION/COMMENT-Benachrichtigungen emittieren (Deduplizierung). Neu Aufgenommene
    *       bekommen nur die MENTION, keine PARTICIPANT-Benachrichtigung.
    *   <li>Inbox-Generation-Bump + Invalidate fuer alle aktiven Teilnehmer der Aufgabe (der
@@ -259,7 +262,31 @@ public class CommentService {
     mentionTargets.addAll(addedMentionRefs);
     readerRefs.addAll(addedMentionRefs);
 
-    // Kommentar anlegen
+    // Test-Seam: deterministische Synchronisation der Nebenlaeufigkeits-ITs GENAU NACH den
+    // Membership-/Assignee-Reads und VOR dem versionierten TASK-save - zu diesem Zeitpunkt haelt
+    // der
+    // Verlierer noch KEINE TASK-Schreibsperre (der requireTask-SELECT gab seine Shared-Locks frei),
+    // sodass ein nebenlaeufiger Gewinner (updateAssignees) blockierungsfrei committen und die
+    // TASK-VERSION bumpen kann; der Verlierer trifft dann beim versionierten save die stale VERSION
+    // -> 409 + voller Rollback. Produktiv ein No-Op.
+    onBeforeTaskSaveForTest(taskId);
+
+    // Zaehler und Aktivitaet aktualisieren. Der KSF-save prueft optimistisch die TASK-VERSION; ein
+    // nebenlaeufiger VERSION-Bump (z.B. updateAssignees) laesst den Verlierer hier mit
+    // BusinessRuleException (409) scheitern -> die GANZE createComment-Tx rollt zurueck (Aufnahme,
+    // Notifications; der Kommentar ist zu diesem Zeitpunkt noch nicht angelegt, der
+    // After-Commit-Push feuert nicht). Kein Teil-Commit.
+    task.setCommentCount(task.getCommentCount() + 1);
+    task.setLastActivityAt(LocalDateTime.now());
+    taskRepository.save(task);
+
+    // Kommentar erst NACH dem TASK-save anlegen (Review #150): KSF stempelt ANGELEGT_AM beim save,
+    // und dieser Zeitstempel muss unter der Schreibsperre der Aufgabenzeile entstehen, die bis zum
+    // Commit gehalten wird. MarkerService#markSeen stempelt SEEN_AT unter einer Update-Sperre
+    // derselben Zeile; so kann kein Kommentar mit Zeitstempel vor SEEN_AT erst nach dessen Commit
+    // sichtbar werden (isNew bliebe sonst faelschlich false). Ein Versionskonflikt am TASK-save
+    // rollt wie bisher alles zurueck; der Kommentar entsteht dann gar nicht erst. Neue Entity und
+    // save stehen beide hier, gleich ob KSF ANGELEGT_AM beim Erzeugen oder beim save setzt.
     final TaskComment comment = new TaskComment();
     comment.setTenantId(tenantId);
     comment.setTaskId(taskId);
@@ -280,24 +307,6 @@ public class CommentService {
         taskId,
         actorRef,
         tenantId);
-
-    // Test-Seam: deterministische Synchronisation der Nebenlaeufigkeits-ITs GENAU NACH den
-    // Membership-/Assignee-Reads und VOR dem versionierten TASK-save - zu diesem Zeitpunkt haelt
-    // der
-    // Verlierer noch KEINE TASK-Schreibsperre (der requireTask-SELECT gab seine Shared-Locks frei),
-    // sodass ein nebenlaeufiger Gewinner (updateAssignees) blockierungsfrei committen und die
-    // TASK-VERSION bumpen kann; der Verlierer trifft dann beim versionierten save die stale VERSION
-    // -> 409 + voller Rollback. Produktiv ein No-Op.
-    onBeforeTaskSaveForTest(taskId);
-
-    // Zaehler und Aktivitaet aktualisieren. Der KSF-save prueft optimistisch die TASK-VERSION; ein
-    // nebenlaeufiger VERSION-Bump (z.B. updateAssignees) laesst den Verlierer hier mit
-    // BusinessRuleException (409) scheitern -> die GANZE createComment-Tx rollt zurueck (Kommentar
-    // +
-    // Notifications; der After-Commit-Push feuert nicht). Kein Teil-Commit.
-    task.setCommentCount(task.getCommentCount() + 1);
-    task.setLastActivityAt(LocalDateTime.now());
-    taskRepository.save(task);
 
     // Benachrichtigungs-Fan-out (NACH dem TASK-save) aus den VOR dem save geladenen Mengen -
     // Deduplizierung + kein Selbst-Notify. Die Empfaenger-Filterung (Self-Exclusion, REPLY-Vorrang,

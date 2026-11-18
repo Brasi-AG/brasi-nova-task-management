@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
-import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import io.keel.framework.api.exception.EntityNotFoundException;
@@ -58,7 +58,7 @@ class MarkerServiceTest {
   private static final Long TASK_DB_ID = 42L;
   private static final UUID TASK_EXTERNAL_ID = UUID.randomUUID();
 
-  @Mock private BaseTaskRepository taskRepository;
+  @Mock private TaskKeysetQueryRepository taskRepository;
   @Mock private TaskUserStateQueryRepository userStateQueryRepository;
   @Mock private UserStateService userStateService;
   @Mock private InboxSignalService inboxSignalService;
@@ -393,7 +393,7 @@ class MarkerServiceTest {
     final java.time.LocalDateTime unsubscribedAt = java.time.LocalDateTime.of(2026, 1, 1, 8, 0);
     stateA.setUnsubscribedAt(unsubscribedAt);
     stateA.setPinned(true);
-    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+    when(userStateQueryRepository.lockByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
         .thenReturn(List.of(stateA));
     when(userStateService.ensure(TASK_DB_ID, USER_A_REF, TENANT_ID)).thenReturn(false);
 
@@ -401,9 +401,14 @@ class MarkerServiceTest {
     markerService.markSeen(TASK_EXTERNAL_ID);
 
     final org.mockito.InOrder order =
-        org.mockito.Mockito.inOrder(membershipGuard, userStateService, userStateQueryRepository);
+        org.mockito.Mockito.inOrder(
+            membershipGuard, userStateService, userStateQueryRepository, taskRepository);
     order.verify(membershipGuard).requireReadMember(TASK_DB_ID, USER_A_REF, TENANT_ID);
     order.verify(userStateService).ensure(eq(TASK_DB_ID), eq(USER_A_REF), eq(TENANT_ID));
+    // Sperrfolge (Review #150): eigene State-Zeile, dann Aufgabenzeile, dann erst SEEN_AT
+    // schreiben.
+    order.verify(userStateQueryRepository).lockByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF);
+    order.verify(taskRepository).lockById(TASK_DB_ID);
     order.verify(userStateQueryRepository).save(stateA);
     verify(membershipGuard, never()).requireWriteMember(any(Long.class), any(), any(Long.class));
 
@@ -421,7 +426,7 @@ class MarkerServiceTest {
     final Task task = taskWithId(TASK_DB_ID, TASK_EXTERNAL_ID);
     when(taskRepository.findByUuid(TASK_EXTERNAL_ID.toString())).thenReturn(Optional.of(task));
     final TaskUserState stateA = stateForUser(TASK_DB_ID, USER_A_REF, TENANT_ID);
-    when(userStateQueryRepository.findByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
+    when(userStateQueryRepository.lockByTaskIdAndUserRef(TASK_DB_ID, USER_A_REF))
         .thenReturn(List.of(stateA));
     when(userStateService.ensure(TASK_DB_ID, USER_A_REF, TENANT_ID)).thenReturn(true);
 
@@ -447,6 +452,7 @@ class MarkerServiceTest {
 
     verify(userStateService, never()).ensure(any(Long.class), any(), any(Long.class));
     verify(userStateQueryRepository, never()).save(any());
+    verify(taskRepository, never()).lockById(any());
     verify(inboxGenerationService, never()).bump(any(Long.class), any());
   }
 
