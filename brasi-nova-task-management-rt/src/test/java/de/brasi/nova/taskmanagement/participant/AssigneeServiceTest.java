@@ -1684,15 +1684,12 @@ class AssigneeServiceTest {
   void addAsParticipants_ausgetretener_ref() {
     final Long taskId = 211L;
     final UUID ref = UUID.randomUUID();
-    final TaskParticipant exitedAssignee = new TaskParticipant();
+    final TaskParticipant exitedAssignee = personRow(taskId, ref, EntityState.ACTIVE);
     exitedAssignee.setId(4L);
-    exitedAssignee.setTaskId(taskId);
-    exitedAssignee.setParticipantRef(ref);
     exitedAssignee.setAssigneeFlag(true);
-    exitedAssignee.setParticipantFlag(true);
     exitedAssignee.setExitKind(ExitKind.UNSUBSCRIBED);
     exitedAssignee.setExitAt(java.time.LocalDateTime.now().minusDays(1));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref))
         .thenReturn(List.of(exitedAssignee));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
@@ -1718,23 +1715,17 @@ class AssigneeServiceTest {
     final UUID raceRef = UUID.fromString("00000000-0000-0000-0000-0000000000a2");
     final UUID newRef = UUID.fromString("00000000-0000-0000-0000-0000000000a3");
 
-    final TaskParticipant active = new TaskParticipant();
+    final TaskParticipant active = personRow(taskId, activeRef, EntityState.ACTIVE);
     active.setId(5L);
-    active.setTaskId(taskId);
-    active.setParticipantRef(activeRef);
-    active.setParticipantFlag(true);
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, activeRef))
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
         .thenReturn(List.of(active));
 
-    final TaskParticipant winner = new TaskParticipant();
+    // raceRef: der Vorab-Read findet nichts (Default), der Insert scheitert am Unique-Key, der
+    // Re-Read im Konfliktzweig zeigt den aktiven Gewinner.
+    final TaskParticipant winner = personRow(taskId, raceRef, EntityState.ACTIVE);
     winner.setId(6L);
-    winner.setTaskId(taskId);
-    winner.setParticipantRef(raceRef);
-    winner.setParticipantFlag(true);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, raceRef))
-        .thenReturn(List.of(), List.of(winner));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRef))
-        .thenReturn(List.of());
+        .thenReturn(List.of(winner));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(
             inv -> {
@@ -1915,13 +1906,9 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant active = new TaskParticipant();
+    final TaskParticipant active = personRow(taskId, ref, EntityState.ACTIVE); // EXIT_KIND null
     active.setId(1L);
-    active.setTaskId(taskId);
-    active.setParticipantRef(ref);
-    active.setParticipantFlag(true); // EXIT_KIND null -> aktiv
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
-        .thenReturn(List.of(active));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref)).thenReturn(List.of(active));
 
     service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
 
@@ -1946,16 +1933,12 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant exited = new TaskParticipant();
+    final TaskParticipant exited = personRow(taskId, ref, EntityState.ACTIVE);
     exited.setId(2L);
-    exited.setTaskId(taskId);
-    exited.setParticipantRef(ref);
-    exited.setParticipantFlag(true);
     exited.setAssigneeFlag(false);
     exited.setExitKind(ExitKind.UNSUBSCRIBED);
     exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
-        .thenReturn(List.of(exited));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref)).thenReturn(List.of(exited));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -1995,14 +1978,11 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant exitedAssignee = new TaskParticipant();
+    final TaskParticipant exitedAssignee = personRow(taskId, ref, EntityState.ACTIVE);
     exitedAssignee.setId(3L);
-    exitedAssignee.setTaskId(taskId);
-    exitedAssignee.setParticipantRef(ref);
     exitedAssignee.setAssigneeFlag(true); // war Assignee
-    exitedAssignee.setParticipantFlag(true);
     exitedAssignee.setExitKind(ExitKind.UNSUBSCRIBED);
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref))
         .thenReturn(List.of(exitedAssignee));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
@@ -2067,14 +2047,12 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant winner = new TaskParticipant();
+    final TaskParticipant winner = personRow(taskId, ref, EntityState.ACTIVE); // aktiver Gewinner
     winner.setId(9L);
-    winner.setTaskId(taskId);
-    winner.setParticipantRef(ref);
-    winner.setParticipantFlag(true); // aktiver Gewinner, EXIT_KIND null
-    // Erst leer (neu-Pfad), nach Konflikt Re-Read -> Gewinner-Zeile.
+    // Vorab-Read (Unique-Key) leer (neu-Pfad, Default), nach dem Konflikt liefert der Re-Read die
+    // Gewinner-Zeile.
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
-        .thenReturn(List.of(), List.of(winner));
+        .thenReturn(List.of(winner));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenThrow(new BusinessRuleException("UNIQUE", new DuplicateKeyException("dup")));
 
@@ -2119,13 +2097,10 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant activeWinner = new TaskParticipant();
+    final TaskParticipant activeWinner = personRow(taskId, ref, EntityState.ACTIVE);
     activeWinner.setId(10L);
-    activeWinner.setTaskId(taskId);
-    activeWinner.setParticipantRef(ref);
-    activeWinner.setParticipantFlag(true);
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
-        .thenReturn(List.of(), List.of(activeWinner));
+        .thenReturn(List.of(activeWinner));
     // Unverwandte BusinessRuleException (z.B. Validator-Guard) OHNE DAO-Ursache.
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenThrow(new BusinessRuleException("unverwandter Validator-Verstoss"));
@@ -2169,6 +2144,112 @@ class AssigneeServiceTest {
             eq(ACTOR_REF));
   }
 
+  // ---- Intake #156: DEACTIVE-PERSON-Zeile wird reaktiviert statt neu eingefuegt -----------------
+
+  @Test
+  @DisplayName(
+      "addParticipants_deactive_zeile_wird_reaktiviert: vorhandene DEACTIVE-PERSON-Zeile (Unique-Key"
+          + " belegt, vom ACTIVE-Lookup nicht gesehen) -> ENTITY_STATUS wieder ACTIVE, reiner"
+          + " Teilnehmer, KEIN Insert; PARTICIPANT, Bump und Signal wie bei jeder Aufnahme")
+  void addParticipants_deactive_zeile_wird_reaktiviert() {
+    final Long taskId = 230L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID ref = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final TaskParticipant deactive = personRow(taskId, ref, EntityState.DEACTIVE);
+    deactive.setId(31L);
+    deactive.setAssigneeFlag(true); // alter Assignee-Rest
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref)).thenReturn(List.of(deactive));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+
+    final ArgumentCaptor<TaskParticipant> saves = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository).save(saves.capture());
+    assertThat(saves.getValue()).as("dieselbe Zeile, kein Insert").isSameAs(deactive);
+    assertThat(deactive.getEntityState()).isEqualTo(EntityState.ACTIVE);
+    assertThat(deactive.isAssigneeFlag()).as("nie Assignee").isFalse();
+    assertThat(deactive.isParticipantFlag()).isTrue();
+    assertThat(deactive.getExitKind()).isNull();
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(inboxGenerationService).bump(TENANT_ID, ref);
+    verify(notificationService, times(1))
+        .emit(
+            eq(ref),
+            eq(taskId),
+            eq(NotificationTypeCodes.PARTICIPANT),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_deactive_und_ausgetretene_zeile: DEACTIVE-Zeile und ausgetretene Zeile"
+          + " werden beide reaktiviert und gemeldet, eine aktive Zeile uebersprungen")
+  void addAsParticipants_deactive_und_ausgetretene_zeile() {
+    final Long taskId = 231L;
+    final UUID activeRef = UUID.fromString("00000000-0000-0000-0000-0000000000b1");
+    final UUID deactiveRef = UUID.fromString("00000000-0000-0000-0000-0000000000b2");
+    final UUID exitedRef = UUID.fromString("00000000-0000-0000-0000-0000000000b3");
+    final TaskParticipant active = personRow(taskId, activeRef, EntityState.ACTIVE);
+    final TaskParticipant deactive = personRow(taskId, deactiveRef, EntityState.DEACTIVE);
+    deactive.setExitKind(ExitKind.UNSUBSCRIBED); // inaktiv UND ausgetreten
+    final TaskParticipant exited = personRow(taskId, exitedRef, EntityState.ACTIVE);
+    exited.setExitKind(ExitKind.HANDOVER);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(active));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, deactiveRef))
+        .thenReturn(List.of(deactive));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, exitedRef))
+        .thenReturn(List.of(exited));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    final List<UUID> affected =
+        service.addAsParticipants(taskId, TENANT_ID, List.of(exitedRef, activeRef, deactiveRef));
+
+    assertThat(affected).containsExactly(deactiveRef, exitedRef);
+    assertThat(deactive.getEntityState()).isEqualTo(EntityState.ACTIVE);
+    assertThat(deactive.getExitKind()).isNull();
+    assertThat(exited.getExitKind()).isNull();
+    verify(participantQueryRepository, times(2)).save(any(TaskParticipant.class));
+    verify(userStateService).reactivate(eq(taskId), eq(deactiveRef), eq(TENANT_ID));
+    verify(userStateService).reactivate(eq(taskId), eq(exitedRef), eq(TENANT_ID));
+    verify(userStateService, never()).reactivate(eq(taskId), eq(activeRef), eq(TENANT_ID));
+  }
+
+  @Test
+  @DisplayName(
+      "addAsParticipants_team_oder_fremde_zeile_409_keine_mutation: die Unique-Key-Zeile ist eine"
+          + " TEAM-Zeile bzw. traegt ein fremdes Basis-TENANT_ID -> 409 fail-closed wie bei der"
+          + " Uebergabe, nichts wird gespeichert (ein PERSON-Insert braeche den Unique-Key)")
+  void addAsParticipants_team_oder_fremde_zeile_409_keine_mutation() {
+    final Long taskId = 232L;
+    final UUID teamRef = UUID.fromString("00000000-0000-0000-0000-0000000000c1");
+    final UUID foreignRef = UUID.fromString("00000000-0000-0000-0000-0000000000c2");
+    final TaskParticipant team = personRow(taskId, teamRef, EntityState.ACTIVE);
+    team.setParticipantKind(ParticipantKind.TEAM);
+    final TaskParticipant foreign = personRow(taskId, foreignRef, EntityState.ACTIVE);
+    foreign.setTenantId(TENANT_ID + 1);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, teamRef)).thenReturn(List.of(team));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, foreignRef))
+        .thenReturn(List.of(foreign));
+
+    assertThatThrownBy(() -> service.addAsParticipants(taskId, TENANT_ID, List.of(teamRef)))
+        .isInstanceOf(BusinessRuleException.class);
+    assertThatThrownBy(() -> service.addAsParticipants(taskId, TENANT_ID, List.of(foreignRef)))
+        .isInstanceOf(BusinessRuleException.class);
+
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(userStateService, never()).reactivate(any(), any(), any());
+  }
+
   // ---- Intake #147: PARTICIPANT-Benachrichtigung an neu hinzugefuegte Personen ----------------
 
   @Test
@@ -2185,23 +2266,15 @@ class AssigneeServiceTest {
     when(taskRepository.findByUuid(taskUuid.toString()))
         .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
 
-    final TaskParticipant active = new TaskParticipant();
+    final TaskParticipant active = personRow(taskId, activeRef, EntityState.ACTIVE);
     active.setId(11L);
-    active.setTaskId(taskId);
-    active.setParticipantRef(activeRef);
-    active.setParticipantFlag(true);
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, activeRef))
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
         .thenReturn(List.of(active));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, newRef))
-        .thenReturn(List.of());
-    final TaskParticipant exited = new TaskParticipant();
+    final TaskParticipant exited = personRow(taskId, exitedRef, EntityState.ACTIVE);
     exited.setId(12L);
-    exited.setTaskId(taskId);
-    exited.setParticipantRef(exitedRef);
-    exited.setParticipantFlag(true);
     exited.setExitKind(ExitKind.UNSUBSCRIBED);
     exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, exitedRef))
+    when(participantQueryRepository.findRowByUniqueKey(taskId, exitedRef))
         .thenReturn(List.of(exited));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
@@ -2862,16 +2935,12 @@ class AssigneeServiceTest {
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
 
-    final TaskParticipant exited = new TaskParticipant();
+    final TaskParticipant exited = personRow(taskId, ref, EntityState.ACTIVE);
     exited.setId(73L);
-    exited.setTaskId(taskId);
-    exited.setParticipantRef(ref);
-    exited.setParticipantFlag(true);
     exited.setAssigneeFlag(false);
     exited.setExitKind(ExitKind.UNSUBSCRIBED);
     exited.setExitAt(java.time.LocalDateTime.now().minusDays(1));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
-        .thenReturn(List.of(exited));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, ref)).thenReturn(List.of(exited));
     when(participantQueryRepository.save(any(TaskParticipant.class)))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -2935,6 +3004,25 @@ class AssigneeServiceTest {
     task.setLastActivityAt(java.time.LocalDateTime.now());
     task.setCommentCount(0);
     return task;
+  }
+
+  /**
+   * PERSON-Teilnehmerzeile des Task-Mandanten mit PARTICIPANT_FLAG (kein Assignee, kein Creator,
+   * nicht ausgetreten) und dem gegebenen {@code ENTITY_STATUS}: so liefert sie der Unique-Key-
+   * Lookup der Aufnahme ({@code findRowByUniqueKey}), auch als {@code DEACTIVE}-Zeile.
+   */
+  private static TaskParticipant personRow(
+      final Long taskId, final UUID ref, final EntityState entityState) {
+    final TaskParticipant p = new TaskParticipant();
+    p.setId(1L);
+    p.setTenantId(TENANT_ID);
+    p.setParticipantTenantId(TENANT_ID);
+    p.setTaskId(taskId);
+    p.setParticipantRef(ref);
+    p.setParticipantKind(ParticipantKind.PERSON);
+    p.setParticipantFlag(true);
+    p.setEntityState(entityState);
+    return p;
   }
 
   /** Aktiver (Nicht-Creator-)Assignee-Participant fuer die BE-7-Exit-Unit-Tests. */

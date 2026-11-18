@@ -141,7 +141,7 @@ public class CommentController {
               + " stummgeschalteten Assignees COMMENT; die aufrufende Person selbst wird nie"
               + " benachrichtigt. Erwaehnungen sind explizite UUIDs in mentions und werden nicht"
               + " aus dem Text gelesen. Ist eine erwaehnte Person ein aktiver Benutzer des eigenen"
-              + " Mandanten, aber noch kein aktives Mitglied der Aufgabe (auch wer ausgetreten ist),"
+              + " Mandanten, aber noch kein aktives Mitglied der Aufgabe (auch wer ausgetreten oder inaktiv ist),"
               + " wird sie als Beteiligte hinzugefuegt, sofern die aufrufende Person Beteiligte"
               + " hinzufuegen darf, also dieselbe Berechtigung TASK_WRITE hat wie bei POST"
               + " /api/v1/tasks/{id}/participants: Sie wird reiner Teilnehmer (nie Assignee; ein"
@@ -217,11 +217,16 @@ public class CommentController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Konflikt: die Aufgabe (Zaehler und Aktivitaet) oder bei der Aufnahme"
-                + " erwaehnter Personen deren Teilnehmerzeile bzw. persoenlicher Zustand wurde"
-                + " zwischenzeitlich geaendert (Versionskonflikt) oder gleichzeitig erstmals"
-                + " angelegt. Nichts wurde gespeichert; die Anfrage gegen den frischen Stand"
-                + " wiederholen.",
+            "Zwei Ursachen, in beiden Faellen wurde nichts gespeichert (weder Kommentar noch"
+                + " Aufnahme). (1) Nebenlaeufiger Konflikt: die Aufgabe (Zaehler und Aktivitaet)"
+                + " oder bei der Aufnahme einer erwaehnten Person deren Teilnehmerzeile bzw."
+                + " persoenlicher Zustand wurde zwischenzeitlich geaendert (Versionskonflikt) oder"
+                + " gleichzeitig erstmals angelegt; die Anfrage gegen den frischen Stand"
+                + " wiederholen. (2) Die vorhandene Teilnehmerzeile einer erwaehnten Person, die"
+                + " aufgenommen werden soll, ist keine PERSON-Zeile des Mandanten (TEAM-Zeile oder"
+                + " fremder Mandant, Datenfehler); sie wird nicht ueberschrieben und die Anfrage"
+                + " scheitert, bis der Datenbestand bereinigt ist. Ausgetretene oder inaktive"
+                + " erwaehnte Personen sind kein Konfliktgrund: sie werden reaktiviert.",
         content =
             @Content(
                 mediaType = "application/json",

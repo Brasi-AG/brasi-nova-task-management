@@ -392,8 +392,10 @@ public class AssigneeService {
    *   <li>All-or-Nothing: alle verbleibenden Refs muessen aktive Benutzer DES Mandanten sein
    *       ({@code findActiveByUuids}) - sonst 400 VOR jeder Mutation.
    *   <li>Je Ref ({@link #addAsParticipants}, gemeinsamer Kern mit dem Kommentar, Intake #156):
-   *       aktive Zeile -> SKIP (idempotent); ausgetretene Zeile -> als REINER Teilnehmer
-   *       reaktivieren (ASSIGNEE_FLAG=false); keine Zeile -> neu anlegen (reiner Teilnehmer).
+   *       Unique-Key-exakter Lookup (findet auch DEACTIVE-Zeilen): aktive Zeile -> SKIP
+   *       (idempotent); ausgetretene oder inaktive (DEACTIVE) PERSON-Zeile -> als REINER Teilnehmer
+   *       reaktivieren (ASSIGNEE_FLAG=false, ENTITY_STATUS=ACTIVE); TEAM-Zeile oder fremdes
+   *       Basis-TENANT_ID -> 409 ohne Mutation; keine Zeile -> neu anlegen (reiner Teilnehmer).
    *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
    *       #saveParticipantHandlingRace} idempotent aufgeloest.
    *   <li>Generation-Bump + UserState NUR fuer tatsaechlich neu angelegte/reaktivierte Refs.
@@ -556,19 +558,36 @@ public class AssigneeService {
   /**
    * Fuegt EINEN Teilnehmer-Ref hinzu bzw. reaktiviert ihn (reine Teilnehmer-Rolle).
    *
+   * <p>Der Lookup ist Unique-Key-exakt wie in {@link #ensureAssignee} ({@link
+   * TaskParticipantQueryRepository#findRowByUniqueKey}, ohne {@code ENTITY_STATUS}-/{@code
+   * EXIT_KIND}-/{@code PARTICIPANT_KIND}-Filter). Der lose Lookup {@code
+   * findByTaskIdAndParticipantRef} liest nur {@code ENTITY_STATUS='ACTIVE'}: eine vorhandene {@code
+   * DEACTIVE}-PERSON-Zeile bliebe unsichtbar, der Insert braeche den V3-Unique-Key und der ganze
+   * Aufruf (auch der Kommentar mit Erwaehnung) endete mit 409.
+   *
    * @return {@code true}, wenn tatsaechlich angelegt/reaktiviert wurde (Generation-Bump faellig);
    *     {@code false} bei idempotentem SKIP (bereits aktiv - sequentiell ODER als Race-Verlierer)
+   * @throws BusinessRuleException 409 fail-closed ohne Mutation, wenn die Unique-Key-Zeile eine
+   *     TEAM-Zeile ist oder ein fremdes Basis-{@code TENANT_ID} traegt (wie {@link
+   *     #ensureAssignee}); ein PERSON-Insert waere per Unique-Key unmoeglich
    */
   private boolean addSingleParticipant(final Long taskId, final UUID ref, final long tenantId) {
     final List<TaskParticipant> existing =
-        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref);
+        participantQueryRepository.findRowByUniqueKey(taskId, ref);
     if (!existing.isEmpty()) {
       final TaskParticipant p = existing.get(0);
-      if (p.getExitKind() == null) {
+      if (p.getParticipantKind() != ParticipantKind.PERSON
+          || !Objects.equals(tenantId, p.getTenantId())) {
+        throw new BusinessRuleException(
+            "Die Person kann nicht als Beteiligter gefuehrt werden: die vorhandene"
+                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
+      }
+      if (p.getExitKind() == null && p.getEntityState() == EntityState.ACTIVE) {
         // (a) aktive Zeile (Creator / Assignee / Teilnehmer) -> idempotenter SKIP, keine Mutation.
         return false;
       }
-      // (b) ausgetretene Zeile -> als REINEN Teilnehmer reaktivieren. ASSIGNEE_FLAG MUSS false
+      // (b) ausgetretene ODER inaktive (DEACTIVE) PERSON-Zeile -> als REINEN Teilnehmer
+      // reaktivieren (wie die Uebergabe: ENTITY_STATUS wieder ACTIVE). ASSIGNEE_FLAG MUSS false
       // werden (D4-BLOCKER: ein abgewaehlter Ex-Assignee behaelt sonst ASSIGNEE_FLAG=1 und wuerde
       // durch die Reaktivierung faelschlich wieder aktiver Assignee - findActiveAssigneesByTaskId
       // filtert ASSIGNEE_FLAG=1 AND EXIT_KIND IS NULL). Add-Participants verleiht NIE Assignee.
@@ -576,6 +595,7 @@ public class AssigneeService {
       p.setAssigneeFlag(false);
       p.setExitKind(null);
       p.setExitAt(null);
+      p.setEntityState(EntityState.ACTIVE);
       if (!saveParticipantHandlingRace(p, taskId, ref)) {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }

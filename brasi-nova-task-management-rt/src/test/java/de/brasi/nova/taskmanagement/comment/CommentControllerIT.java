@@ -1042,6 +1042,140 @@ class CommentControllerIT {
 
   @Test
   @DisplayName(
+      "i156_deactive_person_zeile_wird_per_erwaehnung_reaktiviert_nur_mention (Review 2):"
+          + " USER_D hat eine DEACTIVE-PERSON-Zeile (Unique-Key belegt, vom ACTIVE-Lookup nicht"
+          + " gesehen). Ein Kommentar mit Erwaehnung -> 201 (kein 409 durch den Unique-Key), dieselbe"
+          + " Zeile ist wieder ACTIVE und reiner Teilnehmer (altes Assignee-Flag geloescht), D hat"
+          + " genau eine MENTION und keine PARTICIPANT, die Aufgabe steht in Ds Inbox")
+  void i156_deactive_person_row_is_reactivated_by_mention_with_mention_only() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Deactive-Kommentar");
+    insertDeactiveParticipant(560801L, taskDbId(taskUuid), USER_D_REF);
+    assertThat(participantRow(taskUuid, USER_D_REF).get("ENTITY_STATUS")).isEqualTo("DEACTIVE");
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).doesNotContain(taskUuid);
+    final long generationBefore = inboxGeneration(USER_D_REF);
+
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "D, bitte wieder dabei sein.", USER_D_REF);
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF))
+        .as("dieselbe Zeile reaktiviert, kein zweiter Insert")
+        .isEqualTo(1);
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+    assertThat(row.get("EXIT_KIND")).isNull();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).as("in Ds Inbox").contains(taskUuid);
+    assertThat(inboxGeneration(USER_D_REF)).isGreaterThan(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i156_post_participants_reaktiviert_deactive_person_zeile_mit_participant (Review 2):"
+          + " POST /participants fuer USER_D mit DEACTIVE-PERSON-Zeile -> 204 (kein 409), dieselbe"
+          + " Zeile ist wieder ACTIVE und reiner Teilnehmer, D bekommt genau eine PARTICIPANT und"
+          + " keine MENTION; ein zweiter Aufruf ist ein No-Op")
+  void i156_post_participants_reactivates_deactive_person_row_with_participant() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Deactive-Participants");
+    insertDeactiveParticipant(560802L, taskDbId(taskUuid), USER_D_REF);
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_D_REF);
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).as("kein zweiter Insert").isEqualTo(1);
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+    assertThat(row.get("EXIT_KIND")).isNull();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT"))
+        .as("die reaktivierte Person wird wie jede neu Aufgenommene benachrichtigt")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).as("in Ds Inbox").contains(taskUuid);
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_D_REF);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i156_team_zeile_blockiert_aufnahme_409_ohne_mutation (Review 2): hat USER_D unter dem"
+          + " Unique-Key eine TEAM-Zeile, ist die Aufnahme nicht moeglich (ein PERSON-Insert braeche"
+          + " den Unique-Key, ueberschrieben wird nicht) -> Kommentar mit Erwaehnung und POST"
+          + " /participants liefern 409 und aendern nichts (kein Kommentar, keine Zeile, keine"
+          + " Benachrichtigung); so ist es in der 409-Beschreibung der OpenAPI dokumentiert")
+  void i156_team_row_blocks_adding_with_409_and_no_mutation() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Team-Zeile");
+    insertParticipantRow(560803L, taskDbId(taskUuid), USER_D_REF, "TEAM", "ACTIVE");
+    final Integer commentsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "text",
+                            "D steht als TEAM-Zeile da.",
+                            "mentions",
+                            List.of(USER_D_REF)))))
+        .andExpect(status().isConflict());
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("participantIds", List.of(USER_D_REF)))))
+        .andExpect(status().isConflict());
+
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .as("der Kommentar wurde zurueckgerollt")
+        .isEqualTo(commentsBefore);
+    assertThat(participantRow(taskUuid, USER_D_REF).get("PARTICIPANT_KIND"))
+        .as("die TEAM-Zeile blieb unveraendert")
+        .isEqualTo("TEAM");
+    assertThat(notificationCountOfRecipient(taskUuid, USER_D_REF)).isZero();
+    assertThat(userStateRowCount(taskUuid, USER_D_REF)).isZero();
+  }
+
+  @Test
+  @DisplayName(
       "i156_kommentar_antworten_entsprechen_den_openapi_beispielen (Intake #156): die"
           + " Live-Antworten von POST /comments (201 ohne und mit Eltern-Kommentar, 400 Eltern-"
           + " Kommentar und Text fehlt, 401, 404, 409) und GET /comments (200, 400, 401, 404) haben"
@@ -2186,8 +2320,8 @@ class CommentControllerIT {
   /** Die einzige Teilnehmerzeile einer Person an einer Aufgabe (Rollenflags und Austritt). */
   private Map<String, Object> participantRow(final UUID taskUuid, final UUID userRef) {
     return jdbcTemplate.queryForMap(
-        "SELECT p.PARTICIPANT_FLAG, p.ASSIGNEE_FLAG, p.CREATOR_FLAG, p.PARTICIPANT_KIND,"
-            + " p.EXIT_KIND, p.EXIT_AT FROM [dbo].[TASK_PARTICIPANT] p"
+        "SELECT p.ENTITY_STATUS, p.PARTICIPANT_FLAG, p.ASSIGNEE_FLAG, p.CREATOR_FLAG,"
+            + " p.PARTICIPANT_KIND, p.EXIT_KIND, p.EXIT_AT FROM [dbo].[TASK_PARTICIPANT] p"
             + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
             + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
         taskUuid,
@@ -2350,6 +2484,40 @@ class CommentControllerIT {
         TENANT_A_ID,
         taskId,
         ref,
+        TENANT_A_ID);
+  }
+
+  /**
+   * Fuegt eine inaktive PERSON-Teilnehmerzeile ({@code ENTITY_STATUS='DEACTIVE'}, ehemaliger
+   * Assignee, nicht ausgetreten) direkt per JDBC hinzu (Review 2 zu Intake #156): der ACTIVE-Lookup
+   * sieht sie nicht, der V3-Unique-Key ist aber belegt.
+   */
+  private void insertDeactiveParticipant(final long partId, final long taskId, final UUID ref) {
+    insertParticipantRow(partId, taskId, ref, "PERSON", "DEACTIVE");
+  }
+
+  /**
+   * Fuegt eine nicht ausgetretene Teilnehmerzeile mit der gegebenen Art ({@code PERSON}/{@code
+   * TEAM}) und dem gegebenen {@code ENTITY_STATUS} direkt per JDBC hinzu (ehemaliger Assignee).
+   */
+  private void insertParticipantRow(
+      final long partId,
+      final long taskId,
+      final UUID ref,
+      final String kind,
+      final String entityStatus) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, ?, 'it', GETDATE(), NEWID(), 1, ?, ?, ?, ?, ?, 0, 1, 1, NULL, NULL)",
+        partId,
+        entityStatus,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        kind,
         TENANT_A_ID);
   }
 
