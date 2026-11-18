@@ -2,191 +2,3116 @@
   {
     "operation": "activeTasks",
     "rule": "property-description",
-    "fingerprint": "645b55c3e65dab5b"
+    "where": "Antwort 200 application/json, Feld _embedded"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld asOf"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld hasMore"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld asOf"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld hasMore"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld asOf"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld hasMore"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld asOf"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld hasMore"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld nextCursor"
   },
   {
     "operation": "activeTasks",
     "rule": "response-example",
-    "fingerprint": "645b55c3e65dab5b"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "where": "Antwort 400 application/json"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "activeTasks",
+    "rule": "response-example",
+    "where": "Antwort 410 application/json"
   },
   {
     "operation": "archiveTasks",
     "rule": "property-description",
-    "fingerprint": "e79f312d02a4686c"
+    "where": "Antwort 200 application/json, Feld _embedded"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld asOf"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld hasMore"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld asOf"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld hasMore"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld asOf"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld hasMore"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[]._links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[].id"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _embedded.tasks[].modelState"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld asOf"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld hasMore"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld nextCursor"
   },
   {
     "operation": "archiveTasks",
     "rule": "response-example",
-    "fingerprint": "e79f312d02a4686c"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "where": "Antwort 400 application/json"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "archiveTasks",
+    "rule": "response-example",
+    "where": "Antwort 410 application/json"
   },
   {
     "operation": "create",
     "rule": "property-description",
-    "fingerprint": "fbdd0370f8a14b3c"
+    "where": "Anfrage application/json, Feld source.entityRef"
+  },
+  {
+    "operation": "create",
+    "rule": "property-description",
+    "where": "Anfrage application/json, Feld source.entityType"
+  },
+  {
+    "operation": "create",
+    "rule": "property-description",
+    "where": "Anfrage application/json, Feld source.module"
   },
   {
     "operation": "create",
     "rule": "request-example",
-    "fingerprint": "fbdd0370f8a14b3c"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "create",
     "rule": "response-example",
-    "fingerprint": "fbdd0370f8a14b3c"
+    "where": "Antwort 400 application/json"
+  },
+  {
+    "operation": "create",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "create",
+    "rule": "response-example",
+    "where": "Antwort 403 application/json"
   },
   {
     "operation": "createFromSource",
     "rule": "property-description",
-    "fingerprint": "b6b4b33d8f067e6a"
+    "where": "Anfrage application/json, Feld source.entityRef"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "property-description",
+    "where": "Anfrage application/json, Feld source.entityType"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "property-description",
+    "where": "Anfrage application/json, Feld source.module"
   },
   {
     "operation": "createFromSource",
     "rule": "request-example",
-    "fingerprint": "b6b4b33d8f067e6a"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "createFromSource",
     "rule": "response-example",
-    "fingerprint": "b6b4b33d8f067e6a"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 201 application/json"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 400: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "createFromSource",
+    "rule": "response-example",
+    "where": "Antwort 409: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "createTag",
     "rule": "op-summary-de",
-    "fingerprint": "870d9123827ae372"
+    "where": "description"
   },
   {
     "operation": "createTag",
     "rule": "request-example",
-    "fingerprint": "870d9123827ae372"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "createTag",
     "rule": "response-example",
-    "fingerprint": "870d9123827ae372"
+    "where": "Antwort 400 application/json"
+  },
+  {
+    "operation": "createTag",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "createTag",
+    "rule": "response-example",
+    "where": "Antwort 403 application/json"
   },
   {
     "operation": "deactivateTag",
     "rule": "response-example",
-    "fingerprint": "ee979fb6a2765a06"
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "deactivateTag",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "deactivateTag",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "deleteTag",
     "rule": "response-example",
-    "fingerprint": "21b72b16d65eaef0"
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "deleteTag",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "deleteTag",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "deleteTag",
+    "rule": "response-example",
+    "where": "Antwort 409 application/json"
   },
   {
     "operation": "detail",
     "rule": "property-description",
-    "fingerprint": "551c74d9fbf95888"
+    "where": "Antwort 200 application/hal+json, Feld _links"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.href"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.name"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.profile"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.templated"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.title"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.type"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld createdAt"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld id"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld modelState"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld source.entityRef"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld source.entityType"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld source.module"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld createdAt"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld id"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld modelState"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld source.entityRef"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld source.entityType"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld source.module"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld createdAt"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld id"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld modelState"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld source.entityRef"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld source.entityType"
+  },
+  {
+    "operation": "detail",
+    "rule": "property-description",
+    "where": "Antwort 404 application/json, Feld source.module"
   },
   {
     "operation": "detail",
     "rule": "response-example",
-    "fingerprint": "551c74d9fbf95888"
+    "where": "Antwort 200 application/hal+json"
+  },
+  {
+    "operation": "detail",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "detail",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "detail",
+    "rule": "response-example",
+    "where": "Antwort 404 application/json"
   },
   {
     "operation": "flag",
     "rule": "request-example",
-    "fingerprint": "5a2932e3fbda3101"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "flag",
     "rule": "response-example",
-    "fingerprint": "5a2932e3fbda3101"
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "flag",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "issueTicket",
     "rule": "response-example",
-    "fingerprint": "9de121526164b7a1"
+    "where": "Antwort 401 application/json"
   },
   {
     "operation": "listDictionaries",
     "rule": "response-example",
-    "fingerprint": "b659d608a143a53c"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "listDictionaries",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
   },
   {
     "operation": "listNotifications",
     "rule": "property-description",
-    "fingerprint": "34449950d5a673e6"
+    "where": "Antwort 200 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[]._links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[].id"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.notifications[].modelState"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld asOf"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld hasMore"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[]._links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[].id"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _embedded.notifications[].modelState"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld asOf"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld hasMore"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 400 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[]._links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[].id"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.notifications[].modelState"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld asOf"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld hasMore"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld nextCursor"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[]._links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[].id"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _embedded.notifications[].modelState"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld asOf"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld hasMore"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "property-description",
+    "where": "Antwort 403 application/json, Feld nextCursor"
   },
   {
     "operation": "listNotifications",
     "rule": "response-example",
-    "fingerprint": "34449950d5a673e6"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "response-example",
+    "where": "Antwort 400 application/json"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "response-example",
+    "where": "Antwort 403 application/json"
+  },
+  {
+    "operation": "listNotifications",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "listTags",
     "rule": "property-description",
-    "fingerprint": "7af5acdde974ddb3"
+    "where": "Antwort 200 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.deprecation"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.href"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.hreflang"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.name"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.profile"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.templated"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.title"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[]._links{}.type"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[].createdAt"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[].id"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _embedded.tags[].modelState"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 200 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.deprecation"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.href"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.hreflang"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.name"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.profile"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.templated"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.title"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[]._links{}.type"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[].createdAt"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[].id"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _embedded.tags[].modelState"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "listTags",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
   },
   {
     "operation": "listTags",
     "rule": "response-example",
-    "fingerprint": "7af5acdde974ddb3"
+    "where": "Antwort 200 application/json"
+  },
+  {
+    "operation": "listTags",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "listTags",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "listTags",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "markAllRead",
     "rule": "response-example",
-    "fingerprint": "b3578b4488c8ca71"
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "markAllRead",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "markRead",
     "rule": "request-example",
-    "fingerprint": "5397f606f0398bd3"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "markRead",
     "rule": "response-example",
-    "fingerprint": "5397f606f0398bd3"
+    "where": "Antwort 400: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "markRead",
+    "rule": "response-example",
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "markRead",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "markRead",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "patch",
     "rule": "request-example",
-    "fingerprint": "8f16f1cf22f2244d"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "patch",
     "rule": "response-example",
-    "fingerprint": "8f16f1cf22f2244d"
+    "where": "Antwort 400: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "patch",
+    "rule": "response-example",
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "patch",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "pin",
     "rule": "request-example",
-    "fingerprint": "732179871f079cc2"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "pin",
     "rule": "response-example",
-    "fingerprint": "732179871f079cc2"
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "pin",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "searchParticipants",
     "rule": "example-valid",
-    "fingerprint": "68ebe29deb98f750"
+    "where": "Antwort 200 application/json, Example alle-kandidaten: falscher Typ bei nextCursor (erwartet string)"
+  },
+  {
+    "operation": "searchParticipants",
+    "rule": "example-valid",
+    "where": "Antwort 200 application/json, Example suche: falscher Typ bei nextCursor (erwartet string)"
   },
   {
     "operation": "searchParticipants",
     "rule": "response-example",
-    "fingerprint": "68ebe29deb98f750"
+    "where": "Antwort 401 application/json"
   },
   {
     "operation": "snapshot",
     "rule": "property-description",
-    "fingerprint": "55db486ec79317ce"
+    "where": "Antwort 200 application/hal+json, Feld _links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld _links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld notifications.items[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[].createdAt"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tags[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].done"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].flagged"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].muted"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 200 application/hal+json, Feld tasks.items[].pinned"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld notifications.items[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[].createdAt"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tags[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].done"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].flagged"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].muted"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 401 application/json, Feld tasks.items[].pinned"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld _links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld notifications.items[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[].createdAt"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tags[].modelState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.deprecation"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.href"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.hreflang"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.name"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.profile"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.templated"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.title"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[]._links{}.type"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].done"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].entityState"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].flagged"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].id"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].muted"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "property-description",
+    "where": "Antwort 410 application/json, Feld tasks.items[].pinned"
   },
   {
     "operation": "snapshot",
     "rule": "response-example",
-    "fingerprint": "55db486ec79317ce"
+    "where": "Antwort 200 application/hal+json"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "response-example",
+    "where": "Antwort 401 application/json"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "snapshot",
+    "rule": "response-example",
+    "where": "Antwort 410 application/json"
   },
   {
     "operation": "updateTag",
     "rule": "request-example",
-    "fingerprint": "b614a5b7d24f75e7"
+    "where": "Anfrage application/json"
   },
   {
     "operation": "updateTag",
     "rule": "response-example",
-    "fingerprint": "b614a5b7d24f75e7"
+    "where": "Antwort 400: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "updateTag",
+    "rule": "response-example",
+    "where": "Antwort 401: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "updateTag",
+    "rule": "response-example",
+    "where": "Antwort 403: ohne Inhalt, daher ohne Example"
+  },
+  {
+    "operation": "updateTag",
+    "rule": "response-example",
+    "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   }
 ]
