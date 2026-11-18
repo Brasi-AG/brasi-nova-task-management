@@ -119,14 +119,66 @@ public class UserStateService {
   }
 
   /**
-   * Gemeinsame Umsetzung von {@link #reactivate} und {@link #reactivateAsAssignee}.
+   * Wie {@link #reactivate(Long, UUID, Long)}, aber mit dem vom Aufrufer VORAB gelesenen State
+   * (Intake #167): liest selbst nichts. Fuer Pfade, die alle Reads vor der ersten Schreibung
+   * erledigen muessen (Lock-Reihenfolge der Karte {@code participants-actions}); eine Lesung nach
+   * eigenen Schreibungen kann bei parallelen Aufrufen fuer andere Personen derselben Aufgabe
+   * verklemmen.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interner Mandanten-Schluessel
+   * @param existing Ergebnis von {@link TaskUserStateQueryRepository#findByTaskIdAndUserRef} fuer
+   *     diese Person (leer, wenn sie keinen State hat)
+   */
+  public void reactivate(
+      final Long taskId,
+      final UUID userRef,
+      final Long tenantId,
+      final List<TaskUserState> existing) {
+    apply(taskId, userRef, tenantId, false, existing);
+  }
+
+  /**
+   * Wie {@link #reactivateAsAssignee(Long, UUID, Long)}, aber mit dem vom Aufrufer VORAB gelesenen
+   * State (Intake #167, siehe {@link #reactivate(Long, UUID, Long, List)}).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interner Mandanten-Schluessel
+   * @param existing Ergebnis von {@link TaskUserStateQueryRepository#findByTaskIdAndUserRef} fuer
+   *     diese Person (leer, wenn sie keinen State hat)
+   */
+  public void reactivateAsAssignee(
+      final Long taskId,
+      final UUID userRef,
+      final Long tenantId,
+      final List<TaskUserState> existing) {
+    apply(taskId, userRef, tenantId, true, existing);
+  }
+
+  /**
+   * Gemeinsame Umsetzung von {@link #reactivate} und {@link #reactivateAsAssignee} mit eigener
+   * Lesung des States.
    *
    * @param clearMute {@code true}: {@code IS_MUTED} eines vorhandenen States zuruecksetzen (neue
    *     Zuweisung); {@code false}: Mute unveraendert lassen
    */
   private void reactivate(
       final Long taskId, final UUID userRef, final Long tenantId, final boolean clearMute) {
-    final List<TaskUserState> existing = repository.findByTaskIdAndUserRef(taskId, userRef);
+    apply(taskId, userRef, tenantId, clearMute, repository.findByTaskIdAndUserRef(taskId, userRef));
+  }
+
+  /**
+   * Schreibt die Reaktivierung auf Basis eines gelesenen States: fehlt er, wird er neu angelegt,
+   * sonst {@code UNSUBSCRIBED_AT} (und bei {@code clearMute} der Mute) zurueckgesetzt.
+   */
+  private void apply(
+      final Long taskId,
+      final UUID userRef,
+      final Long tenantId,
+      final boolean clearMute,
+      final List<TaskUserState> existing) {
     if (existing.isEmpty()) {
       // Kein Eintrag vorhanden -> neu anlegen (wie ensure)
       final TaskUserState state = new TaskUserState();

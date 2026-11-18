@@ -64,9 +64,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
@@ -89,15 +94,16 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * Real-MSSQL-Nebenlaeufigkeits-IT fuer parallele Mitgliedschaftsaenderungen VERSCHIEDENER Personen
  * derselben Aufgabe (Intake #167, zusammen mit #166): {@code AssigneeService#updateAssignees} (PUT
  * /assignees), {@code #addParticipants} (POST /participants) und {@code #exit} (POST /exit,
- * UNSUBSCRIBED).
+ * UNSUBSCRIBED), dazu das gleichzeitige Hinzufuegen DERSELBEN Person.
  *
- * <p><b>Befund:</b> die drei Pfade lesen die States anderer Personen ({@code
- * TaskUserStateQueryRepository#findActiveUserRefsByTaskId}, beim Austritt auch {@code
- * TaskParticipantQueryRepository#findArchiveReadersByTaskId}) erst NACH ihren eigenen Teilnehmer-
- * und State-Schreibungen. Unter sperrendem READ COMMITTED wartet diese Lesung auf die X-gesperrte
- * State-Zeile der anderen Transaktion und umgekehrt: Deadlock 1205 (HTTP 500), bevor der
- * TASK-Versionskonflikt (409) greift. Vorbild der Korrektur ist {@code #removeParticipant} (Intake
- * #145, {@link ParticipantRemoveConcurrencyIT}): alle Reads vor der ersten Schreibung.
+ * <p><b>Befund (Rot-Nachweis, CI-Lauf 44389850011):</b> die drei Pfade lasen die States anderer
+ * Personen ({@code TaskUserStateQueryRepository#findActiveUserRefsByTaskId}, beim Austritt auch
+ * {@code TaskParticipantQueryRepository#findArchiveReadersByTaskId}) erst NACH ihren eigenen
+ * Teilnehmer- und State-Schreibungen. Unter sperrendem READ COMMITTED wartete diese Lesung auf die
+ * X-gesperrte State-Zeile der anderen Transaktion und umgekehrt: Deadlock 1205 (HTTP 500), bevor
+ * der TASK-Versionskonflikt (409) griff. Seit der Korrektur stehen alle Reads vor der ersten
+ * Schreibung (Vorbild {@code #removeParticipant}, {@link ParticipantRemoveConcurrencyIT}), und das
+ * Hinzufuegen speichert die Aufgabe versioniert.
  *
  * <p><b>Erzwungener Ablauf</b> je Szenario (zwei Transaktionen, Rollen Gewinnerin und Verliererin;
  * Sync-Punkte an den Produktiv-Seams, kein Zeitablauf):
@@ -113,34 +119,33 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *   <li>An Sync 2 halten beide ihre X-Sperren. Die Gewinnerin laeuft weiter (Historie,
  *       Benachrichtigung, TASK-save, Bump, Commit); die Verliererin wartet, bis die Gewinnerin
  *       fertig ist.
- *   <li>Die Verliererin laeuft weiter: PUT und Austritt treffen beim versionierten TASK-save die
- *       veraltete VERSION ({@link BusinessRuleException} mit {@link
- *       OptimisticLockingFailureException}, 409, voller Rollback). Das Hinzufuegen speichert die
- *       Aufgabe heute nicht; dort sind beide Ausgaenge zulaessig (beide erfolgreich oder genau eine
- *       409 mit vollem Rollback; die fachliche Entscheidung steht aus).
+ *   <li>Die Verliererin laeuft weiter und trifft beim versionierten TASK-save die veraltete VERSION
+ *       ({@link BusinessRuleException} mit {@link OptimisticLockingFailureException}, 409, voller
+ *       Rollback). Beim Hinzufuegen derselben Person aendert die Verliererin nichts und bleibt 204.
  * </ol>
  *
  * <p><b>Warten wird beobachtet, nicht abgewartet:</b> wer an einem Sync-Punkt auf die andere
  * wartet, fragt ueber eine unabhaengige master-Verbindung {@code sys.dm_exec_requests} ab, ob die
  * andere Sitzung auf eine Sperre der eigenen wartet ({@code blocking_session_id}). Dann ist der
  * Ablauf entschieden: der Wartegrund (Art, Ressource, Anfang der SQL-Anweisung) wird vermerkt und
- * der Sync-Punkt sofort verlassen. Mit dem heutigen Code wartet die Gewinnerin nach Sync 2 in der
- * spaeten Leser-Lesung auf die State-Zeile der Verliererin; die Verliererin laeuft dann in dieselbe
- * Lesung, SQL Server erkennt den Zyklus und bricht eine als Deadlock-Opfer ab (1205). Der Test wird
- * dadurch rot mit 1205 im Fehlerbild, nicht an einem Zeitablauf. Ohne VIEW SERVER STATE sieht die
- * Sonde fremde Sitzungen nicht; dann laeuft der Sync-Punkt nach {@link #GATE_TIMEOUT_MS} ab, der
- * Deadlock folgt genauso.
+ * der Sync-Punkt sofort verlassen. Wartet die Gewinnerin nach Sync 2 auf die Verliererin, laeuft
+ * diese in dieselbe Lage, und SQL Server bricht eine als Deadlock-Opfer ab (1205); genau das war
+ * der Rot-Nachweis. Ohne VIEW SERVER STATE sieht die Sonde fremde Sitzungen nicht; dann laeuft der
+ * Sync-Punkt nach {@link #GATE_TIMEOUT_MS} ab.
  *
- * <p><b>Ausfuehrungsplaene wie im Betrieb:</b> die Teilnehmer- und State-Tabellen werden mit
- * Fremdzeilen anderer Aufgaben aufgefuellt und die Statistiken aktualisiert. In einer Tabelle mit
- * einer Handvoll Zeilen waehlt SQL Server sonst Scans, und schon die Einzel-Lookups je Person
- * stiessen auf die X-Sperren der anderen Transaktion (Nebenpunkt in #167, nur bei Scan-Plaenen
- * riskant). Wartet trotzdem eine Lesung der Verliererin vor Sync 2 auf die Gewinnerin, ist auch das
- * rot und im Fehlerbild benannt.
+ * <p><b>Zwei Phasen, Plan-Unabhaengigkeit (Prueffrage des Controllers):</b> jedes Szenario laeuft
+ * zweimal auf eigener Aufgabe. Zuerst ohne Fremdzeilen: in Tabellen mit einer Handvoll Zeilen
+ * waehlt SQL Server Scans, Einzel-Lookups lesen dann auch fremde Zeilen. Danach mit je 2000
+ * Fremdzeilen in Teilnehmer- und State-Tabelle und frischen Statistiken (Index-Seeks wie im
+ * Betrieb). Der Kern der Aussage gilt in beiden Phasen: kein Deadlock-Opfer, die Gewinnerin wartet
+ * nach Sync 2 nie auf die Verliererin, eine 409 nur aus dem Versionskonflikt. Mit Fremdzeilen gilt
+ * zusaetzlich, dass auch die Verliererin vor Sync 2 nicht auf die Gewinnerin wartet. Ohne
+ * Fremdzeilen ist dieses Warten zulaessig und wird nur protokolliert: es ist ein Serialisieren (die
+ * Gewinnerin haelt nichts, worauf sie selbst wartet), kein Zyklus; der gemeinsame Aufnahme-Kern
+ * {@code addAsParticipants} liest seine Zeilen bewusst erst nach Sync 1.
  *
  * <p>Voraussetzung: die Wegwerf-DB laeuft mit sperrendem READ COMMITTED (kein RCSI), sonst warten
  * Lesungen nicht auf Schreibsperren und der Test bewiese nichts; das prueft jedes Szenario zuerst.
- * Jedes Szenario hat eine eigene Aufgabe.
  *
  * <p>Uebersprungen ohne MSSQL-Zugang ({@link RefSchemaItEnabled}).
  */
@@ -164,7 +169,10 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
     })
 @RefSchemaItEnabled
 @Execution(ExecutionMode.SAME_THREAD)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class MembershipConcurrencyIT {
+
+  private static final Logger log = LoggerFactory.getLogger(MembershipConcurrencyIT.class);
 
   private static final long TENANT_ID = 597L;
   private static final UUID TENANT_UUID = UUID.fromString("00000059-0000-0059-0000-000000000597");
@@ -187,25 +195,22 @@ class MembershipConcurrencyIT {
   /** Aufzunehmende Person der Verlierer-Transaktion (ausgetreten, wird reaktiviert). */
   private static final UUID NEW_P2 = UUID.fromString("00000059-00d2-0059-0000-000000000597");
 
+  /** Von beiden Transaktionen gleichzeitig aufzunehmende Person (ausgetreten). */
+  private static final UUID SAME_P = UUID.fromString("00000059-00e0-0059-0000-000000000597");
+
   private static final long STATUS_OPEN = 101L;
   private static final long PRIORITY_NORMAL = 202L;
   private static final long DIRECTION = 301L;
 
-  private static final long TASK_PUT_ID = 597101L;
-  private static final UUID TASK_PUT_UUID = UUID.fromString("00000059-0000-0059-aaaa-000000597101");
+  /** Szenario-Nummern (Aufgabe je Phase und Szenario). */
+  private static final int PUT_PUT = 1;
 
-  private static final long TASK_EXIT_ID = 597102L;
-  private static final UUID TASK_EXIT_UUID =
-      UUID.fromString("00000059-0000-0059-aaaa-000000597102");
+  private static final int EXIT_EXIT = 2;
+  private static final int ADD_ADD = 3;
+  private static final int PUT_EXIT = 4;
+  private static final int ADD_SAME = 5;
 
-  private static final long TASK_ADD_ID = 597103L;
-  private static final UUID TASK_ADD_UUID = UUID.fromString("00000059-0000-0059-aaaa-000000597103");
-
-  private static final long TASK_MIXED_ID = 597104L;
-  private static final UUID TASK_MIXED_UUID =
-      UUID.fromString("00000059-0000-0059-aaaa-000000597104");
-
-  /** Fremdzeilen je Tabelle (siehe Klassen-Javadoc, Ausfuehrungsplaene). */
+  /** Fremdzeilen je Tabelle (Phase mit Fremdzeilen, siehe Klassen-Javadoc). */
   private static final int PADDING_ROWS = 2000;
 
   /** Fehlercode des SQL-Server-Deadlock-Opfers. */
@@ -232,6 +237,9 @@ class MembershipConcurrencyIT {
   /** Sync-Punkte des laufenden Szenarios; von den Seams gelesen. */
   private static final AtomicReference<Gates> GATES = new AtomicReference<>();
 
+  /** Fremdzeilen schon eingespielt (Phase mit Fremdzeilen). */
+  private static final AtomicBoolean PADDED = new AtomicBoolean(false);
+
   private static HikariDataSource master;
   private static String dbName;
 
@@ -239,6 +247,30 @@ class MembershipConcurrencyIT {
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private RecordingInboxSignalPort inboxSignalPort;
   @Autowired private RecordingNotificationPushPort notificationPushPort;
+
+  /** Phase eines Szenarios. */
+  enum Phase {
+    /** Ohne Fremdzeilen: kleine Tabellen, Scan-Plaene; die Verliererin darf serialisieren. */
+    UNPADDED(0, false),
+    /** Mit Fremdzeilen und frischen Statistiken: Index-Seeks; auch die Verliererin wartet nie. */
+    PADDED(1, true);
+
+    private final int offset;
+    private final boolean loserMustNotWait;
+
+    Phase(final int offset, final boolean loserMustNotWait) {
+      this.offset = offset;
+      this.loserMustNotWait = loserMustNotWait;
+    }
+
+    long taskId(final int scenario) {
+      return 597100L + 100L * offset + scenario;
+    }
+
+    UUID taskUuid(final int scenario) {
+      return UUID.fromString(String.format("00000059-0000-0059-aaaa-%012d", taskId(scenario)));
+    }
+  }
 
   @DynamicPropertySource
   static void configureProperties(final DynamicPropertyRegistry registry) {
@@ -274,197 +306,291 @@ class MembershipConcurrencyIT {
     seedBenutzer(jt, 597504L, PERSON_C, "person-c@brasi.de");
     seedBenutzer(jt, 597505L, NEW_P1, "new-p1@brasi.de");
     seedBenutzer(jt, 597506L, NEW_P2, "new-p2@brasi.de");
-
-    // PUT x PUT: Ersteller, A, B und C sind aktive Assignees.
-    insertTask(jt, TASK_PUT_ID, TASK_PUT_UUID, "I167-PUT-parallel");
-    insertParticipant(jt, 597211L, TASK_PUT_ID, CREATOR_REF, true, true, false);
-    insertParticipant(jt, 597212L, TASK_PUT_ID, ACTOR_A_REF, false, true, false);
-    insertParticipant(jt, 597213L, TASK_PUT_ID, PERSON_B, false, true, false);
-    insertParticipant(jt, 597214L, TASK_PUT_ID, PERSON_C, false, true, false);
-    insertUserState(jt, 597311L, TASK_PUT_ID, CREATOR_REF, false);
-    insertUserState(jt, 597312L, TASK_PUT_ID, ACTOR_A_REF, false);
-    insertUserState(jt, 597313L, TASK_PUT_ID, PERSON_B, false);
-    insertUserState(jt, 597314L, TASK_PUT_ID, PERSON_C, false);
-
-    // exit x exit: Ersteller, B und C (reine Beteiligte).
-    insertTask(jt, TASK_EXIT_ID, TASK_EXIT_UUID, "I167-Austritt-parallel");
-    insertParticipant(jt, 597221L, TASK_EXIT_ID, CREATOR_REF, true, true, false);
-    insertParticipant(jt, 597222L, TASK_EXIT_ID, PERSON_B, false, false, false);
-    insertParticipant(jt, 597223L, TASK_EXIT_ID, PERSON_C, false, false, false);
-    insertUserState(jt, 597321L, TASK_EXIT_ID, CREATOR_REF, false);
-    insertUserState(jt, 597322L, TASK_EXIT_ID, PERSON_B, false);
-    insertUserState(jt, 597323L, TASK_EXIT_ID, PERSON_C, false);
-
-    // add x add: Ersteller und A aktiv; P1 und P2 ausgetreten (Archivleser), werden reaktiviert.
-    // Reaktivierung statt Erst-Insert: sie allokiert keine Sequenz und legt keine neuen
-    // Index-Schluessel an (Lesson concurrency-test-seams); der spaete Read ist derselbe.
-    insertTask(jt, TASK_ADD_ID, TASK_ADD_UUID, "I167-Hinzufuegen-parallel");
-    insertParticipant(jt, 597231L, TASK_ADD_ID, CREATOR_REF, true, true, false);
-    insertParticipant(jt, 597232L, TASK_ADD_ID, ACTOR_A_REF, false, true, false);
-    insertParticipant(jt, 597233L, TASK_ADD_ID, NEW_P1, false, false, true);
-    insertParticipant(jt, 597234L, TASK_ADD_ID, NEW_P2, false, false, true);
-    insertUserState(jt, 597331L, TASK_ADD_ID, CREATOR_REF, false);
-    insertUserState(jt, 597332L, TASK_ADD_ID, ACTOR_A_REF, false);
-    insertUserState(jt, 597333L, TASK_ADD_ID, NEW_P1, true);
-    insertUserState(jt, 597334L, TASK_ADD_ID, NEW_P2, true);
-
-    // PUT x exit: Ersteller und B Assignees, C reiner Beteiligter.
-    insertTask(jt, TASK_MIXED_ID, TASK_MIXED_UUID, "I167-PUT-gegen-Austritt");
-    insertParticipant(jt, 597241L, TASK_MIXED_ID, CREATOR_REF, true, true, false);
-    insertParticipant(jt, 597242L, TASK_MIXED_ID, PERSON_B, false, true, false);
-    insertParticipant(jt, 597243L, TASK_MIXED_ID, PERSON_C, false, false, false);
-    insertUserState(jt, 597341L, TASK_MIXED_ID, CREATOR_REF, false);
-    insertUserState(jt, 597342L, TASK_MIXED_ID, PERSON_B, false);
-    insertUserState(jt, 597343L, TASK_MIXED_ID, PERSON_C, false);
-
-    padMembershipTables(jt);
+    seedBenutzer(jt, 597507L, SAME_P, "same-p@brasi.de");
+    for (final Phase phase : Phase.values()) {
+      // PUT x PUT: Ersteller, A, B und C sind aktive Assignees.
+      seedMembers(
+          jt,
+          phase,
+          PUT_PUT,
+          member(CREATOR_REF, true, true, false),
+          member(ACTOR_A_REF, false, true, false),
+          member(PERSON_B, false, true, false),
+          member(PERSON_C, false, true, false));
+      // exit x exit: Ersteller, B und C (reine Beteiligte).
+      seedMembers(
+          jt,
+          phase,
+          EXIT_EXIT,
+          member(CREATOR_REF, true, true, false),
+          member(PERSON_B, false, false, false),
+          member(PERSON_C, false, false, false));
+      // add x add: Ersteller und A aktiv; P1 und P2 ausgetreten (Archivleser), werden reaktiviert.
+      // Reaktivierung statt Erst-Insert: sie allokiert keine Sequenz und legt keine neuen
+      // Index-Schluessel an (Lesson concurrency-test-seams); die Lesungen sind dieselben.
+      seedMembers(
+          jt,
+          phase,
+          ADD_ADD,
+          member(CREATOR_REF, true, true, false),
+          member(ACTOR_A_REF, false, true, false),
+          member(NEW_P1, false, false, true),
+          member(NEW_P2, false, false, true));
+      // PUT x exit: Ersteller und B Assignees, C reiner Beteiligter.
+      seedMembers(
+          jt,
+          phase,
+          PUT_EXIT,
+          member(CREATOR_REF, true, true, false),
+          member(PERSON_B, false, true, false),
+          member(PERSON_C, false, false, false));
+      // add x add derselben Person: Ersteller und A aktiv, SAME_P ausgetreten.
+      seedMembers(
+          jt,
+          phase,
+          ADD_SAME,
+          member(CREATOR_REF, true, true, false),
+          member(ACTOR_A_REF, false, true, false),
+          member(SAME_P, false, false, true));
+    }
   }
 
-  // ---- Szenarien
-  // ---------------------------------------------------------------------------------
+  // ---- Szenarien ohne Fremdzeilen (Scan-Plaene)
+  // ----------------------------------------------------
 
   @Test
+  @Order(1)
+  @DisplayName("i167_ohne_fremdzeilen_put_x_put: eine 204, eine 409, nie 1205/500")
+  void i167_unpadded_put_put() {
+    putPut(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(2)
+  @DisplayName("i167_ohne_fremdzeilen_exit_x_exit: eine 204, eine 409, nie 1205/500")
+  void i167_unpadded_exit_exit() {
+    exitExit(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(3)
+  @DisplayName("i167_ohne_fremdzeilen_add_x_add: eine 204, eine 409, nie 1205/500")
+  void i167_unpadded_add_add() {
+    addAdd(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(4)
+  @DisplayName("i167_ohne_fremdzeilen_put_x_exit: eine 204, eine 409, nie 1205/500")
+  void i167_unpadded_put_exit() {
+    putExit(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(5)
+  @DisplayName(
+      "i167_ohne_fremdzeilen_add_derselben_person: beide 204, eine Benachrichtigung, nie 1205")
+  void i167_unpadded_add_same_person() {
+    addSamePerson(Phase.UNPADDED);
+  }
+
+  // ---- Szenarien mit Fremdzeilen (Index-Seeks wie im Betrieb)
+  // -------------------------------------
+
+  @Test
+  @Order(11)
   @DisplayName(
       "i167_put_x_put: Nutzer 1 laesst B weg, Nutzer 2 laesst C weg; beide halten ihre X-Sperren"
           + " -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
   void i167_parallel_put_omitting_different_persons_204_and_409_never_deadlock() {
-    assertLockingReadCommitted();
-    final int taskVersionBefore = taskVersion(TASK_PUT_ID);
-    final int loseParticipantVersionBefore = participantVersion(TASK_PUT_ID, PERSON_C);
-    final int loseStateVersionBefore = userStateVersion(TASK_PUT_ID, PERSON_C);
-
-    final Outcome outcome =
-        runPair(
-            "i167-put-put",
-            CREATOR_REF,
-            () ->
-                service.updateAssignees(
-                    TASK_PUT_UUID,
-                    new AssigneeUpdateInput(Set.of(CREATOR_REF, ACTOR_A_REF, PERSON_C))),
-            ACTOR_A_REF,
-            () ->
-                service.updateAssignees(
-                    TASK_PUT_UUID,
-                    new AssigneeUpdateInput(Set.of(CREATOR_REF, ACTOR_A_REF, PERSON_B))));
-
-    assertNoDeadlockAndBothHeldLocks(outcome);
-    assertWinnerCommittedLoserVersionConflict(outcome);
-
-    assertThat(taskVersion(TASK_PUT_ID))
-        .as("TASK-VERSION genau +1")
-        .isEqualTo(taskVersionBefore + 1);
-    assertThat(exitedUnsubscribed(TASK_PUT_ID, PERSON_B)).as("B ausgetreten").isEqualTo(1);
-    assertThat(userStateUnsubscribed(TASK_PUT_ID, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
-    assertUntouched(
-        TASK_PUT_ID, PERSON_C, true, loseParticipantVersionBefore, loseStateVersionBefore);
-    assertSingleSignalContaining(PERSON_B);
+    ensurePadded();
+    putPut(Phase.PADDED);
   }
 
   @Test
+  @Order(12)
   @DisplayName(
       "i167_exit_x_exit: B und C treten gleichzeitig aus (UNSUBSCRIBED); beide halten ihre"
           + " X-Sperren -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
   void i167_parallel_exit_of_different_persons_204_and_409_never_deadlock() {
-    assertLockingReadCommitted();
-    final int taskVersionBefore = taskVersion(TASK_EXIT_ID);
-    final int loseParticipantVersionBefore = participantVersion(TASK_EXIT_ID, PERSON_C);
-    final int loseStateVersionBefore = userStateVersion(TASK_EXIT_ID, PERSON_C);
-
-    final Outcome outcome =
-        runPair(
-            "i167-exit-exit",
-            PERSON_B,
-            () -> service.exit(TASK_EXIT_UUID, new ExitInput(ExitKind.UNSUBSCRIBED)),
-            PERSON_C,
-            () -> service.exit(TASK_EXIT_UUID, new ExitInput(ExitKind.UNSUBSCRIBED)));
-
-    assertNoDeadlockAndBothHeldLocks(outcome);
-    assertWinnerCommittedLoserVersionConflict(outcome);
-
-    assertThat(taskVersion(TASK_EXIT_ID))
-        .as("TASK-VERSION genau +1")
-        .isEqualTo(taskVersionBefore + 1);
-    assertThat(exitedUnsubscribed(TASK_EXIT_ID, PERSON_B)).as("B ausgetreten").isEqualTo(1);
-    assertThat(userStateUnsubscribed(TASK_EXIT_ID, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
-    assertUntouched(
-        TASK_EXIT_ID, PERSON_C, false, loseParticipantVersionBefore, loseStateVersionBefore);
-    assertThat(historyCount(TASK_EXIT_ID, PERSON_B)).as("Historie der Gewinnerin").isEqualTo(1);
-    assertThat(historyCount(TASK_EXIT_ID, PERSON_C)).as("keine Historie der Verliererin").isZero();
-    assertSingleSignalContaining(PERSON_B);
+    ensurePadded();
+    exitExit(Phase.PADDED);
   }
 
   @Test
+  @Order(13)
   @DisplayName(
       "i167_add_x_add: zwei POST /participants mit verschiedenen Personen; beide halten ihre"
-          + " X-Sperren -> beide 204 oder genau eine 409 mit vollem Rollback, nie 1205/500")
-  void i167_parallel_add_of_different_persons_never_deadlock() {
-    assertLockingReadCommitted();
-    final int p1ParticipantVersionBefore = participantVersion(TASK_ADD_ID, NEW_P1);
-    final int p1StateVersionBefore = userStateVersion(TASK_ADD_ID, NEW_P1);
-    final int p2ParticipantVersionBefore = participantVersion(TASK_ADD_ID, NEW_P2);
-    final int p2StateVersionBefore = userStateVersion(TASK_ADD_ID, NEW_P2);
-
-    final Outcome outcome =
-        runPair(
-            "i167-add-add",
-            CREATOR_REF,
-            () -> service.addParticipants(TASK_ADD_UUID, new ParticipantAddInput(List.of(NEW_P1))),
-            ACTOR_A_REF,
-            () -> service.addParticipants(TASK_ADD_UUID, new ParticipantAddInput(List.of(NEW_P2))));
-
-    assertNoDeadlockAndBothHeldLocks(outcome);
-
-    // Fachlich offen (Stefan): beide gelingen ODER genau eine bekommt 409. Nie beide abgelehnt, nie
-    // ein anderer Fehler als die 409.
-    final boolean winnerAdded = outcome.winnerError() == null;
-    final boolean loserAdded = outcome.loserError() == null;
-    assertThat(winnerAdded || loserAdded).as("mindestens eine Aufnahme gelingt").isTrue();
-    for (final Throwable error : outcome.errors()) {
-      assertThat(error)
-          .as("eine abgelehnte Aufnahme ist 409 (BusinessRuleException), nie 500")
-          .isInstanceOf(BusinessRuleException.class);
-    }
-    assertAddEffect(NEW_P1, winnerAdded, p1ParticipantVersionBefore, p1StateVersionBefore);
-    assertAddEffect(NEW_P2, loserAdded, p2ParticipantVersionBefore, p2StateVersionBefore);
-    assertThat(inboxSignalPort.sends())
-        .as("je gelungener Aufnahme genau ein Signal, keines aus einem Rollback")
-        .hasSize((winnerAdded ? 1 : 0) + (loserAdded ? 1 : 0));
+          + " X-Sperren -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
+  void i167_parallel_add_of_different_persons_204_and_409_never_deadlock() {
+    ensurePadded();
+    addAdd(Phase.PADDED);
   }
 
   @Test
+  @Order(14)
   @DisplayName(
       "i167_put_x_exit: der Ersteller laesst B weg, C tritt gleichzeitig aus; beide halten ihre"
           + " X-Sperren -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
   void i167_parallel_put_and_exit_of_different_persons_204_and_409_never_deadlock() {
+    ensurePadded();
+    putExit(Phase.PADDED);
+  }
+
+  @Test
+  @Order(15)
+  @DisplayName(
+      "i167_add_derselben_person: zwei POST /participants mit derselben Person -> beide 204, genau"
+          + " eine Benachrichtigung, Aufgabe genau einmal gespeichert, nie 1205/500")
+  void i167_parallel_add_of_same_person_both_204() {
+    ensurePadded();
+    addSamePerson(Phase.PADDED);
+  }
+
+  // ---- Szenario-Ablaeufe
+  // --------------------------------------------------------------------------
+
+  private void putPut(final Phase phase) {
     assertLockingReadCommitted();
-    final int taskVersionBefore = taskVersion(TASK_MIXED_ID);
-    final int loseParticipantVersionBefore = participantVersion(TASK_MIXED_ID, PERSON_C);
-    final int loseStateVersionBefore = userStateVersion(TASK_MIXED_ID, PERSON_C);
+    final long taskId = phase.taskId(PUT_PUT);
+    final UUID taskUuid = phase.taskUuid(PUT_PUT);
+    final int taskVersionBefore = taskVersion(taskId);
+    final int loseParticipantVersionBefore = participantVersion(taskId, PERSON_C);
+    final int loseStateVersionBefore = userStateVersion(taskId, PERSON_C);
 
     final Outcome outcome =
         runPair(
-            "i167-put-exit",
+            "i167-put-put-" + phase,
             CREATOR_REF,
             () ->
                 service.updateAssignees(
-                    TASK_MIXED_UUID, new AssigneeUpdateInput(Set.of(CREATOR_REF))),
-            PERSON_C,
-            () -> service.exit(TASK_MIXED_UUID, new ExitInput(ExitKind.UNSUBSCRIBED)));
+                    taskUuid, new AssigneeUpdateInput(Set.of(CREATOR_REF, ACTOR_A_REF, PERSON_C))),
+            ACTOR_A_REF,
+            () ->
+                service.updateAssignees(
+                    taskUuid, new AssigneeUpdateInput(Set.of(CREATOR_REF, ACTOR_A_REF, PERSON_B))));
 
-    assertNoDeadlockAndBothHeldLocks(outcome);
+    assertNoDeadlock(outcome, phase);
     assertWinnerCommittedLoserVersionConflict(outcome);
-
-    assertThat(taskVersion(TASK_MIXED_ID))
-        .as("TASK-VERSION genau +1")
-        .isEqualTo(taskVersionBefore + 1);
-    assertThat(exitedUnsubscribed(TASK_MIXED_ID, PERSON_B)).as("B ausgetreten").isEqualTo(1);
-    assertThat(userStateUnsubscribed(TASK_MIXED_ID, PERSON_B))
-        .as("State B abgemeldet")
-        .isEqualTo(1);
-    assertUntouched(
-        TASK_MIXED_ID, PERSON_C, false, loseParticipantVersionBefore, loseStateVersionBefore);
-    assertThat(historyCount(TASK_MIXED_ID, PERSON_C)).as("keine Historie der Verliererin").isZero();
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertThat(exitedUnsubscribed(taskId, PERSON_B)).as("B ausgetreten").isEqualTo(1);
+    assertThat(userStateUnsubscribed(taskId, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
+    assertUntouched(taskId, PERSON_C, true, loseParticipantVersionBefore, loseStateVersionBefore);
     assertSingleSignalContaining(PERSON_B);
+  }
+
+  private void exitExit(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(EXIT_EXIT);
+    final UUID taskUuid = phase.taskUuid(EXIT_EXIT);
+    final int taskVersionBefore = taskVersion(taskId);
+    final int loseParticipantVersionBefore = participantVersion(taskId, PERSON_C);
+    final int loseStateVersionBefore = userStateVersion(taskId, PERSON_C);
+
+    final Outcome outcome =
+        runPair(
+            "i167-exit-exit-" + phase,
+            PERSON_B,
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED)),
+            PERSON_C,
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED)));
+
+    assertNoDeadlock(outcome, phase);
+    assertWinnerCommittedLoserVersionConflict(outcome);
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertThat(exitedUnsubscribed(taskId, PERSON_B)).as("B ausgetreten").isEqualTo(1);
+    assertThat(userStateUnsubscribed(taskId, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
+    assertUntouched(taskId, PERSON_C, false, loseParticipantVersionBefore, loseStateVersionBefore);
+    assertThat(historyCount(taskId, PERSON_B)).as("Historie der Gewinnerin").isEqualTo(1);
+    assertThat(historyCount(taskId, PERSON_C)).as("keine Historie der Verliererin").isZero();
+    assertSingleSignalContaining(PERSON_B);
+  }
+
+  private void addAdd(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(ADD_ADD);
+    final UUID taskUuid = phase.taskUuid(ADD_ADD);
+    final int taskVersionBefore = taskVersion(taskId);
+    final int p2ParticipantVersionBefore = participantVersion(taskId, NEW_P2);
+    final int p2StateVersionBefore = userStateVersion(taskId, NEW_P2);
+
+    final Outcome outcome =
+        runPair(
+            "i167-add-add-" + phase,
+            CREATOR_REF,
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(NEW_P1))),
+            ACTOR_A_REF,
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(NEW_P2))));
+
+    // Stefan (2026-11-18): das Hinzufuegen speichert die Aufgabe versioniert; die Verliererin
+    // bekommt 409 mit vollem Rollback.
+    assertNoDeadlock(outcome, phase);
+    assertWinnerCommittedLoserVersionConflict(outcome);
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertAdded(taskId, NEW_P1);
+    assertThat(exitedUnsubscribed(taskId, NEW_P2)).as("P2 weiter ausgetreten").isEqualTo(1);
+    assertThat(participantVersion(taskId, NEW_P2))
+        .as("Teilnehmerzeile P2 unveraendert (voller Rollback)")
+        .isEqualTo(p2ParticipantVersionBefore);
+    assertThat(userStateUnsubscribed(taskId, NEW_P2)).as("State P2 abgemeldet").isEqualTo(1);
+    assertThat(userStateVersion(taskId, NEW_P2))
+        .as("State P2 unveraendert (voller Rollback)")
+        .isEqualTo(p2StateVersionBefore);
+    assertThat(notificationCount(taskId, NEW_P2)).as("keine Benachrichtigung an P2").isZero();
+    assertSingleSignalContaining(NEW_P1);
+  }
+
+  private void putExit(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(PUT_EXIT);
+    final UUID taskUuid = phase.taskUuid(PUT_EXIT);
+    final int taskVersionBefore = taskVersion(taskId);
+    final int loseParticipantVersionBefore = participantVersion(taskId, PERSON_C);
+    final int loseStateVersionBefore = userStateVersion(taskId, PERSON_C);
+
+    final Outcome outcome =
+        runPair(
+            "i167-put-exit-" + phase,
+            CREATOR_REF,
+            () -> service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(CREATOR_REF))),
+            PERSON_C,
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED)));
+
+    assertNoDeadlock(outcome, phase);
+    assertWinnerCommittedLoserVersionConflict(outcome);
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertThat(exitedUnsubscribed(taskId, PERSON_B)).as("B ausgetreten").isEqualTo(1);
+    assertThat(userStateUnsubscribed(taskId, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
+    assertUntouched(taskId, PERSON_C, false, loseParticipantVersionBefore, loseStateVersionBefore);
+    assertThat(historyCount(taskId, PERSON_C)).as("keine Historie der Verliererin").isZero();
+    assertSingleSignalContaining(PERSON_B);
+  }
+
+  private void addSamePerson(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(ADD_SAME);
+    final UUID taskUuid = phase.taskUuid(ADD_SAME);
+    final int taskVersionBefore = taskVersion(taskId);
+
+    final Outcome outcome =
+        runPair(
+            "i167-add-same-" + phase,
+            CREATOR_REF,
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(SAME_P))),
+            ACTOR_A_REF,
+            () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(SAME_P))));
+
+    // Dieselbe Zeile: die Verliererin wartet beim Lesen der Zeile auf die Gewinnerin
+    // (Serialisieren,
+    // kein Zyklus) und sieht danach die aktive Zeile (SKIP ohne Aenderung, kein TASK-save).
+    assertNoDeadlockLoserMayWait(outcome);
+    assertThat(outcome.winnerError()).as("Gewinnerin: 204").isNull();
+    assertThat(outcome.loserError()).as("Verliererin: 204 ohne Aenderung").isNull();
+    assertThat(taskVersion(taskId))
+        .as("TASK-VERSION genau +1 (nur die Gewinnerin aendert etwas)")
+        .isEqualTo(taskVersionBefore + 1);
+    assertAdded(taskId, SAME_P);
+    assertSingleSignalContaining(SAME_P);
   }
 
   // ---- Ablauf und gemeinsame Pruefungen
@@ -473,19 +599,7 @@ class MembershipConcurrencyIT {
   /**
    * Ergebnis eines Szenarios: Fehler beider Transaktionen und die Beobachtungen der Sync-Punkte.
    */
-  record Outcome(Throwable winnerError, Throwable loserError, Gates gates) {
-
-    List<Throwable> errors() {
-      final List<Throwable> errors = new ArrayList<>();
-      if (winnerError != null) {
-        errors.add(winnerError);
-      }
-      if (loserError != null) {
-        errors.add(loserError);
-      }
-      return errors;
-    }
-  }
+  record Outcome(Throwable winnerError, Throwable loserError, Gates gates) {}
 
   private Outcome runPair(
       final String label,
@@ -512,6 +626,14 @@ class MembershipConcurrencyIT {
       GATES.set(null);
     }
     assertThat(winner.isAlive() || loser.isAlive()).as("beide Threads beendet").isFalse();
+    log.info(
+        "{}: Gewinnerin-Fehler={}, Verliererin-Fehler={}, Gewinnerin wartete auf Verliererin={},"
+            + " Verliererin wartete auf Gewinnerin={}",
+        label,
+        winnerError.get(),
+        loserError.get(),
+        gates.winnerBlockedByLoser.get(),
+        gates.loserBlockedByWinner.get());
     return new Outcome(winnerError.get(), loserError.get(), gates);
   }
 
@@ -563,10 +685,23 @@ class MembershipConcurrencyIT {
   }
 
   /**
-   * Kein Deadlock und der erzwungene Ablauf wurde wirklich erreicht. Die 1205-Pruefung steht vorn,
-   * damit das Fehlerbild den Deadlock nennt; die Wartegruende der Sonde stehen in ihrer Meldung.
+   * Kein Deadlock; die Gewinnerin wartet nach Sync 2 nie auf die Verliererin. Mit Fremdzeilen
+   * wartet auch die Verliererin vor Sync 2 nicht auf die Gewinnerin (beide halten ihre Sperren
+   * gleichzeitig). Die 1205-Pruefung steht vorn, damit das Fehlerbild den Deadlock nennt.
    */
-  private static void assertNoDeadlockAndBothHeldLocks(final Outcome outcome) {
+  private static void assertNoDeadlock(final Outcome outcome, final Phase phase) {
+    assertNoDeadlockLoserMayWait(outcome);
+    if (phase.loserMustNotWait) {
+      assertThat(outcome.gates().loserBlockedByWinner.get())
+          .as(
+              "mit Fremdzeilen wartet vor Sync 2 keine Lesung der Verliererin auf eine X-Sperre der"
+                  + " Gewinnerin (beide halten ihre Sperren gleichzeitig)")
+          .isNull();
+    }
+  }
+
+  /** Wie {@link #assertNoDeadlock}, die Verliererin darf aber auf die Gewinnerin warten. */
+  private static void assertNoDeadlockLoserMayWait(final Outcome outcome) {
     final Gates gates = outcome.gates();
     assertThat(deadlockVictims(outcome))
         .as(
@@ -577,12 +712,9 @@ class MembershipConcurrencyIT {
     assertThat(gates.winnerBlockedByLoser.get())
         .as("nach Sync 2 wartet keine Lesung der Gewinnerin auf eine X-Sperre der Verliererin")
         .isNull();
-    assertThat(gates.loserBlockedByWinner.get())
-        .as("vor Sync 2 wartet keine Lesung der Verliererin auf eine X-Sperre der Gewinnerin")
-        .isNull();
     assertThat(gates.gateTimedOut.get()).as("kein Ablauf an den Sync-Punkten").isFalse();
     assertThat(gates.membershipWritesReached.get())
-        .as("beide hielten ihre Teilnehmer- und State-Sperren gleichzeitig (Sync 2)")
+        .as("beide Transaktionen erreichten Sync 2")
         .isEqualTo(2);
   }
 
@@ -649,44 +781,22 @@ class MembershipConcurrencyIT {
         .isEqualTo(stateVersionBefore);
   }
 
-  /** Aufnahme wirksam (reiner Teilnehmer, State aktiv, PARTICIPANT gemeldet) oder voll zurueck. */
-  private void assertAddEffect(
-      final UUID ref,
-      final boolean added,
-      final int participantVersionBefore,
-      final int stateVersionBefore) {
-    if (added) {
-      assertThat(
-              count(
-                  "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND"
-                      + " PARTICIPANT_REF=? AND EXIT_KIND IS NULL AND PARTICIPANT_FLAG=1"
-                      + " AND ASSIGNEE_FLAG=0 AND ENTITY_STATUS='ACTIVE'",
-                  TASK_ADD_ID,
-                  ref))
-          .as("%s als reiner Teilnehmer aufgenommen", ref)
-          .isEqualTo(1);
-      assertThat(userStateUnsubscribed(TASK_ADD_ID, ref)).as("State %s aktiv", ref).isZero();
-      assertThat(notificationCount(TASK_ADD_ID, ref)).as("PARTICIPANT an %s", ref).isEqualTo(1);
-    } else {
-      assertThat(exitedUnsubscribed(TASK_ADD_ID, ref))
-          .as("%s weiter ausgetreten", ref)
-          .isEqualTo(1);
-      assertThat(participantVersion(TASK_ADD_ID, ref))
-          .as("Teilnehmerzeile %s unveraendert (voller Rollback)", ref)
-          .isEqualTo(participantVersionBefore);
-      assertThat(userStateUnsubscribed(TASK_ADD_ID, ref))
-          .as("State %s abgemeldet", ref)
-          .isEqualTo(1);
-      assertThat(userStateVersion(TASK_ADD_ID, ref))
-          .as("State %s unveraendert (voller Rollback)", ref)
-          .isEqualTo(stateVersionBefore);
-      assertThat(notificationCount(TASK_ADD_ID, ref))
-          .as("keine Benachrichtigung an %s", ref)
-          .isZero();
-    }
+  /** Aufnahme wirksam: reiner Teilnehmer, State aktiv, genau eine PARTICIPANT-Benachrichtigung. */
+  private void assertAdded(final long taskId, final UUID ref) {
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND"
+                    + " PARTICIPANT_REF=? AND EXIT_KIND IS NULL AND PARTICIPANT_FLAG=1"
+                    + " AND ASSIGNEE_FLAG=0 AND ENTITY_STATUS='ACTIVE'",
+                taskId,
+                ref))
+        .as("%s als reiner Teilnehmer aufgenommen", ref)
+        .isEqualTo(1);
+    assertThat(userStateUnsubscribed(taskId, ref)).as("State %s aktiv", ref).isZero();
+    assertThat(notificationCount(taskId, ref)).as("genau ein PARTICIPANT an %s", ref).isEqualTo(1);
   }
 
-  /** Genau ein After-Commit-Signal (nur die Gewinnerin committet), das die Person enthaelt. */
+  /** Genau ein After-Commit-Signal (nur die Gewinnerin aendert etwas), das die Person enthaelt. */
   private void assertSingleSignalContaining(final UUID ref) {
     assertThat(inboxSignalPort.sends()).as("genau ein Signal (Gewinnerin)").hasSize(1);
     assertThat(inboxSignalPort.sends().get(0)).as("Signal enthaelt %s", ref).contains(ref);
@@ -697,7 +807,7 @@ class MembershipConcurrencyIT {
 
   /**
    * Sync-Punkte eines Szenarios mit Sperr-Sonde. Ablaeufe und beobachtete Sperr-Wartezustaende
-   * werden vermerkt und machen den Test rot.
+   * werden vermerkt; die Pruefungen entscheiden, welche davon den Test rot machen.
    */
   static final class Gates {
     private final JdbcTemplate txJdbc;
@@ -892,6 +1002,27 @@ class MembershipConcurrencyIT {
   // ---- Seed-Helfer
   // -------------------------------------------------------------------------------
 
+  /** Mitglied einer Szenario-Aufgabe (Teilnehmerzeile samt State). */
+  record Member(UUID ref, boolean creator, boolean assignee, boolean exited) {}
+
+  private static Member member(
+      final UUID ref, final boolean creator, final boolean assignee, final boolean exited) {
+    return new Member(ref, creator, assignee, exited);
+  }
+
+  /** Legt die Szenario-Aufgabe einer Phase samt Teilnehmerzeilen und States an. */
+  private static void seedMembers(
+      final JdbcTemplate jt, final Phase phase, final int scenario, final Member... members) {
+    final long taskId = phase.taskId(scenario);
+    insertTask(jt, taskId, phase.taskUuid(scenario), "I167-" + phase + "-" + scenario);
+    for (int i = 0; i < members.length; i++) {
+      final Member m = members[i];
+      insertParticipant(
+          jt, taskId * 100 + i + 1, taskId, m.ref(), m.creator(), m.assignee(), m.exited());
+      insertUserState(jt, taskId * 100 + 50 + i + 1, taskId, m.ref(), m.exited());
+    }
+  }
+
   private static void seedFirma(final JdbcTemplate jt, final long id, final UUID externalId) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_FIRMA] WHERE ID = ?) "
@@ -986,10 +1117,18 @@ class MembershipConcurrencyIT {
         unsubscribed ? 1 : 0);
   }
 
+  /** Spielt die Fremdzeilen einmal ein (erste Methode der Phase mit Fremdzeilen). */
+  private void ensurePadded() {
+    if (PADDED.compareAndSet(false, true)) {
+      padMembershipTables(jdbcTemplate);
+    }
+  }
+
   /**
    * Fuellt Teilnehmer- und State-Tabelle mit Zeilen fremder Aufgaben desselben Mandanten (100
-   * Aufgaben-IDs ohne TASK-Zeile, je 20 Personen) und aktualisiert die Statistiken, damit die
-   * Lookups wie im Betrieb per Index-Seek statt per Scan laufen (Klassen-Javadoc).
+   * Aufgaben-IDs ohne TASK-Zeile, je 20 Personen), aktualisiert die Statistiken und markiert die
+   * Plaene beider Tabellen zur Neuuebersetzung, damit die Lookups wie im Betrieb per Index-Seek
+   * statt per Scan laufen (Klassen-Javadoc).
    */
   private static void padMembershipTables(final JdbcTemplate jt) {
     final String numbers =
@@ -1017,6 +1156,8 @@ class MembershipConcurrencyIT {
         TENANT_ID);
     jt.execute("UPDATE STATISTICS [dbo].[TASK_PARTICIPANT] WITH FULLSCAN");
     jt.execute("UPDATE STATISTICS [dbo].[TASK_USER_STATE] WITH FULLSCAN");
+    jt.execute("EXEC sp_recompile N'dbo.TASK_PARTICIPANT'");
+    jt.execute("EXEC sp_recompile N'dbo.TASK_USER_STATE'");
   }
 
   // ---- Aufzeichnende Ports

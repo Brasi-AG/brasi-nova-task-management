@@ -237,8 +237,9 @@ class AssigneeServiceTest {
         .isEqualTo(ParticipantKind.PERSON);
 
     // UserState als Zuweisung reaktiviert (MAJOR 3: UNSUBSCRIBED_AT zurueck; #158: Mute aufgehoben)
-    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
-    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivate(any(), any(), any(), any());
 
     // ASSIGN-Notification emittiert
     verify(notificationService)
@@ -269,10 +270,10 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "lock_order_update_assignees_state_read_vor_task_save (Intake #156): die Lesung der aktiven"
-          + " States fuer das Signal laeuft VOR taskRepository.save, danach erst der sortierte Bump"
-          + " (Mitgliedschaft vor Aufgabe; sonst wartet die Lesung unter dem TASK-Lock auf eine"
-          + " Aufnahme per Kommentar, die ihrerseits die Aufgabe will -> Deadlock)")
+      "lock_order_update_assignees_state_read_vor_task_save (Intake #156/#167): die Lesung der"
+          + " aktiven States fuer Bump und Signal laeuft VOR der ersten Teilnehmer-Schreibung und"
+          + " damit vor taskRepository.save, danach erst der sortierte Bump (sonst wartet die"
+          + " Lesung auf die Zeilen eines parallelen Aufrufs -> Deadlock)")
   void lock_order_update_assignees_state_read_vor_task_save() {
     final Long taskId = 43L;
     final UUID taskUuid = UUID.randomUUID();
@@ -293,8 +294,8 @@ class AssigneeServiceTest {
             userStateQueryRepository,
             taskRepository,
             inboxGenerationService);
-    order.verify(participantQueryRepository).save(any(TaskParticipant.class));
     order.verify(userStateQueryRepository).findActiveUserRefsByTaskId(taskId);
+    order.verify(participantQueryRepository).save(any(TaskParticipant.class));
     order.verify(taskRepository).save(task);
     order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
   }
@@ -333,8 +334,12 @@ class AssigneeServiceTest {
     assertThat(saves.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList())
         .containsExactly(ORDER_LOW, ORDER_HIGH);
     final InOrder order = inOrder(userStateService);
-    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_LOW, TENANT_ID);
-    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_HIGH, TENANT_ID);
+    order
+        .verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ORDER_LOW), eq(TENANT_ID), any());
+    order
+        .verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ORDER_HIGH), eq(TENANT_ID), any());
   }
 
   @Test
@@ -390,7 +395,9 @@ class AssigneeServiceTest {
     assertThat(targets.getAllValues().stream().map(TaskHandoverTarget::getToRef).toList())
         .containsExactly(ORDER_LOW, ORDER_HIGH);
     final InOrder order = inOrder(userStateService, notificationService);
-    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_LOW, TENANT_ID);
+    order
+        .verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ORDER_LOW), eq(TENANT_ID), any());
     order
         .verify(notificationService)
         .emit(
@@ -401,7 +408,9 @@ class AssigneeServiceTest {
             any(),
             any(),
             eq(ACTOR_REF));
-    order.verify(userStateService).reactivateAsAssignee(taskId, ORDER_HIGH, TENANT_ID);
+    order
+        .verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ORDER_HIGH), eq(TENANT_ID), any());
     order
         .verify(notificationService)
         .emit(
@@ -704,8 +713,9 @@ class AssigneeServiceTest {
 
     // Assert: reactivateAsAssignee (nicht ensure) aufgerufen -> UNSUBSCRIBED_AT wird zurueckgesetzt
     // und der Mute aufgehoben (#158-Folge)
-    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID));
-    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivate(any(), any(), any(), any());
     verify(userStateService, never()).ensure(any(), any(), any());
   }
 
@@ -1166,9 +1176,9 @@ class AssigneeServiceTest {
     verify(taskRepository).save(task);
     verify(taskHistoryService).record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), any(), any());
     // Ziele werden als Zuweisung reaktiviert (Mute aufgehoben, #158-Folge), nicht als Teilnehmer
-    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t1), eq(TENANT_ID));
-    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t2), eq(TENANT_ID));
-    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t1), eq(TENANT_ID), any());
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(t2), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivate(any(), any(), any(), any());
     // Ziel-Bumps + Akteur-Bump
     verify(inboxGenerationService).bump(TENANT_ID, t1);
     verify(inboxGenerationService).bump(TENANT_ID, t2);
@@ -1558,8 +1568,8 @@ class AssigneeServiceTest {
             eq(ACTOR_REF));
     assertThat(existingTarget.isAssigneeFlag()).as("bleibt Assignee").isTrue();
     // Keine neue Zuweisung (war schon aktiver Assignee): nur reactivate, der Mute bleibt (#158).
-    verify(userStateService).reactivate(eq(taskId), eq(t1), eq(TENANT_ID));
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService).reactivate(eq(taskId), eq(t1), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
   }
 
   @Test
@@ -1851,8 +1861,8 @@ class AssigneeServiceTest {
   @Test
   @DisplayName(
       "addParticipants_neuer_ref: neuer Ref -> Teilnehmer (PARTICIPANT_FLAG=1, kein Assignee/Creator)"
-          + " + ensure + bump + invalidate + genau eine PARTICIPANT-Notification; KEIN"
-          + " Task-VERSION-Bump")
+          + " + ensure + bump + invalidate + genau eine PARTICIPANT-Notification + Task-VERSION-Bump"
+          + " (Intake #167)")
   void addParticipants_neuer_ref() {
     final Long taskId = 200L;
     final UUID taskUuid = UUID.randomUUID();
@@ -1885,7 +1895,8 @@ class AssigneeServiceTest {
     assertThat(refsCaptor.getValue()).contains(ref);
 
     // Intake #147: genau eine PARTICIPANT-Notification an die neue Person (Akteur ist der
-    // Ausloeser, Vorschau ist der Aufgabentitel); D8: kein Task-VERSION-Bump (kommutative Union).
+    // Ausloeser, Vorschau ist der Aufgabentitel). Intake #167: bei echter Aenderung speichert das
+    // Hinzufuegen die Aufgabe (VERSION-Bump), parallele Aufnahmen serialisieren wie PUT.
     verify(notificationService, times(1))
         .emit(
             eq(ref),
@@ -1897,7 +1908,7 @@ class AssigneeServiceTest {
             eq(ACTOR_REF));
     verify(notificationService, never())
         .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
-    verify(taskRepository, never()).save(any(Task.class));
+    verify(taskRepository).save(task);
   }
 
   @Test
@@ -2346,13 +2357,13 @@ class AssigneeServiceTest {
   @Test
   @DisplayName(
       "i147_reihenfolge_save_emit_bump_invalidate: Participant-Save und State vor der"
-          + " Benachrichtigung, Generation-Bump und Signal danach (kein TASK-Save)")
+          + " Benachrichtigung, danach TASK-Save (Intake #167), Generation-Bump und Signal")
   void i147_order_save_emit_bump_invalidate() {
     final Long taskId = 222L;
     final UUID taskUuid = UUID.randomUUID();
     final UUID ref = UUID.randomUUID();
-    when(taskRepository.findByUuid(taskUuid.toString()))
-        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
     when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref))
         .thenReturn(List.of());
     when(participantQueryRepository.save(any(TaskParticipant.class)))
@@ -2365,6 +2376,7 @@ class AssigneeServiceTest {
             participantQueryRepository,
             userStateService,
             notificationService,
+            taskRepository,
             inboxGenerationService,
             inboxSignalService);
     order.verify(participantQueryRepository).save(any(TaskParticipant.class));
@@ -2379,9 +2391,9 @@ class AssigneeServiceTest {
             any(),
             any(),
             eq(ACTOR_REF));
+    order.verify(taskRepository).save(task);
     order.verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
     order.verify(inboxSignalService).invalidate(eq(TENANT_ID), any());
-    verify(taskRepository, never()).save(any(Task.class));
   }
 
   // ============================================================================================
@@ -3008,7 +3020,7 @@ class AssigneeServiceTest {
     assertThat(deactive.isParticipantFlag()).isTrue();
     assertThat(deactive.getExitKind()).isNull();
     assertThat(deactive.getExitAt()).isNull();
-    verify(userStateService).reactivateAsAssignee(taskId, ref, TENANT_ID);
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ref), eq(TENANT_ID), any());
     verify(notificationService)
         .emit(
             eq(ref),
@@ -3049,7 +3061,7 @@ class AssigneeServiceTest {
     assertThat(row.isAssigneeFlag()).isTrue();
     assertThat(row.getExitKind()).isNull();
     assertThat(row.getExitAt()).isNull();
-    verify(userStateService).reactivateAsAssignee(taskId, ref, TENANT_ID);
+    verify(userStateService).reactivateAsAssignee(eq(taskId), eq(ref), eq(TENANT_ID), any());
   }
 
   @Test
@@ -3303,6 +3315,296 @@ class AssigneeServiceTest {
    * Alle bisherigen Aufrufe der beobachteten Mocks in globaler Reihenfolge als {@code Typ#methode}
    * (Mockito-Sequenznummer; Typ ist das gemockte Interface bzw. die Klasse).
    */
+  // ---- Intake #166/#167: Lock-Reihenfolge und Lesermenge von PUT, Hinzufuegen und Austritt ------
+
+  /** Lesende Mock-Methoden der Mitgliedschaftspfade (Aufgabe, Guard, Teilnehmer, States, Namen). */
+  private static final Set<String> MEMBERSHIP_READS =
+      Set.of(
+          "findByUuid",
+          "requireWriteMember",
+          "isWriteMember",
+          "findActiveAssigneesByTaskId",
+          "findByTaskIdAndParticipantRef",
+          "findRowByUniqueKey",
+          "findByTaskIdAndUserRef",
+          "findActiveByUuids",
+          "findActiveUserRefsByTaskId",
+          "findArchiveReadersByTaskId");
+
+  /** Schreibende Mock-Methoden (Teilnehmer, State, Historie, Benachrichtigung, Aufgabe). */
+  private static final Set<String> MEMBERSHIP_WRITES =
+      Set.of("save", "record", "emit", "reactivate", "reactivateAsAssignee", "ensure");
+
+  /** Beobachtete Mocks der Reihenfolge-Tests (in Aufrufreihenfolge ausgewertet). */
+  private Object[] orderObserved() {
+    return new Object[] {
+      taskRepository,
+      membershipGuard,
+      participantQueryRepository,
+      userStateQueryRepository,
+      userReadRepository,
+      userStateService,
+      handoverRepository,
+      handoverTargetRepository,
+      taskHistoryService,
+      notificationService,
+      inboxGenerationService,
+      inboxSignalService
+    };
+  }
+
+  /** Service, der am Sync-1-Seam die bis dahin gelaufenen Aufrufe festhaelt. */
+  private AssigneeService serviceRecordingAtSeam(final List<String> atSeam) {
+    final Object[] observed = orderObserved();
+    return new AssigneeService(
+        taskRepository,
+        participantQueryRepository,
+        userStateQueryRepository,
+        userStateService,
+        notificationService,
+        inboxSignalService,
+        userReadRepository,
+        userAccessor,
+        inboxGenerationService,
+        handoverRepository,
+        handoverTargetRepository,
+        taskHistoryService,
+        membershipGuard,
+        permissionEvaluator) {
+      @Override
+      protected void onBeforeMembershipWritesForTest(final Long id) {
+        atSeam.clear();
+        atSeam.addAll(orderedCalls(observed));
+      }
+    };
+  }
+
+  /** Letzter Read vor der ersten Schreibung; am Seam ist nichts geschrieben. */
+  private static void assertReadsBeforeFirstWrite(
+      final List<String> calls, final List<String> atSeam) {
+    int lastRead = -1;
+    int firstWrite = Integer.MAX_VALUE;
+    for (int i = 0; i < calls.size(); i++) {
+      final String method = calls.get(i).substring(calls.get(i).indexOf('#') + 1);
+      if (MEMBERSHIP_READS.contains(method)) {
+        lastRead = i;
+      } else if (MEMBERSHIP_WRITES.contains(method)) {
+        firstWrite = Math.min(firstWrite, i);
+      }
+    }
+    assertThat(lastRead)
+        .as("letzter Read vor der ersten Schreibung, Aufrufe: %s", calls)
+        .isLessThan(firstWrite);
+    assertThat(atSeam)
+        .as("am Seam sind beide Leser-Lesungen gelaufen")
+        .contains(
+            "TaskUserStateQueryRepository#findActiveUserRefsByTaskId",
+            "TaskParticipantQueryRepository#findArchiveReadersByTaskId");
+    assertThat(atSeam)
+        .as("am Seam ist noch nichts geschrieben")
+        .noneMatch(call -> MEMBERSHIP_WRITES.contains(call.substring(call.indexOf('#') + 1)));
+  }
+
+  /** Menge des Generation-Bumps; das Signal geht an dieselbe Menge. */
+  @SuppressWarnings("unchecked")
+  private Collection<UUID> capturedBump() {
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    final ArgumentCaptor<Collection<UUID>> invalidated = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), invalidated.capture());
+    assertThat(invalidated.getValue())
+        .as("Signal fuer dieselbe Menge wie der Bump")
+        .containsExactlyInAnyOrderElementsOf(bumped.getValue());
+    return bumped.getValue();
+  }
+
+  @Test
+  @DisplayName(
+      "i167_put_alle_reads_vor_der_ersten_schreibung: Zeilen und States der neuen und der"
+          + " abgewaehlten Person sowie beide Leser-Lesungen laufen vor dem Sync-1-Seam; danach nur"
+          + " Schreibungen, TASK-save, Bump, Signal; Bump und Signal enthalten den Archivleser (#166)")
+  void i167_put_reads_before_first_write_and_archive_reader_bumped() {
+    final Long taskId = 16701L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final UUID activeReader = UUID.randomUUID();
+    final UUID archiveReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant removed = activeAssignee(taskId, ASSIGNEE_REF, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true), removed));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(removed));
+    final TaskUserState removedState = userStateFor(taskId, ASSIGNEE_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+        .thenReturn(List.of(removedState));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(
+            List.of(
+                userStateFor(taskId, ACTOR_REF), userStateFor(taskId, activeReader), removedState));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(exitedRow(taskId, archiveReader)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeam(atSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, newRef)));
+
+    final List<String> calls = orderedCalls(observed);
+    assertReadsBeforeFirstWrite(calls, atSeam);
+    assertThat(atSeam)
+        .as("am Seam sind Zeile und State der neuen und State der abgewaehlten Person gelesen")
+        .contains(
+            "TaskParticipantQueryRepository#findRowByUniqueKey",
+            "TaskParticipantQueryRepository#findByTaskIdAndParticipantRef",
+            "TaskUserStateQueryRepository#findByTaskIdAndUserRef");
+    assertThat(calls)
+        .containsSubsequence(
+            "UserStateService#reactivateAsAssignee",
+            "TaskParticipantQueryRepository#save",
+            "TaskUserStateQueryRepository#save",
+            "BaseTaskRepository#save",
+            "InboxGenerationService#bumpSorted",
+            "InboxSignalService#invalidate");
+    verify(userStateService)
+        .reactivateAsAssignee(eq(taskId), eq(newRef), eq(TENANT_ID), eq(List.of()));
+    assertThat(removedState.getUnsubscribedAt())
+        .as("State der Abgewaehlten abgemeldet")
+        .isNotNull();
+    assertThat(capturedBump())
+        .as("geaenderte Personen, aktive Leser und Archivleser (Intake #166)")
+        .containsExactlyInAnyOrder(newRef, ASSIGNEE_REF, ACTOR_REF, activeReader, archiveReader);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_exit_alle_reads_vor_der_ersten_schreibung: State des Akteurs, Namen und beide"
+          + " Leser-Lesungen laufen vor dem Sync-1-Seam; danach Teilnehmer, State, Historie,"
+          + " TASK-save, Bump, Signal")
+  void i167_exit_reads_before_first_write() {
+    final Long taskId = 16702L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID otherReader = UUID.randomUUID();
+    final UUID archiveReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    final TaskUserState actorState = userStateFor(taskId, ACTOR_REF);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(actorState));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(actorState, userStateFor(taskId, otherReader)));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(exitedRow(taskId, archiveReader)));
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeam(atSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    final List<String> calls = orderedCalls(observed);
+    assertReadsBeforeFirstWrite(calls, atSeam);
+    assertThat(atSeam)
+        .as("am Seam sind State und Namen des Akteurs gelesen")
+        .contains(
+            "TaskUserStateQueryRepository#findByTaskIdAndUserRef",
+            "UserReadRepository#findActiveByUuids");
+    assertThat(calls)
+        .containsSubsequence(
+            "TaskParticipantQueryRepository#save",
+            "TaskUserStateQueryRepository#save",
+            "TaskHistoryService#record",
+            "BaseTaskRepository#save",
+            "InboxGenerationService#bumpSorted",
+            "InboxSignalService#invalidate");
+    assertThat(actorState.getUnsubscribedAt()).as("State des Akteurs abgemeldet").isNotNull();
+    assertThat(capturedBump())
+        .as("Akteur, aktive Leser und Archivleser")
+        .containsExactlyInAnyOrder(ACTOR_REF, otherReader, archiveReader);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_hinzufuegen_leser_vor_der_ersten_schreibung_und_task_save: beide Leser-Lesungen vor"
+          + " dem Sync-1-Seam, keine danach; Aufnahme, Benachrichtigung, TASK-save, Bump und"
+          + " Signal mit Archivleser (#166)")
+  void i167_add_readers_before_first_write_task_saved_archive_reader_bumped() {
+    final Long taskId = 16703L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final UUID archiveReader = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
+        .thenReturn(List.of(userStateFor(taskId, ACTOR_REF)));
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId))
+        .thenReturn(List.of(exitedRow(taskId, archiveReader)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeam(atSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.addParticipants(taskUuid, new ParticipantAddInput(List.of(newRef)));
+
+    final List<String> calls = orderedCalls(observed);
+    assertThat(atSeam)
+        .as("am Seam sind beide Leser-Lesungen gelaufen")
+        .contains(
+            "TaskUserStateQueryRepository#findActiveUserRefsByTaskId",
+            "TaskParticipantQueryRepository#findArchiveReadersByTaskId");
+    assertThat(atSeam)
+        .as("am Seam ist noch nichts geschrieben")
+        .noneMatch(call -> MEMBERSHIP_WRITES.contains(call.substring(call.indexOf('#') + 1)));
+    assertThat(calls.subList(atSeam.size(), calls.size()))
+        .as("nach dem Seam keine Leser-Lesung mehr")
+        .doesNotContain(
+            "TaskUserStateQueryRepository#findActiveUserRefsByTaskId",
+            "TaskParticipantQueryRepository#findArchiveReadersByTaskId");
+    assertThat(calls)
+        .containsSubsequence(
+            "TaskParticipantQueryRepository#save",
+            "UserStateService#ensure",
+            "NotificationService#emit",
+            "BaseTaskRepository#save",
+            "InboxGenerationService#bumpSorted",
+            "InboxSignalService#invalidate");
+    verify(taskRepository).save(task);
+    assertThat(capturedBump())
+        .as("neue Person, aktive Leser und Archivleser (Intake #166)")
+        .containsExactlyInAnyOrder(newRef, ACTOR_REF, archiveReader);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_hinzufuegen_ohne_aenderung: schon aktive Person -> kein TASK-save, keine"
+          + " Benachrichtigung, kein Bump, kein Signal (204, auch fuer die Verliererin eines"
+          + " gleich-Ref-Race)")
+  void i167_add_without_change_saves_nothing() {
+    final Long taskId = 16704L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID activeRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(personRow(taskId, activeRef, EntityState.ACTIVE)));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(activeRef)));
+
+    verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
+  }
+
   private static List<String> orderedCalls(final Object... mocks) {
     final List<org.mockito.invocation.Invocation> all = new ArrayList<>();
     for (final Object m : mocks) {

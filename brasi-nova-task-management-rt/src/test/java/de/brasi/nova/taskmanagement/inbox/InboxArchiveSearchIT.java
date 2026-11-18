@@ -2,6 +2,8 @@ package de.brasi.nova.taskmanagement.inbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -65,6 +67,7 @@ import org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConf
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -154,6 +157,27 @@ class InboxArchiveSearchIT {
 
   private static final String USER_P_LOGIN = "user-p-search@brasi.de";
   private static final long USER_P_DB_ID = 545L;
+
+  /** Intake #166: Ersteller der beiden Querschnitt-Aufgaben (aktiver Leser, Akteur). */
+  private static final UUID USER_C166_REF = UUID.randomUUID();
+
+  private static final String USER_C166_LOGIN = "user-c166-search@brasi.de";
+
+  /** Intake #166: ausgetretener Archivleser der beiden Querschnitt-Aufgaben. */
+  private static final UUID USER_R166_REF = UUID.randomUUID();
+
+  private static final String USER_R166_LOGIN = "user-r166-search@brasi.de";
+
+  /** Intake #166: Assignee mit eindeutigem Namen (Treffer ueber den Teilnehmernamen). */
+  private static final UUID USER_P166_REF = UUID.randomUUID();
+
+  /** Intake #166: neu aufzunehmende Person. */
+  private static final UUID USER_Q166_REF = UUID.randomUUID();
+
+  /** Intake #166: erledigte Aufgaben, die fuer C und R ueber Titel und Namen von P treffen. */
+  private static final UUID T166_A = UUID.randomUUID();
+
+  private static final UUID T166_B = UUID.randomUUID();
 
   /**
    * ID-Block: Aufgaben +1..+14 und +300.., Ersteller-Zeilen von S +100+n, States +200+n, weitere
@@ -325,6 +349,26 @@ class InboxArchiveSearchIT {
       seedTask(jt, taskId, UUID.randomUUID(), done, base.plusMinutes(40 + i), "Serie " + i, null);
       seedParticipant(jt, ID_BASE + 400 + i, taskId, USER_P_REF, true, true, true, null);
       seedUserState(jt, ID_BASE + 500 + i, taskId, USER_P_REF, null);
+    }
+
+    // Intake #166: zwei erledigte Querschnitt-Aufgaben mit Ersteller C (aktiv), Assignee P (Name
+    // Pia Querfeld) und dem ausgetretenen Archivleser R.
+    seedBenutzer(jt, 546L, USER_C166_REF, USER_C166_LOGIN, "Carla Querstand");
+    seedBenutzer(jt, 547L, USER_R166_REF, USER_R166_LOGIN, "Rolf Rueckblick");
+    seedBenutzer(jt, 548L, USER_P166_REF, "user-p166-search@brasi.de", "Pia Querfeld");
+    seedBenutzer(jt, 549L, USER_Q166_REF, "user-q166-search@brasi.de", "Quirin Neuling");
+    final UUID[] querschnitt = {T166_A, T166_B};
+    for (int i = 0; i < querschnitt.length; i++) {
+      final long taskId = ID_BASE + 40 + i;
+      seedTask(
+          jt, taskId, querschnitt[i], done, base.plusMinutes(60 + i), "Querschnitt " + i, null);
+      seedParticipant(jt, ID_BASE + 700 + 3 * i, taskId, USER_C166_REF, true, true, true, null);
+      seedUserState(jt, ID_BASE + 720 + 3 * i, taskId, USER_C166_REF, null);
+      seedParticipant(jt, ID_BASE + 701 + 3 * i, taskId, USER_P166_REF, false, true, true, null);
+      seedUserState(jt, ID_BASE + 721 + 3 * i, taskId, USER_P166_REF, null);
+      seedParticipant(
+          jt, ID_BASE + 702 + 3 * i, taskId, USER_R166_REF, false, false, true, "UNSUBSCRIBED");
+      seedUserState(jt, ID_BASE + 722 + 3 * i, taskId, USER_R166_REF, base.plusMinutes(30));
     }
   }
 
@@ -566,6 +610,91 @@ class InboxArchiveSearchIT {
         .andExpect(status().isOk());
   }
 
+  /**
+   * Intake #166: PUT {@code /assignees} (Weglassen) und POST {@code /participants} bumpen die
+   * Generation ALLER Leser der Aufgabe, also auch eines ausgetretenen Archivlesers und eines
+   * unbeteiligten aktiven Lesers. Ihr alter Such-Cursor liefert danach 410 statt 200; vorher
+   * bekamen nur die geaenderten Personen einen Bump.
+   */
+  @Test
+  @DisplayName(
+      "i166_put_weglassen_und_hinzufuegen_bumpen_alle_leser_alter_such_cursor_410: der alte"
+          + " Such-Cursor des ausgetretenen Archivlesers und des Erstellers liefert nach PUT"
+          + " (Weglassen) bzw. POST /participants 410")
+  void i166_put_and_add_bump_all_readers_old_search_cursor_gone() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String reader = jwt(USER_R166_REF, USER_R166_LOGIN);
+    final String creator = jwt(USER_C166_REF, USER_C166_LOGIN);
+    final String creatorWrite =
+        jwtWithAuthorities(
+            USER_C166_REF,
+            USER_C166_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    // (1) PUT /assignees ohne P: die Aufgabe faellt fuer jeden Leser aus dem Namenstreffer.
+    final String readerCursor = firstPageCursor(mvc, reader, "querfeld");
+    final String creatorCursor = firstPageCursor(mvc, creator, "querfeld");
+    final long readerGenerationBefore = generationOf(USER_R166_REF);
+    mvc.perform(
+            put("/api/v1/tasks/{id}/assignees", T166_A)
+                .header("Authorization", "Bearer " + creatorWrite)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assignees\":[\"" + USER_C166_REF + "\"]}"))
+        .andExpect(status().isNoContent());
+    assertThat(generationOf(USER_R166_REF))
+        .as("ausgetretener Archivleser bekommt den Bump")
+        .isGreaterThan(readerGenerationBefore);
+    expectGone(mvc, reader, "querfeld", readerCursor);
+    expectGone(mvc, creator, "querfeld", creatorCursor);
+
+    // (2) POST /participants mit einer neuen Person: wieder bekommt jeder Leser den Bump.
+    final String readerTitleCursor = firstPageCursor(mvc, reader, "querschnitt");
+    final long readerGenerationBeforeAdd = generationOf(USER_R166_REF);
+    mvc.perform(
+            post("/api/v1/tasks/{id}/participants", T166_B)
+                .header("Authorization", "Bearer " + creatorWrite)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"participantIds\":[\"" + USER_Q166_REF + "\"]}"))
+        .andExpect(status().isNoContent());
+    assertThat(generationOf(USER_R166_REF))
+        .as("ausgetretener Archivleser bekommt den Bump")
+        .isGreaterThan(readerGenerationBeforeAdd);
+    expectGone(mvc, reader, "querschnitt", readerTitleCursor);
+  }
+
+  /** Erste Suchseite mit Grenze 1; die Suche hat mindestens zwei Treffer, also einen Cursor. */
+  private String firstPageCursor(final MockMvc mvc, final String token, final String query)
+      throws Exception {
+    final JsonNode page =
+        getJson(mvc, get(SEARCH_URL).queryParam("query", query).queryParam("limit", "1"), token);
+    assertThat(page.hasNonNull("nextCursor")).as("Cursor fuer '%s': %s", query, page).isTrue();
+    return page.get("nextCursor").asText();
+  }
+
+  private static void expectGone(
+      final MockMvc mvc, final String token, final String query, final String cursor)
+      throws Exception {
+    mvc.perform(
+            get(SEARCH_URL)
+                .queryParam("query", query)
+                .queryParam("limit", "1")
+                .queryParam("cursor", cursor)
+                .header("Authorization", "Bearer " + token))
+        .andExpect(status().isGone());
+  }
+
+  private long generationOf(final UUID userRef) {
+    final Long generation =
+        jdbcTemplate.queryForObject(
+            "SELECT COALESCE(MAX(GENERATION), 0) FROM [dbo].[TASK_INBOX_GENERATION]"
+                + " WHERE TENANT_ID = ? AND USER_REF = ?",
+            Long.class,
+            TENANT_ID,
+            userRef);
+    return generation == null ? 0L : generation;
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
 
   private String userS() {
@@ -798,6 +927,33 @@ class InboxArchiveSearchIT {
         .claim("lastActiveTenantId", TENANT_UUID.toString())
         .claim("profile", profileJson)
         .claim("authorities", List.of())
+        .claim("global", List.of())
+        .claim("byTenant", Map.of())
+        .signWith(RSA_KEY_PAIR.getPrivate())
+        .compact();
+  }
+
+  /** Wie {@link #jwt}, aber mit den angegebenen Authorities (z. B. TASK_WRITE fuer Mutationen). */
+  private static String jwtWithAuthorities(
+      final UUID userUuid, final String loginName, final String... authorities) {
+    final String profileJson =
+        "{\"userId\":\""
+            + userUuid
+            + "\",\"username\":\""
+            + loginName
+            + "\",\"firstName\":\"IT\",\"lastName\":\"Test\","
+            + "\"is2faEnabled\":false,\"is2faVerified\":true}";
+    final Instant now = Instant.now();
+    return Jwts.builder()
+        .header()
+        .keyId(TEST_KID)
+        .and()
+        .subject(loginName)
+        .issuedAt(Date.from(now.minusSeconds(60)))
+        .expiration(Date.from(now.plusSeconds(600)))
+        .claim("lastActiveTenantId", TENANT_UUID.toString())
+        .claim("profile", profileJson)
+        .claim("authorities", List.of(authorities))
         .claim("global", List.of())
         .claim("byTenant", Map.of())
         .signWith(RSA_KEY_PAIR.getPrivate())
