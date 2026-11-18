@@ -2,7 +2,7 @@ package de.brasi.nova.taskmanagement.participant;
 
 /**
  * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code mute}, {@code updateAssignees}, {@code
- * exit} und {@code addParticipants}.
+ * exit}, {@code addParticipants} und {@code removeParticipant}.
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -189,6 +189,102 @@ final class ParticipantApiExamples {
           + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
           + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
           + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
+
+  /**
+   * Pfad von {@code DELETE /api/v1/tasks/{id}/participants/{userId}} in den Fehlerbeispielen
+   * (Intake #145); die Person ist {@link #USER_REF_A}.
+   */
+  private static final String PATH_REMOVE = PATH_PARTICIPANTS + "/" + USER_REF_A;
+
+  /** Feste Trace-Id der Fehlerbeispiele (der Wert kommt zur Laufzeit aus dem MDC). */
+  private static final String TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+  /**
+   * Meldung der 400 von {@code removeParticipant} (aus dem Service, damit beide gleich bleiben).
+   */
+  private static final String SELF_REMOVE_MESSAGE = AssigneeService.SELF_REMOVE_MESSAGE;
+
+  /** Meldung der fachlichen 403 von {@code removeParticipant} (weder Ersteller noch Assignee). */
+  private static final String REMOVE_ROLE_MESSAGE = AssigneeService.REMOVE_ROLE_MESSAGE;
+
+  /** 400 von {@code removeParticipant}: Selbstentfernung, Hinweis auf POST /exit. */
+  static final String BAD_REQUEST_REMOVE =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\",\"message\":\""
+          + SELF_REMOVE_MESSAGE
+          + "\",\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_VALIDATION_FAILED\",\"traceId\":\""
+          + TRACE_ID
+          + "\",\"details\":[\"io.keel.framework.api.validation.EntityValidationException: "
+          + SELF_REMOVE_MESSAGE
+          + "\"]}";
+
+  /** 403 von {@code removeParticipant}: Berechtigung TASK_WRITE fehlt (Controller). */
+  static final String FORBIDDEN_REMOVE =
+      ERROR_HEAD
+          + "\"status\":403,\"error\":\"Forbidden\",\"message\":\""
+          + FORBIDDEN_MESSAGE
+          + "\",\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_ACCESS_DENIED\",\"traceId\":\""
+          + TRACE_ID
+          + "\",\"details\":[\"io.keel.framework.api.security.permission.PermissionDeniedException:"
+          + " Fehlende Permission 'task-management:TASK_WRITE' für"
+          + " AssigneeController#removeParticipant\"]}";
+
+  /**
+   * 403 von {@code removeParticipant}: der Akteur ist Mitglied, aber weder Ersteller noch aktiver
+   * Assignee (Service, keine Mutation).
+   */
+  static final String FORBIDDEN_REMOVE_ROLE =
+      ERROR_HEAD
+          + "\"status\":403,\"error\":\"Forbidden\",\"message\":\""
+          + FORBIDDEN_MESSAGE
+          + "\",\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_ACCESS_DENIED\",\"traceId\":\""
+          + TRACE_ID
+          + "\",\"details\":[\"io.keel.framework.api.security.permission.PermissionDeniedException: "
+          + REMOVE_ROLE_MESSAGE
+          + "\"]}";
+
+  /** 404 von {@code removeParticipant}: Aufgabe unbekannt, fremder Mandant oder kein Mitglied. */
+  static final String NOT_FOUND_REMOVE =
+      ERROR_HEAD
+          + "\"status\":404,\"error\":\"Not Found\",\"message\":\"Aufgabe nicht gefunden.\","
+          + "\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_NOT_FOUND\",\"traceId\":\""
+          + TRACE_ID
+          + "\",\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
+          + " Aufgabe nicht gefunden.\"]}";
+
+  /**
+   * 409 von {@code removeParticipant}: die Person ist der Ersteller. Die Geschaeftsregel hat keine
+   * Ursache, daher ohne {@code details}.
+   */
+  static final String CONFLICT_REMOVE_CREATOR =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\""
+          + AssigneeService.REMOVE_CREATOR_MESSAGE
+          + "\",\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\",\"traceId\":\""
+          + TRACE_ID
+          + "\"}";
+
+  /** 409 von {@code removeParticipant}: nebenlaeufiger Versionskonflikt beim Speichern. */
+  static final String CONFLICT_REMOVE =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_REMOVE
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\",\"traceId\":\""
+          + TRACE_ID
+          + "\",\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
 
   /** 400 von {@code exit}: unbekanntes oder fremdes Uebergabeziel. */
   static final String BAD_REQUEST_EXIT =

@@ -18,6 +18,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -427,6 +428,128 @@ public class AssigneeController {
           @RequestBody
           final ParticipantAddInput input) {
     assigneeService.addParticipants(id, input);
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Entfernt eine Person aus der Aufgabe (Intake #145, idempotent).
+   *
+   * <p>Nur der Ersteller und aktive Assignees duerfen entfernen; die Person tritt mit UNSUBSCRIBED
+   * aus, verliert eine Zuweisung, behaelt aber den Lesezugriff auf das Archiv-Detail und erhaelt
+   * eine REMOVED-Benachrichtigung. Den Ablauf und die Fehlerfaelle beschreibt {@link
+   * AssigneeService#removeParticipant}.
+   *
+   * @param id externe UUID der Aufgabe
+   * @param userId UUID der zu entfernenden Person
+   * @return 204 No Content
+   */
+  @Operation(
+      summary = "Beteiligten entfernen",
+      description =
+          "Entfernt die Person userId aus der Aufgabe. Erlaubt nur dem Ersteller und aktiven"
+              + " Assignees der Aufgabe; andere Mitglieder erhalten 403, Nicht-Mitglieder die"
+              + " neutrale 404. Die Person tritt mit der Austrittsart UNSUBSCRIBED aus, genau wie"
+              + " beim Weglassen in PUT /api/v1/tasks/{id}/assignees; war sie Assignee, verliert sie"
+              + " die Zuweisung. Sie behaelt den Lesezugriff auf das Archiv-Detail der Aufgabe und"
+              + " erhaelt eine Benachrichtigung vom Typ REMOVED (gespeichert, abrufbar ueber GET"
+              + " /api/v1/notifications; zusaetzlich nach dem Commit nach bestem Bemuehen per"
+              + " WebSocket an offene Sitzungen mit Recht NOTIFICATION_READ). REMOVED ist direkt"
+              + " persoenlich und von der Stummschaltung ausgenommen. Der aufrufende Benutzer"
+              + " erhaelt keine Benachrichtigung. Idempotent: ist die Person unbekannt, nie"
+              + " beteiligt gewesen oder bereits ausgetreten, antwortet der Aufruf mit 204 ohne"
+              + " Aenderung und ohne Benachrichtigung. Der Ersteller kann nicht entfernt werden"
+              + " (409); sich selbst entfernt man nicht hier, sondern ueber POST"
+              + " /api/v1/tasks/{id}/exit (400).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "204",
+        description =
+            "Person entfernt und benachrichtigt, oder keine Aenderung, weil sie nicht (mehr)"
+                + " beteiligt ist."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Der aufrufende Benutzer will sich selbst entfernen (stattdessen POST"
+                + " /api/v1/tasks/{id}/exit verwenden) oder eine Pfadangabe ist keine UUID.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.BAD_REQUEST_REMOVE))),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Kein oder ungueltiges JWT.",
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.UNAUTHORIZED))),
+    @ApiResponse(
+        responseCode = "403",
+        description =
+            "Fehlende TASK_WRITE-Berechtigung, oder der aufrufende Benutzer ist Mitglied der"
+                + " Aufgabe, aber weder ihr Ersteller noch ein aktiver Assignee; es wurde nichts"
+                + " geaendert.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "kein-ersteller-oder-assignee",
+                      summary = "Mitglied ohne Ersteller- oder Assignee-Rolle",
+                      value = ParticipantApiExamples.FORBIDDEN_REMOVE_ROLE),
+                  @ExampleObject(
+                      name = "task-write-fehlt",
+                      summary = "Berechtigung TASK_WRITE fehlt",
+                      value = ParticipantApiExamples.FORBIDDEN_REMOVE)
+                })),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht gefunden, fremder Mandant oder keine aktive Mitgliedschaft des"
+                + " Aufrufers (neutral maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_REMOVE))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Die Person ist der"
+                + " Ersteller der Aufgabe; er bleibt dauerhaft Mitglied. (2) Nebenlaeufiger"
+                + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe oder die"
+                + " Teilnehmerzeile, z. B. gleichzeitige Mitgliederaenderung oder Austritt; die"
+                + " Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "ersteller",
+                      summary = "Der Ersteller kann nicht entfernt werden",
+                      value = ParticipantApiExamples.CONFLICT_REMOVE_CREATOR),
+                  @ExampleObject(
+                      name = "versionskonflikt",
+                      summary = "Nebenlaeufiger Versionskonflikt",
+                      value = ParticipantApiExamples.CONFLICT_REMOVE)
+                }))
+  })
+  @DeleteMapping("/{id}/participants/{userId}")
+  @RequiresPermission(TaskManagementPermissions.TASK_WRITE)
+  public ResponseEntity<Void> removeParticipant(
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
+      @Parameter(
+              description =
+                  "UUID der zu entfernenden Person (Benutzer-UUID, wie in participantIds beim"
+                      + " Hinzufuegen).",
+              required = true)
+          @PathVariable
+          final UUID userId) {
+    assigneeService.removeParticipant(id, userId);
     return ResponseEntity.noContent().build();
   }
 }

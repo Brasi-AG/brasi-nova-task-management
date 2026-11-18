@@ -67,6 +67,21 @@ public class AssigneeService {
 
   private static final Logger log = LoggerFactory.getLogger(AssigneeService.class);
 
+  /**
+   * Meldung der 400 beim Versuch, sich selbst zu entfernen (Intake #145, auch OpenAPI-Beispiel).
+   */
+  static final String SELF_REMOVE_MESSAGE =
+      "Sich selbst aus der Aufgabe zu entfernen ist nicht moeglich. Zum Verlassen der"
+          + " Aufgabe POST /api/v1/tasks/{id}/exit verwenden.";
+
+  /** Meldung der 403, wenn der Akteur weder Ersteller noch aktiver Assignee ist (Intake #145). */
+  static final String REMOVE_ROLE_MESSAGE =
+      "Beteiligte entfernen duerfen nur der Ersteller und aktive Assignees der Aufgabe.";
+
+  /** Meldung der 409, wenn der Ersteller entfernt werden soll (Intake #145). */
+  static final String REMOVE_CREATOR_MESSAGE =
+      "Der Ersteller kann nicht aus der Aufgabe entfernt werden.";
+
   private final BaseTaskRepository taskRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
@@ -313,19 +328,9 @@ public class AssigneeService {
             actorRef,
             tenantId);
       } else {
-        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt).
-        p.setExitKind(ExitKind.UNSUBSCRIBED);
-        p.setExitAt(LocalDateTime.now());
-        participantQueryRepository.save(p);
-
-        // UNSUBSCRIBED_AT auch im UserState setzen
-        final List<TaskUserState> states =
-            userStateQueryRepository.findByTaskIdAndUserRef(taskId, removedRef);
-        if (!states.isEmpty()) {
-          final TaskUserState state = states.get(0);
-          state.setUnsubscribedAt(LocalDateTime.now());
-          userStateQueryRepository.save(state);
-        }
+        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt) samt UNSUBSCRIBED_AT im
+        // UserState; gemeinsamer Kern mit removeParticipant (Intake #145).
+        unsubscribe(taskId, p);
         log.info(
             "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
                 + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
@@ -383,6 +388,172 @@ public class AssigneeService {
       inboxGenerationService.bumpSorted(tenantId, affectedRefs);
 
       inboxSignalService.invalidate(tenantId, toInvalidate);
+    }
+  }
+
+  /**
+   * Entfernt eine Person aus einer Aufgabe (Intake #145, {@code DELETE
+   * /api/v1/tasks/{id}/participants/{userId}}).
+   *
+   * <p>Ablauf (Reihenfolge ist Vertrag):
+   *
+   * <ol>
+   *   <li>Aufgabe tenant-scoped laden, dann WRITE-Member-Guard des Akteurs: fremd, unbekannt oder
+   *       kein aktives Mitglied ergibt die neutrale 404, vor jeder weiteren Pruefung.
+   *   <li>Sich selbst entfernen ist 400 mit Hinweis auf {@code POST /api/v1/tasks/{id}/exit}; der
+   *       eigene Austritt hat dort seine eigenen Regeln (Ersteller, Uebergabe).
+   *   <li>Rechtegrenze: entfernen duerfen nur der Ersteller und aktive Assignees der Aufgabe. Ein
+   *       anderes WRITE-Mitglied bekommt 403 ohne Mutation; das ist kein Existenz-Leck, weil der
+   *       Akteur bestaetigtes Mitglied ist (Muster der Handover-Rechtegrenze in {@link #exit}). Das
+   *       grobe Recht TASK_WRITE prueft der Controller.
+   *   <li>Ziel lesen (aktive PERSON-Zeile des Task-Mandanten, Austritt beliebig): keine Zeile
+   *       (unbekannte Person, nie beteiligt, deaktivierte Zeile) oder schon ausgetreten ergibt
+   *       idempotent 204 ohne Aenderung, ohne Benachrichtigung und ohne Signal. Der Ersteller ist
+   *       dauerhaftes Mitglied und nicht entfernbar (409).
+   *   <li>Wirkung wie das Weglassen eines Nicht-Erstellers in {@link #updateAssignees}: gemeinsamer
+   *       Kern {@link #unsubscribe} (EXIT_KIND=UNSUBSCRIBED, EXIT_AT, UNSUBSCRIBED_AT im
+   *       UserState); zusaetzlich verliert ein entfernter Assignee seine Zuweisung
+   *       (ASSIGNEE_FLAG=false). Die Zeile bleibt ACTIVE, damit der READ-Guard das Archiv-Detail
+   *       weiter zulaesst. Keine neue Austrittsart.
+   *   <li>Historieneintrag mit Namen-Snapshot der entfernten Person, dann REMOVED-Benachrichtigung
+   *       an sie (nie an den Akteur; der Selbstfall ist oben schon 400). REMOVED ist von der
+   *       Stummschaltung ausgenommen (Begruendung in {@code NotificationMuteFilter}), daher keine
+   *       Filter-Lesung.
+   *   <li>Lock-Reihenfolge wie {@link #updateAssignees}: alle Mitgliedschafts-Reads und -Writes
+   *       einschliesslich der aktiven States fuer das Signal VOR dem versionierten TASK-save; der
+   *       VERSION-Bump serialisiert gegen parallele PUT/exit/Entfernen (Verlierer 409, voller
+   *       Rollback). Danach Generation-Bump genau der entfernten Person (ihre Inbox-Sicht aendert
+   *       sich; LAST_ACTIVITY_AT bleibt wie beim PUT unveraendert, die Keyset-Position der anderen
+   *       verschiebt sich nicht) und after-commit Signal an sie und alle aktiven Leser
+   *       (Teilnehmer-Zusammenfassungen aendern sich).
+   * </ol>
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @param participantRef UUID der zu entfernenden Person
+   * @throws EntityNotFoundException Aufgabe unbekannt, fremd, deaktiviert oder Akteur kein aktives
+   *     WRITE-Mitglied (404, neutral)
+   * @throws EntityValidationException der Akteur will sich selbst entfernen (400)
+   * @throws PermissionDeniedException der Akteur ist weder Ersteller noch aktiver Assignee (403)
+   * @throws BusinessRuleException Ziel ist der Ersteller oder nebenlaeufiger Versionskonflikt (409)
+   */
+  @Transactional
+  public void removeParticipant(final UUID taskExternalId, final UUID participantRef) {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    final long tenantId = actor.tenant().id();
+    final UUID actorRef = actor.user().id();
+
+    final Task task = requireTask(taskExternalId, tenantId);
+    final Long taskId = task.getId();
+
+    // Guard GANZ VORNE (vor Selbst-, Rechte- und Zielpruefung): kein Existenz-Leck ueber
+    // 400/403/409.
+    membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
+    if (participantRef.equals(actorRef)) {
+      throw new EntityValidationException(SELF_REMOVE_MESSAGE);
+    }
+
+    // Rechtegrenze: nur Ersteller und aktive Assignees. Der Guard hat die aktive, nicht
+    // ausgetretene PERSON-Zeile des Akteurs bereits bestaetigt.
+    final List<TaskParticipant> actorRows =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef);
+    final boolean mayRemove =
+        !actorRows.isEmpty()
+            && actorRows.get(0).getExitKind() == null
+            && (actorRows.get(0).isCreatorFlag() || actorRows.get(0).isAssigneeFlag());
+    if (!mayRemove) {
+      throw new PermissionDeniedException(
+          "Ersteller oder aktiver Assignee der Aufgabe", REMOVE_ROLE_MESSAGE);
+    }
+
+    final List<TaskParticipant> rows =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef);
+    if (rows.isEmpty()) {
+      log.debug(
+          "AssigneeService.removeParticipant: Person {} ist kein Teilnehmer der Aufgabe {}"
+              + " - idempotent ohne Aenderung.",
+          participantRef,
+          taskExternalId);
+      return;
+    }
+    final TaskParticipant target = rows.get(0);
+    if (target.isCreatorFlag()) {
+      throw new BusinessRuleException(REMOVE_CREATOR_MESSAGE);
+    }
+    if (target.getExitKind() != null) {
+      log.debug(
+          "AssigneeService.removeParticipant: Person {} ist aus der Aufgabe {} bereits"
+              + " ausgetreten - idempotent ohne Aenderung.",
+          participantRef,
+          taskExternalId);
+      return;
+    }
+
+    final boolean wasAssignee = target.isAssigneeFlag();
+    target.setAssigneeFlag(false);
+    unsubscribe(taskId, target);
+
+    final Map<UUID, String> names = resolveNames(Set.of(participantRef), actorRef);
+    taskHistoryService.record(
+        taskId,
+        tenantId,
+        actorRef,
+        "hat einen Beteiligten entfernt",
+        names.getOrDefault(participantRef, participantRef.toString()));
+
+    notificationService.emit(
+        participantRef,
+        taskId,
+        NotificationTypeCodes.REMOVED,
+        NotificationSeverityCodes.INFO,
+        "Du wurdest aus der Aufgabe entfernt.",
+        task.getTitle(),
+        actorRef);
+
+    // Signal-Menge VOR dem TASK-save lesen (Mitgliedschaft vor Aufgabe, wie updateAssignees).
+    final Set<UUID> toInvalidate = new HashSet<>();
+    toInvalidate.add(participantRef);
+    userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+        .map(TaskUserState::getUserRef)
+        .forEach(toInvalidate::add);
+
+    taskRepository.save(task);
+
+    inboxGenerationService.bumpSorted(tenantId, List.of(participantRef));
+    inboxSignalService.invalidate(tenantId, toInvalidate);
+
+    log.info(
+        "AssigneeService.removeParticipant: Person {} aus Aufgabe {} (id={}) entfernt"
+            + " (EXIT_KIND=UNSUBSCRIBED, vorher Assignee={}) von Akteur {} in Mandant {}.",
+        participantRef,
+        taskExternalId,
+        taskId,
+        wasAssignee,
+        actorRef,
+        tenantId);
+  }
+
+  /**
+   * Gemeinsamer Austrittskern fuer das Abwaehlen eines Nicht-Erstellers in {@link #updateAssignees}
+   * und das Entfernen per {@link #removeParticipant} (Intake #145): setzt {@code
+   * EXIT_KIND=UNSUBSCRIBED} und {@code EXIT_AT}, speichert die Teilnehmerzeile und setzt im aktiven
+   * UserState {@code UNSUBSCRIBED_AT} (fehlt er, bleibt es bei der Teilnehmerzeile). Rollenflags
+   * und {@code ENTITY_STATUS} bleiben unberuehrt; die Zeile bleibt ACTIVE (Archivzugriff).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param participant die aktive, nicht ausgetretene Teilnehmerzeile eines Nicht-Erstellers
+   */
+  private void unsubscribe(final Long taskId, final TaskParticipant participant) {
+    participant.setExitKind(ExitKind.UNSUBSCRIBED);
+    participant.setExitAt(LocalDateTime.now());
+    participantQueryRepository.save(participant);
+
+    final List<TaskUserState> states =
+        userStateQueryRepository.findByTaskIdAndUserRef(taskId, participant.getParticipantRef());
+    if (!states.isEmpty()) {
+      final TaskUserState state = states.get(0);
+      state.setUnsubscribedAt(LocalDateTime.now());
+      userStateQueryRepository.save(state);
     }
   }
 
