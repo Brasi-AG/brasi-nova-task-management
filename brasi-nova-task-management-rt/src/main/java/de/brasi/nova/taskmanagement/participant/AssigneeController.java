@@ -40,7 +40,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Client-Eingabedaten.
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class AssigneeController {
 

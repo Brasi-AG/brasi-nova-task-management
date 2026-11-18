@@ -8,9 +8,11 @@ import org.aspectj.lang.annotation.Aspect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
 
 /**
  * Uebersetzt ein Deadlock-Opfer (SQL-Server-Fehler 1205) oder einen anderen Sperrfehler der
@@ -51,17 +53,18 @@ import org.springframework.stereotype.Component;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class LockConflictTranslationAspect {
 
-  /** Meldung der 409 nach einem Sperrfehler (Text von Stefan, Intake #167). */
-  public static final String MESSAGE =
-      "Die Aufgabe wurde gleichzeitig geändert. Bitte neu laden und erneut versuchen.";
-
   /** Fehlercode des SQL-Server-Deadlock-Opfers. */
   static final int SQL_SERVER_DEADLOCK = 1205;
 
   private static final Logger log = LoggerFactory.getLogger(LockConflictTranslationAspect.class);
 
   /**
-   * Fuehrt die schreibende Controller-Methode aus und uebersetzt einen Sperrfehler in 409.
+   * Fuehrt die schreibende Controller-Methode aus und uebersetzt einen Sperrfehler in 409 mit dem
+   * Text der Markierung des Controllers ({@link TranslatesLockConflicts#message}, Text je Sache).
+   *
+   * <p>Die Markierung wird am Zielobjekt gelesen, nicht per Pointcut-Bindung: die Bindung braucht
+   * die vom Auto-Proxy exponierte {@code JoinPointMatch}, die ein von Hand gebauter Proxy (Tests)
+   * nicht bereitstellt.
    *
    * @param joinPoint die Controller-Methode
    * @return das Ergebnis der Methode
@@ -86,8 +89,24 @@ public class LockConflictTranslationAspect {
           "Sperrfehler der Datenbank in {} als 409 gemeldet (Transaktion zurueckgerollt): {}",
           joinPoint.getSignature().toShortString(),
           error.toString());
-      throw new BusinessRuleException(MESSAGE, error);
+      throw new BusinessRuleException(messageOf(joinPoint.getTarget()), error);
     }
+  }
+
+  /**
+   * Text der Markierung des Controllers; der Pointcut garantiert sie, ohne sie gilt der
+   * Aufgaben-Text.
+   *
+   * @param controller das Zielobjekt der Controller-Methode
+   * @return der Text der 409
+   */
+  static String messageOf(final Object controller) {
+    final TranslatesLockConflicts marker =
+        controller == null
+            ? null
+            : AnnotationUtils.findAnnotation(
+                ClassUtils.getUserClass(controller), TranslatesLockConflicts.class);
+    return marker == null ? TranslatesLockConflicts.TASK : marker.message();
   }
 
   /**

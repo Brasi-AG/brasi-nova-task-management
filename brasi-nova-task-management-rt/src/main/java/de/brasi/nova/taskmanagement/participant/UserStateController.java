@@ -36,7 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
  * (READ-Member, ausgetretene eingeschlossen), weil das Gesehen-Markieren zum Lesen gehoert.
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class UserStateController {
 

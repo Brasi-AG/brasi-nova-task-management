@@ -39,7 +39,7 @@ import org.springframework.web.bind.annotation.RestController;
  * CommentQueryService} (Lesen).
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class CommentController {
 

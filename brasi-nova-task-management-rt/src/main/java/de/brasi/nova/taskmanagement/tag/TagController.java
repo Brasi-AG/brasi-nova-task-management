@@ -62,7 +62,7 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code @RequiresPermission(TAG_ADMIN)}.
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TAG)
 @RequestMapping("/api/v1/tags")
 @EnableNovaHateoas(entityClass = TaskTag.class)
 @LinkRules(
@@ -315,7 +315,7 @@ public class TagController {
         description =
             "Tag ist noch an mindestens eine Aufgabe referenziert (Anzahl in der Meldung);"
                 + " der Tag bleibt aktiv. errorKey=NOVA_BUSINESS_RULE_VIOLATION."
-                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
+                + LockConflictApiExamples.TAG_DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",

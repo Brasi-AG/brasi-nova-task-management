@@ -4,12 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.keel.framework.api.exception.BusinessRuleException;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -30,15 +33,24 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Unit-Tests fuer {@link LockConflictTranslationAspect} (Intake #167): ein Sperrfehler der
- * Datenbank an einem schreibenden Endpunkt wird 409 ({@link BusinessRuleException} mit festem Text
- * und Ursache), alles andere bleibt unveraendert. Dazu ein Wachposten: jeder schreibende Endpunkt
- * eines markierten Controllers dokumentiert die 409, und jeder handgeschriebene Controller mit
- * schreibenden Endpunkten ist markiert (bewusste Ausnahme in {@link #UNMARKED_WRITE_CONTROLLERS}).
+ * Datenbank an einem schreibenden Endpunkt wird 409 ({@link BusinessRuleException} mit dem Text der
+ * Markierung des Controllers und Ursache), alles andere bleibt unveraendert. Dazu ein Wachposten:
+ * jeder handgeschriebene Controller mit schreibenden Endpunkten ist markiert (bewusste Ausnahme in
+ * {@link #UNMARKED_WRITE_CONTROLLERS}), jeder schreibende Endpunkt eines markierten Controllers
+ * dokumentiert die 409, und ein 409-Beispiel mit Sperrkonflikt-Text traegt den Text seiner
+ * Markierung. Der HTTP-Weg mit der KSF-Fehlerbehandlung steht in {@link LockConflictHttpTest}.
  */
 class LockConflictTranslationAspectTest {
 
   /** Basis-Paket der Anwendung. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";
+
+  /** Die Sperrkonflikt-Texte je Sache (Stefan, 2026-11-18). */
+  private static final Set<String> LOCK_TEXTS =
+      Set.of(
+          TranslatesLockConflicts.TASK,
+          TranslatesLockConflicts.TAG,
+          TranslatesLockConflicts.NOTIFICATION);
 
   /**
    * Handgeschriebene Controller mit schreibenden Endpunkten ohne Markierung: der Ticket-Controller
@@ -47,9 +59,9 @@ class LockConflictTranslationAspectTest {
   private static final Set<String> UNMARKED_WRITE_CONTROLLERS =
       Set.of("de.brasi.nova.taskmanagement.push.WebSocketTicketController");
 
-  /** Beispiel-Controller fuer den Proxy: wirft die uebergebene Ausnahme. */
-  @TranslatesLockConflicts
-  static class SampleController {
+  /** Beispiel-Controller einer Aufgaben-Sache fuer den Proxy: wirft die uebergebene Ausnahme. */
+  @TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
+  static class SampleTaskController {
 
     @PutMapping("/sample")
     public void write(final RuntimeException toThrow) {
@@ -62,8 +74,18 @@ class LockConflictTranslationAspectTest {
     }
   }
 
-  private static SampleController proxy() {
-    final AspectJProxyFactory factory = new AspectJProxyFactory(new SampleController());
+  /** Beispiel-Controller einer Tag-Sache (Nicht-Aufgaben-Text). */
+  @TranslatesLockConflicts(message = TranslatesLockConflicts.TAG)
+  static class SampleTagController {
+
+    @DeleteMapping("/sample-tag")
+    public void delete(final RuntimeException toThrow) {
+      throw toThrow;
+    }
+  }
+
+  private static <T> T proxy(final T target) {
+    final AspectJProxyFactory factory = new AspectJProxyFactory(target);
     factory.setProxyTargetClass(true);
     factory.addAspect(new LockConflictTranslationAspect());
     return factory.getProxy();
@@ -72,15 +94,29 @@ class LockConflictTranslationAspectTest {
   @Test
   @DisplayName(
       "i167_deadlock_opfer_wird_409: CannotAcquireLockException (Spring-Uebersetzung von 1205) an"
-          + " einem schreibenden Endpunkt -> BusinessRuleException mit festem Text und Ursache")
+          + " einem schreibenden Endpunkt -> BusinessRuleException mit dem Text der Markierung und"
+          + " Ursache")
   void lock_failure_becomes_business_rule_exception() {
     final CannotAcquireLockException deadlock =
         new CannotAcquireLockException(
             "deadlock victim", new SQLException("deadlock", "40001", 1205));
 
-    assertThatThrownBy(() -> proxy().write(deadlock))
+    assertThatThrownBy(() -> proxy(new SampleTaskController()).write(deadlock))
         .isInstanceOf(BusinessRuleException.class)
-        .hasMessage(LockConflictTranslationAspect.MESSAGE)
+        .hasMessage(TranslatesLockConflicts.TASK)
+        .hasCause(deadlock);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_text_je_sache: an einem Tag-Controller traegt die 409 den Tag-Text, nicht den"
+          + " Aufgaben-Text")
+  void lock_failure_uses_text_of_controller_marker() {
+    final CannotAcquireLockException deadlock = new CannotAcquireLockException("deadlock victim");
+
+    assertThatThrownBy(() -> proxy(new SampleTagController()).delete(deadlock))
+        .isInstanceOf(BusinessRuleException.class)
+        .hasMessage(TranslatesLockConflicts.TAG)
         .hasCause(deadlock);
   }
 
@@ -93,9 +129,9 @@ class LockConflictTranslationAspectTest {
         new UncategorizedSQLException(
             "update", "UPDATE X", new SQLException("deadlock", "40001", 1205));
 
-    assertThatThrownBy(() -> proxy().write(wrapped))
+    assertThatThrownBy(() -> proxy(new SampleTaskController()).write(wrapped))
         .isInstanceOf(BusinessRuleException.class)
-        .hasMessage(LockConflictTranslationAspect.MESSAGE)
+        .hasMessage(TranslatesLockConflicts.TASK)
         .hasCause(wrapped);
   }
 
@@ -109,10 +145,11 @@ class LockConflictTranslationAspectTest {
     final UncategorizedSQLException otherCode =
         new UncategorizedSQLException("x", "SELECT 1", new SQLException("timeout", "HYT00", 1222));
     final BusinessRuleException conflict = new BusinessRuleException("Versionskonflikt");
+    final SampleTaskController controller = proxy(new SampleTaskController());
 
-    assertThatThrownBy(() -> proxy().write(integrity)).isSameAs(integrity);
-    assertThatThrownBy(() -> proxy().write(otherCode)).isSameAs(otherCode);
-    assertThatThrownBy(() -> proxy().write(conflict)).isSameAs(conflict);
+    assertThatThrownBy(() -> controller.write(integrity)).isSameAs(integrity);
+    assertThatThrownBy(() -> controller.write(otherCode)).isSameAs(otherCode);
+    assertThatThrownBy(() -> controller.write(conflict)).isSameAs(conflict);
   }
 
   @Test
@@ -122,20 +159,23 @@ class LockConflictTranslationAspectTest {
   void read_endpoints_are_not_translated() {
     final CannotAcquireLockException deadlock = new CannotAcquireLockException("deadlock victim");
 
-    assertThatThrownBy(() -> proxy().read(deadlock)).isSameAs(deadlock);
+    assertThatThrownBy(() -> proxy(new SampleTaskController()).read(deadlock)).isSameAs(deadlock);
   }
 
   @Test
   @DisplayName(
       "i167_wachposten_409_dokumentiert: jeder handgeschriebene Controller mit schreibenden"
-          + " Endpunkten ist markiert (Ausnahme Ticket-Controller), und jeder schreibende Endpunkt"
-          + " eines markierten Controllers dokumentiert die 409")
+          + " Endpunkten ist markiert (Ausnahme Ticket-Controller), jeder schreibende Endpunkt"
+          + " eines markierten Controllers dokumentiert die 409, und jedes 409-Beispiel mit"
+          + " Sperrkonflikt-Text traegt den Text der Markierung seines Controllers")
   void every_write_endpoint_of_marked_controllers_documents_409() throws ClassNotFoundException {
     final ClassPathScanningCandidateComponentProvider scanner =
         new ClassPathScanningCandidateComponentProvider(false);
     scanner.addIncludeFilter(new AnnotationTypeFilter(RestController.class));
     final List<String> unmarked = new ArrayList<>();
     final List<String> undocumented = new ArrayList<>();
+    final List<String> wrongText = new ArrayList<>();
+    final Set<String> textsInExamples = new HashSet<>();
     int markedControllers = 0;
     for (final BeanDefinition candidate : scanner.findCandidateComponents(APP_BASE_PACKAGE)) {
       final Class<?> type = Class.forName(candidate.getBeanClassName());
@@ -149,7 +189,8 @@ class LockConflictTranslationAspectTest {
       if (writes.isEmpty()) {
         continue;
       }
-      if (!type.isAnnotationPresent(TranslatesLockConflicts.class)) {
+      final TranslatesLockConflicts marker = type.getAnnotation(TranslatesLockConflicts.class);
+      if (marker == null) {
         if (!UNMARKED_WRITE_CONTROLLERS.contains(type.getName())) {
           unmarked.add(type.getName());
         }
@@ -157,14 +198,31 @@ class LockConflictTranslationAspectTest {
       }
       markedControllers++;
       for (final Method write : writes) {
-        if (!documents409(write)) {
+        final List<ApiResponse> conflicts = conflictResponses(write);
+        if (conflicts.isEmpty()) {
           undocumented.add(type.getSimpleName() + "#" + write.getName());
+        }
+        for (final String example : exampleValues(conflicts)) {
+          for (final String text : LOCK_TEXTS) {
+            if (example.contains(text)) {
+              textsInExamples.add(text);
+              if (!text.equals(marker.message())) {
+                wrongText.add(type.getSimpleName() + "#" + write.getName() + ": " + text);
+              }
+            }
+          }
         }
       }
     }
     assertThat(markedControllers).as("markierte Controller gefunden").isGreaterThanOrEqualTo(6);
     assertThat(unmarked).as("schreibende Controller ohne @TranslatesLockConflicts").isEmpty();
     assertThat(undocumented).as("schreibende Endpunkte ohne dokumentierte 409").isEmpty();
+    assertThat(wrongText)
+        .as("409-Beispiele mit dem Sperrkonflikt-Text einer anderen Sache")
+        .isEmpty();
+    assertThat(textsInExamples)
+        .as("jeder Sperrkonflikt-Text erscheint in einem 409-Beispiel")
+        .containsExactlyInAnyOrderElementsOf(LOCK_TEXTS);
   }
 
   private static boolean isTestClass(final Class<?> type) {
@@ -179,13 +237,25 @@ class LockConflictTranslationAspectTest {
         || method.isAnnotationPresent(DeleteMapping.class);
   }
 
-  private static boolean documents409(final Method method) {
+  private static List<ApiResponse> conflictResponses(final Method method) {
     final List<ApiResponse> responses = new ArrayList<>();
     final ApiResponses container = method.getAnnotation(ApiResponses.class);
     if (container != null) {
       responses.addAll(Arrays.asList(container.value()));
     }
     responses.addAll(Arrays.asList(method.getAnnotationsByType(ApiResponse.class)));
-    return responses.stream().anyMatch(response -> "409".equals(response.responseCode()));
+    return responses.stream().filter(response -> "409".equals(response.responseCode())).toList();
+  }
+
+  private static List<String> exampleValues(final List<ApiResponse> responses) {
+    final List<String> values = new ArrayList<>();
+    for (final ApiResponse response : responses) {
+      for (final Content content : response.content()) {
+        for (final ExampleObject example : content.examples()) {
+          values.add(example.value());
+        }
+      }
+    }
+    return values;
   }
 }

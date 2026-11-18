@@ -54,7 +54,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Mutations-Handler tragen unveraendert ihr {@code @RequiresPermission(NOTIFICATION_WRITE)}.
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.NOTIFICATION)
 @RequestMapping("/api/v1/notifications")
 @EnableNovaHateoas(entityClass = TaskNotification.class)
 @LinkRules(

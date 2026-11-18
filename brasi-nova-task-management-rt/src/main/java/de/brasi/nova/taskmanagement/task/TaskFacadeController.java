@@ -61,7 +61,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Client-Eingabedaten.
  */
 @RestController
-@TranslatesLockConflicts
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 @EnableNovaHateoas(entityClass = Task.class)
 @LinkRules(
@@ -272,7 +272,11 @@ public class TaskFacadeController {
         responseCode = "409",
         description =
             "Key fuer andere Eingabe verwendet." + LockConflictApiExamples.DESCRIPTION_SUFFIX,
-        content = @Content)
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TASK_CREATE_FROM_SOURCE)))
   })
   @PostMapping("/from-source")
   @HateoasLinkTarget(TaskHateoas.Targets.CREATE_FROM_SOURCE)
