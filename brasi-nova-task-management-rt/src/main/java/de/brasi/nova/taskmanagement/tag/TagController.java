@@ -5,6 +5,8 @@ import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.tag.model.TagCreateInput;
 import de.brasi.nova.taskmanagement.tag.model.TagModel;
 import de.brasi.nova.taskmanagement.tag.model.TagUpdateInput;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
@@ -14,6 +16,7 @@ import io.keel.framework.api.hateoas.annotation.LinkRule;
 import io.keel.framework.api.hateoas.annotation.LinkRules;
 import io.keel.framework.api.openapi.annotation.ApiFindCollectionResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
+import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -59,6 +62,7 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code @RequiresPermission(TAG_ADMIN)}.
  */
 @RestController
+@TranslatesLockConflicts
 @RequestMapping("/api/v1/tags")
 @EnableNovaHateoas(entityClass = TaskTag.class)
 @LinkRules(
@@ -158,7 +162,15 @@ public class TagController {
             "Ungueltige Eingabe: leerer/zu langer Name, ungueltiger Hex-color, oder unbekannter"
                 + " bzw. nicht-kanonischer severityCode."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-    @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung.")
+    @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TAG_CREATE)))
   })
   @PostMapping
   @HateoasLinkTarget(TagHateoas.Targets.CREATE)
@@ -196,7 +208,15 @@ public class TagController {
                 + " severityCode-Setzen."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
     @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung."),
-    @ApiResponse(responseCode = "404", description = "Tag nicht gefunden.")
+    @ApiResponse(responseCode = "404", description = "Tag nicht gefunden."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TAG_UPDATE)))
   })
   @PutMapping("/{id}")
   @HateoasLinkTarget(TagHateoas.Targets.UPDATE)
@@ -237,7 +257,15 @@ public class TagController {
     @ApiResponse(responseCode = "403", description = "Fehlende TAG_ADMIN-Berechtigung."),
     @ApiResponse(
         responseCode = "404",
-        description = "Tag nicht gefunden oder bereits deaktiviert (terminal, neutral maskiert).")
+        description = "Tag nicht gefunden oder bereits deaktiviert (terminal, neutral maskiert)."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TAG_DEACTIVATE)))
   })
   @PostMapping("/{id}/deactivate")
   @HateoasLinkTarget(TagHateoas.Targets.DEACTIVATE)
@@ -286,7 +314,8 @@ public class TagController {
         responseCode = "409",
         description =
             "Tag ist noch an mindestens eine Aufgabe referenziert (Anzahl in der Meldung);"
-                + " der Tag bleibt aktiv. errorKey=NOVA_BUSINESS_RULE_VIOLATION.",
+                + " der Tag bleibt aktiv. errorKey=NOVA_BUSINESS_RULE_VIOLATION."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",

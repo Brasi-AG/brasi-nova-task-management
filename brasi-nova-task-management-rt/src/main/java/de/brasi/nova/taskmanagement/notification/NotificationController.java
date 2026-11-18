@@ -6,6 +6,8 @@ import de.brasi.nova.taskmanagement.notification.model.NotificationReadInput;
 import de.brasi.nova.taskmanagement.paging.CursorCollectionModel;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
@@ -15,8 +17,12 @@ import io.keel.framework.api.hateoas.annotation.LinkRules;
 import io.keel.framework.api.openapi.annotation.ApiFindCollectionResponse;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
@@ -48,6 +54,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Mutations-Handler tragen unveraendert ihr {@code @RequiresPermission(NOTIFICATION_WRITE)}.
  */
 @RestController
+@TranslatesLockConflicts
 @RequestMapping("/api/v1/notifications")
 @EnableNovaHateoas(entityClass = TaskNotification.class)
 @LinkRules(
@@ -138,7 +145,15 @@ public class NotificationController {
         responseCode = "204",
         description = "Alle Benachrichtigungen erfolgreich als gelesen markiert."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-    @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung.")
+    @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.NOTIFICATIONS_READ_ALL)))
   })
   @PutMapping("/read-all")
   @HateoasLinkTarget(NotificationHateoas.Targets.MARK_ALL_READ)
@@ -177,7 +192,15 @@ public class NotificationController {
     @ApiResponse(responseCode = "403", description = "Fehlende NOTIFICATION_WRITE-Berechtigung."),
     @ApiResponse(
         responseCode = "404",
-        description = "Benachrichtigung nicht gefunden (neutral maskiert).")
+        description = "Benachrichtigung nicht gefunden (neutral maskiert)."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.NOTIFICATION_READ)))
   })
   @PutMapping("/{id}/read")
   @HateoasLinkTarget(NotificationHateoas.Targets.MARK_READ)
