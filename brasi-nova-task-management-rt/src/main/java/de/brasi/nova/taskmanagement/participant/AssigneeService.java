@@ -34,6 +34,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,6 +49,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -172,17 +174,22 @@ public class AssigneeService {
             .map(TaskParticipant::getParticipantRef)
             .collect(Collectors.toSet());
 
-    // Neue Assignees: in desired, aber nicht in current
-    final Set<UUID> toAdd =
-        desiredRefs.stream().filter(ref -> !currentRefs.contains(ref)).collect(Collectors.toSet());
+    // Neue Assignees: in desired, aber nicht in current. Intake #156: nach UUID sortiert, weil
+    // dieselben Teilnehmer-/State-Zeilen auch createComment (Aufnahme erwaehnter Personen),
+    // addParticipants und die Uebergabe schreiben und alle Pfade mehrere Zeilen in GLEICHER
+    // Reihenfolge sperren muessen; eine HashSet-Reihenfolge liesse zwei ausgetretene Personen, die
+    // gleichzeitig erwaehnt und zugewiesen werden, ueberkreuz sperren (Deadlock).
+    final List<UUID> toAdd =
+        desiredRefs.stream().filter(ref -> !currentRefs.contains(ref)).sorted().toList();
 
     // Abgewaehlte Assignees: in current, aber nicht in desired.
     // BE-7 (A3): Creator-Schutz ist nun MITGLIEDSCHAFTS-Schutz (nicht mehr "Creator nie aus
     // toRemove"): ein ausgelassener Creator wird DE-ASSIGNT (ASSIGNEE_FLAG=false), behaelt aber
     // CREATOR_FLAG + PARTICIPANT_FLAG + aktiven UserState + EXIT_KIND=null (KEIN Austritt). Ein
     // ausgelassener Nicht-Creator wird wie bisher mit EXIT_KIND=UNSUBSCRIBED ausgetreten.
-    final Set<UUID> toRemove =
-        currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).collect(Collectors.toSet());
+    // Ebenfalls nach UUID sortiert (siehe toAdd).
+    final List<UUID> toRemove =
+        currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).sorted().toList();
 
     // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
     // Sonst entstuenden orphan-/cross-tenant-Participant/UserState/Notification. Unbekannt/fremd/
@@ -204,6 +211,11 @@ public class AssigneeService {
 
     // Neue Assignees anlegen
     for (final UUID assigneeRef : toAdd) {
+      // Test-Seam: Synchronisation der Nebenlaeufigkeits-ITs VOR dem ersten Zeilen-Zugriff je
+      // Person
+      // (Reihenfolge-Beweis gegen die Aufnahme per Erwaehnung). Produktiv No-Op.
+      onBeforeAssigneeAddForTest(taskId, assigneeRef);
+
       // Pruefen ob bereits ein Participant-Eintrag existiert (z.B. als Beobachter oder CREATOR)
       final List<TaskParticipant> existing =
           participantQueryRepository.findByTaskIdAndParticipantRef(taskId, assigneeRef);
@@ -344,6 +356,17 @@ public class AssigneeService {
       // beim
       // versionierten UPDATE) und der Client wiederholt den PUT gegen frischen Stand. Nur bei
       // tatsaechlicher Aenderung (affectedRefs nicht leer) - ein No-Op-PUT bumpt die Version nicht.
+      //
+      // Intake #156: die aktiven States fuer das Signal werden VOR dem TASK-save gelesen
+      // (Mitgliedschaft vor Aufgabe). Der Inhalt ist derselbe (die State-Writes liegen oben), aber
+      // eine Lesung unter dem TASK-Lock wartet auf eine uncommittete State-Zeile, die createComment
+      // beim Aufnehmen einer erwaehnten Person schreibt, waehrend dieser Kommentar die Aufgabe
+      // sperren will -> Deadlock. Vor dem save wartet die Lesung ohne TASK-Lock.
+      final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
+      userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
+          .map(TaskUserState::getUserRef)
+          .forEach(toInvalidate::add);
+
       taskRepository.save(task);
 
       // Codex #6: Generation-Bump der geaenderten Refs (toAdd + toRemove) ERST NACH dem TASK-save -
@@ -353,10 +376,6 @@ public class AssigneeService {
       // UNVERAENDERT genau affectedRefs (NICHT die weitere Invalidate-Menge toInvalidate).
       inboxGenerationService.bumpSorted(tenantId, affectedRefs);
 
-      final Set<UUID> toInvalidate = new HashSet<>(affectedRefs);
-      userStateQueryRepository.findActiveUserRefsByTaskId(taskId).stream()
-          .map(TaskUserState::getUserRef)
-          .forEach(toInvalidate::add);
       inboxSignalService.invalidate(tenantId, toInvalidate);
     }
   }
@@ -372,8 +391,11 @@ public class AssigneeService {
    *   <li>Eingabe deduplizieren; leere Menge -> No-Op (keine DB-Mutation, kein Signal).
    *   <li>All-or-Nothing: alle verbleibenden Refs muessen aktive Benutzer DES Mandanten sein
    *       ({@code findActiveByUuids}) - sonst 400 VOR jeder Mutation.
-   *   <li>Je Ref: aktive Zeile -> SKIP (idempotent); ausgetretene Zeile -> als REINER Teilnehmer
-   *       reaktivieren (ASSIGNEE_FLAG=false); keine Zeile -> neu anlegen (reiner Teilnehmer).
+   *   <li>Je Ref ({@link #addAsParticipants}, gemeinsamer Kern mit dem Kommentar, Intake #156):
+   *       Unique-Key-exakter Lookup (findet auch DEACTIVE-Zeilen): aktive Zeile -> SKIP
+   *       (idempotent); ausgetretene oder inaktive (DEACTIVE) PERSON-Zeile -> als REINER Teilnehmer
+   *       reaktivieren (ASSIGNEE_FLAG=false, ENTITY_STATUS=ACTIVE); TEAM-Zeile oder fremdes
+   *       Basis-TENANT_ID -> 409 ohne Mutation; keine Zeile -> neu anlegen (reiner Teilnehmer).
    *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
    *       #saveParticipantHandlingRace} idempotent aufgeloest.
    *   <li>Generation-Bump + UserState NUR fuer tatsaechlich neu angelegte/reaktivierte Refs.
@@ -432,12 +454,10 @@ public class AssigneeService {
           "Unbekannte oder nicht zugelassene Teilnehmer-Benutzer: " + unknown);
     }
 
-    final List<UUID> affectedRefs = new ArrayList<>();
-    for (final UUID ref : refs) {
-      if (addSingleParticipant(taskId, ref, tenantId)) {
-        affectedRefs.add(ref);
-      }
-    }
+    // Gemeinsamer Aufnahme-Kern (auch von CommentService#createComment genutzt, Intake #156): legt
+    // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie und liefert die tatsaechlich
+    // aufgenommenen Refs. Benachrichtigung, Bump und Signal bleiben hier beim Aufrufer.
+    final List<UUID> affectedRefs = addAsParticipants(taskId, tenantId, refs);
 
     // Intake #147: PARTICIPANT-Benachrichtigung nur an tatsaechlich neu hinzugefuegte oder aus dem
     // Austritt reaktivierte Personen (affectedRefs: aktive Zeilen und Race-Verlierer sind schon
@@ -484,21 +504,90 @@ public class AssigneeService {
   }
 
   /**
+   * Gemeinsamer Kern des Hinzufuegens als Beteiligter (Intake #156): legt je Ref einen reinen
+   * Teilnehmer samt persoenlichem State an bzw. reaktiviert einen ausgetretenen als reinen
+   * Teilnehmer (nie Assignee, ein Mute bleibt, {@link UserStateService#reactivate}) und behandelt
+   * den gleich-Ref-Race idempotent ({@link #saveParticipantHandlingRace}).
+   *
+   * <p>Schreibt AUSSCHLIESSLICH die Zeilen {@code TASK_PARTICIPANT} und {@code TASK_USER_STATE}:
+   * keine Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save. Das ist Sache des
+   * Aufrufers, weil dessen Lock-Reihenfolge die Stelle vorgibt: zuerst alle Mitgliedschafts-Reads
+   * und -Writes, dann das Speichern der Aufgabe, dann der sortierte Bump (Karten {@code
+   * participants-actions} und {@code inbox-snapshot}). {@link #addParticipants} meldet danach
+   * PARTICIPANT, {@code CommentService#createComment} die MENTION.
+   *
+   * <p>Die Refs muessen vom Aufrufer als aktive Benutzer DES Mandanten geprueft sein. Sie werden
+   * dedupliziert und nach UUID sortiert verarbeitet, damit parallele Aufrufe mit mehreren Refs
+   * dieselben Zeilen in gleicher Reihenfolge sperren. Muss in der Transaktion des Aufrufers laufen.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param tenantId interner Mandanten-Schluessel
+   * @param refs aufzunehmende Benutzer-UUIDs (beliebige Reihenfolge, Duplikate erlaubt)
+   * @return die tatsaechlich neu angelegten oder reaktivierten Refs in aufsteigender UUID-
+   *     Reihenfolge; aktive Mitglieder und Race-Verlierer (den meldet der Gewinner) fehlen
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<UUID> addAsParticipants(
+      final Long taskId, final long tenantId, final Collection<UUID> refs) {
+    final List<UUID> sortedRefs = new ArrayList<>(new LinkedHashSet<>(refs));
+    sortedRefs.sort(UUID::compareTo);
+    final List<UUID> affectedRefs = new ArrayList<>();
+    for (final UUID ref : sortedRefs) {
+      if (addSingleParticipant(taskId, ref, tenantId)) {
+        affectedRefs.add(ref);
+      }
+    }
+    return affectedRefs;
+  }
+
+  /**
+   * Darf der aktuelle Akteur Personen als Beteiligte hinzufuegen? Dieselbe Pruefung wie am Endpunkt
+   * {@code POST /api/v1/tasks/{id}/participants} ({@code @RequiresPermission(TASK_WRITE)} am
+   * Controller): die exakte Authority {@code task-management:TASK_WRITE}. Die Mitgliedschaft des
+   * Akteurs prueft der Aufrufer selbst ({@link TaskMembershipGuard#requireWriteMember}).
+   *
+   * <p>Genutzt vom Kommentar mit Erwaehnung (Intake #156) und von der Uebergabe an Nicht-Mitglieder
+   * ({@link #exit}), die effektiv ebenfalls jemanden hinzufuegt.
+   *
+   * @return {@code true}, wenn der Akteur die Berechtigung hat
+   */
+  public boolean mayAddParticipants() {
+    return permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE);
+  }
+
+  /**
    * Fuegt EINEN Teilnehmer-Ref hinzu bzw. reaktiviert ihn (reine Teilnehmer-Rolle).
+   *
+   * <p>Der Lookup ist Unique-Key-exakt wie in {@link #ensureAssignee} ({@link
+   * TaskParticipantQueryRepository#findRowByUniqueKey}, ohne {@code ENTITY_STATUS}-/{@code
+   * EXIT_KIND}-/{@code PARTICIPANT_KIND}-Filter). Der lose Lookup {@code
+   * findByTaskIdAndParticipantRef} liest nur {@code ENTITY_STATUS='ACTIVE'}: eine vorhandene {@code
+   * DEACTIVE}-PERSON-Zeile bliebe unsichtbar, der Insert braeche den V3-Unique-Key und der ganze
+   * Aufruf (auch der Kommentar mit Erwaehnung) endete mit 409.
    *
    * @return {@code true}, wenn tatsaechlich angelegt/reaktiviert wurde (Generation-Bump faellig);
    *     {@code false} bei idempotentem SKIP (bereits aktiv - sequentiell ODER als Race-Verlierer)
+   * @throws BusinessRuleException 409 fail-closed ohne Mutation, wenn die Unique-Key-Zeile eine
+   *     TEAM-Zeile ist oder ein fremdes Basis-{@code TENANT_ID} traegt (wie {@link
+   *     #ensureAssignee}); ein PERSON-Insert waere per Unique-Key unmoeglich
    */
   private boolean addSingleParticipant(final Long taskId, final UUID ref, final long tenantId) {
     final List<TaskParticipant> existing =
-        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ref);
+        participantQueryRepository.findRowByUniqueKey(taskId, ref);
     if (!existing.isEmpty()) {
       final TaskParticipant p = existing.get(0);
-      if (p.getExitKind() == null) {
+      if (p.getParticipantKind() != ParticipantKind.PERSON
+          || !Objects.equals(tenantId, p.getTenantId())) {
+        throw new BusinessRuleException(
+            "Die Person kann nicht als Beteiligter gefuehrt werden: die vorhandene"
+                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
+      }
+      if (p.getExitKind() == null && p.getEntityState() == EntityState.ACTIVE) {
         // (a) aktive Zeile (Creator / Assignee / Teilnehmer) -> idempotenter SKIP, keine Mutation.
         return false;
       }
-      // (b) ausgetretene Zeile -> als REINEN Teilnehmer reaktivieren. ASSIGNEE_FLAG MUSS false
+      // (b) ausgetretene ODER inaktive (DEACTIVE) PERSON-Zeile -> als REINEN Teilnehmer
+      // reaktivieren (wie die Uebergabe: ENTITY_STATUS wieder ACTIVE). ASSIGNEE_FLAG MUSS false
       // werden (D4-BLOCKER: ein abgewaehlter Ex-Assignee behaelt sonst ASSIGNEE_FLAG=1 und wuerde
       // durch die Reaktivierung faelschlich wieder aktiver Assignee - findActiveAssigneesByTaskId
       // filtert ASSIGNEE_FLAG=1 AND EXIT_KIND IS NULL). Add-Participants verleiht NIE Assignee.
@@ -506,6 +595,7 @@ public class AssigneeService {
       p.setAssigneeFlag(false);
       p.setExitKind(null);
       p.setExitAt(null);
+      p.setEntityState(EntityState.ACTIVE);
       if (!saveParticipantHandlingRace(p, taskId, ref)) {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }
@@ -596,6 +686,19 @@ public class AssigneeService {
       }
       throw conflict;
     }
+  }
+
+  /**
+   * Test-Seam (Default No-Op): Haken in {@link #updateAssignees} VOR dem ersten Zeilen-Zugriff je
+   * neu zugewiesener Person. Ermoeglicht dem Nebenlaeufigkeits-IT (Intake #156), updateAssignees
+   * und die Aufnahme per Erwaehnung vor ihrem ersten Write zu synchronisieren und so die gleiche
+   * Sperr-Reihenfolge (UUID-aufsteigend) zu beweisen. Im Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der gleich zugewiesenen Person
+   */
+  protected void onBeforeAssigneeAddForTest(final Long taskId, final UUID ref) {
+    // No-Op im Produktivbetrieb.
   }
 
   /**
@@ -739,8 +842,7 @@ public class AssigneeService {
       final boolean allTargetsAreWriteMembers =
           dedupedTargets.stream()
               .allMatch(targetRef -> membershipGuard.isWriteMember(taskId, targetRef, tenantId));
-      if (!allTargetsAreWriteMembers
-          && !permissionEvaluator.hasExactAuthority(TaskManagementPermissions.TASK_WRITE)) {
+      if (!allTargetsAreWriteMembers && !mayAddParticipants()) {
         throw new PermissionDeniedException(
             TaskManagementPermissions.TASK_WRITE,
             "Die Uebergabe an ein noch nicht als WRITE-Mitglied gefuehrtes Ziel erfordert"
@@ -798,7 +900,12 @@ public class AssigneeService {
       final TaskHandover savedEvent = handoverRepository.save(event);
       final Long handoverId = savedEvent.getId();
 
-      for (final UUID targetRef : dedupedTargets) {
+      // Intake #156: die Ziele schreiben Teilnehmer- und State-Zeilen wie updateAssignees und die
+      // Aufnahme per Erwaehnung und werden daher nach UUID sortiert verarbeitet (gleiche
+      // Sperr-Reihenfolge ueber alle Pfade). dedupedTargets bleibt in Eingabereihenfolge
+      // (Historie).
+      final List<UUID> sortedTargets = dedupedTargets.stream().sorted().toList();
+      for (final UUID targetRef : sortedTargets) {
         final TaskHandoverTarget targetRow = new TaskHandoverTarget();
         targetRow.setTenantId(tenantId);
         targetRow.setHandoverId(handoverId);

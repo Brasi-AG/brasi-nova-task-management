@@ -35,21 +35,6 @@
     "fingerprint": "fbdd0370f8a14b3c"
   },
   {
-    "operation": "createComment",
-    "rule": "example-valid",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
-    "operation": "createComment",
-    "rule": "request-example",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
-    "operation": "createComment",
-    "rule": "response-example",
-    "fingerprint": "211ddc53fb5a8558"
-  },
-  {
     "operation": "createFromSource",
     "rule": "property-description",
     "fingerprint": "b6b4b33d8f067e6a"
@@ -108,11 +93,6 @@
     "operation": "flag",
     "rule": "response-example",
     "fingerprint": "5a2932e3fbda3101"
-  },
-  {
-    "operation": "getComments",
-    "rule": "response-example",
-    "fingerprint": "666f25b1ba29ce96"
   },
   {
     "operation": "issueTicket",

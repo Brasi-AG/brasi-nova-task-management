@@ -294,7 +294,9 @@ public class AssigneeController {
           "Fuegt die angegebenen Benutzer additiv als Teilnehmer der Aufgabe hinzu (idempotent)."
               + " Verleiht ausschliesslich die Teilnehmer-Rolle, nicht die Assignee-Rolle."
               + " Bereits aktive Mitglieder der Aufgabe werden uebersprungen; ein leeres Array ist"
-              + " ein No-Op. Zuvor ausgetretene Personen werden als reine Teilnehmer reaktiviert."
+              + " ein No-Op. Zuvor ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile"
+              + " (der Benutzer selbst ist aktiv) werden als reine Teilnehmer"
+              + " reaktiviert."
               + " Jede Person, die dabei tatsaechlich neu hinzukommt oder reaktiviert wird, erhaelt"
               + " eine Benachrichtigung vom Typ PARTICIPANT (gespeichert, abrufbar ueber"
               + " GET /api/v1/notifications; zusaetzlich nach dem Commit nach bestem Bemuehen"
@@ -360,10 +362,16 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Konflikt: paralleler Schreibzugriff auf dieselbe Teilnehmerzeile oder"
-                + " den persoenlichen Zustand der Person (Versionskonflikt) bzw. gleichzeitiges"
-                + " erstes Hinzufuegen; die Anfrage gegen den frischen Stand wiederholen (der Aufruf"
-                + " ist idempotent).",
+            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Nebenlaeufiger Konflikt:"
+                + " paralleler Schreibzugriff auf dieselbe Teilnehmerzeile oder den persoenlichen"
+                + " Zustand der Person (Versionskonflikt) bzw. gleichzeitiges erstes Hinzufuegen;"
+                + " die Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent)."
+                + " (2) Die vorhandene Teilnehmerzeile einer Person ist keine PERSON-Zeile des"
+                + " Mandanten (TEAM-Zeile oder fremder Mandant, Datenfehler); sie wird nicht"
+                + " ueberschrieben und die Anfrage scheitert, bis der Datenbestand bereinigt ist."
+                + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei aktivem"
+                + " Benutzer) sind kein Konfliktgrund: sie werden"
+                + " reaktiviert.",
         content =
             @Content(
                 mediaType = "application/json",

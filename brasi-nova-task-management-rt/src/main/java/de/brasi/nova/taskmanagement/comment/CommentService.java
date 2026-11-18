@@ -11,6 +11,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
+import de.brasi.nova.taskmanagement.participant.AssigneeService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.refentity.User;
 import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
@@ -46,7 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Benachrichtigungen (REPLY, MENTION) werden nach der Persistierung emittiert. Der Aktor wird
  * niemals selbst benachrichtigt; REPLY hat Vorrang vor MENTION fuer denselben Empfaenger
- * (Deduplizierung).
+ * (Deduplizierung). Erwaehnte aktive Mandanten-Nutzer, die noch nicht Mitglied sind, werden als
+ * Beteiligte aufgenommen, wenn der Kommentierende Beteiligte hinzufuegen darf (Intake #156).
  *
  * <p>Actor-UUID kommt ausschliesslich aus dem Security-Context ({@link UserAccessor}), NIEMALS aus
  * Client-Eingabedaten.
@@ -68,6 +70,7 @@ public class CommentService {
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
   private final NotificationMuteFilter muteFilter;
+  private final AssigneeService assigneeService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -82,7 +85,8 @@ public class CommentService {
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter,
       final TaskMembershipGuard membershipGuard,
-      final NotificationMuteFilter muteFilter) {
+      final NotificationMuteFilter muteFilter,
+      final AssigneeService assigneeService) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -95,6 +99,7 @@ public class CommentService {
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
     this.muteFilter = muteFilter;
+    this.assigneeService = assigneeService;
   }
 
   /**
@@ -106,9 +111,13 @@ public class CommentService {
    *   <li>Actor aus dem Security-Context laden.
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Optionalen Eltern-Kommentar aufloesen und validieren (400 bei fremder/fehlender UUID).
+   *   <li>Mentions aufloesen (aktive Mandanten-Nutzer); Mitglieder sind MENTION-Ziele. Nicht-
+   *       Mitglieder werden als Beteiligte aufgenommen, wenn der Kommentierende das Recht von
+   *       {@code POST /participants} hat (Intake #156), sonst still verworfen.
    *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false).
    *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT aktualisieren.
-   *   <li>Mentions aufloesen und REPLY/MENTION-Benachrichtigungen emittieren (Deduplizierung).
+   *   <li>REPLY/MENTION/COMMENT-Benachrichtigungen emittieren (Deduplizierung). Neu Aufgenommene
+   *       bekommen nur die MENTION, keine PARTICIPANT-Benachrichtigung.
    *   <li>Inbox-Generation-Bump + Invalidate fuer alle aktiven Teilnehmer der Aufgabe (der
    *       LAST_ACTIVITY_AT-Bump verschiebt die aktive Keyset-Position jedes Teilnehmers -&gt; alte
    *       aktive Cursor werden beim naechsten Folge-Read mit 410 abgelehnt statt stale 200).
@@ -153,6 +162,9 @@ public class CommentService {
     // (ausgeloest durch Top-Level-Mention oder die neue Assignee-Benachrichtigung). Daher: zuerst
     // alle Membership-/Assignee-Daten lesen, DANN task.save, DANN Emit aus den vorab geladenen
     // Mengen. Etabliertes Muster (vgl. TaskCommandService.patch "vor dem TASK-save lesen").
+    // Intake #156: auch die Aufnahme erwaehnter Nicht-Mitglieder (Teilnehmer- und State-WRITES)
+    // liegt vor dem task.save (Teilnehmer-dann-Task wie updateAssignees); der sortierte Bump der
+    // Aufgenommenen folgt mit allen Lesern nach dem save.
 
     // Reader-Refs vor dem TASK-save materialisieren, damit kein Membership-SELECT unter dessen
     // X-Lock gegen einen Exit mit umgekehrter Lock-Reihenfolge laeuft.
@@ -195,6 +207,9 @@ public class CommentService {
     }
     final UUID finalReplyRecipient = replyRecipient;
     final Set<UUID> mentionTargets = new LinkedHashSet<>();
+    // Intake #156: erwaehnte aktive Mandanten-Nutzer, die noch kein WRITE-Mitglied sind. Sie werden
+    // unten (unter dem Recht von POST /participants) als Beteiligte aufgenommen; sonst verworfen.
+    final Set<UUID> nonMemberMentions = new LinkedHashSet<>();
     for (final UUID mentionRef : mentionRefs) {
       // Selbst-Notify ausschliessen + Deduplizierung: wer REPLY bekommt, bekommt kein MENTION.
       if (actorRef.equals(mentionRef)) {
@@ -203,13 +218,16 @@ public class CommentService {
       if (mentionRef.equals(finalReplyRecipient)) {
         continue;
       }
-      // Standard-Selfservice (Slice 3/Auflage 4): nur WRITE-Member werden erwaehnt. Ein
-      // ausgetretener (READ-Member) oder Nicht-Teilnehmer wird still verworfen (kein Ping an eine
-      // verlassene Task), obwohl findActiveByUuids ihn als aktiven Mandanten-Nutzer aufgeloest hat.
-      if (!membershipGuard.isWriteMember(taskId, mentionRef, tenantId)) {
-        continue;
+      // Standard-Selfservice (Slice 3/Auflage 4): MENTION geht nur an WRITE-Member. Ein
+      // ausgetretener (READ-Member) oder Nicht-Teilnehmer, den findActiveByUuids als aktiven
+      // Mandanten-Nutzer aufgeloest hat, wird nicht sofort benachrichtigt, sondern ein Kandidat
+      // fuer
+      // die Aufnahme als Beteiligter (Intake #156).
+      if (membershipGuard.isWriteMember(taskId, mentionRef, tenantId)) {
+        mentionTargets.add(mentionRef);
+      } else {
+        nonMemberMentions.add(mentionRef);
       }
-      mentionTargets.add(mentionRef);
     }
 
     // COMMENT-Empfaenger (Intake #136) VOR dem TASK-save bestimmen: aktive PERSON-Assignees der
@@ -230,6 +248,16 @@ public class CommentService {
     } else {
       assigneeRefs = List.of();
     }
+
+    // Intake #156: erwaehnte Nicht-Mitglieder als Beteiligte aufnehmen. Das sind Teilnehmer- und
+    // State-Writes und gehoeren deshalb VOR den TASK-save (Mitgliedschaft vor Aufgabe, wie bei
+    // updateAssignees); der sortierte Generation-Bump folgt NACH dem save, gemeinsam mit den
+    // uebrigen Lesern (readerRefs). Die Aufgenommenen bekommen NUR die MENTION unten, keine
+    // PARTICIPANT-Benachrichtigung; ein Mute bleibt (MENTION ist ohnehin davon ausgenommen).
+    final Set<UUID> addedMentionRefs =
+        addMentionedNonMembersAsParticipants(taskId, tenantId, nonMemberMentions);
+    mentionTargets.addAll(addedMentionRefs);
+    readerRefs.addAll(addedMentionRefs);
 
     // Kommentar anlegen
     final TaskComment comment = new TaskComment();
@@ -355,6 +383,48 @@ public class CommentService {
         input.text(),
         false,
         createdAt);
+  }
+
+  /**
+   * Nimmt erwaehnte Nicht-Mitglieder als Beteiligte auf (Intake #156), sofern der Kommentierende
+   * dazu berechtigt ist.
+   *
+   * <p>Berechtigung: dieselbe Pruefung wie am Endpunkt {@code POST /participants} ({@link
+   * AssigneeService#mayAddParticipants()}); die Mitgliedschaft des Kommentierenden ist durch den
+   * WRITE-Member-Guard in {@link #createComment} schon bestanden. Ohne das Recht wird niemand
+   * aufgenommen: die Erwaehnung von Nicht-Mitgliedern entfaellt still wie bisher, Mitglieder werden
+   * weiter benachrichtigt.
+   *
+   * <p>Die Aufnahme selbst ist der gemeinsame Kern von {@code addParticipants} ({@link
+   * AssigneeService#addAsParticipants}): reiner Teilnehmer, nie Assignee, Ausgetretene werden als
+   * reine Teilnehmer reaktiviert. Hat ein gleichzeitiger Aufruf eine Person schon aufgenommen (der
+   * Kern meldet sie dann nicht), ist sie inzwischen WRITE-Mitglied und wird trotzdem erwaehnt.
+   * Laeuft vor dem TASK-save in der Transaktion von {@link #createComment}.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param tenantId interner Mandanten-Schluessel
+   * @param nonMembers erwaehnte aktive Mandanten-Nutzer, die (noch) kein WRITE-Mitglied sind
+   * @return die Personen, die danach WRITE-Mitglied sind und die MENTION bekommen
+   */
+  private Set<UUID> addMentionedNonMembersAsParticipants(
+      final Long taskId, final long tenantId, final Set<UUID> nonMembers) {
+    if (nonMembers.isEmpty() || !assigneeService.mayAddParticipants()) {
+      return Set.of();
+    }
+    final Set<UUID> members =
+        new LinkedHashSet<>(assigneeService.addAsParticipants(taskId, tenantId, nonMembers));
+    for (final UUID ref : nonMembers) {
+      if (!members.contains(ref) && membershipGuard.isWriteMember(taskId, ref, tenantId)) {
+        members.add(ref);
+      }
+    }
+    log.info(
+        "CommentService.createComment: {} erwaehnte Person(en) in Aufgabe (id={}) als Beteiligte"
+            + " aufgenommen, Mandant {}.",
+        members.size(),
+        taskId,
+        tenantId);
+    return members;
   }
 
   /**

@@ -19,12 +19,15 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
 import io.jsonwebtoken.Jwts;
+import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.security.AuditorProvider;
 import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfiguration;
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import io.keel.framework.security.KsfSecurityAutoConfiguration;
 import io.keel.framework.security.web.KsfWebSecurityAutoConfiguration;
+import io.keel.framework.web.controller.GlobalApiExceptionHandler;
+import io.keel.framework.web.exception.ApiError;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -36,7 +39,9 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -64,8 +69,10 @@ import org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConf
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -147,6 +154,25 @@ class CommentControllerIT {
   private static final String USER_C_LOGIN = "user-c-comment@brasi.de";
   private static final long USER_C_DB_ID = 564L;
 
+  /**
+   * Weitere aktive Nutzer des Mandanten A fuer die Aufnahme per Erwaehnung (Intake #156): D ist das
+   * erwaehnte Nicht-Mitglied, E ein erwaehntes Mitglied.
+   */
+  private static final UUID USER_D_REF = UUID.randomUUID();
+
+  private static final String USER_D_LOGIN = "user-d-comment@brasi.de";
+  private static final long USER_D_DB_ID = 565L;
+  private static final UUID USER_E_REF = UUID.randomUUID();
+  private static final long USER_E_DB_ID = 566L;
+
+  /** Inaktiver Benutzer des Mandanten A (ENTITY_STATUS != ACTIVE): nie ein Erwaehnungsziel. */
+  private static final UUID USER_INACTIVE_REF = UUID.randomUUID();
+
+  private static final long USER_INACTIVE_DB_ID = 567L;
+
+  /** Die Aufgaben-UUID in den OpenAPI-Beispielen (wird durch die verwendete ersetzt). */
+  private static final String EXAMPLE_TASK_ID = CommentApiExamples.TASK_REF;
+
   private static final KeyPair RSA_KEY_PAIR;
 
   static {
@@ -209,6 +235,8 @@ class CommentControllerIT {
 
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private GlobalApiExceptionHandler apiExceptionHandler;
+  @Autowired private ObjectMapper contextObjectMapper;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -217,6 +245,13 @@ class CommentControllerIT {
     seedBenutzerIfAbsent(jt, USER_A_DB_ID, USER_A_REF, USER_A_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_C_DB_ID, USER_C_REF, USER_C_LOGIN, TENANT_B_ID);
+    seedBenutzerIfAbsent(jt, USER_D_DB_ID, USER_D_REF, USER_D_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, USER_E_DB_ID, USER_E_REF, "user-e-comment@brasi.de", TENANT_A_ID);
+    seedBenutzerIfAbsent(
+        jt, USER_INACTIVE_DB_ID, USER_INACTIVE_REF, "user-inactive-comment@brasi.de", TENANT_A_ID);
+    jt.update(
+        "UPDATE [dbo].[PROD_BENUTZER] SET ENTITY_STATUS = 'INACTIVE' WHERE ID = ?",
+        USER_INACTIVE_DB_ID);
   }
 
   // ---- IT 1: POST comment -> persistiert + COMMENT_COUNT++ + LAST_ACTIVITY_AT +
@@ -780,6 +815,639 @@ class CommentControllerIT {
 
     assertThat(countNotifications(taskUuid, USER_B_REF, "PARTICIPANT")).isZero();
     assertThat(countActiveParticipantRows(taskUuid, USER_B_REF)).isZero();
+  }
+
+  // ---- Intake #156: Erwaehnung nimmt Nicht-Mitglieder als Beteiligte auf ------------------------
+
+  @Test
+  @DisplayName(
+      "i156_erwaehnung_nimmt_nichtmitglied_als_beteiligten_auf_und_meldet_nur_mention (Intake"
+          + " #156): USER_A kommentiert und erwaehnt USER_D (aktiver Nutzer des Mandanten, kein"
+          + " Mitglied) -> D ist reiner Teilnehmer (nicht Assignee), hat genau eine MENTION und"
+          + " keine PARTICIPANT, die Aufgabe steht in Ds Inbox, Ds Generation ist gebumpt; ein"
+          + " spaeteres POST /participants mit D ist ein No-Op ohne PARTICIPANT")
+  void i156_mention_adds_non_member_as_participant_and_notifies_only_mention() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Aufnahme");
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).as("D ist kein Mitglied").isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).doesNotContain(taskUuid);
+    final long generationBefore = inboxGeneration(USER_D_REF);
+
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "Bitte ansehen.", USER_D_REF);
+
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("PARTICIPANT_FLAG")).as("Beteiligter").isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+    assertThat(row.get("CREATOR_FLAG")).isEqualTo(false);
+    assertThat(row.get("PARTICIPANT_KIND")).isEqualTo("PERSON");
+    assertThat(row.get("EXIT_KIND")).as("aktives Mitglied").isNull();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION"))
+        .as("genau eine MENTION")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT"))
+        .as("keine zusaetzliche PARTICIPANT-Benachrichtigung")
+        .isZero();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "COMMENT"))
+        .as("reiner Teilnehmer ist kein COMMENT-Empfaenger")
+        .isZero();
+    final Map<String, Object> mention = notificationRow(taskUuid, USER_D_REF, "MENTION");
+    assertThat(mention.get("TEXT")).isEqualTo("Du wurdest in einem Kommentar erwaehnt.");
+    assertThat(String.valueOf(mention.get("ACTOR_REF")))
+        .isEqualToIgnoringCase(USER_A_REF.toString());
+    assertThat(snapshotTaskIds(mvc, om, tokenD))
+        .as("die Aufgabe steht in Ds Inbox")
+        .contains(taskUuid);
+    assertThat(inboxGeneration(USER_D_REF))
+        .as("Ds Generation ist gebumpt (alte Cursor werden mit 410 abgelehnt)")
+        .isGreaterThan(generationBefore);
+
+    // D ist jetzt volles Mitglied: er darf lesen und kommentieren, ohne ein Recht zu haben.
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenD))
+        .andExpect(status().isOk());
+    postComment(mvc, om, tokenD, taskUuid, "Danke, ich schaue es mir an.", null);
+
+    // Ein spaeteres POST /participants mit D ist ein No-Op (D ist schon aktives Mitglied).
+    postParticipants(mvc, om, tokenA, taskUuid, USER_D_REF);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(1);
+    assertThat(countActiveParticipantRows(taskUuid, USER_D_REF)).isEqualTo(1);
+
+    // Wird D erneut erwaehnt, ist er Mitglied: wieder eine MENTION, keine neue Aufnahme.
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "Noch einmal an D.", USER_D_REF);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(2);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i156_kommentierender_ohne_hinzufuegen_recht_verwirft_nichtmitglieder_still (Intake #156):"
+          + " USER_B (Mitglied, nur TASK_READ) erwaehnt USER_D (kein Mitglied) und USER_E"
+          + " (Mitglied) -> 201, D bleibt Nicht-Mitglied ohne Benachrichtigung, E bekommt seine"
+          + " MENTION; dieselbe Erwaehnung durch USER_A (mit TASK_WRITE) nimmt D auf")
+  void i156_commenter_without_add_right_discards_non_members_silently() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenBReadOnly =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-OhneRecht");
+    final long taskId = taskDbId(taskUuid);
+    insertActiveMember(560701L, taskId, USER_B_REF);
+    insertActiveMember(560702L, taskId, USER_E_REF);
+
+    postCommentWithMentions(
+        mvc, om, tokenBReadOnly, taskUuid, "Bitte pruefen.", USER_D_REF, USER_E_REF);
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF))
+        .as("D wurde nicht aufgenommen (kein Recht, keine Zeile, auch keine ausgetretene)")
+        .isZero();
+    assertThat(userStateRowCount(taskUuid, USER_D_REF)).as("kein persoenlicher State").isZero();
+    assertThat(notificationCountOfRecipient(taskUuid, USER_D_REF))
+        .as("keine Benachrichtigung fuer D")
+        .isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).doesNotContain(taskUuid);
+    assertThat(countNotifications(taskUuid, USER_E_REF, "MENTION"))
+        .as("das Mitglied E wird weiter benachrichtigt")
+        .isEqualTo(1);
+
+    // Gegenprobe: dieselbe Erwaehnung durch einen Kommentierenden mit TASK_WRITE nimmt D auf.
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "Bitte pruefen, D.", USER_D_REF);
+    assertThat(countActiveParticipantRows(taskUuid, USER_D_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i156_unbekannte_inaktive_und_fremde_refs_werden_still_verworfen (Intake #156): eine"
+          + " unbekannte UUID, ein inaktiver Nutzer und ein Nutzer eines fremden Mandanten in"
+          + " mentions -> 201 (kein 400), keine Teilnehmerzeile, kein State, keine"
+          + " Benachrichtigung; gueltige Personen derselben Anfrage werden trotzdem aufgenommen")
+  void i156_unknown_inactive_and_foreign_refs_are_discarded_silently() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Verworfen");
+    final UUID unknown = UUID.randomUUID();
+    final Integer commentsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+
+    postCommentWithMentions(
+        mvc, om, tokenA, taskUuid, "Nur Unbekannte.", unknown, USER_INACTIVE_REF, USER_C_REF);
+
+    for (final UUID ref : List.of(unknown, USER_INACTIVE_REF, USER_C_REF)) {
+      assertThat(participantRowCount(taskUuid, ref))
+          .as("keine Teilnehmerzeile fuer %s", ref)
+          .isZero();
+      assertThat(userStateRowCount(taskUuid, ref)).as("kein State fuer %s", ref).isZero();
+      assertThat(notificationCountOfRecipient(taskUuid, ref))
+          .as("keine Benachrichtigung fuer %s", ref)
+          .isZero();
+    }
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .as("der Kommentar selbst wurde gespeichert")
+        .isEqualTo(commentsBefore + 1);
+
+    // Gemischt: die gueltige Person wird aufgenommen, die ungueltigen fallen weiter weg.
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "Gemischt.", unknown, USER_D_REF);
+    assertThat(countActiveParticipantRows(taskUuid, USER_D_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(1);
+    assertThat(participantRowCount(taskUuid, unknown)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i156_ausgetretener_wird_per_erwaehnung_als_reiner_teilnehmer_reaktiviert (Intake #156):"
+          + " USER_D war Assignee, hat die Aufgabe stummgeschaltet und wurde per PUT"
+          + " abgewaehlt -> die Erwaehnung reaktiviert ihn als reinen Teilnehmer (nicht wieder"
+          + " Assignee), er bekommt MENTION trotz Mute, keine PARTICIPANT, der Mute bleibt, die"
+          + " Aufgabe steht wieder in seiner Inbox; ein Kommentar ohne Erwaehnung loest fuer ihn kein"
+          + " COMMENT aus")
+  void i156_exited_person_is_reactivated_as_pure_participant_by_mention() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Ausgetreten");
+
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF, USER_D_REF);
+    putMute(mvc, tokenD, taskUuid, true);
+    putAssignees(mvc, om, tokenA, taskUuid, USER_A_REF);
+    assertThat(countActiveParticipantRows(taskUuid, USER_D_REF)).as("D ist ausgetreten").isZero();
+    assertThat(isMuted(taskUuid, USER_D_REF)).as("und stumm").isTrue();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).doesNotContain(taskUuid);
+    final long generationBefore = inboxGeneration(USER_D_REF);
+
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "D, bitte wieder dabei sein.", USER_D_REF);
+
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("EXIT_KIND")).as("wieder aktiv").isNull();
+    assertThat(row.get("EXIT_AT")).isNull();
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG"))
+        .as("reiner Teilnehmer: das alte Assignee-Flag ist geloescht")
+        .isEqualTo(false);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION"))
+        .as("MENTION kommt trotz Mute an")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "ASSIGN"))
+        .as("nur die fruehere Zuweisung, keine neue")
+        .isEqualTo(1);
+    assertThat(isMuted(taskUuid, USER_D_REF)).as("die Erwaehnung hebt den Mute nicht auf").isTrue();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).as("wieder in der Inbox").contains(taskUuid);
+    assertThat(inboxGeneration(USER_D_REF)).isGreaterThan(generationBefore);
+
+    // Kein Assignee: ein Top-Level-Kommentar ohne Erwaehnung loest fuer D kein COMMENT aus.
+    postComment(mvc, om, tokenA, taskUuid, "Ohne Erwaehnung.", null);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "COMMENT")).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i156_deactive_person_zeile_wird_per_erwaehnung_reaktiviert_nur_mention (Review 2):"
+          + " USER_D hat eine DEACTIVE-PERSON-Zeile (Unique-Key belegt, vom ACTIVE-Lookup nicht"
+          + " gesehen). Ein Kommentar mit Erwaehnung -> 201 (kein 409 durch den Unique-Key), dieselbe"
+          + " Zeile ist wieder ACTIVE und reiner Teilnehmer (altes Assignee-Flag geloescht), D hat"
+          + " genau eine MENTION und keine PARTICIPANT, die Aufgabe steht in Ds Inbox")
+  void i156_deactive_person_row_is_reactivated_by_mention_with_mention_only() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Deactive-Kommentar");
+    insertDeactiveParticipant(560801L, taskDbId(taskUuid), USER_D_REF);
+    assertThat(participantRow(taskUuid, USER_D_REF).get("ENTITY_STATUS")).isEqualTo("DEACTIVE");
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).doesNotContain(taskUuid);
+    final long generationBefore = inboxGeneration(USER_D_REF);
+
+    postCommentWithMentions(mvc, om, tokenA, taskUuid, "D, bitte wieder dabei sein.", USER_D_REF);
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF))
+        .as("dieselbe Zeile reaktiviert, kein zweiter Insert")
+        .isEqualTo(1);
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+    assertThat(row.get("EXIT_KIND")).isNull();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).as("in Ds Inbox").contains(taskUuid);
+    assertThat(inboxGeneration(USER_D_REF)).isGreaterThan(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i156_post_participants_reaktiviert_deactive_person_zeile_mit_participant (Review 2):"
+          + " POST /participants fuer USER_D mit DEACTIVE-PERSON-Zeile -> 204 (kein 409), dieselbe"
+          + " Zeile ist wieder ACTIVE und reiner Teilnehmer, D bekommt genau eine PARTICIPANT und"
+          + " keine MENTION; ein zweiter Aufruf ist ein No-Op")
+  void i156_post_participants_reactivates_deactive_person_row_with_participant() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenD = buildGrantFreeJwt(TENANT_A_UUID, USER_D_REF, USER_D_LOGIN);
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Deactive-Participants");
+    insertDeactiveParticipant(560802L, taskDbId(taskUuid), USER_D_REF);
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_D_REF);
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).as("kein zweiter Insert").isEqualTo(1);
+    final Map<String, Object> row = participantRow(taskUuid, USER_D_REF);
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(row.get("PARTICIPANT_FLAG")).isEqualTo(true);
+    assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+    assertThat(row.get("EXIT_KIND")).isNull();
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT"))
+        .as("die reaktivierte Person wird wie jede neu Aufgenommene benachrichtigt")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "MENTION")).isZero();
+    assertThat(snapshotTaskIds(mvc, om, tokenD)).as("in Ds Inbox").contains(taskUuid);
+
+    postParticipants(mvc, om, tokenA, taskUuid, USER_D_REF);
+    assertThat(countNotifications(taskUuid, USER_D_REF, "PARTICIPANT")).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i156_team_zeile_blockiert_aufnahme_409_ohne_mutation (Review 2): hat USER_D unter dem"
+          + " Unique-Key eine TEAM-Zeile, ist die Aufnahme nicht moeglich (ein PERSON-Insert braeche"
+          + " den Unique-Key, ueberschrieben wird nicht) -> Kommentar mit Erwaehnung und POST"
+          + " /participants liefern 409 und aendern nichts (kein Kommentar, keine Zeile, keine"
+          + " Benachrichtigung); so ist es in der 409-Beschreibung der OpenAPI dokumentiert")
+  void i156_team_row_blocks_adding_with_409_and_no_mutation() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-156-Team-Zeile");
+    insertParticipantRow(560803L, taskDbId(taskUuid), USER_D_REF, "TEAM", "ACTIVE");
+    final Integer commentsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "text",
+                            "D steht als TEAM-Zeile da.",
+                            "mentions",
+                            List.of(USER_D_REF)))))
+        .andExpect(status().isConflict());
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("participantIds", List.of(USER_D_REF)))))
+        .andExpect(status().isConflict());
+
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?",
+                Integer.class,
+                taskUuid))
+        .as("der Kommentar wurde zurueckgerollt")
+        .isEqualTo(commentsBefore);
+    assertThat(participantRow(taskUuid, USER_D_REF).get("PARTICIPANT_KIND"))
+        .as("die TEAM-Zeile blieb unveraendert")
+        .isEqualTo("TEAM");
+    assertThat(notificationCountOfRecipient(taskUuid, USER_D_REF)).isZero();
+    assertThat(userStateRowCount(taskUuid, USER_D_REF)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i156_kommentar_antworten_entsprechen_den_openapi_beispielen (Intake #156): die"
+          + " Live-Antworten von POST /comments (201 ohne und mit Eltern-Kommentar, 400 Eltern-"
+          + " Kommentar und Text fehlt, 401, 404, 409) und GET /comments (200, 400, 401, 404) haben"
+          + " dieselben Felder und stabilen Werte wie die Beispiele der Operationen")
+  void i156_comment_responses_match_openapi_examples() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "Comment-IT-156-Beispiele");
+    final String path = "/api/v1/tasks/" + taskId + "/comments";
+    final SoftAssertions soft = new SoftAssertions();
+
+    // 201 ohne Eltern-Kommentar: parentCommentId ist null (Feld vorhanden), sonst wie im Beispiel.
+    final JsonNode topLevel =
+        om.readTree(
+            mvc.perform(
+                    post(path)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(om.writeValueAsString(Map.of("text", "Eltern-Kommentar."))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertCommentMatchesExample(
+        soft, topLevel, om.readTree(CommentApiExamples.CREATED_TOP_LEVEL), taskId);
+    final UUID parent = UUID.fromString(topLevel.get("id").asText());
+
+    // 201: Antwort auf einen Kommentar; Felder und Formen wie im Beispiel.
+    final String createdJson =
+        mvc.perform(
+                post(path)
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(
+                            Map.of("text", "Erledigt, danke.", "parentCommentId", parent))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final JsonNode created = om.readTree(createdJson);
+    assertCommentMatchesExample(
+        soft, created, om.readTree(CommentApiExamples.CREATED_REPLY), taskId);
+    soft.assertThat(created.get("parentCommentId").asText()).isEqualTo(parent.toString());
+
+    // GET /comments: 200 mit den beiden Kommentaren chronologisch aufsteigend, Elemente wie im
+    // Beispiel (der erste ohne, der zweite mit Eltern-Kommentar).
+    final JsonNode list =
+        om.readTree(
+            mvc.perform(get(path).header("Authorization", "Bearer " + tokenA))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    final JsonNode listExample = om.readTree(CommentApiExamples.LIST_COMMENTS);
+    soft.assertThat(list.size()).isEqualTo(listExample.size());
+    for (int i = 0; i < Math.min(list.size(), listExample.size()); i++) {
+      assertCommentMatchesExample(soft, list.get(i), listExample.get(i), taskId);
+    }
+
+    // GET /comments 400: keine UUID im Pfad.
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                get("/api/v1/tasks/keine-uuid/comments")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.BAD_REQUEST_PATH,
+        taskId);
+
+    // GET /comments 401 (problem+json der Filterkette) und 404 (unbekannte Aufgabe, maskiert).
+    soft.assertThat(
+            om.readTree(
+                mvc.perform(get(path))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString()))
+        .isEqualTo(om.readTree(CommentApiExamples.UNAUTHORIZED));
+    final UUID unknownForGet = UUID.randomUUID();
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                get("/api/v1/tasks/" + unknownForGet + "/comments")
+                    .header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.NOT_FOUND,
+        unknownForGet);
+
+    // 400: Eltern-Kommentar unbekannt (Service-Validierung).
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                post(path)
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(
+                            Map.of("text", "Antwort.", "parentCommentId", UUID.randomUUID()))))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.BAD_REQUEST_PARENT,
+        taskId);
+
+    // 400: Text fehlt, leer oder nur Leerraum (Validierung beim Lesen des Bodys).
+    for (final String body : List.of("{}", "{\"text\":null}", "{\"text\":\"  \"}")) {
+      assertMatchesExample(
+          soft,
+          om,
+          mvc.perform(
+                  post(path)
+                      .header("Authorization", "Bearer " + tokenA)
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(body))
+              .andExpect(status().isBadRequest())
+              .andReturn()
+              .getResponse()
+              .getContentAsString(),
+          CommentApiExamples.BAD_REQUEST_BODY,
+          taskId);
+    }
+
+    // 400: weitere in der Beschreibung genannte Faelle (null-Element, mehr als 100 Eintraege,
+    // kein gueltiges JSON, keine UUID im Pfad).
+    mvc.perform(
+            post(path)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"x\",\"mentions\":[null]}"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            post(path)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of(
+                            "text",
+                            "x",
+                            "mentions",
+                            java.util.stream.Stream.generate(UUID::randomUUID)
+                                .limit(101)
+                                .toList()))))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            post(path)
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            post("/api/v1/tasks/keine-uuid/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CommentApiExamples.REQUEST_TOP_LEVEL))
+        .andExpect(status().isBadRequest());
+
+    // 401: ohne Anmeldung antwortet die Filterkette mit problem+json.
+    final JsonNode unauthorized =
+        om.readTree(
+            mvc.perform(
+                    post(path)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CommentApiExamples.REQUEST_TOP_LEVEL))
+                .andExpect(status().isUnauthorized())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    soft.assertThat(unauthorized).isEqualTo(om.readTree(CommentApiExamples.UNAUTHORIZED));
+
+    // 404: unbekannte Aufgabe (neutral maskiert).
+    final UUID unknownTask = UUID.randomUUID();
+    assertMatchesExample(
+        soft,
+        om,
+        mvc.perform(
+                post("/api/v1/tasks/" + unknownTask + "/comments")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(CommentApiExamples.REQUEST_TOP_LEVEL))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        CommentApiExamples.NOT_FOUND,
+        unknownTask);
+
+    // 409: der Versionskonflikt beim Speichern (KSF: BusinessRuleException mit
+    // OptimisticLockingFailureException als Ursache) laeuft durch den echten Fehler-Handler des
+    // Kontexts; ein echter Versionskonflikt ist ueber HTTP nicht deterministisch zu erzeugen
+    // (Nebenlaeufigkeitsbeweis mit Rollback: CommentConcurrencyIT).
+    final String conflictMessage = "Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).";
+    final ApiError conflict =
+        apiExceptionHandler
+            .handleNovaBusinessRule(
+                new BusinessRuleException(
+                    conflictMessage, new OptimisticLockingFailureException(conflictMessage)),
+                new MockHttpServletRequest("POST", path))
+            .getBody();
+    assertMatchesExample(
+        soft,
+        om,
+        contextObjectMapper.writeValueAsString(conflict),
+        CommentApiExamples.CONFLICT,
+        taskId);
+    soft.assertAll();
+  }
+
+  /**
+   * Vergleicht einen Kommentar der Live-Antwort mit dem Beispiel: gleiche Feldmenge (auch ein
+   * {@code null}-Wert von parentCommentId steht als Feld da), gleiche Form von parentCommentId
+   * (null oder UUID), edited und createdAt im Format UTC-Instant, taskId die verwendete.
+   */
+  private static void assertCommentMatchesExample(
+      final SoftAssertions soft, final JsonNode live, final JsonNode example, final UUID taskId) {
+    final Set<String> liveFields = new java.util.TreeSet<>();
+    live.fieldNames().forEachRemaining(liveFields::add);
+    final Set<String> exampleFields = new java.util.TreeSet<>();
+    example.fieldNames().forEachRemaining(exampleFields::add);
+    soft.assertThat(liveFields).as("Felder des Kommentars: %s", live).isEqualTo(exampleFields);
+    soft.assertThat(live.get("taskId").asText()).isEqualTo(taskId.toString());
+    soft.assertThat(live.get("parentCommentId").isNull())
+        .as("parentCommentId null wie im Beispiel: %s", live)
+        .isEqualTo(example.get("parentCommentId").isNull());
+    soft.assertThat(live.get("edited").asBoolean()).isEqualTo(example.get("edited").asBoolean());
+    soft.assertThat(live.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
+    soft.assertThat(example.get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
+  }
+
+  /**
+   * Vergleicht eine Live-Antwort mit einem OpenAPI-Beispiel: gleiche Feldmenge und gleiche Werte,
+   * ausser {@code timestamp} und {@code traceId} (je Aufruf neu). Die Aufgaben-UUID im {@code path}
+   * des Beispiels wird durch die verwendete ersetzt.
+   */
+  private static void assertMatchesExample(
+      final SoftAssertions soft,
+      final ObjectMapper om,
+      final String liveJson,
+      final String exampleJson,
+      final UUID taskId)
+      throws Exception {
+    final JsonNode live = om.readTree(liveJson);
+    final JsonNode example = om.readTree(exampleJson.replace(EXAMPLE_TASK_ID, taskId.toString()));
+    final Set<String> exampleFields = new java.util.TreeSet<>();
+    example.fieldNames().forEachRemaining(exampleFields::add);
+    final Set<String> liveFields = new java.util.TreeSet<>();
+    live.fieldNames().forEachRemaining(liveFields::add);
+    soft.assertThat(liveFields).as("Felder der Antwort: %s", live).isEqualTo(exampleFields);
+    for (final String stable :
+        List.of("status", "error", "message", "path", "errorKey", "details")) {
+      soft.assertThat(live.get(stable))
+          .as("Feld %s der Antwort: %s", stable, live)
+          .isEqualTo(example.get(stable));
+    }
   }
 
   // ---- IT I3 (Intake #136): reiner Participant + ausgetretener Assignee -> KEIN COMMENT --------
@@ -1626,6 +2294,101 @@ class CommentControllerIT {
             userRef));
   }
 
+  /** Postet einen Kommentar mit Erwaehnungen (erwartet 201) und liefert dessen externe UUID. */
+  private UUID postCommentWithMentions(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final String text,
+      final UUID... mentions)
+      throws Exception {
+    final String resp =
+        mvc.perform(
+                post("/api/v1/tasks/" + taskUuid + "/comments")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(Map.of("text", text, "mentions", List.of(mentions)))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(resp, JsonNode.class).get("id").traverse(om).readValueAs(UUID.class);
+  }
+
+  /** Die einzige Teilnehmerzeile einer Person an einer Aufgabe (Rollenflags und Austritt). */
+  private Map<String, Object> participantRow(final UUID taskUuid, final UUID userRef) {
+    return jdbcTemplate.queryForMap(
+        "SELECT p.ENTITY_STATUS, p.PARTICIPANT_FLAG, p.ASSIGNEE_FLAG, p.CREATOR_FLAG,"
+            + " p.PARTICIPANT_KIND, p.EXIT_KIND, p.EXIT_AT FROM [dbo].[TASK_PARTICIPANT] p"
+            + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        taskUuid,
+        userRef);
+  }
+
+  /** Anzahl aller Teilnehmerzeilen einer Person an einer Aufgabe (auch ausgetretene). */
+  private int participantRowCount(final UUID taskUuid, final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p"
+            + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        Integer.class,
+        taskUuid,
+        userRef);
+  }
+
+  /** Anzahl der persoenlichen State-Zeilen einer Person an einer Aufgabe. */
+  private int userStateRowCount(final UUID taskUuid, final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s"
+            + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+        Integer.class,
+        taskUuid,
+        userRef);
+  }
+
+  /** Anzahl aller Benachrichtigungen (jeden Typs) eines Empfaengers an einer Aufgabe. */
+  private int notificationCountOfRecipient(final UUID taskUuid, final UUID recipientRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+        Integer.class,
+        taskUuid,
+        recipientRef);
+  }
+
+  /** Inbox-Generation einer Person im Mandanten A; 0, solange noch keine Zeile existiert. */
+  private long inboxGeneration(final UUID userRef) {
+    final List<Long> generations =
+        jdbcTemplate.queryForList(
+            "SELECT GENERATION FROM [dbo].[TASK_INBOX_GENERATION]"
+                + " WHERE TENANT_ID = ? AND USER_REF = ?",
+            Long.class,
+            TENANT_A_ID,
+            userRef);
+    return generations.isEmpty() ? 0L : generations.get(0);
+  }
+
+  /** Die Aufgaben-UUIDs der ersten Seite des Inbox-Snapshots einer Person. */
+  private Set<UUID> snapshotTaskIds(final MockMvc mvc, final ObjectMapper om, final String token)
+      throws Exception {
+    final String json =
+        mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final Set<UUID> ids = new java.util.HashSet<>();
+    for (final JsonNode item : om.readTree(json).get("tasks").get("items")) {
+      ids.add(UUID.fromString(item.get("id").asText()));
+    }
+    return ids;
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
@@ -1721,6 +2484,40 @@ class CommentControllerIT {
         TENANT_A_ID,
         taskId,
         ref,
+        TENANT_A_ID);
+  }
+
+  /**
+   * Fuegt eine inaktive PERSON-Teilnehmerzeile ({@code ENTITY_STATUS='DEACTIVE'}, ehemaliger
+   * Assignee, nicht ausgetreten) direkt per JDBC hinzu (Review 2 zu Intake #156): der ACTIVE-Lookup
+   * sieht sie nicht, der V3-Unique-Key ist aber belegt.
+   */
+  private void insertDeactiveParticipant(final long partId, final long taskId, final UUID ref) {
+    insertParticipantRow(partId, taskId, ref, "PERSON", "DEACTIVE");
+  }
+
+  /**
+   * Fuegt eine nicht ausgetretene Teilnehmerzeile mit der gegebenen Art ({@code PERSON}/{@code
+   * TEAM}) und dem gegebenen {@code ENTITY_STATUS} direkt per JDBC hinzu (ehemaliger Assignee).
+   */
+  private void insertParticipantRow(
+      final long partId,
+      final long taskId,
+      final UUID ref,
+      final String kind,
+      final String entityStatus) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT] "
+            + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID, CREATOR_FLAG,"
+            + " ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT) "
+            + "VALUES (?, ?, 'it', GETDATE(), NEWID(), 1, ?, ?, ?, ?, ?, 0, 1, 1, NULL, NULL)",
+        partId,
+        entityStatus,
+        TENANT_A_ID,
+        taskId,
+        ref,
+        kind,
         TENANT_A_ID);
   }
 
