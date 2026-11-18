@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.participant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -3376,6 +3377,411 @@ class AssigneeControllerIT {
                 HANDOVER_TARGET_REF))
         .as("das Ziel wurde durch den geblockten Ex-Member nicht angelegt")
         .isZero();
+  }
+
+  // ============================================================================================
+  // Intake #145: DELETE /api/v1/tasks/{id}/participants/{userId}
+  // ============================================================================================
+
+  @Autowired private de.brasi.nova.taskmanagement.security.TaskMembershipGuard membershipGuard;
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_assignee: 204, Austritt UNSUBSCRIBED mit Zeitpunkt, Zuweisung weg, Zeile"
+          + " ACTIVE, State abgemeldet, Historie, genau ein REMOVED an die Person und keins an den"
+          + " Akteur, VERSION und Generation gebumpt, Archivzugriff bleibt; Wiederholung und"
+          + " unbekannte Person sind 204 ohne Aenderung")
+  void i145_remove_assignee_db_state_archive_notification_idempotent() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I145-Entfernen-Assignee");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+    final int versionBefore = taskVersion(dbId);
+    final long generationBefore = inboxGeneration(ASSIGNEE_REF);
+
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND EXIT_KIND = 'UNSUBSCRIBED'"
+                    + " AND EXIT_AT IS NOT NULL AND ASSIGNEE_FLAG = 0 AND PARTICIPANT_FLAG = 1"
+                    + " AND ENTITY_STATUS = 'ACTIVE'",
+                dbId,
+                ASSIGNEE_REF))
+        .as("ausgetreten (UNSUBSCRIBED), Zuweisung weg, Zeile bleibt ACTIVE")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND UNSUBSCRIBED_AT IS NOT NULL AND ENTITY_STATUS = 'ACTIVE'",
+                dbId,
+                ASSIGNEE_REF))
+        .as("UNSUBSCRIBED_AT im State gesetzt")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 1"
+                    + " AND EXIT_KIND IS NULL",
+                dbId,
+                USER_A_REF))
+        .as("der Akteur bleibt unveraendert")
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isEqualTo(1);
+    assertThat(countNotifications(dbId, USER_A_REF, "REMOVED")).as("nie an den Akteur").isZero();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] WHERE TASK_ID = ?"
+                    + " AND ACTOR_REF = ? AND TEXT = 'hat einen Beteiligten entfernt'",
+                dbId,
+                USER_A_REF))
+        .as("Historieneintrag")
+        .isEqualTo(1);
+    assertThat(taskVersion(dbId)).as("VERSION-Bump der Aufgabe").isGreaterThan(versionBefore);
+    assertThat(inboxGeneration(ASSIGNEE_REF))
+        .as("Generation der entfernten Person gebumpt")
+        .isGreaterThan(generationBefore);
+
+    // Archivzugriff bleibt: READ-Mitglied (Detail), kein WRITE-Mitglied mehr, Aufgabe im Archiv
+    // "verlassen".
+    TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+    try {
+      membershipGuard.requireReadMember(dbId, ASSIGNEE_REF, TENANT_A_ID);
+      assertThat(membershipGuard.isWriteMember(dbId, ASSIGNEE_REF, TENANT_A_ID)).isFalse();
+      final LocalDateTime asOf = LocalDateTime.now().plusSeconds(5);
+      assertThat(
+              keysetQueryRepository
+                  .findArchiveLeftPage(
+                      ASSIGNEE_REF,
+                      asOf,
+                      asOf,
+                      UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+                      10)
+                  .stream()
+                  .anyMatch(t -> taskId.equals(t.getUuid())))
+          .as("Aufgabe im Archiv 'verlassen' der entfernten Person")
+          .isTrue();
+    } finally {
+      TenantContextHolder.clear();
+    }
+
+    // Idempotent: Wiederholung und unbekannte Person aendern nichts.
+    final int versionAfter = taskVersion(dbId);
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+    deleteParticipant(mvc, tokenA, taskId, UUID.randomUUID()).andExpect(status().isNoContent());
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isEqualTo(1);
+    assertThat(taskVersion(dbId)).as("kein Save bei No-Op").isEqualTo(versionAfter);
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_stummgeschaltete_person: eine Person mit IS_MUTED bekommt trotzdem genau eine"
+          + " REMOVED-Benachrichtigung; der Mute-Marker bleibt gesetzt, Austritt UNSUBSCRIBED und"
+          + " abgemeldeter State greifen wie sonst; die Wiederholung schickt nichts mehr")
+  void i145_remove_muted_person_still_notified_and_mute_marker_unchanged() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I145-Entfernen-Stumm");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+
+    // Ausgangslage: die Person hat die Aufgabe stummgeschaltet (persoenlicher Marker IS_MUTED).
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_USER_STATE] SET IS_MUTED = 1 WHERE TASK_ID = ? AND USER_REF = ?",
+        dbId,
+        ASSIGNEE_REF);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND IS_MUTED = 1 AND UNSUBSCRIBED_AT IS NULL",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Ausgangslage: stummgeschaltet und angemeldet")
+        .isEqualTo(1);
+    final int removedBefore = countNotifications(dbId, ASSIGNEE_REF, "REMOVED");
+
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED"))
+        .as("REMOVED ist vom Mute ausgenommen: genau eine Benachrichtigung trotz IS_MUTED")
+        .isEqualTo(removedBefore + 1);
+    assertThat(countNotifications(dbId, USER_A_REF, "REMOVED")).as("nie an den Akteur").isZero();
+    final Map<String, Object> state =
+        jdbcTemplate.queryForMap(
+            "SELECT IS_MUTED, UNSUBSCRIBED_AT FROM [dbo].[TASK_USER_STATE]"
+                + " WHERE TASK_ID = ? AND USER_REF = ?",
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(state.get("IS_MUTED")).as("der Mute-Marker bleibt unveraendert").isEqualTo(true);
+    assertThat(state.get("UNSUBSCRIBED_AT")).as("der State ist abgemeldet").isNotNull();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND EXIT_KIND = 'UNSUBSCRIBED'"
+                    + " AND ASSIGNEE_FLAG = 0",
+                dbId,
+                ASSIGNEE_REF))
+        .as("ausgetreten (UNSUBSCRIBED), Zuweisung weg")
+        .isEqualTo(1);
+
+    // Idempotent: die Wiederholung aendert weder Mute-Marker noch Benachrichtigungen.
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isEqualTo(removedBefore + 1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND IS_MUTED = 1",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Mute-Marker auch nach der Wiederholung gesetzt")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i145_entfernen_rechte_und_fehlerformat: aktiver Assignee entfernt einen Beteiligten (204);"
+          + " reines Mitglied 403 ohne Mutation, Selbstentfernung 400, Ersteller 409, ohne"
+          + " TASK_WRITE 403, Nicht-Mitglied und unbekannte Aufgabe 404, anonym 401; die"
+          + " Fehlerantworten entsprechen den OpenAPI-Beispielen")
+  void i145_remove_rights_and_error_responses_match_openapi_examples() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN, "task-management:TASK_WRITE");
+    final String tokenParticipant =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            HANDOVER_TARGET_REF,
+            HANDOVER_TARGET_LOGIN,
+            "task-management:TASK_WRITE");
+    final String tokenReadOnly =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN, "task-management:TASK_READ");
+    final String tokenWriteNonMember =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            WRITE_NON_MEMBER_REF,
+            WRITE_NON_MEMBER_LOGIN,
+            "task-management:TASK_WRITE");
+    final UUID taskId = createTask(mvc, om, tokenA, "I145-Entfernen-Rechte");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+    mvc.perform(
+            post("/api/v1/tasks/" + taskId + "/participants")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("participantIds", List.of(HANDOVER_TARGET_REF.toString())))))
+        .andExpect(status().isNoContent());
+    final SoftAssertions soft = new SoftAssertions();
+
+    // 403: reines Mitglied (weder Ersteller noch Assignee), keine Mutation.
+    final int versionBefore = taskVersion(dbId);
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenParticipant, taskId, ASSIGNEE_REF)
+            .andExpect(status().isForbidden())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.FORBIDDEN_REMOVE_ROLE,
+        taskId,
+        ASSIGNEE_REF);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND ASSIGNEE_FLAG = 1 AND EXIT_KIND IS NULL",
+                dbId,
+                ASSIGNEE_REF))
+        .as("403 ohne Mutation: Assignee bleibt")
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isZero();
+    assertThat(taskVersion(dbId)).isEqualTo(versionBefore);
+
+    // 400: sich selbst entfernen (Hinweis auf POST /exit).
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenA, taskId, USER_A_REF)
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.BAD_REQUEST_REMOVE,
+        taskId,
+        USER_A_REF);
+
+    // 409: der Ersteller ist nicht entfernbar (hier durch einen aktiven Assignee versucht).
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenAssignee, taskId, USER_A_REF)
+            .andExpect(status().isConflict())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.CONFLICT_REMOVE_CREATOR,
+        taskId,
+        USER_A_REF);
+
+    // 403: ohne TASK_WRITE (Controller).
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenReadOnly, taskId, ASSIGNEE_REF)
+            .andExpect(status().isForbidden())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.FORBIDDEN_REMOVE,
+        taskId,
+        ASSIGNEE_REF);
+
+    // 404: TASK_WRITE, aber kein Mitglied; ebenso eine unbekannte Aufgabe (neutral maskiert).
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenWriteNonMember, taskId, ASSIGNEE_REF)
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.NOT_FOUND_REMOVE,
+        taskId,
+        ASSIGNEE_REF);
+    final UUID unknownTask = UUID.randomUUID();
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        deleteParticipant(mvc, tokenA, unknownTask, ASSIGNEE_REF)
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(),
+        ParticipantApiExamples.NOT_FOUND_REMOVE,
+        unknownTask,
+        ASSIGNEE_REF);
+
+    // 400: keine UUID im Pfad.
+    mvc.perform(
+            delete("/api/v1/tasks/" + taskId + "/participants/keine-uuid")
+                .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isBadRequest());
+
+    // 401: ohne Anmeldung problem+json der Filterkette.
+    soft.assertThat(
+            om.readTree(
+                mvc.perform(delete("/api/v1/tasks/" + taskId + "/participants/" + ASSIGNEE_REF))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString()))
+        .isEqualTo(om.readTree(ParticipantApiExamples.UNAUTHORIZED));
+
+    // 409 Versionskonflikt: durch den echten Fehler-Handler des Kontexts (deterministisch nicht
+    // ueber HTTP erzeugbar, Mechanismus: TaskOptimisticLockIT).
+    final String conflictMessage = "Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).";
+    final String path = "/api/v1/tasks/" + taskId + "/participants/" + ASSIGNEE_REF;
+    final ApiError conflict =
+        apiExceptionHandler
+            .handleNovaBusinessRule(
+                new BusinessRuleException(
+                    conflictMessage, new OptimisticLockingFailureException(conflictMessage)),
+                new MockHttpServletRequest("DELETE", path))
+            .getBody();
+    assertMatchesRemoveExample(
+        soft,
+        om,
+        contextObjectMapper.writeValueAsString(conflict),
+        ParticipantApiExamples.CONFLICT_REMOVE,
+        taskId,
+        ASSIGNEE_REF);
+
+    // 204: ein aktiver Assignee (kein Ersteller) entfernt den reinen Beteiligten.
+    deleteParticipant(mvc, tokenAssignee, taskId, HANDOVER_TARGET_REF)
+        .andExpect(status().isNoContent());
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND EXIT_KIND = 'UNSUBSCRIBED'",
+                dbId,
+                HANDOVER_TARGET_REF))
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, HANDOVER_TARGET_REF, "REMOVED")).isEqualTo(1);
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isZero();
+    soft.assertAll();
+  }
+
+  /** {@code DELETE /participants/{userId}} (Status prueft der Aufrufer). */
+  private org.springframework.test.web.servlet.ResultActions deleteParticipant(
+      final MockMvc mvc, final String token, final UUID taskId, final UUID userId)
+      throws Exception {
+    return mvc.perform(
+        delete("/api/v1/tasks/" + taskId + "/participants/" + userId)
+            .header("Authorization", "Bearer " + token));
+  }
+
+  /**
+   * Wie {@link #assertMatchesExample}, zusaetzlich mit der Personen-UUID im Pfad des Beispiels
+   * ({@link ParticipantApiExamples#USER_REF_A}) durch die verwendete ersetzt. Ein Feld, das die
+   * Live-Antwort mit {@code null} fuehrt und das Beispiel weglaesst (etwa {@code details} einer
+   * Geschaeftsregel ohne Ursache), gilt als gleich: fuer Clients ist beides "nicht vorhanden".
+   */
+  private static void assertMatchesRemoveExample(
+      final SoftAssertions soft,
+      final ObjectMapper om,
+      final String liveJson,
+      final String exampleJson,
+      final UUID taskId,
+      final UUID userId)
+      throws Exception {
+    final com.fasterxml.jackson.databind.node.ObjectNode live =
+        (com.fasterxml.jackson.databind.node.ObjectNode) om.readTree(liveJson);
+    final JsonNode example = om.readTree(exampleJson);
+    final List<String> nullOnlyInLive = new java.util.ArrayList<>();
+    live.fieldNames()
+        .forEachRemaining(
+            name -> {
+              if (live.get(name).isNull() && !example.has(name)) {
+                nullOnlyInLive.add(name);
+              }
+            });
+    live.remove(nullOnlyInLive);
+    assertMatchesExample(
+        soft,
+        om,
+        om.writeValueAsString(live),
+        exampleJson.replace(ParticipantApiExamples.USER_REF_A, userId.toString()),
+        taskId);
   }
 
   private static String toPem(final byte[] der) {

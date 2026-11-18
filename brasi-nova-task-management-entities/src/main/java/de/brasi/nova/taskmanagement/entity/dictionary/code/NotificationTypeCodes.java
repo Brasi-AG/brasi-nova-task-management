@@ -32,4 +32,11 @@ public final class NotificationTypeCodes {
    * #HANDOVER} und daher von der Stummschaltung ausgenommen. Seed per Flyway V11.
    */
   public static final String PARTICIPANT = "PARTICIPANT";
+
+  /**
+   * Person wurde von einem Ersteller oder aktiven Assignee aus einer Aufgabe entfernt (Intake #145,
+   * {@code DELETE /api/v1/tasks/{id}/participants/{userId}}). Direkt persoenlich wie {@link
+   * #PARTICIPANT} und daher von der Stummschaltung ausgenommen. Seed per Flyway V12.
+   */
+  public static final String REMOVED = "REMOVED";
 }
