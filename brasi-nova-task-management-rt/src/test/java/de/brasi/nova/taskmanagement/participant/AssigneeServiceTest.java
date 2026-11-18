@@ -3391,6 +3391,45 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
+      "i145_entfernen_stummgeschaltete_person: REMOVED wird trotz IS_MUTED genau einmal emittiert,"
+          + " ohne Mute-Lesung; der Mute-Marker bleibt gesetzt, der State wird abgemeldet")
+  void i145_remove_muted_person_still_emits_removed_and_keeps_mute_marker() {
+    final Long taskId = 1460L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID participantRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = personRow(taskId, participantRef, EntityState.ACTIVE);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, participantRef))
+        .thenReturn(List.of(target));
+    final TaskUserState mutedState = mutedState(taskId, participantRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, participantRef))
+        .thenReturn(List.of(mutedState));
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
+    when(participantQueryRepository.findArchiveReadersByTaskId(taskId)).thenReturn(List.of());
+
+    service.removeParticipant(taskUuid, participantRef);
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(participantRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.REMOVED),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    assertThat(mutedState.isMuted()).as("das Entfernen aendert den Mute-Marker nicht").isTrue();
+    assertThat(mutedState.getUnsubscribedAt()).as("der State wird abgemeldet").isNotNull();
+    verify(userStateQueryRepository).save(mutedState);
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
+    assertThat(target.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
+  }
+
+  @Test
+  @DisplayName(
       "i145_anderes_write_mitglied_403_ohne_mutation: reiner Beteiligter (weder Ersteller noch"
           + " aktiver Assignee) -> PermissionDeniedException, nichts geschrieben")
   void i145_other_write_member_403_without_mutation() {

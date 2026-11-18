@@ -447,8 +447,10 @@ public class AssigneeController {
       summary = "Beteiligten entfernen",
       description =
           "Entfernt die Person userId aus der Aufgabe. Erlaubt nur dem Ersteller und aktiven"
-              + " Assignees der Aufgabe; andere Mitglieder erhalten 403, Nicht-Mitglieder die"
-              + " neutrale 404. Die Person tritt mit der Austrittsart UNSUBSCRIBED aus, genau wie"
+              + " Assignees der Aufgabe. Ohne TASK_WRITE antwortet der Aufruf immer mit 403, auch"
+              + " fuer Nicht-Mitglieder (die Rechtepruefung laeuft vor der Mitgliedschaftspruefung);"
+              + " mit TASK_WRITE erhalten andere Mitglieder 403, Nicht-Mitglieder die neutrale"
+              + " 404. Die Person tritt mit der Austrittsart UNSUBSCRIBED aus, genau wie"
               + " beim Weglassen in PUT /api/v1/tasks/{id}/assignees; war sie Assignee, verliert sie"
               + " die Zuweisung. Sie behaelt den Lesezugriff auf das Archiv-Detail der Aufgabe und"
               + " erhaelt eine Benachrichtigung vom Typ REMOVED (gespeichert, abrufbar ueber GET"
@@ -487,9 +489,9 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "403",
         description =
-            "Fehlende TASK_WRITE-Berechtigung, oder der aufrufende Benutzer ist Mitglied der"
-                + " Aufgabe, aber weder ihr Ersteller noch ein aktiver Assignee; es wurde nichts"
-                + " geaendert.",
+            "Fehlende TASK_WRITE-Berechtigung (immer 403, auch fuer Nicht-Mitglieder), oder der"
+                + " aufrufende Benutzer hat TASK_WRITE und ist Mitglied der Aufgabe, aber weder"
+                + " ihr Ersteller noch ein aktiver Assignee; es wurde nichts geaendert.",
         content =
             @Content(
                 mediaType = "application/json",
@@ -507,8 +509,9 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder keine aktive Mitgliedschaft des"
-                + " Aufrufers (neutral maskiert).",
+            "Nur fuer Aufrufer mit TASK_WRITE: Aufgabe nicht gefunden, fremder Mandant oder keine"
+                + " aktive Mitgliedschaft des Aufrufers (neutral maskiert). Ohne TASK_WRITE"
+                + " antwortet immer 403.",
         content =
             @Content(
                 mediaType = "application/json",

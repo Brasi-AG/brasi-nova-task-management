@@ -3485,6 +3485,78 @@ class AssigneeControllerIT {
 
   @Test
   @DisplayName(
+      "i145_entfernen_stummgeschaltete_person: eine Person mit IS_MUTED bekommt trotzdem genau eine"
+          + " REMOVED-Benachrichtigung; der Mute-Marker bleibt gesetzt, Austritt UNSUBSCRIBED und"
+          + " abgemeldeter State greifen wie sonst; die Wiederholung schickt nichts mehr")
+  void i145_remove_muted_person_still_notified_and_mute_marker_unchanged() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I145-Entfernen-Stumm");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+
+    // Ausgangslage: die Person hat die Aufgabe stummgeschaltet (persoenlicher Marker IS_MUTED).
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_USER_STATE] SET IS_MUTED = 1 WHERE TASK_ID = ? AND USER_REF = ?",
+        dbId,
+        ASSIGNEE_REF);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND IS_MUTED = 1 AND UNSUBSCRIBED_AT IS NULL",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Ausgangslage: stummgeschaltet und angemeldet")
+        .isEqualTo(1);
+    final int removedBefore = countNotifications(dbId, ASSIGNEE_REF, "REMOVED");
+
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED"))
+        .as("REMOVED ist vom Mute ausgenommen: genau eine Benachrichtigung trotz IS_MUTED")
+        .isEqualTo(removedBefore + 1);
+    assertThat(countNotifications(dbId, USER_A_REF, "REMOVED")).as("nie an den Akteur").isZero();
+    final Map<String, Object> state =
+        jdbcTemplate.queryForMap(
+            "SELECT IS_MUTED, UNSUBSCRIBED_AT FROM [dbo].[TASK_USER_STATE]"
+                + " WHERE TASK_ID = ? AND USER_REF = ?",
+            dbId,
+            ASSIGNEE_REF);
+    assertThat(state.get("IS_MUTED")).as("der Mute-Marker bleibt unveraendert").isEqualTo(true);
+    assertThat(state.get("UNSUBSCRIBED_AT")).as("der State ist abgemeldet").isNotNull();
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND EXIT_KIND = 'UNSUBSCRIBED'"
+                    + " AND ASSIGNEE_FLAG = 0",
+                dbId,
+                ASSIGNEE_REF))
+        .as("ausgetreten (UNSUBSCRIBED), Zuweisung weg")
+        .isEqualTo(1);
+
+    // Idempotent: die Wiederholung aendert weder Mute-Marker noch Benachrichtigungen.
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isEqualTo(removedBefore + 1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND IS_MUTED = 1",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Mute-Marker auch nach der Wiederholung gesetzt")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
       "i145_entfernen_rechte_und_fehlerformat: aktiver Assignee entfernt einen Beteiligten (204);"
           + " reines Mitglied 403 ohne Mutation, Selbstentfernung 400, Ersteller 409, ohne"
           + " TASK_WRITE 403, Nicht-Mitglied und unbekannte Aufgabe 404, anonym 401; die"
