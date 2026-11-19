@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -59,7 +60,9 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * {@code USER_TENANT_ID = :tenantId}. Diskriminator: eine State-Zeile mit Request-Mandant in {@code
  * TENANT_ID}, aber FREMDEM {@code USER_TENANT_ID} (der Unique-Index erlaubt sie neben der eigenen
  * Zeile) darf weder von {@link TaskUserStateQueryRepository} noch von den Inbox-/Archiv- Lesern des
- * {@link TaskKeysetQueryRepository} als State des Anfragers gewertet werden.
+ * {@link TaskKeysetQueryRepository} als State des Anfragers gewertet werden. Review R1 ergaenzt
+ * dieselbe Gegenprobe fuer die Archivsuche ({@code findArchiveSearchPage}), die Stummschalt-Lesung
+ * ({@code findMutedByTaskId}) und die Archivleser ({@code findArchiveReadersByTaskId}).
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -91,6 +94,9 @@ class TaskKeysetMembershipLeakIT {
       UUID.fromString("00000059-0000-0059-0000-000000000592");
 
   private static final UUID USER_B_REF = UUID.fromString("00000059-0002-0059-0002-000000000591");
+  // Intake #170, Review R1: eigene Person fuer Archivsuche, Stummschaltung und Archivleser, damit
+  // die Zaehler und Seiten der bestehenden Tests (USER_B_REF) unveraendert bleiben.
+  private static final UUID USER_C_REF = UUID.fromString("00000059-0003-0059-0003-000000000591");
 
   // feste Task-IDs (ausserhalb KSF-Sequenz; Namensraum 5910xx fuer diesen IT)
   private static final long TASK_ORPHAN_ACTIVE_ID = 591001L;
@@ -105,6 +111,13 @@ class TaskKeysetMembershipLeakIT {
   private static final long TASK_FOREIGN_USER_TENANT_DONE_ID = 591009L;
   private static final long TASK_FOREIGN_USER_TENANT_LEFT_ID = 591010L;
   private static final long TASK_TWO_STATES_ID = 591011L;
+  // Intake #170, Review R1: Archivsuche (Person USER_C_REF), Stummschaltung, Archivleser
+  private static final long TASK_SEARCH_FOREIGN_DONE_ID = 591012L;
+  private static final long TASK_SEARCH_FOREIGN_LEFT_ID = 591013L;
+  private static final long TASK_SEARCH_OWN_DONE_ID = 591014L;
+  private static final long TASK_SEARCH_OWN_LEFT_ID = 591015L;
+  private static final long TASK_MUTED_ID = 591016L;
+  private static final long TASK_ARCHIVE_READERS_ID = 591017L;
 
   private static final UUID TASK_ORPHAN_ACTIVE_UUID =
       UUID.fromString("00000059-0000-0059-bbbb-000000591001");
@@ -128,6 +141,18 @@ class TaskKeysetMembershipLeakIT {
       UUID.fromString("00000059-0000-0059-bbbb-000000591010");
   private static final UUID TASK_TWO_STATES_UUID =
       UUID.fromString("00000059-0000-0059-bbbb-000000591011");
+  private static final UUID TASK_SEARCH_FOREIGN_DONE_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591012");
+  private static final UUID TASK_SEARCH_FOREIGN_LEFT_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591013");
+  private static final UUID TASK_SEARCH_OWN_DONE_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591014");
+  private static final UUID TASK_SEARCH_OWN_LEFT_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591015");
+  private static final UUID TASK_MUTED_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591016");
+  private static final UUID TASK_ARCHIVE_READERS_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591017");
 
   // Bekannte Seed-IDs aus V1-Migration
   private static final long STATUS_OPEN = 101L;
@@ -144,6 +169,9 @@ class TaskKeysetMembershipLeakIT {
   private static final LocalDateTime CURSOR_LAST_ACTIVITY = LocalDateTime.of(9999, 12, 31, 0, 0, 0);
 
   private static final UUID CURSOR_EXT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+
+  /** LIKE-Muster der Archivsuche: klein, ohne Sonderzeichen, trifft nur die Titel der Suchseeds. */
+  private static final String ARCHIVE_SEARCH_PATTERN = "%intake170-archivsuche%";
 
   private static HikariDataSource master;
   private static String dbName;
@@ -371,6 +399,125 @@ class TaskKeysetMembershipLeakIT {
         jt, 591112L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID, null, T_BEFORE);
     insertActiveParticipant(
         jt, 591111L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
+
+    // (12) Intake #170, Review R1, Archivsuche done: DONE, aktiver Member USER_C_REF, einzige
+    //      State-Zeile mit fremdem USER_TENANT_ID. Titel trifft den Suchbegriff.
+    //      -> darf auch bei passendem Suchbegriff NICHT im done-Zweig der Archivsuche erscheinen.
+    insertTask(
+        jt,
+        TASK_SEARCH_FOREIGN_DONE_ID,
+        TASK_SEARCH_FOREIGN_DONE_UUID,
+        TENANT_ID,
+        STATUS_DONE,
+        T0,
+        "Intake170-Archivsuche-FremdDone");
+    insertUserStateWithUserTenant(
+        jt,
+        591120L,
+        TASK_SEARCH_FOREIGN_DONE_ID,
+        TENANT_ID,
+        USER_C_REF,
+        FOREIGN_TENANT_ID,
+        null,
+        T_BEFORE);
+    insertActiveParticipant(
+        jt, 591121L, TASK_SEARCH_FOREIGN_DONE_ID, TENANT_ID, USER_C_REF, TENANT_ID, T_BEFORE);
+
+    // (13) Intake #170, Review R1, Archivsuche left: OPEN, aktiver Member USER_C_REF, einzige
+    //      State-Zeile mit fremdem USER_TENANT_ID und UNSUBSCRIBED_AT. Titel trifft den
+    //      Suchbegriff. -> darf NICHT im left-Zweig der Archivsuche erscheinen.
+    insertTask(
+        jt,
+        TASK_SEARCH_FOREIGN_LEFT_ID,
+        TASK_SEARCH_FOREIGN_LEFT_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
+        "Intake170-Archivsuche-FremdLeft");
+    insertUserStateWithUserTenant(
+        jt,
+        591130L,
+        TASK_SEARCH_FOREIGN_LEFT_ID,
+        TENANT_ID,
+        USER_C_REF,
+        FOREIGN_TENANT_ID,
+        T_BEFORE,
+        T_BEFORE);
+    insertActiveParticipant(
+        jt, 591131L, TASK_SEARCH_FOREIGN_LEFT_ID, TENANT_ID, USER_C_REF, TENANT_ID, T_BEFORE);
+
+    // (14) Intake #170, Review R1, Gegenprobe done: DONE, aktiver Member USER_C_REF, eigene
+    //      State-Zeile (USER_TENANT_ID = Request-Mandant), gleicher Suchbegriff im Titel.
+    //      -> MUSS im done-Zweig der Archivsuche erscheinen.
+    insertTask(
+        jt,
+        TASK_SEARCH_OWN_DONE_ID,
+        TASK_SEARCH_OWN_DONE_UUID,
+        TENANT_ID,
+        STATUS_DONE,
+        T0,
+        "Intake170-Archivsuche-EigenDone");
+    insertUserState(jt, 591140L, TASK_SEARCH_OWN_DONE_ID, TENANT_ID, USER_C_REF, null, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591141L, TASK_SEARCH_OWN_DONE_ID, TENANT_ID, USER_C_REF, TENANT_ID, T_BEFORE);
+
+    // (15) Intake #170, Review R1, Gegenprobe left: OPEN, aktiver Member USER_C_REF, eigene
+    //      abgemeldete State-Zeile, gleicher Suchbegriff im Titel.
+    //      -> MUSS im left-Zweig der Archivsuche erscheinen.
+    insertTask(
+        jt,
+        TASK_SEARCH_OWN_LEFT_ID,
+        TASK_SEARCH_OWN_LEFT_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
+        "Intake170-Archivsuche-EigenLeft");
+    insertUserState(
+        jt, 591150L, TASK_SEARCH_OWN_LEFT_ID, TENANT_ID, USER_C_REF, T_BEFORE, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591151L, TASK_SEARCH_OWN_LEFT_ID, TENANT_ID, USER_C_REF, TENANT_ID, T_BEFORE);
+
+    // (16) Intake #170, Review R1, Stummschaltung: eine Aufgabe, drei State-Zeilen, kein
+    //      Participant (findMutedByTaskId liest nur TASK_USER_STATE).
+    //      - 591160: USER_B_REF, eigener USER_TENANT_ID, NICHT stumm
+    //      - 591161: USER_B_REF, FREMDER USER_TENANT_ID, stumm  -> darf nicht geliefert werden
+    //      - 591162: USER_C_REF, eigener USER_TENANT_ID, stumm  -> MUSS geliefert werden
+    insertTask(
+        jt, TASK_MUTED_ID, TASK_MUTED_UUID, TENANT_ID, STATUS_OPEN, T0, "Intake170-Stummschaltung");
+    insertUserState(jt, 591160L, TASK_MUTED_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
+    insertUserStateWithUserTenant(
+        jt, 591161L, TASK_MUTED_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID, null, T_BEFORE);
+    muteUserState(jt, 591161L);
+    insertUserState(jt, 591162L, TASK_MUTED_ID, TENANT_ID, USER_C_REF, null, T_BEFORE);
+    muteUserState(jt, 591162L);
+
+    // (17) Intake #170, Review R1, Archivleser: eine Aufgabe, zwei aktive PERSON-Participants
+    //      ohne Austritt (EXIT_KIND NULL), jeweils mit abgemeldetem State.
+    //      - USER_B_REF: einzige State-Zeile mit FREMDEM USER_TENANT_ID -> KEIN Archivleser
+    //      - USER_C_REF: eigene State-Zeile (USER_TENANT_ID = Request-Mandant) -> Archivleser
+    insertTask(
+        jt,
+        TASK_ARCHIVE_READERS_ID,
+        TASK_ARCHIVE_READERS_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
+        "Intake170-Archivleser");
+    insertUserStateWithUserTenant(
+        jt,
+        591170L,
+        TASK_ARCHIVE_READERS_ID,
+        TENANT_ID,
+        USER_B_REF,
+        FOREIGN_TENANT_ID,
+        T_BEFORE,
+        T_BEFORE);
+    insertActiveParticipant(
+        jt, 591171L, TASK_ARCHIVE_READERS_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
+    insertUserState(
+        jt, 591172L, TASK_ARCHIVE_READERS_ID, TENANT_ID, USER_C_REF, T_BEFORE, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591173L, TASK_ARCHIVE_READERS_ID, TENANT_ID, USER_C_REF, TENANT_ID, T_BEFORE);
   }
 
   @BeforeEach
@@ -592,7 +739,95 @@ class TaskKeysetMembershipLeakIT {
         .isEqualTo(2L);
   }
 
+  // ---- Intake #170, Review R1: Archivsuche, Stummschaltung, Archivleser --------------------
+
+  @Test
+  @DisplayName(
+      "Intake170_findArchiveSearchPage_wertet_state_mit_fremdem_user_tenant_nicht_als_eigenen")
+  void findArchiveSearchPage_wertet_state_mit_fremdem_user_tenant_nicht_als_eigenen(
+      @Autowired TaskKeysetQueryRepository repo) {
+    // Der Suchbegriff trifft alle vier Seed-Titel; nur die Zeilen mit eigenem USER_TENANT_ID
+    // duerfen die Sichtbarkeit des Archivs begruenden.
+    final List<Task> done = searchArchive(repo, 1, 0);
+    assertThat(done)
+        .as("done-Zweig: State mit fremdem USER_TENANT_ID zaehlt auch bei Treffer nicht")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_SEARCH_FOREIGN_DONE_ID);
+    assertThat(done)
+        .as("done-Zweig, Gegenprobe: eigene State-Zeile mit demselben Begriff erscheint")
+        .extracting(Task::getId)
+        .containsExactly(TASK_SEARCH_OWN_DONE_ID);
+
+    final List<Task> left = searchArchive(repo, 0, 1);
+    assertThat(left)
+        .as("left-Zweig: Abmeldung mit fremdem USER_TENANT_ID zaehlt auch bei Treffer nicht")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_SEARCH_FOREIGN_LEFT_ID);
+    assertThat(left)
+        .as("left-Zweig, Gegenprobe: eigene Abmeldung mit demselben Begriff erscheint")
+        .extracting(Task::getId)
+        .containsExactly(TASK_SEARCH_OWN_LEFT_ID);
+
+    assertThat(searchArchive(repo, 1, 1))
+        .as("beide Zweige: nur die Aufgaben mit eigener State-Zeile erscheinen")
+        .extracting(Task::getId)
+        .containsExactlyInAnyOrder(TASK_SEARCH_OWN_DONE_ID, TASK_SEARCH_OWN_LEFT_ID);
+  }
+
+  @Test
+  @DisplayName(
+      "Intake170_findMutedByTaskId_liefert_nur_stumme_state_zeilen_des_eigenen_user_tenants")
+  void findMutedByTaskId_liefert_nur_stumme_state_zeilen_des_eigenen_user_tenants(
+      @Autowired TaskUserStateQueryRepository repo) {
+    // USER_B_REF hat eine eigene, nicht stumme und eine fremde, stumme Zeile; USER_C_REF hat eine
+    // eigene, stumme Zeile. Ohne USER_TENANT_ID-Bindung lieferte die Query beide stummen Zeilen.
+    assertThat(repo.findMutedByTaskId(TASK_MUTED_ID))
+        .as("nur die stumme Zeile mit eigenem USER_TENANT_ID, nicht die fremde stumme Zeile")
+        .singleElement()
+        .satisfies(
+            s -> {
+              assertThat(s.getId()).isEqualTo(591162L);
+              assertThat(s.getUserRef()).isEqualTo(USER_C_REF);
+              assertThat(s.getUserTenantId()).isEqualTo(TENANT_ID);
+              assertThat(s.isMuted()).isTrue();
+            });
+  }
+
+  @Test
+  @DisplayName("Intake170_findArchiveReadersByTaskId_ignoriert_abmeldung_mit_fremdem_user_tenant")
+  void findArchiveReadersByTaskId_ignoriert_abmeldung_mit_fremdem_user_tenant(
+      @Autowired TaskParticipantQueryRepository repo) {
+    // Beide Personen sind aktive, nicht ausgetretene Participants mit abgemeldetem State. Nur die
+    // Abmeldung in der Zeile mit eigenem USER_TENANT_ID macht die Person zum Archivleser.
+    assertThat(repo.findArchiveReadersByTaskId(TASK_ARCHIVE_READERS_ID))
+        .as("Archivleser: nur USER_C_REF (eigene Abmeldung), nicht USER_B_REF (fremde Abmeldung)")
+        .extracting(TaskParticipant::getParticipantRef)
+        .containsExactly(USER_C_REF);
+  }
+
   // ---- Hilfsmethoden -----------------------------------------------------------------------
+
+  /**
+   * Ruft die Archivsuche fuer {@code USER_C_REF} mit dem Suchmuster der Seeds auf (erste Seite,
+   * Wasserzeichen {@code T0}).
+   *
+   * @param includeDone 1 = Zweig "erledigt" aktiv, sonst 0
+   * @param includeLeft 1 = Zweig "verlassen" aktiv, sonst 0
+   */
+  private static List<Task> searchArchive(
+      final TaskKeysetQueryRepository repo, final int includeDone, final int includeLeft) {
+    return repo.findArchiveSearchPage(
+        USER_C_REF,
+        STATUS_DONE,
+        STATUS_CANCELLED,
+        includeDone,
+        includeLeft,
+        ARCHIVE_SEARCH_PATTERN,
+        T0,
+        CURSOR_LAST_ACTIVITY,
+        CURSOR_EXT_ID,
+        50);
+  }
 
   private static void seedFirmaIfAbsent(
       final JdbcTemplate jt, final long id, final UUID externalId) {
@@ -686,6 +921,11 @@ class TaskKeysetMembershipLeakIT {
         userTenantId,
         unsubscribedAt,
         angelegtAm);
+  }
+
+  /** Schaltet eine bestehende TASK_USER_STATE-Zeile stumm ({@code IS_MUTED = 1}). */
+  private static void muteUserState(final JdbcTemplate jt, final long id) {
+    jt.update("UPDATE [dbo].[TASK_USER_STATE] SET IS_MUTED = 1 WHERE ID = ?", id);
   }
 
   /** Aktiver PERSON-Participant (EXIT_KIND NULL) = WRITE-/READ-Member. */
