@@ -4,10 +4,14 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamSource;
@@ -25,13 +29,17 @@ import org.springframework.stereotype.Component;
  *   <li>DOC, XLS, PPT: beginnt mit der OLE2-Signatur {@code D0 CF 11 E0 A1 B1 1A E1}
  *   <li>DOCX, XLSX, PPTX: beginnt mit {@code 50 4B 03 04} (ZIP) und enthaelt die Eintraege {@code
  *       [Content_Types].xml} sowie einen Eintrag unter {@code word/}, {@code xl/} bzw. {@code ppt/}
+ *       (in beliebiger Reihenfolge, hoechstens 1000 Eintraege)
  *   <li>TXT: in den ersten 8 KiB kein NUL-Byte, Beginn ohne eine der genannten Signaturen und ohne
  *       {@code MZ} (ausfuehrbare Windows-Dateien)
  * </ul>
  *
- * <p>Es wird nie mehr als der Kopf (8 KiB) gelesen; bei Office-Open-XML-Dateien werden nur die
- * Eintragsnamen des ZIP gelesen (hoechstens 1000 Eintraege), nie entpackt oder ausgewertet. Ein
- * Lesefehler oder ein beschaedigtes ZIP ergibt {@code false}.
+ * <p>Bei allen Typen ausser Office Open XML wird nie mehr als der Kopf (8 KiB) gelesen. Bei
+ * Office-Open-XML-Dateien werden die Eintragsnamen aus dem Central Directory des ZIP gelesen
+ * ({@link ZipFile}); die Eintragsdaten werden dabei weder gelesen noch entpackt (kein Inflate, also
+ * keine CPU-Last durch ZIP-Bomben). Das Central Directory liegt am Dateiende und braucht einen
+ * wahlfreien Zugriff: Die Kosten sind eine temporaere Datei je Pruefung (in {@code java.io.tmpdir},
+ * wird danach immer geloescht). Ein Lesefehler oder ein beschaedigtes ZIP ergibt {@code false}.
  */
 @Component
 public class AttachmentFileInspector {
@@ -41,7 +49,7 @@ public class AttachmentFileInspector {
   /** Laenge des gelesenen Kopfes fuer die Textpruefung (8 KiB). */
   private static final int HEAD_BYTES = 8 * 1024;
 
-  /** Hoechste Zahl gelesener ZIP-Eintraege (Schutz vor ZIP-Archiven mit sehr vielen Eintraegen). */
+  /** Hoechste Zahl von ZIP-Eintraegen; mehr Eintraege ergeben {@code false}. */
   private static final int MAX_ZIP_ENTRIES = 1000;
 
   private static final byte[] PDF_SIGNATURE = "%PDF-".getBytes(StandardCharsets.US_ASCII);
@@ -112,7 +120,9 @@ public class AttachmentFileInspector {
 
   /**
    * Office Open XML: ZIP-Signatur, dazu der Eintrag {@code [Content_Types].xml} und mindestens ein
-   * Eintrag unter dem Ordner des Formats. Gelesen werden nur die Eintragsnamen.
+   * Eintrag unter dem Ordner des Formats. Die Namen kommen aus dem Central Directory (keine
+   * Eintragsdaten werden gelesen oder entpackt); dafuer wird die Quelle in eine temporaere Datei
+   * kopiert, die immer wieder geloescht wird.
    */
   private static boolean isOpenXml(final InputStream in, final String formatFolder)
       throws IOException {
@@ -122,14 +132,26 @@ public class AttachmentFileInspector {
       return false;
     }
     buffered.reset();
-    boolean hasContentTypes = false;
-    boolean hasFormatFolder = false;
-    try (ZipInputStream zip = new ZipInputStream(buffered)) {
-      ZipEntry entry;
-      int entries = 0;
-      while (entries < MAX_ZIP_ENTRIES && (entry = zip.getNextEntry()) != null) {
-        entries++;
-        final String name = entry.getName();
+    final Path tempFile = createTempFile();
+    try {
+      Files.copy(buffered, tempFile, StandardCopyOption.REPLACE_EXISTING);
+      return hasOpenXmlEntries(tempFile, formatFolder);
+    } finally {
+      deleteQuietly(tempFile);
+    }
+  }
+
+  private static boolean hasOpenXmlEntries(final Path zipFile, final String formatFolder)
+      throws IOException {
+    try (ZipFile zip = new ZipFile(zipFile.toFile())) {
+      if (zip.size() > MAX_ZIP_ENTRIES) {
+        return false;
+      }
+      boolean hasContentTypes = false;
+      boolean hasFormatFolder = false;
+      final Enumeration<? extends ZipEntry> entries = zip.entries();
+      while (entries.hasMoreElements()) {
+        final String name = entries.nextElement().getName();
         if (OPEN_XML_CONTENT_TYPES.equals(name)) {
           hasContentTypes = true;
         } else if (name.startsWith(formatFolder)) {
@@ -139,8 +161,26 @@ public class AttachmentFileInspector {
           return true;
         }
       }
+      return false;
     }
-    return false;
+  }
+
+  private static Path createTempFile() throws IOException {
+    try {
+      return Files.createTempFile("attachment-inspect-", ".zip");
+    } catch (IOException e) {
+      log.warn(
+          "Temporaere Datei fuer die ZIP-Pruefung konnte nicht angelegt werden: {}", e.toString());
+      throw e;
+    }
+  }
+
+  private static void deleteQuietly(final Path file) {
+    try {
+      Files.deleteIfExists(file);
+    } catch (IOException e) {
+      log.warn("Temporaere Datei {} konnte nicht geloescht werden: {}", file, e.toString());
+    }
   }
 
   /** Text: kein NUL-Byte im Kopf und kein Beginn mit der Signatur eines anderen Dateityps. */
