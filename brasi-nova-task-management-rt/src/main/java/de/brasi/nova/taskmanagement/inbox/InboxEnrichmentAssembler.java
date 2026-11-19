@@ -80,7 +80,7 @@ public class InboxEnrichmentAssembler {
                 Collectors.groupingBy(
                     TaskTagUuidRow::taskId,
                     Collectors.mapping(TaskTagUuidRow::tagUuid, Collectors.toList())));
-    // Pro (Aufgabe, Anfrager) existiert hoechstens eine aktive Row (UNIQUE TASK_ID + USER_REF).
+    // Pro (Aufgabe, Anfrager) existiert hoechstens eine aktive Row (UNIQUE TASK_ID, USER_TENANT_ID, USER_REF).
     final Map<Long, TaskUserState> actorStateByTask =
         actorStateRows.stream()
             .collect(Collectors.toMap(TaskUserState::getTaskId, s -> s, (a, b) -> a));
