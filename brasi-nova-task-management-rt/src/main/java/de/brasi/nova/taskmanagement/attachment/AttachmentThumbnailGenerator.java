@@ -58,6 +58,17 @@ public class AttachmentThumbnailGenerator {
   private static final int QUARTER_TURN = 90;
   private static final int HALF_TURN = 180;
 
+  /**
+   * Pixelbudget als Vielfaches von Breite mal Breite: Ein dekodiertes bzw. gerendertes Bild und das
+   * Vorschaubild haben hoechstens {@code 4 * width * width} Pixel (bei 600 px rund 1,4 Mio. Pixel,
+   * knapp 6 MB als RGB). Das entspricht einem quadratischen Bild doppelter Breite und Hoehe, genug
+   * Reserve fuer eine saubere Verkleinerung.
+   */
+  private static final long PIXEL_BUDGET_FACTOR = 4L;
+
+  /** Gelesene Breite mindestens doppelt so gross wie die Zielbreite (Qualitaetsreserve). */
+  private static final int OVERSAMPLING = 2;
+
   private final AttachmentProperties.Thumbnail settings;
 
   /**
@@ -94,7 +105,12 @@ public class AttachmentThumbnailGenerator {
       // auch Laufzeitfehler, Speicherueberlauf einzelner Allokationen oder tiefe Rekursion aus;
       // fehlende native Grafik-/Schriftbibliotheken melden sich als LinkageError. Keiner dieser
       // Fehler darf den Upload abbrechen.
-      log.warn("Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: {}", type, e.toString());
+      // Ausnahmetexte von PDFBox/ImageIO koennen Dateifragmente enthalten: auf WARN nur die Art
+      log.warn(
+          "Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: {}",
+          type,
+          e.getClass().getSimpleName());
+      log.debug("Ursache der fehlgeschlagenen Vorschaubild-Erzeugung (Typ {})", type, e);
       return Optional.empty();
     }
   }
@@ -118,8 +134,11 @@ public class AttachmentThumbnailGenerator {
         log.warn("Vorschaubild fuer PDF nicht erzeugt: Die erste Seite hat keine Flaeche.");
         return Optional.empty();
       }
-      final float scale = settings.width() / pageWidth;
-      final double renderedPixels = (double) settings.width() * (pageHeight * scale);
+      // Extrem hohe Seiten werden als Ganzes schmaler gerendert (Pixelbudget), nie riesig
+      final int targetWidth =
+          (int) Math.max(1, Math.min(settings.width(), budgetWidth(pageWidth, pageHeight)));
+      final float scale = targetWidth / pageWidth;
+      final double renderedPixels = (double) targetWidth * (pageHeight * scale);
       if (renderedPixels > settings.maxSourcePixels()) {
         log.warn(
             "Vorschaubild fuer PDF nicht erzeugt: Erste Seite ergaebe {} Pixel (Obergrenze {}).",
@@ -131,7 +150,7 @@ public class AttachmentThumbnailGenerator {
       renderer.setSubsamplingAllowed(true);
       final BufferedImage rendered = renderer.renderImage(FIRST_PAGE, scale, ImageType.RGB);
       // PDFRenderer rundet die Pixelbreite ab (z. B. 599 statt 600): auf exakte Breite bringen
-      return Optional.of(scaleToWidth(rendered, settings.width()));
+      return Optional.of(scaleToWidth(rendered, targetWidth));
     }
   }
 
@@ -168,12 +187,18 @@ public class AttachmentThumbnailGenerator {
               settings.maxSourcePixels());
           return Optional.empty();
         }
-        final int factor = Math.max(1, sourceWidth / (2 * settings.width()));
+        final int factor = subsamplingFactor(sourceWidth, sourceHeight);
         final ImageReadParam param = reader.getDefaultReadParam();
         param.setSourceSubsampling(factor, factor, 0, 0);
         final BufferedImage decoded = reader.read(FIRST_IMAGE, param);
 
-        return Optional.of(scaleToWidth(decoded, Math.min(settings.width(), sourceWidth)));
+        final long targetWidth =
+            Math.max(
+                1,
+                Math.min(
+                    Math.min(settings.width(), sourceWidth),
+                    budgetWidth(sourceWidth, sourceHeight)));
+        return Optional.of(scaleToWidth(decoded, (int) targetWidth));
       } finally {
         reader.dispose();
       }
@@ -181,9 +206,44 @@ public class AttachmentThumbnailGenerator {
   }
 
   /**
+   * Unterabtast-Faktor beim Lesen eines Bilds (je Richtung jede n-te Zeile und Spalte).
+   *
+   * <p>{@code max(1, w / (2 * width), ceil(sqrt(w * h / (4 * width * width))))}: Der zweite Term
+   * haelt die gelesene Breite bei mindestens doppelter Zielbreite (Qualitaet). Der dritte Term
+   * begrenzt die gelesene Pixelzahl auf das Pixelbudget {@code 4 * width * width}, denn ein
+   * schmales, hohes Bild (z. B. 1000 x 50000) haette nach der Breite allein den Faktor 1 und wuerde
+   * voll dekodiert; mit Faktor {@code f} sinkt die Pixelzahl auf {@code w * h / (f * f)}. Bilder
+   * bis zum Budget (z. B. 1200 x 800 oder 300 x 200 bei Breite 600) bleiben bei Faktor 1.
+   *
+   * @param sourceWidth Breite des Quellbilds in Pixeln (positiv)
+   * @param sourceHeight Hoehe des Quellbilds in Pixeln (positiv)
+   * @return Faktor ab 1
+   */
+  int subsamplingFactor(final int sourceWidth, final int sourceHeight) {
+    final int byWidth = sourceWidth / (OVERSAMPLING * settings.width());
+    final int byBudget =
+        (int) Math.ceil(Math.sqrt((double) sourceWidth * sourceHeight / pixelBudget()));
+    return Math.max(1, Math.max(byWidth, byBudget));
+  }
+
+  /** Pixelbudget fuer gelesene/gerenderte Bilder und das Vorschaubild. */
+  private long pixelBudget() {
+    return PIXEL_BUDGET_FACTOR * settings.width() * settings.width();
+  }
+
+  /**
+   * Groesste Breite, bei der ein Bild mit dem Seitenverhaeltnis {@code width : height} das
+   * Pixelbudget einhaelt; fuer uebliche Formate liegt sie ueber der Zielbreite, nur Bilder, die
+   * mehr als viermal so hoch wie breit sind, ergeben ein schmaleres Vorschaubild.
+   */
+  private long budgetWidth(final double width, final double height) {
+    return (long) Math.floor(Math.sqrt(pixelBudget() * width / height));
+  }
+
+  /**
    * Bringt ein Bild auf die Zielbreite (Hoehe proportional) als RGB-Bild mit weissem Hintergrund.
    * Starke Verkleinerung erfolgt in Halbierungsschritten (bessere Qualitaet als ein einziger
-   * bilinearer Schritt).
+   * bilinearer Schritt). Ist das Bild bereits RGB in Zielgroesse, entfaellt die Kopie.
    */
   private static BufferedImage scaleToWidth(final BufferedImage image, final int targetWidth) {
     final int targetHeight =
@@ -193,7 +253,7 @@ public class AttachmentThumbnailGenerator {
       current = draw(current, current.getWidth() / 2, current.getHeight() / 2);
     }
     final boolean done =
-        current != image
+        current.getType() == BufferedImage.TYPE_INT_RGB
             && current.getWidth() == targetWidth
             && current.getHeight() == targetHeight;
     return done ? current : draw(current, targetWidth, targetHeight);

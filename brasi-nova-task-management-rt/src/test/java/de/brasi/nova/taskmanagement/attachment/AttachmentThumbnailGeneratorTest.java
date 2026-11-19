@@ -39,6 +39,9 @@ import org.springframework.util.unit.DataSize;
  */
 class AttachmentThumbnailGeneratorTest {
 
+  /** Pixelbudget des Generators bei Breite 600: 4 * 600 * 600. */
+  private static final long BUDGET = 4L * 600 * 600;
+
   private final AttachmentThumbnailGenerator generator =
       new AttachmentThumbnailGenerator(properties());
 
@@ -84,6 +87,32 @@ class AttachmentThumbnailGeneratorTest {
     assertThat(generator.generate(PNG, source(pngHeaderOnly(30_000, 30_000)))).isEmpty();
   }
 
+  @Test
+  void i152_tall_narrow_image_is_subsampled() throws IOException {
+    // Pixelbudget 4 * 600 * 600: unter dem Budget Faktor 1, schmal und hoch wird unterabgetastet
+    assertThat(generator.subsamplingFactor(1200, 800)).isEqualTo(1);
+    assertThat(generator.subsamplingFactor(300, 200)).isEqualTo(1);
+    assertThat(generator.subsamplingFactor(2400, 1600)).isEqualTo(2);
+    assertThat(generator.subsamplingFactor(600, 30_000)).isEqualTo(4);
+    assertThat(generator.subsamplingFactor(1000, 50_000)).isEqualTo(6);
+
+    final BufferedImage t =
+        decode(generator.generate(PNG, source(binaryPng(600, 30_000))).orElseThrow());
+
+    assertThat(t.getWidth()).isLessThan(600);
+    assertThat((long) t.getWidth() * t.getHeight()).isLessThanOrEqualTo(BUDGET);
+  }
+
+  @Test
+  void i152_tall_pdf_page_rendered_within_budget() throws IOException {
+    final byte[] pdf = pdfWithPage(new PDRectangle(612, 14_400));
+
+    final BufferedImage t = decode(generator.generate(PDF, source(pdf)).orElseThrow());
+
+    assertThat(t.getWidth()).isLessThan(600);
+    assertThat((long) t.getWidth() * t.getHeight()).isLessThanOrEqualTo(BUDGET);
+  }
+
   private static InputStreamSource source(final byte[] content) {
     return new ByteArrayResource(content);
   }
@@ -112,6 +141,24 @@ class AttachmentThumbnailGeneratorTest {
       document.save(out);
       return out.toByteArray();
     }
+  }
+
+  /** PDF mit einer Seite der angegebenen Groesse. */
+  private static byte[] pdfWithPage(final PDRectangle size) throws IOException {
+    try (PDDocument document = new PDDocument()) {
+      document.addPage(new PDPage(size));
+      final ByteArrayOutputStream out = new ByteArrayOutputStream();
+      document.save(out);
+      return out.toByteArray();
+    }
+  }
+
+  /** Schwarz-weisses PNG (klein im Testspeicher auch bei grossen Abmessungen). */
+  private static byte[] binaryPng(final int width, final int height) throws IOException {
+    final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    assertThat(ImageIO.write(image, "png", out)).isTrue();
+    return out.toByteArray();
   }
 
   private static byte[] png(final int width, final int height) throws IOException {
