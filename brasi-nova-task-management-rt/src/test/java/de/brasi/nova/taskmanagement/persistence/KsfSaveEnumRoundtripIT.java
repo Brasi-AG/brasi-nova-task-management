@@ -47,20 +47,20 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 /**
- * KSF-save()-Enum-Roundtrip-IT (Codex-Auflagenpflicht aus Task 5-Regate): beweist, dass
- * {@link BaseTaskParticipantRepository#save(Object)} via KSF-{@code NovaRepository} korrekt
- * persistiert und dass das Entity-Enum-Feld exakt zurueckkommt UND die rohe DB-Spalte den
- * {@code name()}-String haelt.
+ * KSF-save()-Enum-Roundtrip-IT (Codex-Auflagenpflicht aus Task 5-Regate): beweist, dass {@link
+ * BaseTaskParticipantRepository#save(Object)} via KSF-{@code NovaRepository} korrekt persistiert
+ * und dass das Entity-Enum-Feld exakt zurueckkommt UND die rohe DB-Spalte den {@code name()}-String
+ * haelt.
  *
- * <p>Prueft alle Kombinationen aus {@link ParticipantKind} (PERSON, TEAM) und
- * {@link ExitKind} (HANDOVER, UNSUBSCRIBED).
+ * <p>Prueft alle Kombinationen aus {@link ParticipantKind} (PERSON, TEAM) und {@link ExitKind}
+ * (HANDOVER, UNSUBSCRIBED).
  *
  * <p>Intake #152: zusaetzlich {@link AttachmentTariff} ueber {@link TaskAttachmentLimit} und der
  * Ablauf Insert ohne Speicherschluessel, dann Update mit Schluessel fuer {@link TaskAttachment}.
  *
  * <p>Infrastruktur: Wegwerf-MSSQL-DB (wie {@code EnumRoundtripIT}), Flyway-V1 fuer vollstaendiges
- * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via
- * {@code SequenceSchemaManager.ensureSchemaExists()} angelegt).
+ * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via {@code
+ * SequenceSchemaManager.ensureSchemaExists()} angelegt).
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -123,17 +123,13 @@ class KsfSaveEnumRoundtripIT {
     }
   }
 
-  @Autowired
-  private BaseTaskParticipantRepository repository;
+  @Autowired private BaseTaskParticipantRepository repository;
 
-  @Autowired
-  private JdbcTemplate jdbcTemplate;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
-  @Autowired
-  private BaseTaskAttachmentLimitRepository attachmentLimitRepository;
+  @Autowired private BaseTaskAttachmentLimitRepository attachmentLimitRepository;
 
-  @Autowired
-  private BaseTaskAttachmentRepository attachmentRepository;
+  @Autowired private BaseTaskAttachmentRepository attachmentRepository;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -143,7 +139,9 @@ class KsfSaveEnumRoundtripIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, CAST(GETDATE() AS DATE))",
-        TENANT_ID, TENANT_ID, TENANT_ID);
+        TENANT_ID,
+        TENANT_ID,
+        TENANT_ID);
 
     // TASK-Zeile (FK fuer TASK_PARTICIPANT.TASK_ID); Seed-IDs 101/201/301 via Flyway V1
     jt.update(
@@ -154,7 +152,10 @@ class KsfSaveEnumRoundtripIT {
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'ksf-save-it', GETDATE(), NEWID(), 1, ?, "
             + " 'IT-Save-Test-Task', 101, 201, 301, ?, GETDATE(), 0)",
-        TASK_ID, TASK_ID, TENANT_ID, TENANT_ID);
+        TASK_ID,
+        TASK_ID,
+        TENANT_ID,
+        TENANT_ID);
   }
 
   @BeforeEach
@@ -168,7 +169,8 @@ class KsfSaveEnumRoundtripIT {
     TenantContextHolder.clear();
   }
 
-  // ---- 1. ParticipantKind.PERSON -- kein ExitKind --------------------------------------------------
+  // ---- 1. ParticipantKind.PERSON -- kein ExitKind
+  // --------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_participant_kind_person_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -188,15 +190,14 @@ class KsfSaveEnumRoundtripIT {
     assertThat(found.getParticipantKind())
         .as("Entity-Enum-Feld muss exakt zurueckkommen")
         .isEqualTo(ParticipantKind.PERSON);
-    assertThat(found.getExitKind())
-        .as("exitKind soll null sein (nicht gesetzt)")
-        .isNull();
+    assertThat(found.getExitKind()).as("exitKind soll null sein (nicht gesetzt)").isNull();
 
     assertRawColumn(
         saved.getId(), "PARTICIPANT_KIND", ParticipantKind.PERSON.name(), "EXIT_KIND", null);
   }
 
-  // ---- 2. ParticipantKind.TEAM -- kein ExitKind ----------------------------------------------------
+  // ---- 2. ParticipantKind.TEAM -- kein ExitKind
+  // ----------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_participant_kind_team_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -212,10 +213,12 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getParticipantKind()).isEqualTo(ParticipantKind.TEAM);
     assertThat(loaded.get().getExitKind()).isNull();
 
-    assertRawColumn(saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND", null);
+    assertRawColumn(
+        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND", null);
   }
 
-  // ---- 3. ExitKind.HANDOVER ------------------------------------------------------------------------
+  // ---- 3. ExitKind.HANDOVER
+  // ------------------------------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_exit_kind_handover_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -233,11 +236,15 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getExitKind()).isEqualTo(ExitKind.HANDOVER);
 
     assertRawColumn(
-        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.PERSON.name(), "EXIT_KIND",
+        saved.getId(),
+        "PARTICIPANT_KIND",
+        ParticipantKind.PERSON.name(),
+        "EXIT_KIND",
         ExitKind.HANDOVER.name());
   }
 
-  // ---- 4. ExitKind.UNSUBSCRIBED --------------------------------------------------------------------
+  // ---- 4. ExitKind.UNSUBSCRIBED
+  // --------------------------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_exit_kind_unsubscribed_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -255,11 +262,15 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
 
     assertRawColumn(
-        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND",
+        saved.getId(),
+        "PARTICIPANT_KIND",
+        ParticipantKind.TEAM.name(),
+        "EXIT_KIND",
         ExitKind.UNSUBSCRIBED.name());
   }
 
-  // ---- 5. Intake #152: AttachmentTariff ueber TaskAttachmentLimit ----------------------------------
+  // ---- 5. Intake #152: AttachmentTariff ueber TaskAttachmentLimit
+  // ----------------------------------
 
   @Test
   @DisplayName(
@@ -284,7 +295,8 @@ class KsfSaveEnumRoundtripIT {
     assertThat(rawColumn("TASK_ANHANG_GRENZE", "TARIF", id)).isEqualTo("EXPERT");
   }
 
-  // ---- 6. Intake #152: TaskAttachment Insert ohne Schluessel, dann Update mit Schluessel ----------
+  // ---- 6. Intake #152: TaskAttachment Insert ohne Schluessel, dann Update mit Schluessel
+  // ----------
 
   @Test
   @DisplayName(
@@ -334,15 +346,16 @@ class KsfSaveEnumRoundtripIT {
     assertThat(reloaded.getUploadedByRef()).isEqualTo(uploadedBy);
   }
 
-  // ---- Hilfsmethoden -------------------------------------------------------------------------------
+  // ---- Hilfsmethoden
+  // -------------------------------------------------------------------------------
 
   /**
-   * Erstellt eine neue, ungespeicherte {@link TaskParticipant}-Instanz mit dem angegebenen
-   * {@link ParticipantKind} und optionalem {@link ExitKind}.
+   * Erstellt eine neue, ungespeicherte {@link TaskParticipant}-Instanz mit dem angegebenen {@link
+   * ParticipantKind} und optionalem {@link ExitKind}.
    *
-   * <p>Wichtig: {@code tenantId} muss explizit gesetzt werden — KSF schreibt die
-   * {@code TENANT_ID}-Spalte aus dem Entity-Feld, NICHT aus dem {@code TenantContextHolder}.
-   * Der {@code TenantContextHolder} wird nur fuer den Lese-Scope (Criteria/findById) benoetigt.
+   * <p>Wichtig: {@code tenantId} muss explizit gesetzt werden — KSF schreibt die {@code
+   * TENANT_ID}-Spalte aus dem Entity-Feld, NICHT aus dem {@code TenantContextHolder}. Der {@code
+   * TenantContextHolder} wird nur fuer den Lese-Scope (Criteria/findById) benoetigt.
    */
   private TaskParticipant newParticipant(
       ParticipantKind kind, ExitKind exitKind, LocalDateTime exitAt) {
@@ -364,32 +377,24 @@ class KsfSaveEnumRoundtripIT {
   /**
    * Prueft die rohen DB-Spaltenwerte fuer PARTICIPANT_KIND und EXIT_KIND direkt per JDBC.
    *
-   * @param id            gespeicherte Entity-ID
-   * @param pkCol         Spaltenname PARTICIPANT_KIND
-   * @param expectedPk    erwarteter PARTICIPANT_KIND-Wert (name()-String)
-   * @param ekCol         Spaltenname EXIT_KIND
-   * @param expectedEk    erwarteter EXIT_KIND-Wert (name()-String oder null)
+   * @param id gespeicherte Entity-ID
+   * @param pkCol Spaltenname PARTICIPANT_KIND
+   * @param expectedPk erwarteter PARTICIPANT_KIND-Wert (name()-String)
+   * @param ekCol Spaltenname EXIT_KIND
+   * @param expectedEk erwarteter EXIT_KIND-Wert (name()-String oder null)
    */
   private void assertRawColumn(
-      long id,
-      String pkCol,
-      String expectedPk,
-      String ekCol,
-      String expectedEk) {
+      long id, String pkCol, String expectedPk, String ekCol, String expectedEk) {
     String actualPk =
         jdbcTemplate.queryForObject(
-            "SELECT " + pkCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?",
-            String.class,
-            id);
+            "SELECT " + pkCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?", String.class, id);
     assertThat(actualPk)
         .as("Rohe DB-Spalte %s muss den name()-String enthalten", pkCol)
         .isEqualTo(expectedPk);
 
     String actualEk =
         jdbcTemplate.queryForObject(
-            "SELECT " + ekCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?",
-            String.class,
-            id);
+            "SELECT " + ekCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?", String.class, id);
     assertThat(actualEk)
         .as("Rohe DB-Spalte %s muss '%s' enthalten", ekCol, expectedEk)
         .isEqualTo(expectedEk);
@@ -407,7 +412,8 @@ class KsfSaveEnumRoundtripIT {
         "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", Integer.class, id);
   }
 
-  // ---- IT-Konfigurations-Context ------------------------------------------------------------------
+  // ---- IT-Konfigurations-Context
+  // ------------------------------------------------------------------
 
   /**
    * Minimaler Spring-Kontext: DataSource + Flyway (Schema) + KSF-Persistence (Repositories +

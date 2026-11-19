@@ -722,8 +722,7 @@ class FlywayMigrationIT {
     return new ColumnSpec(dataType, maxLength, nullable);
   }
 
-  private static ForeignKey fk(
-      final String column, final String refTable, final String refColumn) {
+  private static ForeignKey fk(final String column, final String refTable, final String refColumn) {
     return new ForeignKey(column, refTable, refColumn);
   }
 
