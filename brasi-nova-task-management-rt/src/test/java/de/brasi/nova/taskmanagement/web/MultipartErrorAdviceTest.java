@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.brasi.nova.taskmanagement.affordanceprobe.MultipartErrorProbeController;
 import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
 import io.keel.framework.web.controller.GlobalApiExceptionHandler;
 import io.keel.framework.web.exception.NovaExceptionHandlingProperties;
@@ -15,17 +16,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.unit.DataSize;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.multipart.MaxUploadSizeExceededException;
-import org.springframework.web.multipart.MultipartException;
-import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 /**
  * HTTP-Test der Multipart-Fehlerbehandlung (Intake #152, Task A7, Review Focus 2): ein
- * Probe-Handler wirft die Ausnahme, die Spring beim Lesen eines Multipart-Requests meldet; davor
- * stehen {@link MultipartErrorAdvice} und die KSF-Fehlerbehandlung ({@link
- * GlobalApiExceptionHandler}) in einem eigenstaendigen MockMvc wie in {@link LockConflictHttpTest}.
- * Ohne Datenbank und ohne Spring-Kontext.
+ * Probe-Handler ({@link MultipartErrorProbeController}) wirft die Ausnahme, die Spring beim Lesen
+ * eines Multipart-Requests meldet; davor stehen {@link MultipartErrorAdvice} und die
+ * KSF-Fehlerbehandlung ({@link GlobalApiExceptionHandler}) in einem eigenstaendigen MockMvc wie in
+ * {@link LockConflictHttpTest}. Ohne Datenbank und ohne Spring-Kontext.
  *
  * <p>Erwartet: 400 im KSF-Format mit {@code errorKey} {@code NOVA_VALIDATION_FAILED} (wie jede
  * {@code EntityValidationException}) statt 500 aus dem Catch-all; {@code message} ist der Text der
@@ -37,7 +34,7 @@ class MultipartErrorAdviceTest {
     final GlobalApiExceptionHandler handler =
         new GlobalApiExceptionHandler(
             new NovaExceptionHandlingProperties(), NovaExceptionMetrics.noop());
-    return MockMvcBuilders.standaloneSetup(new ThrowingProbe())
+    return MockMvcBuilders.standaloneSetup(new MultipartErrorProbeController())
         .setControllerAdvice(new MultipartErrorAdvice(handler, properties()), handler)
         .build();
   }
@@ -83,29 +80,6 @@ class MultipartErrorAdviceTest {
         .andExpect(
             jsonPath("$.message")
                 .value("Die Anfrage konnte nicht als multipart/form-data gelesen werden."));
-  }
-
-  /**
-   * Probe-Handler ohne Klassen-Annotation: das eigenstaendige MockMvc registriert die
-   * Methoden-Mappings direkt; die Sentinels ({@code HandlerSentinelIT}, {@code
-   * AffordanceSentinelsTest}) sehen keinen Controller.
-   */
-  static class ThrowingProbe {
-
-    @PostMapping("/probe/too-large")
-    void tooLarge() {
-      throw new MaxUploadSizeExceededException(DataSize.ofMegabytes(15).toBytes());
-    }
-
-    @PostMapping("/probe/missing-part")
-    void missingPart() throws MissingServletRequestPartException {
-      throw new MissingServletRequestPartException("files");
-    }
-
-    @PostMapping("/probe/broken")
-    void broken() {
-      throw new MultipartException("Multipart-Stream unvollstaendig");
-    }
   }
 
   /** Properties mit den Vorgaben aus application.properties (harte Obergrenze 15 MB). */
