@@ -258,7 +258,8 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
               + "AND p.ENTITY_STATUS = 'ACTIVE' "
               + "AND (p.EXIT_KIND IS NOT NULL OR EXISTS ("
               + "SELECT 1 FROM TASK_USER_STATE s "
-              + "WHERE s.TENANT_ID = :tenantId AND s.TASK_ID = p.TASK_ID "
+              + "WHERE s.TENANT_ID = :tenantId AND s.USER_TENANT_ID = :tenantId "
+              + "AND s.TASK_ID = p.TASK_ID "
               + "AND s.USER_REF = p.PARTICIPANT_REF "
               + "AND s.ENTITY_STATUS = 'ACTIVE' AND s.UNSUBSCRIBED_AT IS NOT NULL))",
       mssql =
@@ -271,7 +272,8 @@ public interface TaskParticipantQueryRepository extends BaseTaskParticipantRepos
               + "AND p.ENTITY_STATUS = 'ACTIVE' "
               + "AND (p.EXIT_KIND IS NOT NULL OR EXISTS ("
               + "SELECT 1 FROM [dbo].[TASK_USER_STATE] s "
-              + "WHERE s.TENANT_ID = :tenantId AND s.TASK_ID = p.TASK_ID "
+              + "WHERE s.TENANT_ID = :tenantId AND s.USER_TENANT_ID = :tenantId "
+              + "AND s.TASK_ID = p.TASK_ID "
               + "AND s.USER_REF = p.PARTICIPANT_REF "
               + "AND s.ENTITY_STATUS = 'ACTIVE' AND s.UNSUBSCRIBED_AT IS NOT NULL))")
   List<TaskParticipant> findArchiveReadersByTaskId(@Param("taskId") Long taskId);

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
@@ -54,6 +55,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * Gegenproben (echte READ-/WRITE-Member) belegen, dass legitime Mitglieder NICHT faelschlich
  * verschwinden (kein False-Negative).
  *
+ * <p><b>Voller Unique-Schluessel (Intake #170):</b> Jede Lesung auf {@code TASK_USER_STATE} bindet
+ * {@code USER_TENANT_ID = :tenantId}. Diskriminator: eine State-Zeile mit Request-Mandant in
+ * {@code TENANT_ID}, aber FREMDEM {@code USER_TENANT_ID} (der Unique-Index erlaubt sie neben der
+ * eigenen Zeile) darf weder von {@link TaskUserStateQueryRepository} noch von den Inbox-/Archiv-
+ * Lesern des {@link TaskKeysetQueryRepository} als State des Anfragers gewertet werden.
+ *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
 @SpringBootTest(
@@ -94,6 +101,11 @@ class TaskKeysetMembershipLeakIT {
   private static final long TASK_EXMEMBER_LEFT_ID = 591005L;
   private static final long TASK_MEMBER_DONE_ID = 591006L;
   private static final long TASK_FOREIGN_EXIT_ONLY_ID = 591007L;
+  // Intake #170: State-Zeilen mit FREMDEM USER_TENANT_ID (TENANT_ID = Request-Mandant)
+  private static final long TASK_FOREIGN_USER_TENANT_ACTIVE_ID = 591008L;
+  private static final long TASK_FOREIGN_USER_TENANT_DONE_ID = 591009L;
+  private static final long TASK_FOREIGN_USER_TENANT_LEFT_ID = 591010L;
+  private static final long TASK_TWO_STATES_ID = 591011L;
 
   private static final UUID TASK_ORPHAN_ACTIVE_UUID =
       UUID.fromString("00000059-0000-0059-bbbb-000000591001");
@@ -109,6 +121,14 @@ class TaskKeysetMembershipLeakIT {
       UUID.fromString("00000059-0000-0059-bbbb-000000591006");
   private static final UUID TASK_FOREIGN_EXIT_ONLY_UUID =
       UUID.fromString("00000059-0000-0059-bbbb-000000591007");
+  private static final UUID TASK_FOREIGN_USER_TENANT_ACTIVE_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591008");
+  private static final UUID TASK_FOREIGN_USER_TENANT_DONE_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591009");
+  private static final UUID TASK_FOREIGN_USER_TENANT_LEFT_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591010");
+  private static final UUID TASK_TWO_STATES_UUID =
+      UUID.fromString("00000059-0000-0059-bbbb-000000591011");
 
   // Bekannte Seed-IDs aus V1-Migration
   private static final long STATUS_OPEN = 101L;
@@ -218,6 +238,57 @@ class TaskKeysetMembershipLeakIT {
     insertExitedParticipant(
         jt, 591071L, TASK_FOREIGN_EXIT_ONLY_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID, T_BEFORE,
         T_BEFORE);
+
+    // (8) Intake #170, aktiv: OPEN, aktiver WRITE-Member (eigener Mandant), aber die EINZIGE
+    //     State-Zeile der Person hat TENANT_ID = Request-Mandant und FREMDEN USER_TENANT_ID.
+    //     -> darf NICHT in findActivePage erscheinen (vorher: erschien, weil die Lesung
+    //        USER_TENANT_ID nicht band).
+    insertTask(
+        jt, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TASK_FOREIGN_USER_TENANT_ACTIVE_UUID, TENANT_ID,
+        STATUS_OPEN, T0, "Intake170-ForeignUserTenantActive");
+    insertUserStateWithUserTenant(
+        jt, 591080L, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
+        null, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591081L, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TENANT_ID, USER_B_REF, TENANT_ID,
+        T_BEFORE);
+
+    // (9) Intake #170, done: DONE, aktiver READ-Member, einzige State-Zeile mit fremdem
+    //     USER_TENANT_ID -> darf NICHT in done/all und nicht in den Zaehlern erscheinen.
+    insertTask(
+        jt, TASK_FOREIGN_USER_TENANT_DONE_ID, TASK_FOREIGN_USER_TENANT_DONE_UUID, TENANT_ID,
+        STATUS_DONE, T0, "Intake170-ForeignUserTenantDone");
+    insertUserStateWithUserTenant(
+        jt, 591090L, TASK_FOREIGN_USER_TENANT_DONE_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
+        null, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591091L, TASK_FOREIGN_USER_TENANT_DONE_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
+
+    // (10) Intake #170, left: OPEN, aktiver Member (kein EXIT_KIND), einzige State-Zeile mit
+    //      fremdem USER_TENANT_ID und UNSUBSCRIBED_AT -> darf NICHT in left/all erscheinen.
+    insertTask(
+        jt, TASK_FOREIGN_USER_TENANT_LEFT_ID, TASK_FOREIGN_USER_TENANT_LEFT_UUID, TENANT_ID,
+        STATUS_OPEN, T0, "Intake170-ForeignUserTenantLeft");
+    insertUserStateWithUserTenant(
+        jt, 591100L, TASK_FOREIGN_USER_TENANT_LEFT_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
+        T_BEFORE, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591101L, TASK_FOREIGN_USER_TENANT_LEFT_ID, TENANT_ID, USER_B_REF, TENANT_ID,
+        T_BEFORE);
+
+    // (11) Intake #170, Gegenprobe/Diskriminator: dieselbe Person hat auf DERSELBEN Aufgabe zwei
+    //      State-Zeilen - eine eigene (USER_TENANT_ID = Request-Mandant) und eine mit fremdem
+    //      USER_TENANT_ID. Der Unique-Index (TASK_ID, USER_TENANT_ID, USER_REF) erlaubt beide.
+    //      -> findByTaskIdAndUserRef liefert genau die eigene Zeile (vorher: beide);
+    //         die Aufgabe MUSS in findActivePage erscheinen (eigene Zeile vorhanden).
+    insertTask(
+        jt, TASK_TWO_STATES_ID, TASK_TWO_STATES_UUID, TENANT_ID, STATUS_OPEN, T0,
+        "Intake170-TwoStates");
+    insertUserState(jt, 591110L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
+    insertUserStateWithUserTenant(
+        jt, 591112L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID, null, T_BEFORE);
+    insertActiveParticipant(
+        jt, 591111L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
   }
 
   @BeforeEach
@@ -340,6 +411,104 @@ class TaskKeysetMembershipLeakIT {
         .isEqualTo(2L);
   }
 
+  // ---- Intake #170: voller Unique-Schluessel (USER_TENANT_ID) -------------------------------
+
+  @Test
+  @DisplayName(
+      "Intake170_findByTaskIdAndUserRef_liefert_nur_die_eigene_state_zeile_bei_fremdem_user_tenant")
+  void findByTaskIdAndUserRef_liefert_nur_die_eigene_state_zeile_bei_fremdem_user_tenant(
+      @Autowired TaskUserStateQueryRepository repo) {
+    // Diskriminator: dieselbe Aufgabe + derselbe USER_REF, zwei Zeilen (eigene + fremder
+    // USER_TENANT_ID). Ohne USER_TENANT_ID-Bindung lieferte die Query beide Zeilen.
+    assertThat(repo.findByTaskIdAndUserRef(TASK_TWO_STATES_ID, USER_B_REF))
+        .as("genau die eigene Zeile (USER_TENANT_ID = Request-Mandant), nicht die fremde")
+        .singleElement()
+        .satisfies(
+            s -> {
+              assertThat(s.getId()).isEqualTo(591110L);
+              assertThat(s.getUserTenantId()).isEqualTo(TENANT_ID);
+            });
+
+    // dieselbe Bindung in der sperrenden Variante, der Aufgaben-Lesung und der Seiten-Lesung
+    assertThat(repo.lockByTaskIdAndUserRef(TASK_TWO_STATES_ID, USER_B_REF))
+        .extracting(TaskUserState::getId)
+        .containsExactly(591110L);
+    assertThat(repo.findByTaskId(TASK_TWO_STATES_ID))
+        .extracting(TaskUserState::getId)
+        .containsExactly(591110L);
+    assertThat(
+            repo.findByTaskIdsAndUserRef(
+                List.of(TASK_TWO_STATES_ID, TASK_FOREIGN_USER_TENANT_ACTIVE_ID), USER_B_REF))
+        .extracting(TaskUserState::getId)
+        .containsExactly(591110L);
+
+    // Aufgabe mit NUR einer State-Zeile des fremden USER_TENANT_ID: fuer den Anfrager kein State
+    assertThat(repo.findByTaskIdAndUserRef(TASK_FOREIGN_USER_TENANT_ACTIVE_ID, USER_B_REF))
+        .as("einzige Zeile hat fremden USER_TENANT_ID -> kein State des Anfragers")
+        .isEmpty();
+    assertThat(repo.lockByTaskIdAndUserRef(TASK_FOREIGN_USER_TENANT_ACTIVE_ID, USER_B_REF))
+        .isEmpty();
+    assertThat(repo.findByTaskId(TASK_FOREIGN_USER_TENANT_ACTIVE_ID)).isEmpty();
+    assertThat(repo.findActiveUserRefsByTaskId(TASK_FOREIGN_USER_TENANT_ACTIVE_ID)).isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "Intake170_inbox_und_archiv_leser_werten_state_mit_fremdem_user_tenant_nicht_als_eigenen")
+  void inbox_und_archiv_leser_werten_state_mit_fremdem_user_tenant_nicht_als_eigenen(
+      @Autowired TaskKeysetQueryRepository repo) {
+    final List<Task> active =
+        repo.findActivePage(USER_B_REF, STATUS_OPEN, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+    assertThat(active)
+        .as("aktiv: State mit fremdem USER_TENANT_ID zaehlt nicht als eigener State")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_FOREIGN_USER_TENANT_ACTIVE_ID);
+    assertThat(active)
+        .as("aktiv, Gegenprobe: mit eigener State-Zeile (neben der fremden) erscheint die Aufgabe")
+        .extracting(Task::getId)
+        .contains(TASK_TWO_STATES_ID, TASK_MEMBER_ACTIVE_ID);
+
+    final List<Task> done =
+        repo.findArchiveDonePage(
+            USER_B_REF, STATUS_DONE, STATUS_CANCELLED, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+    assertThat(done)
+        .as("done: State mit fremdem USER_TENANT_ID zaehlt nicht als aktiver eigener State")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_FOREIGN_USER_TENANT_DONE_ID);
+    assertThat(done)
+        .as("done, Gegenprobe: mit eigener State-Zeile erscheint die Aufgabe")
+        .extracting(Task::getId)
+        .contains(TASK_MEMBER_DONE_ID);
+    assertThat(repo.countArchiveDone(USER_B_REF, STATUS_DONE, STATUS_CANCELLED, T0))
+        .as("done-Zaehler: nur {MemberDone}")
+        .isEqualTo(1L);
+
+    final List<Task> left =
+        repo.findArchiveLeftPage(USER_B_REF, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+    assertThat(left)
+        .as("left: abgemeldeter State mit fremdem USER_TENANT_ID zaehlt nicht als eigenes Abmelden")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_FOREIGN_USER_TENANT_LEFT_ID);
+    assertThat(left)
+        .as("left, Gegenprobe: ausgetretener Member mit eigener State-Zeile erscheint")
+        .extracting(Task::getId)
+        .contains(TASK_EXMEMBER_LEFT_ID);
+    assertThat(repo.countArchiveLeft(USER_B_REF, T0))
+        .as("left-Zaehler: nur {ExMemberLeft}")
+        .isEqualTo(1L);
+
+    final List<Task> all =
+        repo.findArchiveAllPage(
+            USER_B_REF, STATUS_DONE, STATUS_CANCELLED, T0, CURSOR_LAST_ACTIVITY, CURSOR_EXT_ID, 50);
+    assertThat(all)
+        .as("all: weder fremd-done noch fremd-left erscheinen")
+        .extracting(Task::getId)
+        .doesNotContain(TASK_FOREIGN_USER_TENANT_DONE_ID, TASK_FOREIGN_USER_TENANT_LEFT_ID);
+    assertThat(repo.countArchiveAll(USER_B_REF, STATUS_DONE, STATUS_CANCELLED, T0))
+        .as("all-Zaehler: nur {ExMemberLeft, MemberDone}")
+        .isEqualTo(2L);
+  }
+
   // ---- Hilfsmethoden -----------------------------------------------------------------------
 
   private static void seedFirmaIfAbsent(
@@ -385,6 +554,29 @@ class TaskKeysetMembershipLeakIT {
       final UUID userRef,
       final LocalDateTime unsubscribedAt,
       final LocalDateTime angelegtAm) {
+    insertUserStateWithUserTenant(
+        jt, id, taskId, tenantId, userRef, tenantId, unsubscribedAt, angelegtAm);
+  }
+
+  /**
+   * Fuegt einen TASK_USER_STATE-Eintrag mit eigenem {@code USER_TENANT_ID} ein (Intake #170): die
+   * Zeile liegt im Mandanten {@code tenantId}, der Benutzer-Mandant kann davon abweichen. Der
+   * Unique-Index (TASK_ID, USER_TENANT_ID, USER_REF) erlaubt dieselbe Person mit verschiedenen
+   * {@code USER_TENANT_ID} auf derselben Aufgabe.
+   *
+   * @param userTenantId Wert fuer {@code USER_TENANT_ID}
+   * @param unsubscribedAt null = aktiv (abonniert); Wert = Abmeldezeitpunkt
+   * @param angelegtAm Beitrittszeitpunkt (ANGELEGT_AM)
+   */
+  private static void insertUserStateWithUserTenant(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final long tenantId,
+      final UUID userRef,
+      final long userTenantId,
+      final LocalDateTime unsubscribedAt,
+      final LocalDateTime angelegtAm) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_USER_STATE] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_USER_STATE] "
@@ -392,7 +584,7 @@ class TaskKeysetMembershipLeakIT {
             + " USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, 0, 0, 0, ?, 'it-seed', ?)",
-        id, id, tenantId, taskId, userRef, tenantId, unsubscribedAt, angelegtAm);
+        id, id, tenantId, taskId, userRef, userTenantId, unsubscribedAt, angelegtAm);
   }
 
   /** Aktiver PERSON-Participant (EXIT_KIND NULL) = WRITE-/READ-Member. */

@@ -12,13 +12,20 @@ import org.springframework.data.repository.query.Param;
  *
  * <p>Kein {@code tenantId}-Parameter: {@code :tenantId} wird automatisch vom KSF-{@code
  * NovaQueryTenantValidator} aus dem {@code TenantContextHolder} gebunden.
+ *
+ * <p>{@code USER_TENANT_ID} wird wie {@code TENANT_ID} aus dem Kontext gebunden (Intake #170),
+ * damit jede Lesung den vollen Unique-Schluessel (TASK_ID, USER_TENANT_ID, USER_REF) nutzt und
+ * nicht die State-Zeilen anderer Personen der Aufgabe ueberstreicht (Deadlock-Flaeche unter
+ * sperrendem READ COMMITTED). Vorbild: {@code PARTICIPANT_TENANT_ID} in {@link
+ * TaskParticipantQueryRepository}.
  */
 public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepository {
 
   /**
    * Sucht den {@link TaskUserState} fuer eine spezifische Aufgabe und einen Benutzer.
    *
-   * <p>Gibt maximal einen Eintrag zurueck (UNIQUE-Constraint auf TASK_ID + USER_REF).
+   * <p>Gibt maximal einen Eintrag zurueck (UNIQUE-Constraint auf TASK_ID, USER_TENANT_ID,
+   * USER_REF; {@code USER_TENANT_ID} ist an den Kontext-Mandanten gebunden).
    *
    * @param taskId interne Aufgaben-ID
    * @param userRef UUID des Benutzers
@@ -29,6 +36,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -36,6 +44,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'")
@@ -58,6 +67,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -65,6 +75,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] WITH (UPDLOCK, ROWLOCK) "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'")
@@ -82,12 +93,14 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND ENTITY_STATUS = 'ACTIVE'",
       mssql =
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND ENTITY_STATUS = 'ACTIVE'")
   List<TaskUserState> findByTaskId(@Param("taskId") Long taskId);
@@ -107,6 +120,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND UNSUBSCRIBED_AT IS NULL "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -114,6 +128,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND UNSUBSCRIBED_AT IS NULL "
               + "AND ENTITY_STATUS = 'ACTIVE'")
@@ -123,7 +138,8 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
    * Batch-Variante fuer die Inbox-Read-Anreicherung (BE-1): liefert die aktiven {@link
    * TaskUserState}-Rows des ANFRAGERS ({@code userRef}) fuer die uebergebene Aufgaben-Seite in
    * EINER Abfrage (konstante Query-Zahl, kein N+1). Pro (Aufgabe, Benutzer) existiert maximal eine
-   * aktive Row (UNIQUE TASK_ID + USER_REF), daher je Aufgabe hoechstens ein Eintrag.
+   * aktive Row (UNIQUE TASK_ID, USER_TENANT_ID, USER_REF; {@code USER_TENANT_ID} ist an den
+   * Kontext-Mandanten gebunden), daher je Aufgabe hoechstens ein Eintrag.
    *
    * <p>Liefert die persoenlichen Marker ({@code IS_PINNED/IS_FLAGGED/IS_MUTED}) sowie {@code
    * UNSUBSCRIBED_AT} (+ geerbtes {@code ANGELEGT_AM}) fuer die asOf-gebundene Marker-/{@code
@@ -142,6 +158,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID IN (:taskIds) "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -149,6 +166,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID IN (:taskIds) "
               + "AND USER_REF = :userRef "
               + "AND ENTITY_STATUS = 'ACTIVE'")
@@ -176,6 +194,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM TASK_USER_STATE "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND IS_MUTED = 1 "
               + "AND ENTITY_STATUS = 'ACTIVE'",
@@ -183,6 +202,7 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
           "/* NOVA:DICTIONARY_VISIBILITY */ "
               + "SELECT * FROM [dbo].[TASK_USER_STATE] "
               + "WHERE TENANT_ID = :tenantId "
+              + "AND USER_TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND IS_MUTED = 1 "
               + "AND ENTITY_STATUS = 'ACTIVE'")
