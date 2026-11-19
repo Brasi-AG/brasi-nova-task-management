@@ -89,9 +89,9 @@ class AttachmentFileInspectorTest {
   }
 
   /**
-   * Fix-Runde 1 (deterministischer Beleg): Die Daten eines Eintrags werden nie gelesen. Ein
-   * Eintrag mit absichtlich ungueltigen Deflate-Daten stoert die Pruefung nicht (beim Entpacken
-   * ergaebe das einen Fehler und damit {@code false}).
+   * Fix-Runde 1 (deterministischer Beleg): Die Daten eines Eintrags werden nie gelesen. Ein Eintrag
+   * mit absichtlich ungueltigen Deflate-Daten stoert die Pruefung nicht (beim Entpacken ergaebe das
+   * einen Fehler und damit {@code false}).
    */
   @Test
   void i152_entry_data_is_never_read() {

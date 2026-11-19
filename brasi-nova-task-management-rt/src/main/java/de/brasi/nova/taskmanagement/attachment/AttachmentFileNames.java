@@ -7,9 +7,9 @@ import java.util.Locale;
  * Bereinigt Dateinamen hochgeladener Anhaenge (Intake #152) und ermittelt ihre Endung.
  *
  * <p>Der vom Client gelieferte Name wird nie ungeprueft gespeichert oder in einen Header
- * uebernommen: nur der letzte Pfadanteil (nach {@code /} oder {@code \}), ohne Steuerzeichen
- * (z. B. NUL, CR, LF), getrimmt und auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt, wobei die
- * Endung erhalten bleibt.
+ * uebernommen: nur der letzte Pfadanteil (nach {@code /} oder {@code \}), ohne Steuerzeichen (z. B.
+ * NUL, CR, LF), getrimmt und auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt, wobei die Endung
+ * erhalten bleibt.
  */
 public final class AttachmentFileNames {
 

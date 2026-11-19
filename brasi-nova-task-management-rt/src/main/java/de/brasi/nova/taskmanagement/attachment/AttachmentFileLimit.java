@@ -15,8 +15,8 @@ public record AttachmentFileLimit(AttachmentTariff tariff, long maxFileBytes) {
 
   /**
    * Menschenlesbare Groesse fuer Meldungstexte: ganzzahlig bei vollen Megabytes ({@code "5 MB"}),
-   * sonst mit einer Nachkommastelle und deutschem Dezimalkomma ({@code "12,5 MB"}). 1 MB sind
-   * 1 048 576 Bytes (wie Springs {@link DataSize}).
+   * sonst mit einer Nachkommastelle und deutschem Dezimalkomma ({@code "12,5 MB"}). 1 MB sind 1 048
+   * 576 Bytes (wie Springs {@link DataSize}).
    *
    * @return Grenze mit Einheit {@code MB}
    */

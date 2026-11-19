@@ -8,9 +8,8 @@ import java.util.Locale;
  * <p>Ein Schluessel ist ein relativer Pfad mit {@code /} als Trenner, unabhaengig vom
  * Betriebssystem; aufgeloest wird er erst vom {@link AttachmentContentProvider} unter dem
  * konfigurierten Basispfad. Die Ordnerregel lautet {@code {TENANT_ID mindestens
- * dreistellig}/{Anhang-ID ohne die letzten 4 Stellen}/{Anhang-ID}.{endung}}; Anhang-IDs unter
- * 10000 liegen im Ordner {@code 0}. Das Vorschaubild liegt daneben als {@code
- * {Anhang-ID}_thumb.jpeg}.
+ * dreistellig}/{Anhang-ID ohne die letzten 4 Stellen}/{Anhang-ID}.{endung}}; Anhang-IDs unter 10000
+ * liegen im Ordner {@code 0}. Das Vorschaubild liegt daneben als {@code {Anhang-ID}_thumb.jpeg}.
  *
  * <p>Beispiel: Mandant 5, Anhang-ID 10000000095, Endung {@code pdf} ergibt {@code
  * 005/1000000/10000000095.pdf}.

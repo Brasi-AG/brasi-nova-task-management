@@ -25,8 +25,8 @@ import org.springframework.stereotype.Component;
 /**
  * Dateisystem-Umsetzung von {@link AttachmentContentProvider} (Intake #152).
  *
- * <p>Der Basispfad kommt aus {@code task-management.attachments.storage.base-dir} (Config Server
- * je Umgebung, nie im Code). Er wird erst bei der Benutzung geprueft, damit die Anwendung, der
+ * <p>Der Basispfad kommt aus {@code task-management.attachments.storage.base-dir} (Config Server je
+ * Umgebung, nie im Code). Er wird erst bei der Benutzung geprueft, damit die Anwendung, der
  * OpenAPI-Export und Integrationstests auch ohne Basispfad starten; beim Start meldet {@link
  * #verifyStorage()} einen fehlenden oder nicht beschreibbaren Pfad als Fehler im Log, ohne den
  * Start abzubrechen.
@@ -37,8 +37,7 @@ import org.springframework.stereotype.Component;
  * <p>Schreiben ist atomar und ueberschreibt nie: der Inhalt geht in eine temporaere Datei {@code
  * .{name}.{uuid}.part} im Zielordner, danach folgt {@link Files#move(Path, Path,
  * java.nio.file.CopyOption...)} ohne Optionen (Umbenennen im selben Ordner; ein vorhandenes Ziel
- * ergibt {@link FileAlreadyExistsException}). Die temporaere Datei wird bei jedem Fehler
- * geloescht.
+ * ergibt {@link FileAlreadyExistsException}). Die temporaere Datei wird bei jedem Fehler geloescht.
  */
 @Component
 public class FilesystemAttachmentContentProvider implements AttachmentContentProvider {
