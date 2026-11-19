@@ -24,8 +24,8 @@ public interface TaskUserStateQueryRepository extends BaseTaskUserStateRepositor
   /**
    * Sucht den {@link TaskUserState} fuer eine spezifische Aufgabe und einen Benutzer.
    *
-   * <p>Gibt maximal einen Eintrag zurueck (UNIQUE-Constraint auf TASK_ID, USER_TENANT_ID,
-   * USER_REF; {@code USER_TENANT_ID} ist an den Kontext-Mandanten gebunden).
+   * <p>Gibt maximal einen Eintrag zurueck (UNIQUE-Constraint auf TASK_ID, USER_TENANT_ID, USER_REF;
+   * {@code USER_TENANT_ID} ist an den Kontext-Mandanten gebunden).
    *
    * @param taskId interne Aufgaben-ID
    * @param userRef UUID des Benutzers

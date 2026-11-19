@@ -51,15 +51,15 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *
  * <p><b>Orphan-State-Gegenproben (ASYMMETRISCH):</b> Eine {@code TASK_USER_STATE}-Zeile OHNE
  * passende {@code TASK_PARTICIPANT}-Row (Orphan-State) wuerde unter dem alten, reinen State-SQL
- * faelschlich erscheinen/gezaehlt. Der neue Membership-Konjunkt schliesst sie aus. Die
- * Gegenproben (echte READ-/WRITE-Member) belegen, dass legitime Mitglieder NICHT faelschlich
- * verschwinden (kein False-Negative).
+ * faelschlich erscheinen/gezaehlt. Der neue Membership-Konjunkt schliesst sie aus. Die Gegenproben
+ * (echte READ-/WRITE-Member) belegen, dass legitime Mitglieder NICHT faelschlich verschwinden (kein
+ * False-Negative).
  *
  * <p><b>Voller Unique-Schluessel (Intake #170):</b> Jede Lesung auf {@code TASK_USER_STATE} bindet
- * {@code USER_TENANT_ID = :tenantId}. Diskriminator: eine State-Zeile mit Request-Mandant in
- * {@code TENANT_ID}, aber FREMDEM {@code USER_TENANT_ID} (der Unique-Index erlaubt sie neben der
- * eigenen Zeile) darf weder von {@link TaskUserStateQueryRepository} noch von den Inbox-/Archiv-
- * Lesern des {@link TaskKeysetQueryRepository} als State des Anfragers gewertet werden.
+ * {@code USER_TENANT_ID = :tenantId}. Diskriminator: eine State-Zeile mit Request-Mandant in {@code
+ * TENANT_ID}, aber FREMDEM {@code USER_TENANT_ID} (der Unique-Index erlaubt sie neben der eigenen
+ * Zeile) darf weder von {@link TaskUserStateQueryRepository} noch von den Inbox-/Archiv- Lesern des
+ * {@link TaskKeysetQueryRepository} als State des Anfragers gewertet werden.
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -90,8 +90,7 @@ class TaskKeysetMembershipLeakIT {
   private static final UUID FOREIGN_TENANT_UUID =
       UUID.fromString("00000059-0000-0059-0000-000000000592");
 
-  private static final UUID USER_B_REF =
-      UUID.fromString("00000059-0002-0059-0002-000000000591");
+  private static final UUID USER_B_REF = UUID.fromString("00000059-0002-0059-0002-000000000591");
 
   // feste Task-IDs (ausserhalb KSF-Sequenz; Namensraum 5910xx fuer diesen IT)
   private static final long TASK_ORPHAN_ACTIVE_ID = 591001L;
@@ -142,10 +141,9 @@ class TaskKeysetMembershipLeakIT {
   private static final LocalDateTime T_BEFORE = LocalDateTime.of(2026, 1, 1, 8, 0, 0);
 
   /** Keyset-Cursor fuer erste Seite (groesser als alle Tasks bis asOf). */
-  private static final LocalDateTime CURSOR_LAST_ACTIVITY =
-      LocalDateTime.of(9999, 12, 31, 0, 0, 0);
-  private static final UUID CURSOR_EXT_ID =
-      UUID.fromString("00000000-0000-0000-0000-000000000001");
+  private static final LocalDateTime CURSOR_LAST_ACTIVITY = LocalDateTime.of(9999, 12, 31, 0, 0, 0);
+
+  private static final UUID CURSOR_EXT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
   private static HikariDataSource master;
   private static String dbName;
@@ -183,28 +181,48 @@ class TaskKeysetMembershipLeakIT {
     // (1) Orphan-State aktiv: OPEN, aktiver State (UNSUBSCRIBED_AT NULL), KEIN Participant.
     //     -> darf NICHT in findActivePage erscheinen (WRITE-Member fehlt).
     insertTask(
-        jt, TASK_ORPHAN_ACTIVE_ID, TASK_ORPHAN_ACTIVE_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_ORPHAN_ACTIVE_ID,
+        TASK_ORPHAN_ACTIVE_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Slice6-OrphanActive");
     insertUserState(jt, 591010L, TASK_ORPHAN_ACTIVE_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
 
     // (2) Orphan-State DONE: DONE, aktiver State, KEIN Participant.
     //     -> darf NICHT in done/all/countArchiveDone/countArchiveAll erscheinen.
     insertTask(
-        jt, TASK_ORPHAN_DONE_ID, TASK_ORPHAN_DONE_UUID, TENANT_ID, STATUS_DONE, T0,
+        jt,
+        TASK_ORPHAN_DONE_ID,
+        TASK_ORPHAN_DONE_UUID,
+        TENANT_ID,
+        STATUS_DONE,
+        T0,
         "Slice6-OrphanDone");
     insertUserState(jt, 591020L, TASK_ORPHAN_DONE_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
 
     // (3) Orphan-State abgemeldet: OPEN, State mit UNSUBSCRIBED_AT, KEIN Participant.
     //     -> darf NICHT in left/all/countArchiveLeft/countArchiveAll erscheinen.
     insertTask(
-        jt, TASK_ORPHAN_LEFT_ID, TASK_ORPHAN_LEFT_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_ORPHAN_LEFT_ID,
+        TASK_ORPHAN_LEFT_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Slice6-OrphanLeft");
     insertUserState(jt, 591030L, TASK_ORPHAN_LEFT_ID, TENANT_ID, USER_B_REF, T_BEFORE, T_BEFORE);
 
     // (4) Gegenprobe aktiver WRITE-Member: OPEN, aktiver State + aktiver PERSON-Participant
     //     (EXIT_KIND NULL). -> MUSS in findActivePage erscheinen.
     insertTask(
-        jt, TASK_MEMBER_ACTIVE_ID, TASK_MEMBER_ACTIVE_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_MEMBER_ACTIVE_ID,
+        TASK_MEMBER_ACTIVE_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Slice6-MemberActive");
     insertUserState(jt, 591040L, TASK_MEMBER_ACTIVE_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
     insertActiveParticipant(
@@ -213,16 +231,27 @@ class TaskKeysetMembershipLeakIT {
     // (5) Gegenprobe ausgetretener READ-Member: OPEN, State abgemeldet + Participant mit EXIT_KIND.
     //     -> MUSS in left + all + countArchiveLeft/countArchiveAll; NICHT in done.
     insertTask(
-        jt, TASK_EXMEMBER_LEFT_ID, TASK_EXMEMBER_LEFT_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_EXMEMBER_LEFT_ID,
+        TASK_EXMEMBER_LEFT_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Slice6-ExMemberLeft");
     insertUserState(jt, 591050L, TASK_EXMEMBER_LEFT_ID, TENANT_ID, USER_B_REF, T_BEFORE, T_BEFORE);
     insertExitedParticipant(
         jt, 591051L, TASK_EXMEMBER_LEFT_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE, T_BEFORE);
 
-    // (6) Gegenprobe aktiver READ-Member auf DONE: DONE, aktiver State + aktiver PERSON-Participant.
+    // (6) Gegenprobe aktiver READ-Member auf DONE: DONE, aktiver State + aktiver
+    // PERSON-Participant.
     //     -> MUSS in done + all + countArchiveDone/countArchiveAll.
     insertTask(
-        jt, TASK_MEMBER_DONE_ID, TASK_MEMBER_DONE_UUID, TENANT_ID, STATUS_DONE, T0,
+        jt,
+        TASK_MEMBER_DONE_ID,
+        TASK_MEMBER_DONE_UUID,
+        TENANT_ID,
+        STATUS_DONE,
+        T0,
         "Slice6-MemberDone");
     insertUserState(jt, 591060L, TASK_MEMBER_DONE_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
     insertActiveParticipant(
@@ -233,10 +262,21 @@ class TaskKeysetMembershipLeakIT {
     //     -> darf NICHT in left/all erscheinen (READ-Member im task-tenant fehlt);
     //        countArchiveLeft/countArchiveAll zaehlen sie nicht.
     insertTask(
-        jt, TASK_FOREIGN_EXIT_ONLY_ID, TASK_FOREIGN_EXIT_ONLY_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_FOREIGN_EXIT_ONLY_ID,
+        TASK_FOREIGN_EXIT_ONLY_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Slice6-ForeignExitOnly");
     insertExitedParticipant(
-        jt, 591071L, TASK_FOREIGN_EXIT_ONLY_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID, T_BEFORE,
+        jt,
+        591071L,
+        TASK_FOREIGN_EXIT_ONLY_ID,
+        TENANT_ID,
+        USER_B_REF,
+        FOREIGN_TENANT_ID,
+        T_BEFORE,
         T_BEFORE);
 
     // (8) Intake #170, aktiv: OPEN, aktiver WRITE-Member (eigener Mandant), aber die EINZIGE
@@ -244,37 +284,74 @@ class TaskKeysetMembershipLeakIT {
     //     -> darf NICHT in findActivePage erscheinen (vorher: erschien, weil die Lesung
     //        USER_TENANT_ID nicht band).
     insertTask(
-        jt, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TASK_FOREIGN_USER_TENANT_ACTIVE_UUID, TENANT_ID,
-        STATUS_OPEN, T0, "Intake170-ForeignUserTenantActive");
+        jt,
+        TASK_FOREIGN_USER_TENANT_ACTIVE_ID,
+        TASK_FOREIGN_USER_TENANT_ACTIVE_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
+        "Intake170-ForeignUserTenantActive");
     insertUserStateWithUserTenant(
-        jt, 591080L, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
-        null, T_BEFORE);
+        jt,
+        591080L,
+        TASK_FOREIGN_USER_TENANT_ACTIVE_ID,
+        TENANT_ID,
+        USER_B_REF,
+        FOREIGN_TENANT_ID,
+        null,
+        T_BEFORE);
     insertActiveParticipant(
-        jt, 591081L, TASK_FOREIGN_USER_TENANT_ACTIVE_ID, TENANT_ID, USER_B_REF, TENANT_ID,
+        jt,
+        591081L,
+        TASK_FOREIGN_USER_TENANT_ACTIVE_ID,
+        TENANT_ID,
+        USER_B_REF,
+        TENANT_ID,
         T_BEFORE);
 
     // (9) Intake #170, done: DONE, aktiver READ-Member, einzige State-Zeile mit fremdem
     //     USER_TENANT_ID -> darf NICHT in done/all und nicht in den Zaehlern erscheinen.
     insertTask(
-        jt, TASK_FOREIGN_USER_TENANT_DONE_ID, TASK_FOREIGN_USER_TENANT_DONE_UUID, TENANT_ID,
-        STATUS_DONE, T0, "Intake170-ForeignUserTenantDone");
+        jt,
+        TASK_FOREIGN_USER_TENANT_DONE_ID,
+        TASK_FOREIGN_USER_TENANT_DONE_UUID,
+        TENANT_ID,
+        STATUS_DONE,
+        T0,
+        "Intake170-ForeignUserTenantDone");
     insertUserStateWithUserTenant(
-        jt, 591090L, TASK_FOREIGN_USER_TENANT_DONE_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
-        null, T_BEFORE);
+        jt,
+        591090L,
+        TASK_FOREIGN_USER_TENANT_DONE_ID,
+        TENANT_ID,
+        USER_B_REF,
+        FOREIGN_TENANT_ID,
+        null,
+        T_BEFORE);
     insertActiveParticipant(
         jt, 591091L, TASK_FOREIGN_USER_TENANT_DONE_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
 
     // (10) Intake #170, left: OPEN, aktiver Member (kein EXIT_KIND), einzige State-Zeile mit
     //      fremdem USER_TENANT_ID und UNSUBSCRIBED_AT -> darf NICHT in left/all erscheinen.
     insertTask(
-        jt, TASK_FOREIGN_USER_TENANT_LEFT_ID, TASK_FOREIGN_USER_TENANT_LEFT_UUID, TENANT_ID,
-        STATUS_OPEN, T0, "Intake170-ForeignUserTenantLeft");
+        jt,
+        TASK_FOREIGN_USER_TENANT_LEFT_ID,
+        TASK_FOREIGN_USER_TENANT_LEFT_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
+        "Intake170-ForeignUserTenantLeft");
     insertUserStateWithUserTenant(
-        jt, 591100L, TASK_FOREIGN_USER_TENANT_LEFT_ID, TENANT_ID, USER_B_REF, FOREIGN_TENANT_ID,
-        T_BEFORE, T_BEFORE);
-    insertActiveParticipant(
-        jt, 591101L, TASK_FOREIGN_USER_TENANT_LEFT_ID, TENANT_ID, USER_B_REF, TENANT_ID,
+        jt,
+        591100L,
+        TASK_FOREIGN_USER_TENANT_LEFT_ID,
+        TENANT_ID,
+        USER_B_REF,
+        FOREIGN_TENANT_ID,
+        T_BEFORE,
         T_BEFORE);
+    insertActiveParticipant(
+        jt, 591101L, TASK_FOREIGN_USER_TENANT_LEFT_ID, TENANT_ID, USER_B_REF, TENANT_ID, T_BEFORE);
 
     // (11) Intake #170, Gegenprobe/Diskriminator: dieselbe Person hat auf DERSELBEN Aufgabe zwei
     //      State-Zeilen - eine eigene (USER_TENANT_ID = Request-Mandant) und eine mit fremdem
@@ -282,7 +359,12 @@ class TaskKeysetMembershipLeakIT {
     //      -> findByTaskIdAndUserRef liefert genau die eigene Zeile (vorher: beide);
     //         die Aufgabe MUSS in findActivePage erscheinen (eigene Zeile vorhanden).
     insertTask(
-        jt, TASK_TWO_STATES_ID, TASK_TWO_STATES_UUID, TENANT_ID, STATUS_OPEN, T0,
+        jt,
+        TASK_TWO_STATES_ID,
+        TASK_TWO_STATES_UUID,
+        TENANT_ID,
+        STATUS_OPEN,
+        T0,
         "Intake170-TwoStates");
     insertUserState(jt, 591110L, TASK_TWO_STATES_ID, TENANT_ID, USER_B_REF, null, T_BEFORE);
     insertUserStateWithUserTenant(
@@ -345,7 +427,8 @@ class TaskKeysetMembershipLeakIT {
         .as("Ausgetretener (OPEN) darf NICHT in done erscheinen")
         .extracting(Task::getId)
         .doesNotContain(TASK_EXMEMBER_LEFT_ID);
-    assertThat(count).as("done zum Wasserzeichen T0 = {MemberDone}; Orphan-DONE zaehlt nicht")
+    assertThat(count)
+        .as("done zum Wasserzeichen T0 = {MemberDone}; Orphan-DONE zaehlt nicht")
         .isEqualTo(1L);
   }
 
@@ -518,7 +601,10 @@ class TaskKeysetMembershipLeakIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void insertTask(
@@ -536,8 +622,16 @@ class TaskKeysetMembershipLeakIT {
             + " PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID, LAST_ACTIVITY_AT, COMMENT_COUNT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, 'it-seed', GETDATE())",
-        id, id, externalId, tenantId, title, statusId,
-        PRIORITY_LOW, DIRECTION_BRASI_CUSTOMER, tenantId, lastActivityAt);
+        id,
+        id,
+        externalId,
+        tenantId,
+        title,
+        statusId,
+        PRIORITY_LOW,
+        DIRECTION_BRASI_CUSTOMER,
+        tenantId,
+        lastActivityAt);
   }
 
   /**
@@ -584,7 +678,14 @@ class TaskKeysetMembershipLeakIT {
             + " USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT, "
             + " ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, ?, 0, 0, 0, ?, 'it-seed', ?)",
-        id, id, tenantId, taskId, userRef, userTenantId, unsubscribedAt, angelegtAm);
+        id,
+        id,
+        tenantId,
+        taskId,
+        userRef,
+        userTenantId,
+        unsubscribedAt,
+        angelegtAm);
   }
 
   /** Aktiver PERSON-Participant (EXIT_KIND NULL) = WRITE-/READ-Member. */
@@ -604,7 +705,13 @@ class TaskKeysetMembershipLeakIT {
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 1, 1, NULL, NULL, "
             + " 'it-seed', ?)",
-        id, id, tenantId, taskId, participantRef, participantTenantId, angelegtAm);
+        id,
+        id,
+        tenantId,
+        taskId,
+        participantRef,
+        participantTenantId,
+        angelegtAm);
   }
 
   /** Ausgetretener PERSON-Participant (EXIT_KIND HANDOVER) = READ-Member, KEIN WRITE-Member. */
@@ -625,7 +732,14 @@ class TaskKeysetMembershipLeakIT {
             + " PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT, ANGELEGT_VON, ANGELEGT_AM) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, ?, ?, 'PERSON', ?, 0, 0, 1, 'HANDOVER', ?, "
             + " 'it-seed', ?)",
-        id, id, tenantId, taskId, participantRef, participantTenantId, exitAt, angelegtAm);
+        id,
+        id,
+        tenantId,
+        taskId,
+        participantRef,
+        participantTenantId,
+        exitAt,
+        angelegtAm);
   }
 
   // ---- IT-Konfigurations-Context --------------------------------------------------------
