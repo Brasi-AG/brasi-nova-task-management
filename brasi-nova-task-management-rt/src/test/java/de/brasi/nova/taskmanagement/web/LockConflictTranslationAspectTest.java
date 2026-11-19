@@ -22,6 +22,7 @@ import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -133,6 +134,29 @@ class LockConflictTranslationAspectTest {
         .isInstanceOf(BusinessRuleException.class)
         .hasMessage(TranslatesLockConflicts.TASK)
         .hasCause(wrapped);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_sperrfehler_ohne_1205_wird_409: eine PessimisticLockingFailureException ohne SQL-Fehler"
+          + " 1205 in der Ursachenkette (Lock-Timeout 1222, andere Unterklasse ohne Ursache) wird"
+          + " ebenfalls BusinessRuleException mit dem Text der Markierung und Ursache")
+  void lock_failure_without_sql_error_1205_becomes_business_rule_exception() {
+    final CannotAcquireLockException lockTimeout =
+        new CannotAcquireLockException(
+            "lock timeout", new SQLException("lock request timed out", "HYT00", 1222));
+    final CannotSerializeTransactionException serialization =
+        new CannotSerializeTransactionException("serialization failure");
+    final SampleTaskController controller = proxy(new SampleTaskController());
+
+    assertThatThrownBy(() -> controller.write(lockTimeout))
+        .isInstanceOf(BusinessRuleException.class)
+        .hasMessage(TranslatesLockConflicts.TASK)
+        .hasCause(lockTimeout);
+    assertThatThrownBy(() -> controller.write(serialization))
+        .isInstanceOf(BusinessRuleException.class)
+        .hasMessage(TranslatesLockConflicts.TASK)
+        .hasCause(serialization);
   }
 
   @Test

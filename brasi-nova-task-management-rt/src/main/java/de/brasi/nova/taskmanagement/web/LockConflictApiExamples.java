@@ -16,20 +16,20 @@ public final class LockConflictApiExamples {
 
   /** Beschreibung der 409 an Endpunkten, die bisher keine 409 dokumentierten. */
   public static final String DESCRIPTION =
-      "Gleichzeitige Aenderung: ein paralleler Schreibzugriff hat die Datenbank-Transaktion als"
-          + " Sperrkonflikt (Deadlock) abgebrochen; nichts wurde geaendert. Die Anfrage gegen den"
-          + " frischen Stand wiederholen.";
+      "Gleichzeitige Aenderung: ein paralleler Schreibzugriff hat zu einem Sperrkonflikt der"
+          + " Datenbank (z. B. Deadlock) gefuehrt, die Transaktion wurde abgebrochen; nichts wurde"
+          + " geaendert. Die Anfrage gegen den frischen Stand wiederholen.";
 
   /** Ergaenzung der Beschreibung an Aufgaben-Endpunkten, die schon eine 409 dokumentieren. */
   public static final String DESCRIPTION_SUFFIX =
-      " Ebenso bei einem Sperrkonflikt der Datenbank (Deadlock) durch einen parallelen"
+      " Ebenso bei einem Sperrkonflikt der Datenbank (z. B. Deadlock) durch einen parallelen"
           + " Schreibzugriff: Meldung „"
           + TranslatesLockConflicts.TASK
           + "“, nichts wurde geaendert, die Anfrage wiederholen.";
 
   /** Ergaenzung der Beschreibung an Tag-Endpunkten, die schon eine 409 dokumentieren. */
   public static final String TAG_DESCRIPTION_SUFFIX =
-      " Ebenso bei einem Sperrkonflikt der Datenbank (Deadlock) durch einen parallelen"
+      " Ebenso bei einem Sperrkonflikt der Datenbank (z. B. Deadlock) durch einen parallelen"
           + " Schreibzugriff: Meldung „"
           + TranslatesLockConflicts.TAG
           + "“, nichts wurde geaendert, die Anfrage wiederholen.";

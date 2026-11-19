@@ -221,7 +221,7 @@ public class CommentController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts gespeichert (weder Kommentar noch"
+            "Mehrere Ursachen, in allen Faellen wurde nichts gespeichert (weder Kommentar noch"
                 + " Aufnahme). (1) Nebenlaeufiger Konflikt: die Aufgabe (Zaehler und Aktivitaet)"
                 + " oder bei der Aufnahme einer erwaehnten Person deren Teilnehmerzeile bzw."
                 + " persoenlicher Zustand wurde zwischenzeitlich geaendert (Versionskonflikt) oder"

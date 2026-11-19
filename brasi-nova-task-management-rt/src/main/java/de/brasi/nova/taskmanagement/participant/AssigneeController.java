@@ -116,7 +116,7 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B. gleichzeitige"
                 + " Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den frischen Stand"
                 + " wiederholen. (2) Die vorhandene Teilnehmerzeile einer neu zuzuweisenden Person"
@@ -379,7 +379,7 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Nebenlaeufiger Konflikt:"
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger Konflikt:"
                 + " paralleler Schreibzugriff auf die Aufgabe (Versionskonflikt), z. B. ein"
                 + " gleichzeitiges Hinzufuegen einer anderen Person, eine Mitgliederaenderung oder"
                 + " ein Austritt, auf dieselbe Teilnehmerzeile oder den persoenlichen Zustand der"
@@ -531,7 +531,7 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Die Person ist der"
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Die Person ist der"
                 + " Ersteller der Aufgabe; er bleibt dauerhaft Mitglied. (2) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe oder die"
                 + " Teilnehmerzeile, z. B. gleichzeitige Mitgliederaenderung oder Austritt; die"
