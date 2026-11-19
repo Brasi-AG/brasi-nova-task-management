@@ -534,8 +534,8 @@ class MembershipConcurrencyIT {
   @Order(17)
   @DisplayName(
       "i167_put_x_handover (Codex-Review Runde 2): der Ersteller nimmt B hinzu und laesst A weg,"
-          + " B uebergibt gleichzeitig an A; beide halten ihre erste Person und greifen zur zweiten"
-          + " -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
+          + " B uebergibt gleichzeitig an A; beide sperren A als erste Person, die Verliererin wartet"
+          + " dort -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
   void i167_parallel_put_and_handover_crossing_persons_never_deadlock() {
     ensurePadded();
     putHandover(Phase.PADDED);
@@ -688,12 +688,18 @@ class MembershipConcurrencyIT {
   }
 
   /**
-   * Aufnahme zu zweit, verzahnt (Codex-Review #167): die Gewinnerin nimmt {P1, P3} auf, die
-   * Verliererin {P2, P4}. Beide treffen sich nach Sync 1 (ohne Vorlauf der Gewinnerin), schreiben
-   * je ihre erste Person (P1 bzw. P2) und treffen sich am Seam {@code onAfterParticipantAddForTest}
-   * ein zweites Mal. Erst dann verarbeiten beide ihre zweite Person (P3 bzw. P4), waehrend die
-   * andere ihre erste Person X-gesperrt haelt. Laese der Kern hier noch Zeilen, wartete jede auf
-   * die andere (Deadlock 1205, so vor Fix-Runde 2). Danach Sync 2 wie in den anderen Szenarien.
+   * PUT gegen HANDOVER mit gekreuzten Personen (Codex-Review Runde 2, #167): der Ersteller nimmt
+   * HO_B hinzu und laesst HO_A weg, HO_B uebergibt gleichzeitig an HO_A. Vor der gemeinsamen
+   * UUID-Folge sperrte der PUT HO_B vor HO_A, der HANDOVER HO_A (Ziel) vor HO_B (Akteur); beide
+   * warteten ueber Kreuz aufeinander (Deadlock 1205). Seit der Folge schreiben beide HO_A zuerst
+   * (HO_A &lt; HO_B).
+   *
+   * <p>Erwartet wird deshalb ein Serialisieren an der ersten gemeinsamen Zeile, kein Treffen der
+   * beiden: die Verliererin beginnt erst, wenn die Gewinnerin HO_A geschrieben hat, und blockiert
+   * dann mit {@code LCK_M_U} im {@code UPDATE} der Teilnehmerzeile HO_A, die die Gewinnerin haelt.
+   * Sie erreicht weder den Treffpunkt nach der ersten Person noch Sync 2. Nach dem Commit der
+   * Gewinnerin scheitert ihr UPDATE am VERSION-Guard der Teilnehmerzeile ({@link
+   * OptimisticLockingFailureException}, 409, voller Rollback); den TASK-save erreicht sie nie.
    */
   private void putHandover(final Phase phase) {
     assertLockingReadCommitted();
@@ -702,9 +708,9 @@ class MembershipConcurrencyIT {
     final int taskVersionBefore = taskVersion(taskId);
 
     // Gewinnerin: PUT des Erstellers {Ersteller, HO_B}, also +HO_B und -HO_A. Verliererin: HO_B
-    // uebergibt an HO_A (schon Assignee). Ohne gemeinsame UUID-Folge sperrt der PUT HO_B vor HO_A,
-    // der HANDOVER HO_A (Ziel) vor HO_B (Akteur). Die Verliererin beginnt erst, wenn die Gewinnerin
-    // ihre erste Person geschrieben hat; danach greifen beide zur zweiten.
+    // uebergibt an HO_A (schon Assignee). Beide schreiben ihre Personen in UUID-Folge, HO_A zuerst.
+    // Die Verliererin beginnt erst, wenn die Gewinnerin HO_A geschrieben hat, und laeuft dann an
+    // derselben Zeile auf.
     final Outcome outcome =
         runPair(
             "i167-put-handover-" + phase,
@@ -717,13 +723,11 @@ class MembershipConcurrencyIT {
             HO_B,
             () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(HO_A), false)));
 
-    // Beide schreiben HO_A und HO_B: nach dem Fix wartet die Verliererin an der ersten gemeinsamen
-    // Zeile auf die Gewinnerin (Serialisieren, kein Zyklus), auch mit Fremdzeilen.
-    assertNoDeadlockLoserMayWait(outcome);
-    assertThat(outcome.gates().betweenPersonsReached.get())
-        .as("beide erreichten den Treffpunkt nach ihrer ersten Person")
-        .isEqualTo(2);
-    assertWinnerCommittedLoserVersionConflict(outcome);
+    // Nach dem Fix serialisieren beide an HO_A (kein Zyklus, auch mit Fremdzeilen): die Verliererin
+    // wartet an der ersten gemeinsamen Zeile auf die Gewinnerin und scheitert nach deren Commit am
+    // VERSION-Guard der Teilnehmerzeile. Treffpunkt nach der ersten Person und Sync 2 erreicht nur
+    // die Gewinnerin; die Pruefung steht deshalb nicht in assertNoDeadlockLoserMayWait.
+    assertSerializedAtFirstSharedRow(outcome);
     assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
     assertThat(exitedUnsubscribed(taskId, HO_A)).as("HO_A abgewaehlt").isEqualTo(1);
     assertThat(userStateUnsubscribed(taskId, HO_A)).as("State HO_A abgemeldet").isEqualTo(1);
@@ -743,6 +747,14 @@ class MembershipConcurrencyIT {
     assertSingleSignalContaining(HO_B);
   }
 
+  /**
+   * Aufnahme zu zweit, verzahnt (Codex-Review #167): die Gewinnerin nimmt {P1, P3} auf, die
+   * Verliererin {P2, P4}. Beide treffen sich nach Sync 1 (ohne Vorlauf der Gewinnerin), schreiben
+   * je ihre erste Person (P1 bzw. P2) und treffen sich am Seam {@code onAfterParticipantAddForTest}
+   * ein zweites Mal. Erst dann verarbeiten beide ihre zweite Person (P3 bzw. P4), waehrend die
+   * andere ihre erste Person X-gesperrt haelt. Laese der Kern hier noch Zeilen, wartete jede auf
+   * die andere (Deadlock 1205, so vor Fix-Runde 2). Danach Sync 2 wie in den anderen Szenarien.
+   */
   private void addPairs(final Phase phase) {
     assertLockingReadCommitted();
     final long taskId = phase.taskId(ADD_PAIRS);
@@ -955,6 +967,47 @@ class MembershipConcurrencyIT {
     assertThat(gates.membershipWritesReached.get())
         .as("beide Transaktionen erreichten Sync 2")
         .isEqualTo(2);
+  }
+
+  /**
+   * Ausgang von PUT gegen HANDOVER: beide sperren HO_A zuerst, die Verliererin serialisiert dort
+   * hinter der Gewinnerin. Anders als bei {@link #assertNoDeadlockLoserMayWait} erreicht die
+   * Verliererin weder den Treffpunkt nach der ersten Person noch Sync 2 (ihr UPDATE scheitert nach
+   * dem Commit der Gewinnerin am VERSION-Guard der Teilnehmerzeile), also zaehlt hier nur die
+   * Gewinnerin. Die 1205-Pruefung steht vorn, damit das Fehlerbild den Deadlock nennt.
+   */
+  private static void assertSerializedAtFirstSharedRow(final Outcome outcome) {
+    final Gates gates = outcome.gates();
+    assertThat(deadlockVictims(outcome))
+        .as(
+            "kein Deadlock-Opfer %d (500 statt 409). Gewinnerin wartete auf die Verliererin: %s."
+                + " Verliererin wartete auf die Gewinnerin: %s",
+            DEADLOCK_ERROR, gates.winnerBlockedByLoser.get(), gates.loserBlockedByWinner.get())
+        .isEmpty();
+    // Die Sonde der Gewinnerin liegt an Sync 2 der Verliererin, den diese nie erreicht; null ist
+    // hier also nur ein Teilbeleg. Der eigentliche: die Gewinnerin kommt ohne Fehler bis Sync 2.
+    assertThat(gates.winnerBlockedByLoser.get())
+        .as("die Gewinnerin wartet auf keine X-Sperre der Verliererin")
+        .isNull();
+    assertThat(gates.gateTimedOut.get()).as("kein Ablauf an den Sync-Punkten").isFalse();
+    assertThat(gates.membershipWritesReached.get())
+        .as("die Gewinnerin erreichte Sync 2")
+        .isGreaterThanOrEqualTo(1);
+    assertThat(gates.betweenPersonsReached.get())
+        .as(
+            "nur die Gewinnerin erreichte den Treffpunkt nach ihrer ersten Person, die Verliererin"
+                + " blockierte schon an HO_A")
+        .isEqualTo(1);
+    assertThat(gates.loserBlockedByWinner.get())
+        .as(
+            "die Verliererin wartete auf die Gewinnerin (beide sperren HO_A als erste Zeile in"
+                + " derselben Reihenfolge)")
+        .isNotNull();
+    assertThat(outcome.winnerError()).as("Gewinnerin: 204 ohne Fehler").isNull();
+    assertThat(outcome.loserError())
+        .as("Verliererin: 409 aus dem VERSION-Guard der Teilnehmerzeile HO_A")
+        .isInstanceOf(BusinessRuleException.class)
+        .hasCauseInstanceOf(OptimisticLockingFailureException.class);
   }
 
   private static void assertWinnerCommittedLoserVersionConflict(final Outcome outcome) {
