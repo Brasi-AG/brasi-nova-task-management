@@ -3642,6 +3642,74 @@ class AssigneeServiceTest {
     verify(userStateService).ensure(eq(taskId), eq(high), eq(TENANT_ID), eq(List.of()));
   }
 
+  /** Teilnehmer-Refs der gespeicherten Teilnehmerzeilen in Aufrufreihenfolge. */
+  private List<UUID> savedParticipantRefsInOrder() {
+    final ArgumentCaptor<TaskParticipant> saved = ArgumentCaptor.forClass(TaskParticipant.class);
+    verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+    return saved.getAllValues().stream().map(TaskParticipant::getParticipantRef).toList();
+  }
+
+  @Test
+  @DisplayName(
+      "i167_put_eine_uuid_folge (Codex-Review Runde 2): Hinzukommende und Abgewaehlte werden in"
+          + " EINER nach UUID sortierten Folge geschrieben, nicht erst alle Hinzukommenden")
+  void i167_put_writes_added_and_removed_persons_in_one_uuid_order() {
+    final Long taskId = 16706L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID removed1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID added2 = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    final UUID removed3 = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    final UUID added4 = UUID.fromString("00000000-0000-0000-0000-000000000004");
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final TaskParticipant row1 = activeAssignee(taskId, removed1, false);
+    final TaskParticipant row3 = activeAssignee(taskId, removed3, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true), row1, row3));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removed1))
+        .thenReturn(List.of(row1));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removed3))
+        .thenReturn(List.of(row3));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, added2, added4)));
+
+    assertThat(savedParticipantRefsInOrder())
+        .as("eine UUID-Folge ueber Hinzukommende und Abgewaehlte")
+        .containsExactly(removed1, added2, removed3, added4);
+  }
+
+  @Test
+  @DisplayName(
+      "i167_handover_eine_uuid_folge (Codex-Review Runde 2): Uebergabeziele und Akteur werden in"
+          + " EINER nach UUID sortierten Folge geschrieben, nicht erst alle Ziele; das Ereignis"
+          + " steht davor")
+  void i167_handover_writes_targets_and_actor_in_one_uuid_order() {
+    final Long taskId = 16707L;
+    final UUID taskUuid = UUID.randomUUID();
+    // Kleinste und groesste UUID: der (zufaellige) Akteur liegt immer dazwischen.
+    final UUID lowTarget = new UUID(Long.MIN_VALUE, 0L);
+    final UUID highTarget = new UUID(Long.MAX_VALUE, Long.MAX_VALUE);
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(highTarget, lowTarget), false));
+
+    assertThat(savedParticipantRefsInOrder())
+        .as("eine UUID-Folge ueber Ziele und Akteur")
+        .containsExactly(lowTarget, ACTOR_REF, highTarget);
+    final InOrder order = inOrder(handoverRepository, participantQueryRepository);
+    order.verify(handoverRepository).save(any(TaskHandover.class));
+    order
+        .verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce())
+        .save(any(TaskParticipant.class));
+  }
+
   /** Letzter Read vor der ersten Schreibung (ohne Seam-Pruefung). */
   private static void assertReadsBeforeFirstWriteOnly(final List<String> calls) {
     int lastRead = -1;

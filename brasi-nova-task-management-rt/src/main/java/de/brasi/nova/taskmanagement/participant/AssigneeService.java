@@ -152,7 +152,8 @@ public class AssigneeService {
    *       setzen.
    *   <li>Lock-Reihenfolge (Intake #167): alle Reads (Zeilen und States der neuen und der
    *       abgewaehlten Personen, Leser fuer Bump und Signal) stehen VOR der ersten Schreibung,
-   *       danach die Schreibungen, der versionierte TASK-save, der sortierte Bump.
+   *       danach die Schreibungen aller Personen (Hinzukommende und Abgewaehlte) in EINER nach UUID
+   *       sortierten Folge, der versionierte TASK-save, der sortierte Bump.
    *   <li>Bei echter Aenderung: Generation-Bump und nach Commit {@link
    *       InboxSignalService#invalidate} fuer die geaenderten Personen, alle aktiven Leser und alle
    *       ausgetretenen Archivleser (Intake #166, {@link #collectTaskReaders}).
@@ -289,113 +290,126 @@ public class AssigneeService {
 
     final List<UUID> affectedRefs = new ArrayList<>();
 
-    // Neue Assignees anlegen
-    for (final UUID assigneeRef : toAdd) {
-      // Test-Seam: Synchronisation der Nebenlaeufigkeits-ITs VOR der ersten Schreibung je Person
-      // (Reihenfolge-Beweis gegen die Aufnahme per Erwaehnung). Produktiv No-Op.
-      onBeforeAssigneeAddForTest(taskId, assigneeRef);
+    // Codex-Review Runde 2 (#167): ALLE Personen-Schreibungen (Hinzukommende, Abgewaehlte,
+    // De-Assign des Erstellers) laufen in EINER nach UUID sortierten Folge. Vorher schrieb der PUT
+    // erst alle Hinzukommenden, dann alle Abgewaehlten; ein gleichzeitiger HANDOVER (Ziele, dann
+    // Akteur) oder ein zweiter PUT mit gekreuzten Personen sperrte dieselben Zeilen in anderer
+    // Reihenfolge (Deadlock 1205, MembershipConcurrencyIT PUT_HANDOVER). Je Person bleibt die
+    // Logik gleich: Teilnehmerzeile, State, Benachrichtigung.
+    final Set<UUID> toAddSet = new HashSet<>(toAdd);
+    final List<UUID> writeOrder = new ArrayList<>(toAdd);
+    writeOrder.addAll(toRemove);
+    writeOrder.sort(UUID::compareTo);
+    for (final UUID personRef : writeOrder) {
+      if (toAddSet.contains(personRef)) {
+        // Neue Assignees anlegen
+        final UUID assigneeRef = personRef;
+        // Test-Seam: Synchronisation der Nebenlaeufigkeits-ITs VOR der ersten Schreibung je Person
+        // (Reihenfolge-Beweis gegen die Aufnahme per Erwaehnung). Produktiv No-Op.
+        onBeforeAssigneeAddForTest(taskId, assigneeRef);
 
-      final Optional<TaskParticipant> existing = addRows.get(assigneeRef);
+        final Optional<TaskParticipant> existing = addRows.get(assigneeRef);
 
-      if (existing.isPresent()) {
-        // Bestehende Zeile reaktivieren: Assignee und Teilnehmer, Austritt geloescht, ACTIVE.
-        final TaskParticipant p = existing.get();
-        activateAsAssignee(p);
-        participantQueryRepository.save(p);
-        log.debug(
-            "AssigneeService.updateAssignees: Participant {} fuer Task {} reaktiviert als Assignee.",
+        if (existing.isPresent()) {
+          // Bestehende Zeile reaktivieren: Assignee und Teilnehmer, Austritt geloescht, ACTIVE.
+          final TaskParticipant p = existing.get();
+          activateAsAssignee(p);
+          participantQueryRepository.save(p);
+          log.debug(
+              "AssigneeService.updateAssignees: Participant {} fuer Task {} reaktiviert als Assignee.",
+              assigneeRef,
+              taskExternalId);
+        } else {
+          // Neuen Participant-Eintrag anlegen
+          participantQueryRepository.save(newPersonRow(taskId, assigneeRef, tenantId, true));
+          log.debug(
+              "AssigneeService.updateAssignees: Neuer Assignee-Participant {} fuer Task {} angelegt.",
+              assigneeRef,
+              taskExternalId);
+        }
+
+        // UserState reaktivieren: UNSUBSCRIBED_AT=null setzen (Reassign-Reaktivierung - MAJOR 3).
+        // reactivateAsAssignee stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT
+        // zurueckgesetzt wird. Damit erscheint der erneut zugewiesene Benutzer wieder in
+        // findActivePage. Eine NEUE Zuweisung hebt zudem den Mute dieser Aufgabe auf (Folge von
+        // #158); diese Schleife laeuft nur ueber toAdd, unveraenderte Assignees bleiben stumm. Der
+        // State ist vorab gelesen (Intake #167).
+        userStateService.reactivateAsAssignee(
+            taskId, assigneeRef, tenantId, statesByRef.get(assigneeRef));
+
+        // ASSIGN-Notification emittieren
+        notificationService.emit(
             assigneeRef,
-            taskExternalId);
-      } else {
-        // Neuen Participant-Eintrag anlegen
-        participantQueryRepository.save(newPersonRow(taskId, assigneeRef, tenantId, true));
-        log.debug(
-            "AssigneeService.updateAssignees: Neuer Assignee-Participant {} fuer Task {} angelegt.",
-            assigneeRef,
-            taskExternalId);
-      }
+            taskId,
+            NotificationTypeCodes.ASSIGN,
+            NotificationSeverityCodes.INFO,
+            "Du wurdest der Aufgabe zugewiesen.",
+            task.getTitle(),
+            actorRef);
 
-      // UserState reaktivieren: UNSUBSCRIBED_AT=null setzen (Reassign-Reaktivierung - MAJOR 3).
-      // reactivateAsAssignee stellt sicher, dass ein Eintrag existiert UND UNSUBSCRIBED_AT
-      // zurueckgesetzt wird. Damit erscheint der erneut zugewiesene Benutzer wieder in
-      // findActivePage. Eine NEUE Zuweisung hebt zudem den Mute dieser Aufgabe auf (Folge von
-      // #158); diese Schleife laeuft nur ueber toAdd, unveraenderte Assignees bleiben stumm. Der
-      // State ist vorab gelesen (Intake #167).
-      userStateService.reactivateAsAssignee(
-          taskId, assigneeRef, tenantId, statesByRef.get(assigneeRef));
-
-      // ASSIGN-Notification emittieren
-      notificationService.emit(
-          assigneeRef,
-          taskId,
-          NotificationTypeCodes.ASSIGN,
-          NotificationSeverityCodes.INFO,
-          "Du wurdest der Aufgabe zugewiesen.",
-          task.getTitle(),
-          actorRef);
-
-      affectedRefs.add(assigneeRef);
-      // Finding 2 / Option B: Zuweisung reaktiviert destruktiv die Membership-Felder dieses Refs
-      // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation muss atomar in dieser Tx gebumpt werden,
-      // damit alte Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410). Ref in
-      // affectedRefs gesammelt; der eigentliche (sortierte) Bump erfolgt gebuendelt NACH dem
-      // TASK-save
-      // (einheitliche Save-dann-Bump- + Lock-Ordnung, Codex #6).
-      log.info(
-          "AssigneeService.updateAssignees: Assignee {} der Aufgabe {} (id={}) zugewiesen"
-              + " von Akteur {} in Mandant {}.",
-          assigneeRef,
-          taskExternalId,
-          taskId,
-          actorRef,
-          tenantId);
-      // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Person. Produktiv No-Op.
-      onAfterPersonWriteForTest(taskId, assigneeRef);
-    }
-
-    // Abgewaehlte Assignees abhandeln (A3: Creator = reiner Mitgliedschafts-Schutz).
-    for (final UUID removedRef : toRemove) {
-      final TaskParticipant p = removeRows.get(removedRef);
-      if (p == null) {
-        continue;
-      }
-      final boolean isCreator = creatorRefs.contains(removedRef);
-
-      if (isCreator) {
-        // Creator: NUR de-assignen (ASSIGNEE_FLAG=false). CREATOR_FLAG + PARTICIPANT_FLAG +
-        // aktiver UserState + EXIT_KIND=null bleiben -> permanentes, immobiles Mitglied.
-        p.setAssigneeFlag(false);
-        participantQueryRepository.save(p);
+        affectedRefs.add(assigneeRef);
+        // Finding 2 / Option B: Zuweisung reaktiviert destruktiv die Membership-Felder dieses Refs
+        // (UNSUBSCRIBED_AT/EXIT_KIND -> null) -> Generation muss atomar in dieser Tx gebumpt
+        // werden,
+        // damit alte Inbox-Cursor dieses Benutzers beim naechsten Read abgelehnt werden (410). Ref
+        // in
+        // affectedRefs gesammelt; der eigentliche (sortierte) Bump erfolgt gebuendelt NACH dem
+        // TASK-save
+        // (einheitliche Save-dann-Bump- + Lock-Ordnung, Codex #6).
         log.info(
-            "AssigneeService.updateAssignees: Creator {} aus Aufgabe {} (id={}) de-assignt"
-                + " (ASSIGNEE_FLAG=false, kein Austritt) von Akteur {} in Mandant {}.",
-            removedRef,
+            "AssigneeService.updateAssignees: Assignee {} der Aufgabe {} (id={}) zugewiesen"
+                + " von Akteur {} in Mandant {}.",
+            assigneeRef,
             taskExternalId,
             taskId,
             actorRef,
             tenantId);
       } else {
-        // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt) samt UNSUBSCRIBED_AT im
-        // UserState; gemeinsamer Kern mit removeParticipant (Intake #145), State vorab gelesen.
-        saveUnsubscribedParticipant(p);
-        unsubscribeState(statesByRef.get(removedRef));
-        log.info(
-            "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
-                + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
-            removedRef,
-            taskExternalId,
-            taskId,
-            actorRef,
-            tenantId);
-      }
+        // Abgewaehlte Assignees abhandeln (A3: Creator = reiner Mitgliedschafts-Schutz).
+        final UUID removedRef = personRef;
+        final TaskParticipant p = removeRows.get(removedRef);
+        if (p == null) {
+          continue;
+        }
+        final boolean isCreator = creatorRefs.contains(removedRef);
 
-      affectedRefs.add(removedRef);
-      // Finding 2 / Option B: die Abwahl ueberschreibt destruktiv Membership-Felder dieses Refs
-      // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation muss atomar gebumpt
-      // werden. Ref in affectedRefs gesammelt; der (sortierte) Bump erfolgt gebuendelt NACH dem
-      // TASK-save (Codex #6).
+        if (isCreator) {
+          // Creator: NUR de-assignen (ASSIGNEE_FLAG=false). CREATOR_FLAG + PARTICIPANT_FLAG +
+          // aktiver UserState + EXIT_KIND=null bleiben -> permanentes, immobiles Mitglied.
+          p.setAssigneeFlag(false);
+          participantQueryRepository.save(p);
+          log.info(
+              "AssigneeService.updateAssignees: Creator {} aus Aufgabe {} (id={}) de-assignt"
+                  + " (ASSIGNEE_FLAG=false, kein Austritt) von Akteur {} in Mandant {}.",
+              removedRef,
+              taskExternalId,
+              taskId,
+              actorRef,
+              tenantId);
+        } else {
+          // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt) samt UNSUBSCRIBED_AT
+          // im
+          // UserState; gemeinsamer Kern mit removeParticipant (Intake #145), State vorab gelesen.
+          saveUnsubscribedParticipant(p);
+          unsubscribeState(statesByRef.get(removedRef));
+          log.info(
+              "AssigneeService.updateAssignees: Assignee {} aus Aufgabe {} (id={}) abgewaehlt"
+                  + " (EXIT_KIND=UNSUBSCRIBED) von Akteur {} in Mandant {}.",
+              removedRef,
+              taskExternalId,
+              taskId,
+              actorRef,
+              tenantId);
+        }
+
+        affectedRefs.add(removedRef);
+        // Finding 2 / Option B: die Abwahl ueberschreibt destruktiv Membership-Felder dieses Refs
+        // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation muss atomar gebumpt
+        // werden. Ref in affectedRefs gesammelt; der (sortierte) Bump erfolgt gebuendelt NACH dem
+        // TASK-save (Codex #6).
+      }
       // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Person. Produktiv No-Op.
-      onAfterPersonWriteForTest(taskId, removedRef);
+      onAfterPersonWriteForTest(taskId, personRef);
     }
 
     // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor TASK-save
@@ -1316,78 +1330,63 @@ public class AssigneeService {
     final LocalDateTime now = LocalDateTime.now();
     final List<UUID> notifyTargets = new ArrayList<>();
 
-    // (5) HANDOVER: Ereignis + Ziele (-> Assignees) + Reaktivierung + Ziel-Notify + Ziel-Bump.
+    // (5) HANDOVER: das Ereignis (eigene Tabelle) steht vor allen Personen-Schreibungen.
+    final Long handoverId;
     if (handover) {
       final TaskHandover event = new TaskHandover();
       event.setTenantId(tenantId);
       event.setTaskId(taskId);
       event.setFromRef(actorRef);
       event.setShouldStay(shouldStay);
-      final TaskHandover savedEvent = handoverRepository.save(event);
-      final Long handoverId = savedEvent.getId();
+      handoverId = handoverRepository.save(event).getId();
+    } else {
+      handoverId = null;
+    }
 
-      // Intake #156: die Ziele schreiben Teilnehmer- und State-Zeilen wie updateAssignees und die
-      // Aufnahme per Erwaehnung und werden daher nach UUID sortiert verarbeitet (gleiche
-      // Sperr-Reihenfolge ueber alle Pfade). dedupedTargets bleibt in Eingabereihenfolge
-      // (Historie).
-      for (final UUID targetRef : sortedTargets) {
-        final TaskHandoverTarget targetRow = new TaskHandoverTarget();
-        targetRow.setTenantId(tenantId);
-        targetRow.setHandoverId(handoverId);
-        targetRow.setToRef(targetRef);
-        handoverTargetRepository.save(targetRow);
-
-        final boolean newlyAssigned =
-            ensureAssignee(taskId, targetRef, tenantId, targetRows.get(targetRef));
-        if (newlyAssigned) {
-          // Das Ziel war kein aktiver Assignee und wird es jetzt: wie bei einer neuen Zuweisung per
-          // PUT hebt das den Mute dieser Aufgabe fuer das Ziel auf (Folge von #158).
-          userStateService.reactivateAsAssignee(
-              taskId, targetRef, tenantId, targetStates.get(targetRef));
-        } else {
-          // Das Ziel war bereits aktiver Assignee: keine neue Zuweisung, der Mute bleibt bestehen.
-          userStateService.reactivate(taskId, targetRef, tenantId, targetStates.get(targetRef));
-        }
-        notificationService.emit(
-            targetRef,
-            taskId,
-            NotificationTypeCodes.HANDOVER,
-            NotificationSeverityCodes.INFO,
-            "Dir wurde die Aufgabe uebergeben.",
-            task.getTitle(),
-            actorRef);
-        notifyTargets.add(targetRef);
-        // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Ziel. Produktiv No-Op.
-        onAfterPersonWriteForTest(taskId, targetRef);
+    // (5)+(6) Ziele und Akteur in EINER nach UUID sortierten Folge (Intake #156 fuer die Ziele,
+    // Codex-Review Runde 2 #167 fuer den Akteur): vorher schrieb der HANDOVER erst alle Ziele, dann
+    // den Akteur; ein gleichzeitiger PUT mit denselben Personen in anderer Reihenfolge verklemmte
+    // (Deadlock 1205, MembershipConcurrencyIT PUT_HANDOVER). dedupedTargets bleibt in
+    // Eingabereihenfolge (Historie).
+    final List<UUID> writeOrder = new ArrayList<>(sortedTargets);
+    writeOrder.add(actorRef);
+    writeOrder.sort(UUID::compareTo);
+    for (final UUID personRef : writeOrder) {
+      if (personRef.equals(actorRef)) {
+        writeActorRoleChange(taskId, participant, handover, actorExits, now, actorStates);
+        // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Person. Produktiv No-Op.
+        onAfterPersonWriteForTest(taskId, actorRef);
+        continue;
       }
-    }
+      final UUID targetRef = personRef;
+      final TaskHandoverTarget targetRow = new TaskHandoverTarget();
+      targetRow.setTenantId(tenantId);
+      targetRow.setHandoverId(handoverId);
+      targetRow.setToRef(targetRef);
+      handoverTargetRepository.save(targetRow);
 
-    // (6) Akteur-Rollenwechsel. ASSIGNEE_FLAG=false IMMER (auch Creator). Nicht-Creator +
-    // !shouldStay
-    // (bei HANDOVER) ODER UNSUBSCRIBED -> echter Austritt (EXIT_KIND + EXIT_AT + UNSUBSCRIBED_AT).
-    participant.setAssigneeFlag(false);
-    if (actorExits) {
-      participant.setExitKind(handover ? ExitKind.HANDOVER : ExitKind.UNSUBSCRIBED);
-      participant.setExitAt(now);
-    }
-    // (9) VERSION-/Optimistic-Lock-Guard auf dem Participant. Wettlauf-Verlierer -> 409 bzw. bei
-    // tatsaechlichem Doppel-Austritt neutral 400 (Invariante: keine zweite Erfolgsantwort).
-    try {
-      participantQueryRepository.save(participant);
-    } catch (final BusinessRuleException concurrentConflict) {
-      final List<TaskParticipant> recheck =
-          participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef);
-      if (recheck.isEmpty() || recheck.get(0).getExitKind() != null) {
-        throw new EntityValidationException(
-            "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
+      final boolean newlyAssigned =
+          ensureAssignee(taskId, targetRef, tenantId, targetRows.get(targetRef));
+      if (newlyAssigned) {
+        // Das Ziel war kein aktiver Assignee und wird es jetzt: wie bei einer neuen Zuweisung per
+        // PUT hebt das den Mute dieser Aufgabe fuer das Ziel auf (Folge von #158).
+        userStateService.reactivateAsAssignee(
+            taskId, targetRef, tenantId, targetStates.get(targetRef));
+      } else {
+        // Das Ziel war bereits aktiver Assignee: keine neue Zuweisung, der Mute bleibt bestehen.
+        userStateService.reactivate(taskId, targetRef, tenantId, targetStates.get(targetRef));
       }
-      throw concurrentConflict;
-    }
-
-    if (actorExits && !actorStates.isEmpty()) {
-      final TaskUserState state = actorStates.get(0);
-      state.setUnsubscribedAt(now);
-      userStateQueryRepository.save(state);
+      notificationService.emit(
+          targetRef,
+          taskId,
+          NotificationTypeCodes.HANDOVER,
+          NotificationSeverityCodes.INFO,
+          "Dir wurde die Aufgabe uebergeben.",
+          task.getTitle(),
+          actorRef);
+      notifyTargets.add(targetRef);
+      // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Ziel. Produktiv No-Op.
+      onAfterPersonWriteForTest(taskId, targetRef);
     }
 
     // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor Historie,
@@ -1462,6 +1461,56 @@ public class AssigneeService {
         shouldStay,
         dedupedTargets.size(),
         tenantId);
+  }
+
+  /**
+   * Schreibt den Rollenwechsel des Akteurs in {@link #exit} (Schritt 6): {@code
+   * ASSIGNEE_FLAG=false} immer (auch Creator); bei echtem Austritt (Nicht-Creator ohne Verbleib)
+   * zusaetzlich {@code EXIT_KIND}, {@code EXIT_AT} und {@code UNSUBSCRIBED_AT} im vorab gelesenen
+   * State. Laeuft in der gemeinsamen UUID-Folge mit den Uebergabezielen (Codex-Review Runde 2,
+   * #167).
+   *
+   * <p>VERSION-Guard auf der Teilnehmerzeile: der Verlierer eines Wettlaufs bekommt 409, bei
+   * tatsaechlichem Doppel-Austritt neutral 400 (Invariante: keine zweite Erfolgsantwort). Nur
+   * dieser Fehlerzweig liest die Zeile erneut.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param participant die vorab gelesene, aktive Teilnehmerzeile des Akteurs
+   * @param handover {@code true} bei HANDOVER
+   * @param actorExits {@code true}, wenn der Akteur austritt
+   * @param now Zeitpunkt des Austritts
+   * @param actorStates vorab gelesener State des Akteurs (leer, wenn er keinen hat oder nicht
+   *     austritt)
+   */
+  private void writeActorRoleChange(
+      final Long taskId,
+      final TaskParticipant participant,
+      final boolean handover,
+      final boolean actorExits,
+      final LocalDateTime now,
+      final List<TaskUserState> actorStates) {
+    participant.setAssigneeFlag(false);
+    if (actorExits) {
+      participant.setExitKind(handover ? ExitKind.HANDOVER : ExitKind.UNSUBSCRIBED);
+      participant.setExitAt(now);
+    }
+    try {
+      participantQueryRepository.save(participant);
+    } catch (final BusinessRuleException concurrentConflict) {
+      final List<TaskParticipant> recheck =
+          participantQueryRepository.findByTaskIdAndParticipantRef(
+              taskId, participant.getParticipantRef());
+      if (recheck.isEmpty() || recheck.get(0).getExitKind() != null) {
+        throw new EntityValidationException(
+            "Der aktuelle Benutzer ist kein aktiver Teilnehmer dieser Aufgabe.");
+      }
+      throw concurrentConflict;
+    }
+    if (actorExits && !actorStates.isEmpty()) {
+      final TaskUserState state = actorStates.get(0);
+      state.setUnsubscribedAt(now);
+      userStateQueryRepository.save(state);
+    }
   }
 
   /**
