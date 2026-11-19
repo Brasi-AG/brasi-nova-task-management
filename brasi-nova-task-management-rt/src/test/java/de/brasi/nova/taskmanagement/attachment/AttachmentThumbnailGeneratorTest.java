@@ -34,8 +34,8 @@ import org.springframework.util.unit.DataSize;
  * <p>Vertrag: JPEG mit konfigurierter Breite (600 px) von der ersten PDF-Seite bzw. vom
  * verkleinerten Bild (nie vergroessert, Seitenverhaeltnis bleibt); leer fuer nicht vorschaufaehige
  * Typen, bei jedem Fehler und bei Bildern ueber der Pixel-Obergrenze der Quelle (ohne Dekodieren).
- * Testdaten werden im Test erzeugt (PDF per PDFBox {@link PDDocument}, Bilder per {@link
- * ImageIO}); PDFBox kommt erst mit A5 ins POM.
+ * Testdaten werden im Test erzeugt (PDF per PDFBox {@link PDDocument}, Bilder per {@link ImageIO});
+ * PDFBox kommt erst mit A5 ins POM.
  */
 class AttachmentThumbnailGeneratorTest {
 

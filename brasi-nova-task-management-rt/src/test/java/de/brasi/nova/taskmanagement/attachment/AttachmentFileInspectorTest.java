@@ -26,8 +26,8 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamSource;
 
 /**
- * Unit-Tests fuer {@link AttachmentFileInspector} (Intake #152, Task A3): Inhalt (Magic Bytes)
- * muss zur Endung passen.
+ * Unit-Tests fuer {@link AttachmentFileInspector} (Intake #152, Task A3): Inhalt (Magic Bytes) muss
+ * zur Endung passen.
  *
  * <p>Regeln: PDF {@code %PDF-}; PNG {@code 89 50 4E 47 0D 0A 1A 0A}; JPEG {@code FF D8 FF};
  * doc/xls/ppt OLE2 {@code D0 CF 11 E0 A1 B1 1A E1}; docx/xlsx/pptx ZIP {@code 50 4B 03 04} plus
@@ -44,8 +44,7 @@ class AttachmentFileInspectorTest {
 
   @Test
   void i152_magic_bytes_accept() {
-    assertThat(inspector.contentMatches(PDF, bytes("%PDF-1.7\n%âãÏÓ\n1 0 obj")))
-        .isTrue();
+    assertThat(inspector.contentMatches(PDF, bytes("%PDF-1.7\n%âãÏÓ\n1 0 obj"))).isTrue();
     assertThat(inspector.contentMatches(PNG, PNG_HEADER_PLUS_IHDR)).isTrue();
     assertThat(inspector.contentMatches(JPEG, hex("FFD8FFE0"))).isTrue();
     assertThat(inspector.contentMatches(DOCX, zip("[Content_Types].xml", "word/document.xml")))

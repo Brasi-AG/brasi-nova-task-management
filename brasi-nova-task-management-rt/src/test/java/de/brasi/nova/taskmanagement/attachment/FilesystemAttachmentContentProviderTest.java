@@ -45,8 +45,7 @@ class FilesystemAttachmentContentProviderTest {
   @BeforeEach
   void setUp() {
     provider =
-        new FilesystemAttachmentContentProvider(
-            properties(new AttachmentProperties.Storage(base)));
+        new FilesystemAttachmentContentProvider(properties(new AttachmentProperties.Storage(base)));
   }
 
   @Test
