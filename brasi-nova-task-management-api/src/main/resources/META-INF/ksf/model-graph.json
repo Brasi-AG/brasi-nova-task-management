@@ -1206,6 +1206,17 @@
           "label": null,
           "description": null,
           "dtoProjections": []
+        },
+        {
+          "name": "seenAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "SEEN_AT",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
         }
       ],
       "dtoSchemas": [

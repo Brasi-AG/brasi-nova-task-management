@@ -24,6 +24,7 @@ public final class QTaskUserState extends QNovaEntity {
     public final BooleanProperty isFlagged = NovaPropertyFactory.createBoolean("isFlagged");
     public final UUIDProperty userRef = NovaPropertyFactory.createUUID("userRef");
     public final DateTimeProperty unsubscribedAt = NovaPropertyFactory.createDateTime("unsubscribedAt");
+    public final DateTimeProperty seenAt = NovaPropertyFactory.createDateTime("seenAt");
     public final LongProperty taskId = NovaPropertyFactory.createLong("taskId");
     public final BooleanProperty isMuted = NovaPropertyFactory.createBoolean("isMuted");
 
