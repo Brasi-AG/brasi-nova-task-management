@@ -20,6 +20,7 @@ import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
+import io.keel.framework.api.hateoas.annotation.LinkContext;
 import io.keel.framework.api.hateoas.annotation.LinkParam;
 import io.keel.framework.api.hateoas.annotation.LinkRule;
 import io.keel.framework.api.hateoas.annotation.LinkRules;
@@ -138,6 +139,7 @@ import org.springframework.web.bind.annotation.RestController;
           linkTo = TaskHateoas.Targets.LIST_ATTACHMENTS,
           controller = AttachmentController.class,
           title = TaskHateoas.Titles.ATTACHMENTS,
+          context = LinkContext.DETAIL_ONLY,
           params = {@LinkParam(name = "id", source = "#dto.id")}),
       @LinkRule(
           rel = TaskHateoas.Rels.ADD_ATTACHMENT,
@@ -145,6 +147,7 @@ import org.springframework.web.bind.annotation.RestController;
           controller = AttachmentController.class,
           title = TaskHateoas.Titles.ADD_ATTACHMENT,
           conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          context = LinkContext.DETAIL_ONLY,
           params = {@LinkParam(name = "id", source = "#dto.id")})
     },
     collectionRules = {

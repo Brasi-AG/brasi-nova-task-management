@@ -50,10 +50,10 @@ public final class TaskHateoas {
     /** Item-Rel: Mute-Marker setzen (PUT /tasks/{id}/mute). */
     public static final String MUTE = "mute";
 
-    /** Item-Rel: Anhaenge lesen (GET /tasks/{id}/attachments, Intake #152). */
+    /** Item-Rel nur am Detail: Anhaenge lesen (GET /tasks/{id}/attachments, Intake #152). */
     public static final String ATTACHMENTS = "attachments";
 
-    /** Item-Rel: Dateien anhaengen (POST /tasks/{id}/attachments, Intake #152). */
+    /** Item-Rel nur am Detail: Dateien anhaengen (POST /tasks/{id}/attachments, Intake #152). */
     public static final String ADD_ATTACHMENT = "add-attachment";
 
     /** Collection-Rel: Aufgabe anlegen (POST /tasks). */
