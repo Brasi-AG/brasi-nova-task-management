@@ -59,14 +59,14 @@ public class AttachmentThumbnailGenerator {
   private static final int HALF_TURN = 180;
 
   /**
-   * Pixelbudget als Vielfaches von Breite mal Breite: Ein dekodiertes bzw. gerendertes Bild und das
+   * Pixelbudget als Vielfaches von Breite mal Breite: Die gerenderte PDF-Seite und das
    * Vorschaubild haben hoechstens {@code 4 * width * width} Pixel (bei 600 px rund 1,4 Mio. Pixel,
-   * knapp 6 MB als RGB). Das entspricht einem quadratischen Bild doppelter Breite und Hoehe, genug
-   * Reserve fuer eine saubere Verkleinerung.
+   * knapp 6 MB als RGB), ein dekodiertes Bild hoechstens rund das Vierfache davon (siehe {@link
+   * #subsamplingFactor}). Das Budget entspricht einem Quadrat doppelter Breite und Hoehe.
    */
   private static final long PIXEL_BUDGET_FACTOR = 4L;
 
-  /** Gelesene Breite mindestens doppelt so gross wie die Zielbreite (Qualitaetsreserve). */
+  /** Sehr breite Bilder werden bis etwa zur doppelten Zielbreite unterabgetastet gelesen. */
   private static final int OVERSAMPLING = 2;
 
   private final AttachmentProperties.Thumbnail settings;
@@ -135,22 +135,27 @@ public class AttachmentThumbnailGenerator {
         return Optional.empty();
       }
       // Extrem hohe Seiten werden als Ganzes schmaler gerendert (Pixelbudget), nie riesig
-      final int targetWidth =
-          (int) Math.max(1, Math.min(settings.width(), budgetWidth(pageWidth, pageHeight)));
+      final long targetWidth = Math.min(settings.width(), budgetWidth(pageWidth, pageHeight));
+      if (targetWidth < 1) {
+        log.warn("Vorschaubild fuer PDF nicht erzeugt: Seitenverhaeltnis sprengt das Pixelbudget.");
+        return Optional.empty();
+      }
       final float scale = targetWidth / pageWidth;
-      final double renderedPixels = (double) targetWidth * (pageHeight * scale);
-      if (renderedPixels > settings.maxSourcePixels()) {
+      // Pixelzahl wie in PDFRenderer berechnet (Hoehe abgerundet, mindestens 1)
+      final double renderedPixels = targetWidth * Math.max(1, Math.floor(pageHeight * scale));
+      final long pixelLimit = Math.min(pixelBudget(), settings.maxSourcePixels());
+      if (renderedPixels > pixelLimit) {
         log.warn(
             "Vorschaubild fuer PDF nicht erzeugt: Erste Seite ergaebe {} Pixel (Obergrenze {}).",
             Math.round(renderedPixels),
-            settings.maxSourcePixels());
+            pixelLimit);
         return Optional.empty();
       }
       final PDFRenderer renderer = new PDFRenderer(document);
       renderer.setSubsamplingAllowed(true);
       final BufferedImage rendered = renderer.renderImage(FIRST_PAGE, scale, ImageType.RGB);
       // PDFRenderer rundet die Pixelbreite ab (z. B. 599 statt 600): auf exakte Breite bringen
-      return Optional.of(scaleToWidth(rendered, targetWidth));
+      return Optional.of(scaleToWidth(rendered, (int) targetWidth));
     }
   }
 
@@ -187,18 +192,22 @@ public class AttachmentThumbnailGenerator {
               settings.maxSourcePixels());
           return Optional.empty();
         }
+        final int previewWidth = previewWidth(sourceWidth, sourceHeight);
+        if (previewWidth < 1) {
+          log.warn(
+              "Vorschaubild fuer {} nicht erzeugt: {} x {} Pixel sprengen das Pixelbudget.",
+              type,
+              sourceWidth,
+              sourceHeight);
+          return Optional.empty();
+        }
         final int factor = subsamplingFactor(sourceWidth, sourceHeight);
         final ImageReadParam param = reader.getDefaultReadParam();
         param.setSourceSubsampling(factor, factor, 0, 0);
         final BufferedImage decoded = reader.read(FIRST_IMAGE, param);
-
-        final long targetWidth =
-            Math.max(
-                1,
-                Math.min(
-                    Math.min(settings.width(), sourceWidth),
-                    budgetWidth(sourceWidth, sourceHeight)));
-        return Optional.of(scaleToWidth(decoded, (int) targetWidth));
+        // Der Faktor haelt das Dekodat mindestens so breit wie das Vorschaubild; die zweite Grenze
+        // sichert zu, dass scaleToWidth in keinem Fall vergroessert
+        return Optional.of(scaleToWidth(decoded, Math.min(previewWidth, decoded.getWidth())));
       } finally {
         reader.dispose();
       }
@@ -206,14 +215,43 @@ public class AttachmentThumbnailGenerator {
   }
 
   /**
+   * Breite des Vorschaubilds fuer ein Quellbild: {@code min(width, w, budgetWidth)}. Nie breiter
+   * als die Quelle (nie vergroessern) und so schmal, dass das Vorschaubild hoechstens das
+   * Pixelbudget {@code 4 * width * width} hat. Erst Bilder, die mehr als viermal so hoch wie breit
+   * sind, werden schmaler als {@code width}.
+   *
+   * @param sourceWidth Breite des Quellbilds in Pixeln (positiv)
+   * @param sourceHeight Hoehe des Quellbilds in Pixeln (positiv)
+   * @return Breite in Pixeln; {@code 0}, wenn selbst ein Pixel Breite das Budget sprengt (extrem
+   *     schmales, hohes Bild, dann kein Vorschaubild)
+   */
+  int previewWidth(final int sourceWidth, final int sourceHeight) {
+    return (int)
+        Math.min(Math.min(settings.width(), sourceWidth), budgetWidth(sourceWidth, sourceHeight));
+  }
+
+  /**
    * Unterabtast-Faktor beim Lesen eines Bilds (je Richtung jede n-te Zeile und Spalte).
    *
-   * <p>{@code max(1, w / (2 * width), ceil(sqrt(w * h / (4 * width * width))))}: Der zweite Term
-   * haelt die gelesene Breite bei mindestens doppelter Zielbreite (Qualitaet). Der dritte Term
-   * begrenzt die gelesene Pixelzahl auf das Pixelbudget {@code 4 * width * width}, denn ein
-   * schmales, hohes Bild (z. B. 1000 x 50000) haette nach der Breite allein den Faktor 1 und wuerde
-   * voll dekodiert; mit Faktor {@code f} sinkt die Pixelzahl auf {@code w * h / (f * f)}. Bilder
-   * bis zum Budget (z. B. 1200 x 800 oder 300 x 200 bei Breite 600) bleiben bei Faktor 1.
+   * <p>{@code max(1, min(max(w / (2 * width), ceil(sqrt(w * h / budget))), w / T))} mit {@code T =
+   * previewWidth(w, h)} und {@code budget = 4 * width * width}:
+   *
+   * <ul>
+   *   <li>{@code w / (2 * width)}: sehr breite Bilder werden bis etwa zur doppelten Zielbreite
+   *       verkleinert gelesen.
+   *   <li>{@code ceil(sqrt(w * h / budget))}: schmale, hohe Bilder (z. B. 1000 x 50000) haetten
+   *       nach der Breite allein den Faktor 1 und wuerden voll dekodiert; mit Faktor {@code f}
+   *       sinkt die Pixelzahl auf {@code w * h / (f * f)}.
+   *   <li>{@code w / T} (abgerundet) deckelt den Faktor: Das Dekodat ist dann mindestens {@code T}
+   *       breit, das Vorschaubild entsteht also immer durch Verkleinern, nie durch Hochziehen eines
+   *       zu schmal gelesenen Bilds (z. B. 1080 x 1920 bleibt bei Faktor 1).
+   * </ul>
+   *
+   * <p>Speicher: Ohne Deckel liegt das Dekodat beim Budget (bis auf das Aufrunden um eine Zeile und
+   * Spalte). Greift der Deckel, ist es weniger als doppelt so breit wie {@code T} und weniger als
+   * doppelt so hoch wie das Vorschaubild, also unter dem Vierfachen des Budgets (bei 600 px unter
+   * 5,8 Mio. Pixeln, ebenfalls bis auf eine Zeile und Spalte). Bilder, fuer die schon ein Pixel
+   * Breite das Budget sprengt, werden gar nicht gelesen ({@link #previewWidth} = 0).
    *
    * @param sourceWidth Breite des Quellbilds in Pixeln (positiv)
    * @param sourceHeight Hoehe des Quellbilds in Pixeln (positiv)
@@ -223,7 +261,8 @@ public class AttachmentThumbnailGenerator {
     final int byWidth = sourceWidth / (OVERSAMPLING * settings.width());
     final int byBudget =
         (int) Math.ceil(Math.sqrt((double) sourceWidth * sourceHeight / pixelBudget()));
-    return Math.max(1, Math.max(byWidth, byBudget));
+    final int keepPreviewWidth = sourceWidth / Math.max(1, previewWidth(sourceWidth, sourceHeight));
+    return Math.max(1, Math.min(Math.max(byWidth, byBudget), keepPreviewWidth));
   }
 
   /** Pixelbudget fuer gelesene/gerenderte Bilder und das Vorschaubild. */

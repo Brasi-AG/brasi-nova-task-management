@@ -93,14 +93,45 @@ class AttachmentThumbnailGeneratorTest {
     assertThat(generator.subsamplingFactor(1200, 800)).isEqualTo(1);
     assertThat(generator.subsamplingFactor(300, 200)).isEqualTo(1);
     assertThat(generator.subsamplingFactor(2400, 1600)).isEqualTo(2);
-    assertThat(generator.subsamplingFactor(600, 30_000)).isEqualTo(4);
-    assertThat(generator.subsamplingFactor(1000, 50_000)).isEqualTo(6);
+    // Deckel w / previewWidth: Dekodat mindestens so breit wie das Vorschaubild (169 px)
+    assertThat(generator.subsamplingFactor(600, 30_000)).isEqualTo(3);
+    assertThat(generator.subsamplingFactor(1000, 50_000)).isEqualTo(5);
 
     final BufferedImage t =
         decode(generator.generate(PNG, source(binaryPng(600, 30_000))).orElseThrow());
 
     assertThat(t.getWidth()).isLessThan(600);
     assertThat((long) t.getWidth() * t.getHeight()).isLessThanOrEqualTo(BUDGET);
+  }
+
+  @Test
+  void i152_decoded_image_never_narrower_than_preview() throws IOException {
+    assertThat(generator.subsamplingFactor(1080, 1920)).isEqualTo(1);
+    final int[][] sizes = {
+      {1080, 1920}, {1000, 1500}, {600, 2500}, {1200, 800}, {2400, 1600}, {600, 30_000},
+      {1000, 50_000}, {7000, 7000}, {3, 4_000_000}
+    };
+    for (final int[] size : sizes) {
+      final int factor = generator.subsamplingFactor(size[0], size[1]);
+      final int decodedWidth = (size[0] + factor - 1) / factor; // wie ImageIO-Subsampling
+      assertThat(decodedWidth)
+          .as("Dekodatbreite fuer %d x %d", size[0], size[1])
+          .isGreaterThanOrEqualTo(generator.previewWidth(size[0], size[1]));
+    }
+
+    final BufferedImage t =
+        decode(generator.generate(PNG, source(binaryPng(1080, 1920))).orElseThrow());
+
+    assertThat(t.getWidth()).isEqualTo(600);
+    assertThat(t.getHeight()).isEqualTo(1067);
+  }
+
+  @Test
+  void i152_extremely_narrow_source_returns_empty() throws IOException {
+    // Schon ein Pixel Breite sprengt das Pixelbudget: kein Vorschaubild, kein Riesenbild
+    assertThat(generator.previewWidth(1, 1_500_000)).isZero();
+    assertThat(generator.generate(PDF, source(pdfWithPage(new PDRectangle(0.001f, 40_000)))))
+        .isEmpty();
   }
 
   @Test
