@@ -112,6 +112,16 @@ class AttachmentFileInspectorTest {
         .isTrue();
   }
 
+  /**
+   * Runde 2: Die Obergrenze der ZIP-Eintraege liegt bei 10 000. Mit genau 10 000 Eintraegen
+   * (Eintraege der Pflichtnamen eingerechnet) passt die Datei, mit 10 001 nicht.
+   */
+  @Test
+  void i152_open_xml_entry_limit_is_ten_thousand() {
+    assertThat(inspector.contentMatches(DOCX, zipWithEntryCount(10_000))).isTrue();
+    assertThat(inspector.contentMatches(DOCX, zipWithEntryCount(10_001))).isFalse();
+  }
+
   /** Bytes eines Textes in ISO-8859-1 (jedes Zeichen bis U+00FF wird genau ein Byte). */
   private static InputStreamSource bytes(final String text) {
     return new ByteArrayResource(text.getBytes(StandardCharsets.ISO_8859_1));
@@ -218,6 +228,27 @@ class AttachmentFileInspectorTest {
       }
     }
     throw new IllegalStateException("Name nicht im ZIP gefunden");
+  }
+
+  /**
+   * ZIP mit genau {@code count} leeren Eintraegen: Fuelleintraege, am Ende {@code
+   * [Content_Types].xml} und {@code word/document.xml}.
+   */
+  private static InputStreamSource zipWithEntryCount(final int count) {
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (ZipOutputStream zip = new ZipOutputStream(out)) {
+      for (int index = 0; index < count - 2; index++) {
+        zip.putNextEntry(new ZipEntry("customXml/item" + index + ".xml"));
+        zip.closeEntry();
+      }
+      zip.putNextEntry(new ZipEntry("[Content_Types].xml"));
+      zip.closeEntry();
+      zip.putNextEntry(new ZipEntry("word/document.xml"));
+      zip.closeEntry();
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return new ByteArrayResource(out.toByteArray());
   }
 
   private static InputStreamSource failingSource() {

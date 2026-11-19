@@ -29,7 +29,7 @@ import org.springframework.stereotype.Component;
  *   <li>DOC, XLS, PPT: beginnt mit der OLE2-Signatur {@code D0 CF 11 E0 A1 B1 1A E1}
  *   <li>DOCX, XLSX, PPTX: beginnt mit {@code 50 4B 03 04} (ZIP) und enthaelt die Eintraege {@code
  *       [Content_Types].xml} sowie einen Eintrag unter {@code word/}, {@code xl/} bzw. {@code ppt/}
- *       (in beliebiger Reihenfolge, hoechstens 1000 Eintraege)
+ *       (in beliebiger Reihenfolge, hoechstens 10 000 Eintraege)
  *   <li>TXT: in den ersten 8 KiB kein NUL-Byte, Beginn ohne eine der genannten Signaturen und ohne
  *       {@code MZ} (ausfuehrbare Windows-Dateien)
  * </ul>
@@ -50,7 +50,7 @@ public class AttachmentFileInspector {
   private static final int HEAD_BYTES = 8 * 1024;
 
   /** Hoechste Zahl von ZIP-Eintraegen; mehr Eintraege ergeben {@code false}. */
-  private static final int MAX_ZIP_ENTRIES = 1000;
+  private static final int MAX_ZIP_ENTRIES = 10_000;
 
   private static final byte[] PDF_SIGNATURE = "%PDF-".getBytes(StandardCharsets.US_ASCII);
 

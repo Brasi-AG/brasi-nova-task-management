@@ -8,8 +8,9 @@ import java.util.Locale;
  *
  * <p>Der vom Client gelieferte Name wird nie ungeprueft gespeichert oder in einen Header
  * uebernommen: nur der letzte Pfadanteil (nach {@code /} oder {@code \}), ohne Steuerzeichen (z. B.
- * NUL, CR, LF), getrimmt und auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt, wobei die Endung
- * erhalten bleibt.
+ * NUL, CR, LF) und ohne Bidi- und unsichtbare Formatzeichen (siehe {@link #sanitize(String)}),
+ * getrimmt und auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt, wobei die Endung erhalten
+ * bleibt.
  */
 public final class AttachmentFileNames {
 
@@ -22,8 +23,16 @@ public final class AttachmentFileNames {
 
   /**
    * Bereinigt einen Dateinamen: letzter Pfadanteil nach {@code /} oder {@code \}, Steuerzeichen
-   * entfernt, getrimmt, auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt (Endung bleibt
-   * erhalten).
+   * (ISO-Control, z. B. NUL, CR, LF) sowie Bidi- und unsichtbare Formatzeichen entfernt, getrimmt,
+   * auf hoechstens {@value #MAX_LENGTH} Zeichen gekuerzt (Endung bleibt erhalten).
+   *
+   * <p>Entfernt werden zusaetzlich zu den ISO-Steuerzeichen: U+200E und U+200F (Links-nach-rechts-
+   * und Rechts-nach-links-Markierung), U+202A bis U+202E (Bidi-Einbettungen und -Ueberschreibungen,
+   * u. a. RTL-Override), U+2066 bis U+2069 (Bidi-Isolierungen), U+061C (arabische
+   * Buchstabenmarkierung), U+200B bis U+200D (Zero-Width-Zeichen) und U+FEFF (Byte-Order-Mark bzw.
+   * Zero Width No-Break Space). So kann ein Name wie {@code rechnung<RLO>fdp.exe} nicht als
+   * {@code rechnungexe.pdf} erscheinen; die Endung wird nach der Bereinigung bestimmt ({@link
+   * #extensionOf(String)}) und gegen die Erlaubtliste geprueft.
    *
    * @param originalName Dateiname, wie ihn der Client geliefert hat; darf {@code null} sein
    * @return bereinigter, nicht leerer Dateiname
@@ -36,7 +45,7 @@ public final class AttachmentFileNames {
     final int lastSeparator =
         Math.max(originalName.lastIndexOf('/'), originalName.lastIndexOf('\\'));
     final String lastPart = originalName.substring(lastSeparator + 1);
-    final String name = removeControlCharacters(lastPart).strip();
+    final String name = removeUnwantedCharacters(lastPart).strip();
     if (name.isEmpty()) {
       throw new EntityValidationException(MISSING_NAME_MESSAGE);
     }
@@ -61,13 +70,23 @@ public final class AttachmentFileNames {
     return sanitizedName.substring(dot + 1).toLowerCase(Locale.ROOT);
   }
 
-  private static String removeControlCharacters(final String value) {
+  private static String removeUnwantedCharacters(final String value) {
     final StringBuilder cleaned = new StringBuilder(value.length());
     value
         .codePoints()
-        .filter(codePoint -> !Character.isISOControl(codePoint))
+        .filter(codePoint -> !isRemovable(codePoint))
         .forEach(cleaned::appendCodePoint);
     return cleaned.toString();
+  }
+
+  /** ISO-Steuerzeichen sowie Bidi- und unsichtbare Formatzeichen (siehe {@link #sanitize}). */
+  private static boolean isRemovable(final int codePoint) {
+    return Character.isISOControl(codePoint)
+        || codePoint == 0x061C
+        || (codePoint >= 0x200B && codePoint <= 0x200F)
+        || (codePoint >= 0x202A && codePoint <= 0x202E)
+        || (codePoint >= 0x2066 && codePoint <= 0x2069)
+        || codePoint == 0xFEFF;
   }
 
   /** Kuerzt auf {@link #MAX_LENGTH} Zeichen und erhaelt dabei die Endung (mit Punkt). */
