@@ -74,6 +74,11 @@
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
 		</dependency>
+		<!-- Anhaenge: Vorschaubild der ersten PDF-Seite (Version im Wurzel-POM). -->
+		<dependency>
+			<groupId>org.apache.pdfbox</groupId>
+			<artifactId>pdfbox</artifactId>
+		</dependency>
 
 		<dependency>
 			<groupId>com.microsoft.sqlserver</groupId>
