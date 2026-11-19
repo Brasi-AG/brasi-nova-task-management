@@ -145,10 +145,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * {@code addAsParticipants} liest seine Zeilen bewusst erst nach Sync 1.
  *
  * <p><b>Aufnahme zu zweit, verzahnt (Codex-Review):</b> der gemeinsame Kern {@code
- * addAsParticipants} liest Teilnehmerzeile und State jeder Person erst nach der Schreibung der
- * vorigen. Das Szenario {@code ADD_PAIRS} laesst beide Transaktionen nach Sync 1 gleichzeitig
- * schreiben und trifft sie am Seam {@code onAfterParticipantAddForTest} nach ihrer ersten Person;
- * erst dann liest jede die Zeilen ihrer zweiten, waehrend die andere ihre erste X-gesperrt haelt.
+ * addAsParticipants} las Teilnehmerzeile und State jeder Person erst nach der Schreibung der
+ * vorigen; ohne Fremdzeilen verklemmte das (CI-Lauf 44407403653, 1205 in {@code
+ * findByTaskIdAndUserRef}). Seit Fix-Runde 2 liest der Kern alle Zeilen vor der ersten Schreibung.
+ * Das Szenario {@code ADD_PAIRS} laesst beide Transaktionen nach Sync 1 gleichzeitig schreiben und
+ * trifft sie am Seam {@code onAfterParticipantAddForTest} nach ihrer ersten Person; danach schreibt
+ * jede ihre zweite, waehrend die andere ihre erste X-gesperrt haelt.
  *
  * <p>Voraussetzung: die Wegwerf-DB laeuft mit sperrendem READ COMMITTED (kein RCSI), sonst warten
  * Lesungen nicht auf Schreibsperren und der Test bewiese nichts; das prueft jedes Szenario zuerst.
@@ -649,9 +651,9 @@ class MembershipConcurrencyIT {
    * Aufnahme zu zweit, verzahnt (Codex-Review #167): die Gewinnerin nimmt {P1, P3} auf, die
    * Verliererin {P2, P4}. Beide treffen sich nach Sync 1 (ohne Vorlauf der Gewinnerin), schreiben
    * je ihre erste Person (P1 bzw. P2) und treffen sich am Seam {@code onAfterParticipantAddForTest}
-   * ein zweites Mal. Erst dann lesen beide die Zeilen ihrer zweiten Person (P3 bzw. P4), waehrend
-   * die andere ihre erste Person X-gesperrt haelt. Liest der Kern dabei die Zeilen der anderen,
-   * wartet jede auf die andere (Deadlock 1205). Danach Sync 2 wie in den anderen Szenarien.
+   * ein zweites Mal. Erst dann verarbeiten beide ihre zweite Person (P3 bzw. P4), waehrend die
+   * andere ihre erste Person X-gesperrt haelt. Laese der Kern hier noch Zeilen, wartete jede auf
+   * die andere (Deadlock 1205, so vor Fix-Runde 2). Danach Sync 2 wie in den anderen Szenarien.
    */
   private void addPairs(final Phase phase) {
     assertLockingReadCommitted();

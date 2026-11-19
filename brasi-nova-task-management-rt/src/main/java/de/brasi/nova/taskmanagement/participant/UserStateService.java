@@ -41,7 +41,28 @@ public class UserStateService {
    *     diesen Aufruf inbox-faehig wird); {@code false}, wenn bereits ein Eintrag existierte
    */
   public boolean ensure(final Long taskId, final UUID userRef, final Long tenantId) {
-    final List<TaskUserState> existing = repository.findByTaskIdAndUserRef(taskId, userRef);
+    return ensure(taskId, userRef, tenantId, repository.findByTaskIdAndUserRef(taskId, userRef));
+  }
+
+  /**
+   * Wie {@link #ensure(Long, UUID, Long)}, aber mit dem vom Aufrufer VORAB gelesenen State (Intake
+   * #167, Fix-Runde 2): liest im Normalfall selbst nichts. Fuer Pfade, die alle Reads vor der
+   * ersten Schreibung erledigen muessen ({@code AssigneeService#addAsParticipants}). Nur wenn die
+   * Anlage an einer nebenlaeufigen Erstanlage scheitert, liest der Fehlerzweig die Zeile erneut.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param userRef UUID des Benutzers (PROD_BENUTZER.EXTERNALID)
+   * @param tenantId interner Mandanten-Schluessel
+   * @param existing Ergebnis von {@link TaskUserStateQueryRepository#findByTaskIdAndUserRef} fuer
+   *     diese Person (leer, wenn sie keinen State hat)
+   * @return {@code true}, wenn ein neuer aktiver Eintrag angelegt wurde; {@code false}, wenn
+   *     bereits ein Eintrag existierte
+   */
+  public boolean ensure(
+      final Long taskId,
+      final UUID userRef,
+      final Long tenantId,
+      final List<TaskUserState> existing) {
     if (!existing.isEmpty()) {
       log.debug(
           "UserStateService.ensure: Eintrag bereits vorhanden fuer Task {} und User {}.",

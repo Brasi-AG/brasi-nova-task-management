@@ -716,7 +716,7 @@ class AssigneeServiceTest {
     verify(userStateService)
         .reactivateAsAssignee(eq(taskId), eq(ASSIGNEE_REF), eq(TENANT_ID), any());
     verify(userStateService, never()).reactivate(any(), any(), any(), any());
-    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(userStateService, never()).ensure(any(), any(), any(), any());
   }
 
   // ---- Test: Abwahl (toRemove) bumpt Generation des entfernten Refs --------------------------
@@ -1684,7 +1684,7 @@ class AssigneeServiceTest {
     assertThat(saved.getValue().isAssigneeFlag()).as("nie Assignee").isFalse();
     assertThat(saved.getValue().isCreatorFlag()).isFalse();
     assertThat(saved.getValue().getParticipantKind()).isEqualTo(ParticipantKind.PERSON);
-    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID), any());
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
     verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
@@ -1715,8 +1715,8 @@ class AssigneeServiceTest {
     assertThat(exitedAssignee.isAssigneeFlag()).as("Assignee-Flag geloescht").isFalse();
     assertThat(exitedAssignee.getExitKind()).isNull();
     assertThat(exitedAssignee.getExitAt()).isNull();
-    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
@@ -1756,9 +1756,9 @@ class AssigneeServiceTest {
         service.addAsParticipants(taskId, TENANT_ID, List.of(newRef, raceRef, activeRef));
 
     assertThat(affected).containsExactly(newRef);
-    verify(userStateService).ensure(eq(taskId), eq(newRef), eq(TENANT_ID));
-    verify(userStateService, never()).ensure(eq(taskId), eq(raceRef), eq(TENANT_ID));
-    verify(userStateService, never()).ensure(eq(taskId), eq(activeRef), eq(TENANT_ID));
+    verify(userStateService).ensure(eq(taskId), eq(newRef), eq(TENANT_ID), any());
+    verify(userStateService, never()).ensure(eq(taskId), eq(raceRef), eq(TENANT_ID), any());
+    verify(userStateService, never()).ensure(eq(taskId), eq(activeRef), eq(TENANT_ID), any());
   }
 
   @Test
@@ -1854,7 +1854,7 @@ class AssigneeServiceTest {
         .containsExactly(first, second, first, second);
 
     final ArgumentCaptor<UUID> stateRefs = ArgumentCaptor.forClass(UUID.class);
-    verify(userStateService, times(4)).ensure(anyLong(), stateRefs.capture(), eq(TENANT_ID));
+    verify(userStateService, times(4)).ensure(anyLong(), stateRefs.capture(), eq(TENANT_ID), any());
     assertThat(stateRefs.getAllValues()).containsExactly(first, second, first, second);
   }
 
@@ -1886,7 +1886,7 @@ class AssigneeServiceTest {
     assertThat(saved.getParticipantRef()).isEqualTo(ref);
     assertThat(saved.getExitKind()).isNull();
 
-    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID));
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
 
     @SuppressWarnings("unchecked")
@@ -1929,9 +1929,9 @@ class AssigneeServiceTest {
     service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
 
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
-    verify(userStateService, never()).ensure(any(), any(), any());
-    verify(userStateService, never()).reactivate(any(), any(), any());
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService, never()).ensure(any(), any(), any(), any());
+    verify(userStateService, never()).reactivate(any(), any(), any(), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
     // Intake #147: ein schon aktives Mitglied wird nicht erneut benachrichtigt.
@@ -1968,8 +1968,8 @@ class AssigneeServiceTest {
     assertThat(saved.getExitAt()).isNull();
 
     // Reiner Teilnehmer-Wiedereintritt ist keine Zuweisung: Mute bleibt (nur reactivate).
-    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
     // Intake #147: auch die aus dem Austritt reaktivierte Person bekommt die Benachrichtigung.
     verify(notificationService, times(1))
@@ -2075,7 +2075,7 @@ class AssigneeServiceTest {
     // darf NICHT werfen (idempotenter SKIP)
     service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
 
-    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(userStateService, never()).ensure(any(), any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(any(Long.class), any());
     // Intake #147: der Race-Verlierer meldet nichts; die Benachrichtigung kommt vom Gewinner.
@@ -2125,7 +2125,7 @@ class AssigneeServiceTest {
             () -> service.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref))))
         .isInstanceOf(BusinessRuleException.class);
 
-    verify(userStateService, never()).ensure(any(), any(), any());
+    verify(userStateService, never()).ensure(any(), any(), any(), any());
     verify(inboxGenerationService, never()).bump(anyLong(), any());
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
@@ -2189,8 +2189,8 @@ class AssigneeServiceTest {
     assertThat(deactive.isAssigneeFlag()).as("nie Assignee").isFalse();
     assertThat(deactive.isParticipantFlag()).isTrue();
     assertThat(deactive.getExitKind()).isNull();
-    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID));
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService).reactivate(eq(taskId), eq(ref), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
     verify(notificationService, times(1))
         .emit(
@@ -2234,9 +2234,9 @@ class AssigneeServiceTest {
     assertThat(deactive.getExitKind()).isNull();
     assertThat(exited.getExitKind()).isNull();
     verify(participantQueryRepository, times(2)).save(any(TaskParticipant.class));
-    verify(userStateService).reactivate(eq(taskId), eq(deactiveRef), eq(TENANT_ID));
-    verify(userStateService).reactivate(eq(taskId), eq(exitedRef), eq(TENANT_ID));
-    verify(userStateService, never()).reactivate(eq(taskId), eq(activeRef), eq(TENANT_ID));
+    verify(userStateService).reactivate(eq(taskId), eq(deactiveRef), eq(TENANT_ID), any());
+    verify(userStateService).reactivate(eq(taskId), eq(exitedRef), eq(TENANT_ID), any());
+    verify(userStateService, never()).reactivate(eq(taskId), eq(activeRef), eq(TENANT_ID), any());
   }
 
   @Test
@@ -2262,8 +2262,8 @@ class AssigneeServiceTest {
         .isInstanceOf(BusinessRuleException.class);
 
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
-    verify(userStateService, never()).ensure(any(), any(), any());
-    verify(userStateService, never()).reactivate(any(), any(), any());
+    verify(userStateService, never()).ensure(any(), any(), any(), any());
+    verify(userStateService, never()).reactivate(any(), any(), any(), any());
   }
 
   // ---- Intake #147: PARTICIPANT-Benachrichtigung an neu hinzugefuegte Personen ----------------
@@ -2380,7 +2380,7 @@ class AssigneeServiceTest {
             inboxGenerationService,
             inboxSignalService);
     order.verify(participantQueryRepository).save(any(TaskParticipant.class));
-    order.verify(userStateService).ensure(taskId, ref, TENANT_ID);
+    order.verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID), any());
     order
         .verify(notificationService)
         .emit(
@@ -3096,7 +3096,7 @@ class AssigneeServiceTest {
     assertThat(team.isAssigneeFlag()).isFalse();
     assertThat(foreign.isAssigneeFlag()).isFalse();
     verify(participantQueryRepository, never()).save(any(TaskParticipant.class));
-    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any());
+    verify(userStateService, never()).reactivateAsAssignee(any(), any(), any(), any());
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
     verify(taskRepository, never()).save(any(Task.class));
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
@@ -3603,6 +3603,60 @@ class AssigneeServiceTest {
     verify(taskRepository, never()).save(any(Task.class));
     verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i167_kern_alle_reads_vor_der_ersten_schreibung (Fix-Runde 2): addAsParticipants liest"
+          + " Teilnehmerzeile und State aller Personen vor der ersten Schreibung; danach nur"
+          + " Schreibungen in UUID-Reihenfolge mit vorab gelesenem State, keine Lesung dazwischen")
+  void i167_kernel_reads_all_rows_before_first_write() {
+    final Long taskId = 16705L;
+    final UUID low = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    final UUID high = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    final TaskParticipant exitedLow = exitedRow(taskId, low);
+    when(participantQueryRepository.findRowByUniqueKey(taskId, low)).thenReturn(List.of(exitedLow));
+    final TaskUserState lowState = userStateFor(taskId, low);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, low))
+        .thenReturn(List.of(lowState));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    final Object[] observed = {
+      participantQueryRepository, userStateQueryRepository, userStateService
+    };
+    org.mockito.Mockito.clearInvocations(observed);
+
+    final List<UUID> affected = service.addAsParticipants(taskId, TENANT_ID, List.of(high, low));
+
+    assertThat(affected).containsExactly(low, high);
+    final List<String> calls = orderedCalls(observed);
+    assertReadsBeforeFirstWriteOnly(calls);
+    assertThat(calls)
+        .as("Schreibungen in UUID-Reihenfolge: erst low (Reaktivierung), dann high (Anlage)")
+        .containsSubsequence(
+            "TaskParticipantQueryRepository#save",
+            "UserStateService#reactivate",
+            "TaskParticipantQueryRepository#save",
+            "UserStateService#ensure");
+    verify(userStateService).reactivate(eq(taskId), eq(low), eq(TENANT_ID), eq(List.of(lowState)));
+    verify(userStateService).ensure(eq(taskId), eq(high), eq(TENANT_ID), eq(List.of()));
+  }
+
+  /** Letzter Read vor der ersten Schreibung (ohne Seam-Pruefung). */
+  private static void assertReadsBeforeFirstWriteOnly(final List<String> calls) {
+    int lastRead = -1;
+    int firstWrite = Integer.MAX_VALUE;
+    for (int i = 0; i < calls.size(); i++) {
+      final String method = calls.get(i).substring(calls.get(i).indexOf('#') + 1);
+      if (MEMBERSHIP_READS.contains(method)) {
+        lastRead = i;
+      } else if (MEMBERSHIP_WRITES.contains(method)) {
+        firstWrite = Math.min(firstWrite, i);
+      }
+    }
+    assertThat(lastRead)
+        .as("letzter Read vor der ersten Schreibung, Aufrufe: %s", calls)
+        .isLessThan(firstWrite);
   }
 
   private static List<String> orderedCalls(final Object... mocks) {

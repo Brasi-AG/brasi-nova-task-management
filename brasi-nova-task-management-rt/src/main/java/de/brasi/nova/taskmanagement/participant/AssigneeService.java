@@ -879,6 +879,12 @@ public class AssigneeService {
    * dedupliziert und nach UUID sortiert verarbeitet, damit parallele Aufrufe mit mehreren Refs
    * dieselben Zeilen in gleicher Reihenfolge sperren. Muss in der Transaktion des Aufrufers laufen.
    *
+   * <p>Lock-Reihenfolge (Intake #167, Fix-Runde 2): zuerst fuer ALLE Refs die Unique-Key-Zeile und,
+   * wo angelegt oder reaktiviert wird, der State; erst danach die Schreibungen je Ref mit den vorab
+   * gelesenen Zeilen ({@link UserStateService#reactivate(Long, UUID, Long, List)}, {@link
+   * UserStateService#ensure(Long, UUID, Long, List)}). Zwischen zwei Schreibungen liest der Kern
+   * nichts mehr; nur der Fehlerzweig eines gleich-Ref-Race liest die Zeile erneut.
+   *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
    * @param refs aufzunehmende Benutzer-UUIDs (beliebige Reihenfolge, Duplikate erlaubt)
@@ -890,9 +896,30 @@ public class AssigneeService {
       final Long taskId, final long tenantId, final Collection<UUID> refs) {
     final List<UUID> sortedRefs = new ArrayList<>(new LinkedHashSet<>(refs));
     sortedRefs.sort(UUID::compareTo);
+    // Intake #167, Fix-Runde 2: alle Reads VOR der ersten Schreibung. Frueher las der Kern je
+    // Person Teilnehmerzeile und State erst nach der Schreibung der vorigen Person; zwei parallele
+    // Aufnahmen mit je mehreren Personen verklemmten so (Deadlock 1205 in findByTaskIdAndUserRef,
+    // das den Unique-Index nur ueber das Praefix TASK_ID trifft; MembershipConcurrencyIT
+    // ADD_PAIRS). Eine TEAM-Zeile oder ein fremdes Basis-TENANT_ID ergibt die 409 jetzt vor jeder
+    // Schreibung. Den State braucht nur, wer angelegt oder reaktiviert wird.
+    final Map<UUID, Optional<TaskParticipant>> rows = new HashMap<>();
+    final Map<UUID, List<TaskUserState>> states = new HashMap<>();
+    for (final UUID ref : sortedRefs) {
+      final Optional<TaskParticipant> row =
+          findPersonRowByUniqueKey(
+              taskId,
+              ref,
+              tenantId,
+              "Die Person kann nicht als Beteiligter gefuehrt werden: die vorhandene"
+                  + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
+      rows.put(ref, row);
+      if (row.isEmpty() || !isActiveRow(row.get())) {
+        states.put(ref, userStateQueryRepository.findByTaskIdAndUserRef(taskId, ref));
+      }
+    }
     final List<UUID> affectedRefs = new ArrayList<>();
     for (final UUID ref : sortedRefs) {
-      if (addSingleParticipant(taskId, ref, tenantId)) {
+      if (addSingleParticipant(taskId, ref, tenantId, rows.get(ref), states.get(ref))) {
         affectedRefs.add(ref);
       }
       // Test-Seam (Codex-Review #167): nach der Aufnahme je Person, vor der naechsten. Produktiv
@@ -933,17 +960,15 @@ public class AssigneeService {
    *     TEAM-Zeile ist oder ein fremdes Basis-{@code TENANT_ID} traegt (wie {@link
    *     #ensureAssignee}); ein PERSON-Insert waere per Unique-Key unmoeglich
    */
-  private boolean addSingleParticipant(final Long taskId, final UUID ref, final long tenantId) {
-    final Optional<TaskParticipant> existing =
-        findPersonRowByUniqueKey(
-            taskId,
-            ref,
-            tenantId,
-            "Die Person kann nicht als Beteiligter gefuehrt werden: die vorhandene"
-                + " Teilnehmerzeile ist kein PERSON-Mitglied des Task-Mandanten.");
+  private boolean addSingleParticipant(
+      final Long taskId,
+      final UUID ref,
+      final long tenantId,
+      final Optional<TaskParticipant> existing,
+      final List<TaskUserState> state) {
     if (existing.isPresent()) {
       final TaskParticipant p = existing.get();
-      if (p.getExitKind() == null && p.getEntityState() == EntityState.ACTIVE) {
+      if (isActiveRow(p)) {
         // (a) aktive Zeile (Creator / Assignee / Teilnehmer) -> idempotenter SKIP, keine Mutation.
         return false;
       }
@@ -961,8 +986,8 @@ public class AssigneeService {
         return false; // Race-Verlierer: Gewinner-Zustand bereits aktiv -> idempotent.
       }
       // Reiner Teilnehmer, keine Zuweisung: bewusst reactivate (nicht reactivateAsAssignee), ein
-      // vorhandener Mute dieser Aufgabe bleibt bestehen.
-      userStateService.reactivate(taskId, ref, tenantId);
+      // vorhandener Mute dieser Aufgabe bleibt bestehen. Der State ist vorab gelesen (#167).
+      userStateService.reactivate(taskId, ref, tenantId, state);
       // Codex #6: Generation-Bump NICHT hier (sofort/ungeordnet), sondern gebuendelt + SORTIERT im
       // Aufrufer (addParticipants) ueber affectedRefs - konsistente Generation-Lock-Ordnung. Der
       // true-Return meldet "Bump faellig"; der Ref wird dort gesammelt. Scope unveraendert.
@@ -976,11 +1001,16 @@ public class AssigneeService {
     if (!saveParticipantHandlingRace(p, taskId, ref)) {
       return false;
     }
-    userStateService.ensure(taskId, ref, tenantId);
+    userStateService.ensure(taskId, ref, tenantId, state);
     // Codex #6: Generation-Bump gebuendelt + SORTIERT im Aufrufer (addParticipants), nicht hier.
     log.debug(
         "AssigneeService.addParticipants: Neuer Teilnehmer {} fuer Task {} angelegt.", ref, taskId);
     return true;
+  }
+
+  /** Aktive, nicht ausgetretene Teilnehmerzeile: die Aufnahme ueberspringt sie (idempotent). */
+  private static boolean isActiveRow(final TaskParticipant p) {
+    return p.getExitKind() == null && p.getEntityState() == EntityState.ACTIVE;
   }
 
   /**
