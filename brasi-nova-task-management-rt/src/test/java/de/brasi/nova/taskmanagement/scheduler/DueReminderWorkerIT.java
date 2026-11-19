@@ -60,8 +60,8 @@ import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguratio
 import org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -73,10 +73,12 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  * <p>Beweist (arch-v2 §5, plan-v3 Task 16):
  *
  * <ul>
- *   <li>{@code worker_cycle_emittiert_due_fuer_faellige_aufgabe}: runAsSystem + {@code @GlobalQuery}
- *       -Kandidatensuche + runWithTenant + Assignee-Aufloesung + emitOnce -> Receipt + DUE-Notification.
+ *   <li>{@code worker_cycle_emittiert_due_fuer_faellige_aufgabe}: runAsSystem +
+ *       {@code @GlobalQuery} -Kandidatensuche + runWithTenant + Assignee-Aufloesung + emitOnce ->
+ *       Receipt + DUE-Notification.
  *   <li>{@code zwei_threads_latch_genau_ein_receipt_und_due}: zwei parallele emitOnce fuer dieselbe
- *       (Mandant,Aufgabe,Empfaenger,Tag) -> genau 1 Receipt + 1 DUE-Notification (UNIQUE-Idempotenz).
+ *       (Mandant,Aufgabe,Empfaenger,Tag) -> genau 1 Receipt + 1 DUE-Notification
+ *       (UNIQUE-Idempotenz).
  *   <li>{@code due_invalidiert_empfaenger_snapshot}: nach Commit wird {@code InboxSignalPort.send}
  *       fuer den Empfaenger aufgerufen (Snapshot-Invalidierung nach Commit).
  * </ul>
@@ -292,8 +294,9 @@ class DueReminderWorkerIT {
       pool.shutdownNow();
     }
 
-    assertThat(outcomes).as("genau ein Erfolg, ein UNIQUE-Konflikt").containsExactlyInAnyOrder(
-        "ok", "duplicate");
+    assertThat(outcomes)
+        .as("genau ein Erfolg, ein UNIQUE-Konflikt")
+        .containsExactlyInAnyOrder("ok", "duplicate");
     assertThat(receiptCount(taskRowId, USER_RACE_REF, today)).isEqualTo(1);
     assertThat(dueNotificationCount(taskRowId, USER_RACE_REF)).isEqualTo(1);
   }
@@ -313,7 +316,8 @@ class DueReminderWorkerIT {
     TenantContextHolder.runWithTenant(
         TENANT_A,
         () -> {
-          emitter.emitOnce(TENANT_A_ID, taskRowId, USER_INV_REF, LocalDate.now(), "Invalidate-faellig");
+          emitter.emitOnce(
+              TENANT_A_ID, taskRowId, USER_INV_REF, LocalDate.now(), "Invalidate-faellig");
           return null;
         });
 
@@ -370,8 +374,15 @@ class DueReminderWorkerIT {
             + " DUE_DATE, LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'due-it', getdate(), ?, 1, ?, ?, ?, ?, ?, ?,"
             + " CAST(GETDATE() AS DATE), getdate(), 0)",
-        id, id, externalId, TENANT_A_ID, title, statusId("OPEN"), priorityId("NORMAL"),
-        directionId("CUSTOMER_INTERNAL"), TENANT_A_ID);
+        id,
+        id,
+        externalId,
+        TENANT_A_ID,
+        title,
+        statusId("OPEN"),
+        priorityId("NORMAL"),
+        directionId("CUSTOMER_INTERNAL"),
+        TENANT_A_ID);
   }
 
   private void seedAssignee(final long id, final long taskId, final UUID participantRef) {
@@ -382,7 +393,13 @@ class DueReminderWorkerIT {
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
             + "VALUES (?, 'ACTIVE', 'due-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, 1, 1, 1, NULL)",
-        id, id, UUID.randomUUID(), TENANT_A_ID, taskId, participantRef, TENANT_A_ID);
+        id,
+        id,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        taskId,
+        participantRef,
+        TENANT_A_ID);
   }
 
   private void seedUserState(final long id, final long taskId, final UUID userRef) {
@@ -392,7 +409,13 @@ class DueReminderWorkerIT {
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
             + "VALUES (?, 'ACTIVE', 'due-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
-        id, id, UUID.randomUUID(), TENANT_A_ID, taskId, userRef, TENANT_A_ID);
+        id,
+        id,
+        UUID.randomUUID(),
+        TENANT_A_ID,
+        taskId,
+        userRef,
+        TENANT_A_ID);
   }
 
   private static void seedFirmaIfAbsent(
@@ -402,7 +425,10 @@ class DueReminderWorkerIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -416,7 +442,11 @@ class DueReminderWorkerIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   // ---- IT-Konfigurations-Context ------------------------------------------------------------

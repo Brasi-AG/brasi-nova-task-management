@@ -77,11 +77,12 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link ParticipantSearchController} gegen echtes MSSQL.
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>LIKE-Suche: nur Tenant-eigene Benutzer werden gefunden.
  *   <li>Keyset-Pagination: Seite1+nextCursor->Seite2, kein Skip/Duplikat.
- *   <li>Routing-Beweis: {@code GET /api/v1/tasks/participants} kollidiert NICHT mit
- *       {@code GET /api/v1/tasks/{id}} (kein 400 durch participants={id}).
+ *   <li>Routing-Beweis: {@code GET /api/v1/tasks/participants} kollidiert NICHT mit {@code GET
+ *       /api/v1/tasks/{id}} (kein 400 durch participants={id}).
  *   <li>Negativ: anonym 401, Token ohne TASK_READ 403.
  * </ul>
  */
@@ -123,28 +124,35 @@ class ParticipantSearchIT {
 
   /** Anfrage-Benutzer. */
   private static final UUID ACTOR_REF = UUID.randomUUID();
+
   private static final String ACTOR_LOGIN = "actor-part-search@brasi.de";
   private static final long ACTOR_DB_ID = 581L;
 
   /**
-   * Drei Such-Benutzer fuer LIKE-Treffer (eindeutiges Praefix "ptit-"):
-   * IDs 582-584 (nummerisch aufsteigend fuer stabile EXTERNALID-ORDER BY-Pagination).
+   * Drei Such-Benutzer fuer LIKE-Treffer (eindeutiges Praefix "ptit-"): IDs 582-584 (nummerisch
+   * aufsteigend fuer stabile EXTERNALID-ORDER BY-Pagination).
    */
   private static final long SEARCH_USER_1_ID = 582L;
+
   private static final long SEARCH_USER_2_ID = 583L;
   private static final long SEARCH_USER_3_ID = 584L;
 
-  private static final UUID SEARCH_USER_1_REF = UUID.fromString("00000000-0000-0000-0001-000000000582");
-  private static final UUID SEARCH_USER_2_REF = UUID.fromString("00000000-0000-0000-0001-000000000583");
-  private static final UUID SEARCH_USER_3_REF = UUID.fromString("00000000-0000-0000-0001-000000000584");
+  private static final UUID SEARCH_USER_1_REF =
+      UUID.fromString("00000000-0000-0000-0001-000000000582");
+  private static final UUID SEARCH_USER_2_REF =
+      UUID.fromString("00000000-0000-0000-0001-000000000583");
+  private static final UUID SEARCH_USER_3_REF =
+      UUID.fromString("00000000-0000-0000-0001-000000000584");
 
   /** Benutzer in anderem Mandanten (darf nicht in Suchergebnissen erscheinen). */
   private static final long OTHER_TENANT_ID = 585L;
+
   private static final UUID OTHER_TENANT_UUID = UUID.randomUUID();
   private static final long OTHER_USER_ID = 586L;
 
   /** User ohne TASK_READ-Permission. */
   private static final UUID USER_NO_PERM_REF = UUID.randomUUID();
+
   private static final String USER_NO_PERM_LOGIN = "no-perm-part@brasi.de";
 
   private static final KeyPair RSA_KEY_PAIR;
@@ -184,8 +192,7 @@ class ParticipantSearchIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -217,11 +224,15 @@ class ParticipantSearchIT {
     seedFirmaIfAbsent(jt, OTHER_TENANT_ID, OTHER_TENANT_UUID);
     seedBenutzerIfAbsent(jt, ACTOR_DB_ID, ACTOR_REF, ACTOR_LOGIN, "IT Actor", TENANT_ID);
     // Drei Such-Benutzer mit festgelegten EXTERNALIDs fuer stabile Pagination
-    seedBenutzerWithExternalId(jt, SEARCH_USER_1_ID, SEARCH_USER_1_REF, "ptit-alpha@brasi.de", "ptit Alpha", TENANT_ID);
-    seedBenutzerWithExternalId(jt, SEARCH_USER_2_ID, SEARCH_USER_2_REF, "ptit-beta@brasi.de", "ptit Beta", TENANT_ID);
-    seedBenutzerWithExternalId(jt, SEARCH_USER_3_ID, SEARCH_USER_3_REF, "ptit-gamma@brasi.de", "ptit Gamma", TENANT_ID);
+    seedBenutzerWithExternalId(
+        jt, SEARCH_USER_1_ID, SEARCH_USER_1_REF, "ptit-alpha@brasi.de", "ptit Alpha", TENANT_ID);
+    seedBenutzerWithExternalId(
+        jt, SEARCH_USER_2_ID, SEARCH_USER_2_REF, "ptit-beta@brasi.de", "ptit Beta", TENANT_ID);
+    seedBenutzerWithExternalId(
+        jt, SEARCH_USER_3_ID, SEARCH_USER_3_REF, "ptit-gamma@brasi.de", "ptit Gamma", TENANT_ID);
     // Benutzer in anderem Mandanten (darf nicht in Treffern erscheinen)
-    seedBenutzerIfAbsent(jt, OTHER_USER_ID, UUID.randomUUID(), "ptit-other@brasi.de", "ptit Other", OTHER_TENANT_ID);
+    seedBenutzerIfAbsent(
+        jt, OTHER_USER_ID, UUID.randomUUID(), "ptit-other@brasi.de", "ptit Other", OTHER_TENANT_ID);
   }
 
   // ---- IT 1: LIKE-Suche + Tenant-Isolation ---------------------------------------------------
@@ -261,7 +272,8 @@ class ParticipantSearchIT {
       foundLogins.add(item.get("loginName").asText());
     }
     assertThat(foundLogins).doesNotContain("ptit-other@brasi.de");
-    assertThat(foundLogins).contains("ptit-alpha@brasi.de", "ptit-beta@brasi.de", "ptit-gamma@brasi.de");
+    assertThat(foundLogins)
+        .contains("ptit-alpha@brasi.de", "ptit-beta@brasi.de", "ptit-gamma@brasi.de");
   }
 
   // ---- IT 2: Keyset-Pagination: Seite1+nextCursor->Seite2, kein Skip/Duplikat ----------------
@@ -323,7 +335,9 @@ class ParticipantSearchIT {
     // Kein Duplikat zwischen Seite 1 und Seite 2
     final Set<String> allRefs = new HashSet<>(page1Refs);
     for (String ref : page2Refs) {
-      assertThat(allRefs).as("Kein Duplikat: " + ref + " erscheint bereits auf Seite 1").doesNotContain(ref);
+      assertThat(allRefs)
+          .as("Kein Duplikat: " + ref + " erscheint bereits auf Seite 1")
+          .doesNotContain(ref);
     }
   }
 
@@ -338,24 +352,19 @@ class ParticipantSearchIT {
     final MockMvc mvc = buildMvc();
 
     // 1. Anonym -> 401 (kein Token)
-    mvc.perform(get("/api/v1/tasks/participants"))
-        .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/v1/tasks/participants")).andExpect(status().isUnauthorized());
 
     // 2. Token ohne TASK_READ -> 403
     final String tokenNoRead =
-        buildJwtWithAuthority(TENANT_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN,
-            "task-management:TASK_WRITE");
-    mvc.perform(
-            get("/api/v1/tasks/participants")
-                .header("Authorization", "Bearer " + tokenNoRead))
+        buildJwtWithAuthority(
+            TENANT_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN, "task-management:TASK_WRITE");
+    mvc.perform(get("/api/v1/tasks/participants").header("Authorization", "Bearer " + tokenNoRead))
         .andExpect(status().isForbidden());
 
     // 3. Routing-Beweis: mit TASK_READ -> 200 (nicht 404 durch {id}=participants)
     final String tokenRead =
         buildJwtWithAuthority(TENANT_UUID, ACTOR_REF, ACTOR_LOGIN, "task-management:TASK_READ");
-    mvc.perform(
-            get("/api/v1/tasks/participants")
-                .header("Authorization", "Bearer " + tokenRead))
+    mvc.perform(get("/api/v1/tasks/participants").header("Authorization", "Bearer " + tokenRead))
         .andExpect(status().isOk());
   }
 
@@ -404,7 +413,10 @@ class ParticipantSearchIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -419,7 +431,12 @@ class ParticipantSearchIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
-        id, id, externalId, tenantId, loginName, vollerName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName,
+        vollerName);
   }
 
   private static void seedBenutzerWithExternalId(
@@ -434,7 +451,12 @@ class ParticipantSearchIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
-        id, id, externalId, tenantId, loginName, vollerName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName,
+        vollerName);
   }
 
   private static String toPem(final byte[] der) {

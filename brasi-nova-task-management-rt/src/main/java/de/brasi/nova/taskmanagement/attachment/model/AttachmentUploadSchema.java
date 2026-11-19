@@ -5,10 +5,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
- * Reine OpenAPI-Beschreibung des Multipart-Requests von {@code POST
- * /api/v1/tasks/{id}/attachments} (Intake #152). Zur Laufzeit liest der Endpunkt die Teile {@code
- * files} als {@code MultipartFile}; dieser Record beschreibt nur die Wire-Form und wird nie
- * instanziiert (Muster {@code ArchiveSearchPageSchema}).
+ * Reine OpenAPI-Beschreibung des Multipart-Requests von {@code POST /api/v1/tasks/{id}/attachments}
+ * (Intake #152). Zur Laufzeit liest der Endpunkt die Teile {@code files} als {@code MultipartFile};
+ * dieser Record beschreibt nur die Wire-Form und wird nie instanziiert (Muster {@code
+ * ArchiveSearchPageSchema}).
  *
  * @param files hochzuladende Dateien
  */

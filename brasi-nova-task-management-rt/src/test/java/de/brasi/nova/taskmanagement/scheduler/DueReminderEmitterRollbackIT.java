@@ -185,7 +185,10 @@ class DueReminderEmitterRollbackIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        TENANT_A_ID, TENANT_A_ID, TENANT_A_UUID, TENANT_A_ID);
+        TENANT_A_ID,
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        TENANT_A_ID);
   }
 
   @Test

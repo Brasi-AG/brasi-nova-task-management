@@ -74,6 +74,7 @@ import org.springframework.web.context.WebApplicationContext;
  * Integration-Test fuer den {@link DictionaryCatalogController} gegen echtes MSSQL (Wegwerf-DB).
  *
  * <p>Beweist:
+ *
  * <ul>
  *   <li>GET /dictionaries mit TASK_READ-Token: alle 6 Listen nicht leer, je Eintrag code+label
  *   <li>taskPriority sortOrder gesetzt; andere sortOrder=null
@@ -132,6 +133,7 @@ class DictionaryCatalogIT {
 
   /** User ohne TASK_READ (fuer 403-Test). */
   private static final UUID USER_NO_PERM_REF = UUID.randomUUID();
+
   private static final String USER_NO_PERM_LOGIN = "user-noperm-dict@brasi.de";
 
   private static final KeyPair RSA_KEY_PAIR;
@@ -171,8 +173,7 @@ class DictionaryCatalogIT {
     registry.add("ksf.security.jwt.jwk.default-kid", () -> TEST_KID);
     registry.add("ksf.security.jwt.jwk.keys[0].kid", () -> TEST_KID);
     registry.add(
-        "ksf.security.jwt.jwk.keys[0].public-pem",
-        () -> "file:" + pemTempFile.toAbsolutePath());
+        "ksf.security.jwt.jwk.keys[0].public-pem", () -> "file:" + pemTempFile.toAbsolutePath());
   }
 
   @AfterAll
@@ -212,20 +213,21 @@ class DictionaryCatalogIT {
   void get_dictionaries_liefert_alle_6_listen_mit_code_und_label() throws Exception {
     final MockMvc mvc = buildMvc();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
-    final String json = mvc.perform(get("/api/v1/dictionaries")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.taskStatus").isArray())
-        .andExpect(jsonPath("$.taskPriority").isArray())
-        .andExpect(jsonPath("$.taskDirection").isArray())
-        .andExpect(jsonPath("$.notificationType").isArray())
-        .andExpect(jsonPath("$.notificationSeverity").isArray())
-        .andExpect(jsonPath("$.tagSeverity").isArray())
-        .andReturn().getResponse().getContentAsString();
+    final String json =
+        mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.taskStatus").isArray())
+            .andExpect(jsonPath("$.taskPriority").isArray())
+            .andExpect(jsonPath("$.taskDirection").isArray())
+            .andExpect(jsonPath("$.notificationType").isArray())
+            .andExpect(jsonPath("$.notificationSeverity").isArray())
+            .andExpect(jsonPath("$.tagSeverity").isArray())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode root = new ObjectMapper().readTree(json);
 
@@ -233,13 +235,23 @@ class DictionaryCatalogIT {
     assertThat(root.get("taskStatus").size()).as("taskStatus nicht leer").isGreaterThan(0);
     assertThat(root.get("taskPriority").size()).as("taskPriority nicht leer").isGreaterThan(0);
     assertThat(root.get("taskDirection").size()).as("taskDirection nicht leer").isGreaterThan(0);
-    assertThat(root.get("notificationType").size()).as("notificationType nicht leer").isGreaterThan(0);
-    assertThat(root.get("notificationSeverity").size()).as("notificationSeverity nicht leer").isGreaterThan(0);
+    assertThat(root.get("notificationType").size())
+        .as("notificationType nicht leer")
+        .isGreaterThan(0);
+    assertThat(root.get("notificationSeverity").size())
+        .as("notificationSeverity nicht leer")
+        .isGreaterThan(0);
     assertThat(root.get("tagSeverity").size()).as("tagSeverity nicht leer").isGreaterThan(0);
 
     // Je Eintrag: code und label gesetzt
-    for (final String field : List.of("taskStatus", "taskPriority", "taskDirection",
-        "notificationType", "notificationSeverity", "tagSeverity")) {
+    for (final String field :
+        List.of(
+            "taskStatus",
+            "taskPriority",
+            "taskDirection",
+            "notificationType",
+            "notificationSeverity",
+            "tagSeverity")) {
       for (final JsonNode entry : root.get(field)) {
         assertThat(entry.get("id")).as(field + ".id nicht null").isNotNull();
         assertThat(entry.get("code").asText()).as(field + ".code nicht leer").isNotBlank();
@@ -249,19 +261,25 @@ class DictionaryCatalogIT {
 
     // taskPriority[*].sortOrder gesetzt (nicht null)
     for (final JsonNode entry : root.get("taskPriority")) {
-      assertThat(entry.get("sortOrder")).as("taskPriority.sortOrder muss gesetzt sein")
-          .isNotNull();
-      assertThat(entry.get("sortOrder").isNull()).as("taskPriority.sortOrder darf nicht null sein")
+      assertThat(entry.get("sortOrder")).as("taskPriority.sortOrder muss gesetzt sein").isNotNull();
+      assertThat(entry.get("sortOrder").isNull())
+          .as("taskPriority.sortOrder darf nicht null sein")
           .isFalse();
     }
 
     // Alle anderen: sortOrder = null (JSON null)
-    for (final String field : List.of("taskStatus", "taskDirection",
-        "notificationType", "notificationSeverity", "tagSeverity")) {
+    for (final String field :
+        List.of(
+            "taskStatus",
+            "taskDirection",
+            "notificationType",
+            "notificationSeverity",
+            "tagSeverity")) {
       for (final JsonNode entry : root.get(field)) {
         final JsonNode sortOrder = entry.get("sortOrder");
         assertThat(sortOrder == null || sortOrder.isNull())
-            .as(field + ".sortOrder muss null sein").isTrue();
+            .as(field + ".sortOrder muss null sein")
+            .isTrue();
       }
     }
   }
@@ -274,8 +292,7 @@ class DictionaryCatalogIT {
   void get_dictionaries_labels_sind_exakt_deutsch() throws Exception {
     final MockMvc mvc = buildMvc();
     final String token =
-        buildJwtWithAuthority(
-            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
     final String json =
         mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + token))
@@ -286,7 +303,9 @@ class DictionaryCatalogIT {
     final JsonNode root = new ObjectMapper().readTree(json);
 
     assertLabels(
-        root, "taskStatus", Map.of("OPEN", "Offen", "DONE", "Erledigt", "CANCELLED", "Abgebrochen"));
+        root,
+        "taskStatus",
+        Map.of("OPEN", "Offen", "DONE", "Erledigt", "CANCELLED", "Abgebrochen"));
     assertLabels(
         root,
         "taskPriority",
@@ -346,31 +365,31 @@ class DictionaryCatalogIT {
   void get_dictionaries_gleicher_katalog_fuer_zwei_tenants() throws Exception {
     final MockMvc mvc = buildMvc();
 
-    final String tokenA = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-        "task-management:TASK_READ");
-    final String tokenB = buildJwtWithAuthority(
-        TENANT_B_UUID, USER_B_REF, USER_B_LOGIN,
-        "task-management:TASK_READ");
+    final String tokenA =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
+    final String tokenB =
+        buildJwtWithAuthority(TENANT_B_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
 
-    final String jsonA = mvc.perform(get("/api/v1/dictionaries")
-            .header("Authorization", "Bearer " + tokenA))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String jsonA =
+        mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + tokenA))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
-    final String jsonB = mvc.perform(get("/api/v1/dictionaries")
-            .header("Authorization", "Bearer " + tokenB))
-        .andExpect(status().isOk())
-        .andReturn().getResponse().getContentAsString();
+    final String jsonB =
+        mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + tokenB))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
 
     final JsonNode rootA = new ObjectMapper().readTree(jsonA);
     final JsonNode rootB = new ObjectMapper().readTree(jsonB);
 
     // Gleiche Anzahl Eintraege in allen Listen (Tenant-0-Dicts sind global)
-    assertThat(rootA.get("taskStatus").size())
-        .isEqualTo(rootB.get("taskStatus").size());
-    assertThat(rootA.get("taskPriority").size())
-        .isEqualTo(rootB.get("taskPriority").size());
+    assertThat(rootA.get("taskStatus").size()).isEqualTo(rootB.get("taskStatus").size());
+    assertThat(rootA.get("taskPriority").size()).isEqualTo(rootB.get("taskPriority").size());
     assertThat(rootA.get("notificationType").size())
         .isEqualTo(rootB.get("notificationType").size());
   }
@@ -381,14 +400,14 @@ class DictionaryCatalogIT {
    * TDD-Discriminator-Test: Eine DIC_TASK_STATUS-Zeile mit GUELTIG_VON = morgen darf im
    * Katalog-Ergebnis NICHT auftauchen.
    *
-   * <p>Vor dem Fix (findAllActive = Basis-Criteria) wuerde sie erscheinen, da die Basis-Query
-   * kein GUELTIG_VON-Praedikat kennt. Nach dem Fix (findAllValidAndActive mit GUELTIG_VON-Filter)
-   * bleibt sie unsichtbar.
+   * <p>Vor dem Fix (findAllActive = Basis-Criteria) wuerde sie erscheinen, da die Basis-Query kein
+   * GUELTIG_VON-Praedikat kennt. Nach dem Fix (findAllValidAndActive mit GUELTIG_VON-Filter) bleibt
+   * sie unsichtbar.
    */
   @Test
   @DisplayName("future_dated_dict_eintrag_erscheint_nicht_im_katalog")
-  void future_dated_dict_eintrag_erscheint_nicht_im_katalog(
-      @Autowired JdbcTemplate jt) throws Exception {
+  void future_dated_dict_eintrag_erscheint_nicht_im_katalog(@Autowired JdbcTemplate jt)
+      throws Exception {
     final long futureEntryId = 59901L;
     final UUID futureEntryUuid = UUID.fromString("00000099-0000-0099-0000-000000059901");
     final String futureCode = "IT_FUTURE";
@@ -401,18 +420,23 @@ class DictionaryCatalogIT {
             + " ANGELEGT_VON, ANGELEGT_AM, GUELTIG_VON, GUELTIG_BIS) "
             + "VALUES (?, 'ACTIVE', ?, 1, 0, 'SYSTEM_PUBLIC', ?, 'IT Future Entry',"
             + " 'it-test', GETDATE(), CAST(DATEADD(day, 1, GETDATE()) AS DATE), NULL)",
-        futureEntryId, futureEntryId, futureEntryUuid, futureCode);
+        futureEntryId,
+        futureEntryId,
+        futureEntryUuid,
+        futureCode);
 
     try {
       final MockMvc mvc = buildMvc();
-      final String tokenA = buildJwtWithAuthority(
-          TENANT_A_UUID, USER_A_REF, USER_A_LOGIN,
-          "task-management:TASK_READ");
+      final String tokenA =
+          buildJwtWithAuthority(
+              TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_READ");
 
-      final String json = mvc.perform(get("/api/v1/dictionaries")
-              .header("Authorization", "Bearer " + tokenA))
-          .andExpect(status().isOk())
-          .andReturn().getResponse().getContentAsString();
+      final String json =
+          mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + tokenA))
+              .andExpect(status().isOk())
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
 
       final JsonNode root = new ObjectMapper().readTree(json);
       final JsonNode taskStatusList = root.get("taskStatus");
@@ -430,10 +454,10 @@ class DictionaryCatalogIT {
   // ---- IT 4: findByCode ignoriert future-dated Eintraege (P2-A) -----------------------
 
   /**
-   * TDD-Discriminator fuer P2-A: ein future-dated DIC_TASK_PRIORITY-Eintrag darf via
-   * findByCode NICHT aufgeloest werden. Vor dem Fix (kein GUELTIG_VON-Praedikat) wuerde
-   * resolveTaskPriority den Code finden und eine ID liefern; nach dem Fix wirft der Resolver
-   * eine DictionaryResolverException.
+   * TDD-Discriminator fuer P2-A: ein future-dated DIC_TASK_PRIORITY-Eintrag darf via findByCode
+   * NICHT aufgeloest werden. Vor dem Fix (kein GUELTIG_VON-Praedikat) wuerde resolveTaskPriority
+   * den Code finden und eine ID liefern; nach dem Fix wirft der Resolver eine
+   * DictionaryResolverException.
    */
   @Test
   @DisplayName("findbycode_ignoriert_future_dated_priority_code")
@@ -453,15 +477,20 @@ class DictionaryCatalogIT {
             + " ANGELEGT_VON, ANGELEGT_AM, GUELTIG_VON, GUELTIG_BIS, SORT_ORDER) "
             + "VALUES (?, 'ACTIVE', ?, 1, 0, 'SYSTEM_PUBLIC', ?, 'IT Future Prio',"
             + " 'it-test', GETDATE(), CAST(DATEADD(day, 1, GETDATE()) AS DATE), NULL, 99)",
-        futureId, futureId, futureUuid, futureCode);
+        futureId,
+        futureId,
+        futureUuid,
+        futureCode);
 
     try {
       io.keel.framework.api.security.tenant.TenantContextHolder.runWithTenant(
-          io.keel.framework.api.security.tenant.TenantInfo.global(), () -> {
+          io.keel.framework.api.security.tenant.TenantInfo.global(),
+          () -> {
             org.assertj.core.api.Assertions.assertThatThrownBy(
                     () -> resolver.resolveTaskPriority(futureCode))
                 .as("Future-dated Code darf via findByCode nicht aufgeloest werden")
-                .isInstanceOf(de.brasi.nova.taskmanagement.resolver.DictionaryResolverException.class);
+                .isInstanceOf(
+                    de.brasi.nova.taskmanagement.resolver.DictionaryResolverException.class);
             return null;
           });
     } finally {
@@ -479,16 +508,15 @@ class DictionaryCatalogIT {
     final MockMvc mvc = buildMvc();
 
     // 1. Anonym -> 401
-    mvc.perform(get("/api/v1/dictionaries"))
-        .andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/v1/dictionaries")).andExpect(status().isUnauthorized());
 
     // 2. Slice 4: Katalog ist grant-frei. Angemeldeter Nutzer OHNE jede Authority -> 200.
-    final String tokenNoPerm = buildJwtWithAuthority(
-        TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
-        // keine Authorities
-    );
-    mvc.perform(get("/api/v1/dictionaries")
-            .header("Authorization", "Bearer " + tokenNoPerm))
+    final String tokenNoPerm =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_NO_PERM_REF, USER_NO_PERM_LOGIN
+            // keine Authorities
+            );
+    mvc.perform(get("/api/v1/dictionaries").header("Authorization", "Bearer " + tokenNoPerm))
         .andExpect(status().isOk());
   }
 
@@ -537,7 +565,10 @@ class DictionaryCatalogIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
-        id, id, externalId, id);
+        id,
+        id,
+        externalId,
+        id);
   }
 
   private static void seedBenutzerIfAbsent(
@@ -551,7 +582,11 @@ class DictionaryCatalogIT {
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
             + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
-        id, id, externalId, tenantId, loginName);
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName);
   }
 
   private static String toPem(final byte[] der) {

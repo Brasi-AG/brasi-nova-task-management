@@ -21,9 +21,9 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
  * Meldet Fehler beim Lesen eines Multipart-Requests als 400 im KSF-Fehlerformat (Intake #152,
  * Review Focus 2).
  *
- * <p>Ohne diese Advice landen {@link MaxUploadSizeExceededException} und {@link
- * MultipartException} im Catch-all der KSF-Fehlerbehandlung (500). Die Advice baut deshalb eine
- * {@link EntityValidationException} mit deutschem Text und laesst die Antwort von {@link
+ * <p>Ohne diese Advice landen {@link MaxUploadSizeExceededException} und {@link MultipartException}
+ * im Catch-all der KSF-Fehlerbehandlung (500). Die Advice baut deshalb eine {@link
+ * EntityValidationException} mit deutschem Text und laesst die Antwort von {@link
  * GlobalApiExceptionHandler#handleEntityValidation} erzeugen: dasselbe Format wie jede andere 400
  * der Anhaenge ({@code errorKey} {@code NOVA_VALIDATION_FAILED}, Karte {@code ksf/error-format}),
  * ohne eigenen {@code errorKey} und ohne KSF-Aenderung. Die Reihenfolge {@link
@@ -89,8 +89,7 @@ public class MultipartErrorAdvice {
   }
 
   /**
-   * Der Request ist kein lesbarer Multipart-Request (abgebrochen, falscher Inhalt, zu viele
-   * Teile).
+   * Der Request ist kein lesbarer Multipart-Request (abgebrochen, falscher Inhalt, zu viele Teile).
    *
    * @param ex Ausnahme von Spring beim Lesen des Requests
    * @param request aktueller Request

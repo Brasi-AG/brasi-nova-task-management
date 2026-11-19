@@ -13,6 +13,9 @@ import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.task.TaskHistoryService;
+import io.keel.framework.api.exception.EntityNotFoundException;
+import io.keel.framework.api.model.EntityState;
+import io.keel.framework.api.security.permission.PermissionDeniedException;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDateTime;
@@ -36,8 +39,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Akteurs (Karte {@code inbox-snapshot}); das Signal folgt nach dem Commit. Eine eigene
  * Benachrichtigung gibt es nicht.
  *
- * <p>Akteur und Mandant kommen ausschliesslich aus dem Security-Context ({@link UserAccessor}),
- * nie aus Client-Eingaben.
+ * <p>Akteur und Mandant kommen ausschliesslich aus dem Security-Context ({@link UserAccessor}), nie
+ * aus Client-Eingaben.
  */
 @Service
 public class AttachmentCommandService {
@@ -46,6 +49,24 @@ public class AttachmentCommandService {
 
   /** Historientext je hochgeladener Datei (Detail = Dateiname). */
   static final String HISTORY_ATTACHED = "Datei angehaengt";
+
+  /** Historientext je entferntem Anhang (Detail = Dateiname). */
+  static final String HISTORY_REMOVED = "Datei entfernt";
+
+  /** Meldung der 404, wenn der Anhang nicht (mehr) an der Aufgabe haengt. */
+  private static final String ATTACHMENT_NOT_FOUND = "Anhang nicht gefunden.";
+
+  /**
+   * Meldung der 403, wenn der Akteur den Anhang weder hochgeladen hat noch Ersteller der Aufgabe
+   * ist (auch OpenAPI-Beispiel).
+   */
+  static final String REMOVE_ROLE_MESSAGE =
+      "Entfernen dürfen nur die Person, die die Datei hochgeladen hat, und die Person, die die"
+          + " Aufgabe erstellt hat.";
+
+  /** Benennung der verlangten Rolle in der {@link PermissionDeniedException} beim Entfernen. */
+  private static final String REMOVE_REQUIRED_ROLE =
+      "Hochladende Person des Anhangs oder Ersteller der Aufgabe";
 
   private final UserAccessor userAccessor;
   private final AttachmentTaskAccess taskAccess;
@@ -182,6 +203,86 @@ public class AttachmentCommandService {
   }
 
   /**
+   * Entfernt einen Anhang, der direkt an der Aufgabe haengt: der Anhang wird deaktiviert, die Datei
+   * bleibt im Speicher erhalten. Entfernen ist Aktivitaet an der Aufgabe.
+   *
+   * <p>Ablauf (Vertrag der Karte {@code participants-actions}: Guard 404, Rolle 403, Zustand; alle
+   * Reads vor der ersten Schreibung):
+   *
+   * <ol>
+   *   <li>Akteur aus dem Security-Context.
+   *   <li>Aufgabe laden und WRITE-Mitgliedschaft pruefen ({@link
+   *       AttachmentTaskAccess#requireWriteMember}; Nicht-Mitglieder und Ausgetretene erhalten die
+   *       neutrale 404, bevor irgendein Anhang gelesen wird).
+   *   <li>Aktiven Anhang der Aufgabe suchen; unbekannt, schon entfernt oder an einem Kommentar
+   *       (unveraenderlich, {@code commentId} gesetzt): 404 {@code Anhang nicht gefunden.}
+   *   <li>Rolle: die hochladende Person oder der Ersteller der Aufgabe (eigene Teilnehmerzeile mit
+   *       {@code creatorFlag}); jedes andere aktive Mitglied erhaelt 403, nichts wird geaendert.
+   *   <li>Leser lesen (aktive Zustaende und Archiv-Leser) - der letzte Read vor der ersten
+   *       Schreibung.
+   *   <li>Erste Schreibung: {@code ENTITY_STATUS} des Anhangs auf {@code DEACTIVE}; die Datei und
+   *       ihr Vorschaubild bleiben auf der Platte.
+   *   <li>Aufgabe fortschreiben ({@code LAST_ACTIVITY_AT}, versionierter TASK-save; Konflikt: 409
+   *       mit vollem Rollback).
+   *   <li>Historie {@code Datei entfernt} mit dem Dateinamen, dann genau ein sortierter Bump und
+   *       ein Signal fuer Leser und Akteur.
+   * </ol>
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @param attachmentId externe UUID des Anhangs
+   * @throws EntityNotFoundException wenn die Aufgabe nicht sichtbar oder der Akteur kein aktives
+   *     Mitglied ist, oder wenn der Anhang nicht aktiv direkt an der Aufgabe haengt (HTTP 404)
+   * @throws PermissionDeniedException wenn der Akteur weder die Datei hochgeladen hat noch
+   *     Ersteller der Aufgabe ist (HTTP 403)
+   * @throws io.keel.framework.api.exception.BusinessRuleException bei einem Versionskonflikt der
+   *     Aufgabe (HTTP 409)
+   */
+  @Transactional
+  public void remove(final UUID taskExternalId, final UUID attachmentId) {
+    final CurrentActor actor = CurrentActor.require(userAccessor);
+    final long tenantId = actor.tenant().id();
+    final UUID actorRef = actor.user().id();
+
+    final Task task = taskAccess.requireWriteMember(taskExternalId, actor);
+    final Long taskId = task.getId();
+
+    // Kommentar-Anhaenge sind unveraenderlich und ueber die Aufgabe nicht entfernbar.
+    final TaskAttachment attachment =
+        attachmentRepository.findActiveByTaskIdAndUuid(taskId, attachmentId).stream()
+            .filter(found -> found.getCommentId() == null)
+            .findFirst()
+            .orElseThrow(() -> new EntityNotFoundException(ATTACHMENT_NOT_FOUND));
+
+    requireMayRemove(taskId, actorRef, attachment);
+
+    // Leser VOR der ersten Schreibung materialisieren (Sperrfolge, Karte participants-actions).
+    final Set<UUID> readerRefs = readerRefs(taskId);
+
+    // Erste Schreibung: nur die Zeile wird deaktiviert, die Datei bleibt im Speicher.
+    attachment.setEntityState(EntityState.DEACTIVE);
+    attachmentRepository.save(attachment);
+
+    // Versionierter TASK-save: ein paralleler VERSION-Bump laesst das Entfernen mit 409 scheitern.
+    task.setLastActivityAt(LocalDateTime.now());
+    taskRepository.save(task);
+
+    historyService.record(taskId, tenantId, actorRef, HISTORY_REMOVED, attachment.getFileName());
+
+    readerRefs.add(actorRef);
+    inboxGenerationService.bumpSorted(tenantId, readerRefs);
+    inboxSignalService.invalidate(tenantId, readerRefs);
+
+    log.info(
+        "AttachmentCommandService.remove: Anhang {} der Aufgabe {} (id={}) von Akteur {} in Mandant"
+            + " {} entfernt.",
+        attachmentId,
+        taskExternalId,
+        taskId,
+        actorRef,
+        tenantId);
+  }
+
+  /**
    * Test-Seam (Default No-Op): Haken GENAU NACH dem Speichern der Zeilen und Dateien und VOR dem
    * versionierten TASK-save in {@link #storeTaskAttachments}. Erlaubt Integrationstests, die
    * Transaktion an dieser Stelle abzubrechen und das Aufraeumen der Dateien nach dem Rollback zu
@@ -191,6 +292,27 @@ public class AttachmentCommandService {
    */
   protected void onAfterAttachmentsStoredForTest(final Long taskId) {
     // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Rollenpruefung des Entfernens: die hochladende Person oder der Ersteller der Aufgabe. Der
+   * Ersteller ist die eigene, nicht ausgetretene Teilnehmerzeile mit {@code creatorFlag}; den
+   * Zugriff als aktives Mitglied hat der Guard schon bestaetigt. Hat der Akteur die Datei selbst
+   * hochgeladen, ist keine Lesung der Teilnehmerzeile noetig.
+   */
+  private void requireMayRemove(
+      final Long taskId, final UUID actorRef, final TaskAttachment attachment) {
+    if (actorRef.equals(attachment.getUploadedByRef())) {
+      return;
+    }
+    final boolean creator =
+        participantQueryRepository.findByTaskIdAndParticipantRef(taskId, actorRef).stream()
+            .findFirst()
+            .map(row -> row.getExitKind() == null && row.isCreatorFlag())
+            .orElse(false);
+    if (!creator) {
+      throw new PermissionDeniedException(REMOVE_REQUIRED_ROLE, REMOVE_ROLE_MESSAGE);
+    }
   }
 
   /** Wirft 400, wenn das Ziel mit den neuen Dateien mehr aktive Anhaenge als erlaubt haette. */

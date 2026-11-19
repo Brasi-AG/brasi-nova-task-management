@@ -24,14 +24,14 @@ import org.springframework.core.io.InputStreamResource;
 import org.springframework.stereotype.Service;
 
 /**
- * Lesen und Ausliefern von Anhaengen an Aufgaben (Intake #152): Liste, Inhalt, Vorschaubild und
- * die Anhaenge im Aufgaben-Detail.
+ * Lesen und Ausliefern von Anhaengen an Aufgaben (Intake #152): Liste, Inhalt, Vorschaubild und die
+ * Anhaenge im Aufgaben-Detail.
  *
  * <p>Jeder Abruf prueft zuerst die READ-Mitgliedschaft ({@code
  * TaskMembershipGuard#requireReadMember} ueber {@link AttachmentTaskAccess#requireReadMember});
- * ausgetretene Mitglieder lesen weiter, alle anderen erhalten die neutrale 404. Ein Anhang wird
- * nur innerhalb seiner Aufgabe gefunden (Aufgaben- und Kommentar-Anhaenge, nur ACTIVE); sonst
- * {@code Anhang nicht gefunden.}.
+ * ausgetretene Mitglieder lesen weiter, alle anderen erhalten die neutrale 404. Ein Anhang wird nur
+ * innerhalb seiner Aufgabe gefunden (Aufgaben- und Kommentar-Anhaenge, nur ACTIVE); sonst {@code
+ * Anhang nicht gefunden.}.
  *
  * <p>Auslieferung: Ein passender {@code If-None-Match} ergibt 304, ohne die Datei zu oeffnen. Sonst
  * wird der Strom hier geoeffnet, damit eine fehlende Datei synchron als neutrale 404 entsteht (mit

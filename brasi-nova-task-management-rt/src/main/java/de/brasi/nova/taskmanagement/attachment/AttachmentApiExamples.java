@@ -4,8 +4,8 @@ import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 
 /**
  * OpenAPI-Beispieltexte (JSON) fuer die Anhang-Operationen (Intake #152): {@code POST} und {@code
- * GET /api/v1/tasks/{id}/attachments} sowie die Auslieferung von Inhalt, Download und
- * Vorschaubild.
+ * GET /api/v1/tasks/{id}/attachments}, die Auslieferung von Inhalt, Download und Vorschaubild sowie
+ * {@code DELETE /api/v1/tasks/{id}/attachments/{attachmentId}}.
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -53,8 +53,8 @@ public final class AttachmentApiExamples {
   public static final String UPLOAD_REQUEST = "{\"files\":[\"(Binärinhalt)\"]}";
 
   /**
-   * 201: zwei neue Anhaenge in Upload-Reihenfolge, ein PDF mit Vorschaubild und eine Textdatei
-   * ohne ({@code links.thumbnail} ist {@code null}). Das erste Element hat genau die Feldmenge der
+   * 201: zwei neue Anhaenge in Upload-Reihenfolge, ein PDF mit Vorschaubild und eine Textdatei ohne
+   * ({@code links.thumbnail} ist {@code null}). Das erste Element hat genau die Feldmenge der
    * Live-Antwort.
    */
   public static final String UPLOAD_CREATED =
@@ -131,11 +131,7 @@ public final class AttachmentApiExamples {
 
   /** 400: Datei groesser als die Grenze des Tarifs (hier STANDARD mit der Vorgabe 5 MB). */
   public static final String BAD_REQUEST_TARIFF_LIMIT =
-      VALIDATION_HEAD
-          + TEXT_TARIFF_LIMIT
-          + VALIDATION_MIDDLE
-          + TEXT_TARIFF_LIMIT
-          + VALIDATION_TAIL;
+      VALIDATION_HEAD + TEXT_TARIFF_LIMIT + VALIDATION_MIDDLE + TEXT_TARIFF_LIMIT + VALIDATION_TAIL;
 
   /** 400: Datei groesser als die harte Obergrenze (Multipart-Grenze des Servers). */
   public static final String BAD_REQUEST_HARD_LIMIT =
@@ -151,11 +147,7 @@ public final class AttachmentApiExamples {
 
   /** 400: kein Teil {@code files} im Formular. */
   public static final String BAD_REQUEST_MISSING_PART =
-      VALIDATION_HEAD
-          + TEXT_MISSING_PART
-          + VALIDATION_MIDDLE
-          + TEXT_MISSING_PART
-          + VALIDATION_TAIL;
+      VALIDATION_HEAD + TEXT_MISSING_PART + VALIDATION_MIDDLE + TEXT_MISSING_PART + VALIDATION_TAIL;
 
   /** 400: der Request ist kein lesbarer Multipart-Request. */
   public static final String BAD_REQUEST_MULTIPART =
@@ -357,5 +349,82 @@ public final class AttachmentApiExamples {
           + TranslatesLockConflicts.TASK
           + "\",\"path\":\""
           + PATH_UPLOAD
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
+
+  // ---- Entfernen (Task A9) ------------------------------------------------------------------
+
+  /** Meldung der KSF-Fehlerbehandlung bei fehlender Berechtigung. */
+  private static final String FORBIDDEN_MESSAGE =
+      "Zugriff verweigert. Sie haben nicht die erforderlichen Berechtigungen,"
+          + " um diese Aktion auszuführen.";
+
+  /** 400: keine gueltige UUID als Anhang im Pfad des Entfernens. */
+  public static final String BAD_REQUEST_REMOVE_PATH =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der URL-Parameter 'attachmentId' hat einen ungültigen Wert. Ein Wert"
+          + " vom Typ 'UUID' wird erwartet.\",\"path\":\""
+          + PATH_UPLOAD
+          + "/keine-uuid"
+          + BAD_ATTACHMENT_PATH_TAIL;
+
+  /**
+   * 403: der Anfrager ist aktives Mitglied, hat die Datei aber nicht hochgeladen und die Aufgabe
+   * nicht erstellt; es wurde nichts geaendert.
+   */
+  public static final String FORBIDDEN_REMOVE_ROLE =
+      ERROR_HEAD
+          + "\"status\":403,\"error\":\"Forbidden\",\"message\":\""
+          + FORBIDDEN_MESSAGE
+          + "\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "\",\"errorKey\":\"NOVA_ACCESS_DENIED\","
+          + TRACE
+          + "\"details\":[\"io.keel.framework.api.security.permission.PermissionDeniedException: "
+          + AttachmentCommandService.REMOVE_ROLE_MESSAGE
+          + "\"]}";
+
+  /**
+   * 404 des Entfernens: Aufgabe nicht sichtbar, Anfrager kein aktives Mitglied oder ausgetreten.
+   */
+  public static final String NOT_FOUND_REMOVE_TASK =
+      NOT_FOUND_HEAD
+          + "Aufgabe nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + NOT_FOUND_MIDDLE
+          + TASK_NOT_FOUND_TAIL;
+
+  /**
+   * 404 des Entfernens: Anhang unbekannt, schon entfernt, an einer anderen Aufgabe oder an einem
+   * Kommentar.
+   */
+  public static final String NOT_FOUND_REMOVE_ATTACHMENT =
+      NOT_FOUND_HEAD
+          + "Anhang nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + NOT_FOUND_MIDDLE
+          + ATTACHMENT_NOT_FOUND_TAIL;
+
+  /** 409 des Entfernens: nebenlaeufiger Versionskonflikt beim Fortschreiben der Aufgabe. */
+  public static final String CONFLICT_REMOVE_VERSION =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_ATTACHMENT
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
+          + TRACE
+          + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
+
+  /**
+   * 409 des Entfernens: Sperrkonflikt der Datenbank (z. B. Deadlock), Text der Markierung des
+   * Controllers; in derselben Feldauswahl wie {@link #CONFLICT_LOCK}.
+   */
+  public static final String CONFLICT_REMOVE_LOCK =
+      "{\"timestamp\":\"2026-11-19T10:00:00.123456\",\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\""
+          + TranslatesLockConflicts.TASK
+          + "\",\"path\":\""
+          + PATH_ATTACHMENT
           + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\"}";
 }

@@ -28,6 +28,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -42,12 +43,13 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
  * Handgeschriebener Facade-Controller fuer Anhaenge an Aufgaben (Intake #152, arch-v2 §7).
  *
  * <p>Standard-Selfservice (authenticated-only via KSF-Filter-Chain); die Autorisierung erfolgt
- * objekt-level ueber den {@code TaskMembershipGuard} in den delegierten Services: Hochladen
- * verlangt WRITE-Mitgliedschaft, Lesen (Liste, Inhalt, Download, Vorschaubild) READ-Mitgliedschaft
- * (auch Ausgetretene); alle anderen erhalten die neutrale 404. Akteur und Mandant kommen
- * ausschliesslich aus dem Security-Context. Der Controller enthaelt keine Fachlogik; er delegiert
- * an {@link AttachmentUploadService} (Pruefen und Speichern), {@link AttachmentCommandService}
- * (weitere Kommandos) und {@link AttachmentQueryService} (Lesen und Ausliefern).
+ * objekt-level ueber den {@code TaskMembershipGuard} in den delegierten Services: Hochladen und
+ * Entfernen verlangen WRITE-Mitgliedschaft (Entfernen zusaetzlich die hochladende Person oder den
+ * Ersteller, sonst 403), Lesen (Liste, Inhalt, Download, Vorschaubild) READ-Mitgliedschaft (auch
+ * Ausgetretene); alle anderen erhalten die neutrale 404. Akteur und Mandant kommen ausschliesslich
+ * aus dem Security-Context. Der Controller enthaelt keine Fachlogik; er delegiert an {@link
+ * AttachmentUploadService} (Pruefen und Speichern), {@link AttachmentCommandService} (Entfernen)
+ * und {@link AttachmentQueryService} (Lesen und Ausliefern).
  *
  * <p>Auslieferung: Der Service oeffnet den Strom (Fehler entstehen synchron als 404), der Body
  * kopiert ihn nur ({@link StreamingResponseBody}). Jede Antwort traegt einen schwachen ETag und
@@ -639,6 +641,117 @@ public class AttachmentController {
           final String ifNoneMatch) {
     return deliver(
         queryService.serveThumbnail(id, attachmentId, ifNoneMatch), ContentDisposition.inline());
+  }
+
+  /**
+   * Entfernt einen Anhang der Aufgabe (Deaktivieren; die Datei bleibt im Speicher).
+   *
+   * <p>Erlaubt nur aktiven Mitgliedern, die die Datei hochgeladen haben oder die Aufgabe erstellt
+   * haben. Den Ablauf und die Fehlerfaelle beschreibt {@link AttachmentCommandService#remove}.
+   *
+   * @param id externe UUID der Aufgabe
+   * @param attachmentId externe UUID des Anhangs
+   * @return 204 No Content
+   */
+  @Operation(
+      summary = "Anhang einer Aufgabe entfernen",
+      description =
+          "Entfernt einen Anhang, der direkt an der Aufgabe haengt. Erlaubt nur aktiven Mitgliedern"
+              + " der Aufgabe, die die Datei hochgeladen haben oder die Aufgabe erstellt haben"
+              + " (removable in der Liste der Anhaenge zeigt es an); jedes andere aktive Mitglied"
+              + " erhaelt 403 und nichts wird geaendert. Fuer Nicht-Mitglieder und ausgetretene"
+              + " Mitglieder ist die Aufgabe nicht sichtbar (404). Der Anhang wird deaktiviert und"
+              + " erscheint nicht mehr in Liste, Detail, Inhalt, Download und Vorschaubild; die"
+              + " Datei selbst bleibt im Speicher erhalten. Entfernen ist Aktivitaet an der"
+              + " Aufgabe: die letzte Aktivitaet wird fortgeschrieben, die Historie erhaelt den"
+              + " Eintrag Datei entfernt mit dem Dateinamen, und die Inbox aller Leser wird"
+              + " aktualisiert; eine eigene Benachrichtigung gibt es nicht. Anhaenge der"
+              + " Kommentare lassen sich ueber die Aufgabe nicht entfernen (404). Ein zweites"
+              + " Entfernen desselben Anhangs antwortet mit 404.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "204",
+        description = "Der Anhang ist entfernt; die Antwort hat keinen Inhalt."),
+    @ApiResponse(
+        responseCode = "400",
+        description = BAD_REQUEST_DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = AttachmentApiExamples.BAD_REQUEST_REMOVE_PATH))),
+    @ApiResponse(
+        responseCode = "401",
+        description = UNAUTHORIZED_DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/problem+json",
+                schema = @Schema(implementation = ArchiveSearchPageSchema.Problem.class),
+                examples = @ExampleObject(value = AttachmentApiExamples.UNAUTHORIZED))),
+    @ApiResponse(
+        responseCode = "403",
+        description =
+            "Der Anfrager ist aktives Mitglied der Aufgabe, hat die Datei aber nicht hochgeladen"
+                + " und die Aufgabe nicht erstellt; es wurde nichts geaendert.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples =
+                    @ExampleObject(
+                        name = "weder-hochladende-person-noch-ersteller",
+                        summary = "Mitglied ohne Recht zum Entfernen",
+                        value = AttachmentApiExamples.FORBIDDEN_REMOVE_ROLE))),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "Aufgabe nicht sichtbar, fremder Mandant oder der Anfrager ist kein aktives Mitglied"
+                + " (auch ausgetreten); oder der Anhang ist unbekannt, schon entfernt, an einer"
+                + " anderen Aufgabe oder an einem Kommentar (neutral maskiert).",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "aufgabe",
+                      summary = "Aufgabe nicht sichtbar oder kein aktives Mitglied",
+                      value = AttachmentApiExamples.NOT_FOUND_REMOVE_TASK),
+                  @ExampleObject(
+                      name = "anhang",
+                      summary = "Anhang unbekannt, schon entfernt oder an einem Kommentar",
+                      value = AttachmentApiExamples.NOT_FOUND_REMOVE_ATTACHMENT)
+                })),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Nebenlaeufiger Konflikt: die Aufgabe wurde zwischenzeitlich geaendert"
+                + " (Versionskonflikt); nichts wurde geaendert. Die Anfrage gegen den frischen"
+                + " Stand wiederholen."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "versionskonflikt",
+                      summary = "Aufgabe zwischenzeitlich geaendert",
+                      value = AttachmentApiExamples.CONFLICT_REMOVE_VERSION),
+                  @ExampleObject(
+                      name = "sperrkonflikt",
+                      summary = "Sperrkonflikt der Datenbank",
+                      value = AttachmentApiExamples.CONFLICT_REMOVE_LOCK)
+                }))
+  })
+  @DeleteMapping("/{id}/attachments/{attachmentId}")
+  public ResponseEntity<Void> remove(
+      @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
+          final UUID id,
+      @Parameter(description = "Externe UUID des Anhangs.", required = true) @PathVariable
+          final UUID attachmentId) {
+    commandService.remove(id, attachmentId);
+    return ResponseEntity.noContent().build();
   }
 
   /**
