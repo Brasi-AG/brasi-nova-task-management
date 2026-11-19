@@ -99,6 +99,9 @@ public final class TaskHateoas {
 
     /** PUT {@code /api/v1/tasks/{id}/mute} (Mute-Marker setzen). */
     public static final String MUTE = "userState.mute";
+
+    /** POST {@code /api/v1/tasks/{id}/attachments} (Dateien an die Aufgabe anhaengen). */
+    public static final String UPLOAD_ATTACHMENTS = "attachment.upload";
   }
 
   /** {@code title}-Texte der Affordance-Links (deutsch, FE-Anzeige). */
