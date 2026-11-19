@@ -4,8 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.startsWith;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,6 +66,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import javax.imageio.ImageIO;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -95,6 +102,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlParameterValue;
@@ -103,7 +111,10 @@ import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfig
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.ResultMatcher;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
@@ -214,6 +225,15 @@ class AttachmentControllerIT {
   /** IDs der per JDBC gesaeten Anhang-Zeilen, weit weg von der KSF-Sequenz. */
   private static final AtomicLong JDBC_ATTACHMENT_IDS = new AtomicLong(8_000_000_000L);
 
+  /** Feste UUIDs der per JDBC gesaeten Kommentar-Anhaenge (je Test eine eigene). */
+  private static final UUID COMMENT_ATTACHMENT_IN_LIST =
+      UUID.fromString("e1520000-0000-4000-8000-000000000001");
+
+  private static final UUID COMMENT_ATTACHMENT_SERVED =
+      UUID.fromString("e1520000-0000-4000-8000-000000000002");
+  private static final UUID COMMENT_ATTACHMENT_IN_DETAIL =
+      UUID.fromString("e1520000-0000-4000-8000-000000000003");
+
   private static final KeyPair RSA_KEY_PAIR;
 
   static {
@@ -279,6 +299,7 @@ class AttachmentControllerIT {
 
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private AttachmentContentProvider contentProvider;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired final JdbcTemplate jt) {
@@ -650,6 +671,395 @@ class AttachmentControllerIT {
     assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
   }
 
+  // ---- A8: Lesen, Auslieferung, Vorschau, Detail ---------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_list_returns_task_attachments_only_chronological: GET /attachments -> nur die"
+          + " Aufgaben-Anhaenge in Hochlade-Reihenfolge, kein Kommentar-Anhang")
+  void i152_list_returns_task_attachments_only_chronological() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Liste");
+    final UUID first = uploadOne(mvc, creator, taskId, file("a.txt", TXT_BYTES));
+    final UUID second = uploadOne(mvc, creator, taskId, pdfFile("b.pdf"));
+    final long commentDbId = commentDbId(postComment(mvc, creator, taskId, "Kommentar"));
+    insertAttachmentRow(
+        taskDbId(taskId), commentDbId, "ACTIVE", COMMENT_ATTACHMENT_IN_LIST, "kommentar.txt");
+
+    mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(2))
+        .andExpect(jsonPath("$[0].id").value(first.toString()))
+        .andExpect(jsonPath("$[0].fileName").value("a.txt"))
+        .andExpect(jsonPath("$[1].id").value(second.toString()))
+        .andExpect(jsonPath("$[1].fileName").value("b.pdf"))
+        .andExpect(
+            jsonPath("$[1].links.content").value(endsWith(contentUrl(taskId, second, "content"))));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_content_inline_headers: Inhalt mit Typ, Disposition inline (RFC 5987), nosniff, ETag,"
+          + " Cache-Control private 1 Tag, Content-Length und unveraendertem Body; CR/LF im Namen"
+          + " erzeugt keinen Header")
+  void i152_content_inline_headers() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Inhalt");
+    final String name = "Übersicht \"final\".pdf";
+    final UUID attId = uploadOne(mvc, creator, taskId, file(name, PDF_BYTES));
+    final AttachmentRow row = row(attId);
+    assertThat(row.fileName()).isEqualTo(name);
+
+    final MvcResult res = fetch(mvc, get(contentUrl(taskId, attId, "content")), creator);
+
+    expect(
+        res,
+        status().isOk(),
+        header().string("Content-Type", "application/pdf"),
+        header()
+            .string(
+                "Content-Disposition",
+                allOf(
+                    startsWith("inline"),
+                    containsString("filename*=UTF-8''%C3%9Cbersicht%20%22final%22.pdf"))),
+        header().string("X-Content-Type-Options", "nosniff"),
+        header().string("ETag", "W/\"" + row.sha256() + "\""),
+        header()
+            .string(
+                "Cache-Control", allOf(containsString("private"), containsString("max-age=86400"))),
+        header().longValue("Content-Length", PDF_BYTES.length));
+    assertThat(res.getResponse().getContentAsByteArray()).isEqualTo(PDF_BYTES);
+
+    // Steuerzeichen im Originalnamen: bereinigt gespeichert, kein zusaetzlicher Header
+    final UUID injected =
+        uploadOne(mvc, creator, taskId, file("Zeile\r\nX-Injected: 1.txt", TXT_BYTES));
+    final MvcResult download = fetch(mvc, get(contentUrl(taskId, injected, "download")), creator);
+    expect(
+        download,
+        status().isOk(),
+        header().doesNotExist("X-Injected"),
+        header().string("Content-Disposition", not(containsString("\n"))),
+        header().string("Content-Disposition", not(containsString("\r"))));
+    assertThat(row(injected).fileName()).doesNotContain("\r").doesNotContain("\n");
+  }
+
+  @Test
+  @DisplayName(
+      "i152_download_attachment_disposition: Download mit Disposition attachment und gleichem"
+          + " Body")
+  void i152_download_attachment_disposition() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Download");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+
+    final MvcResult res = fetch(mvc, get(contentUrl(taskId, attId, "download")), creator);
+
+    expect(
+        res,
+        status().isOk(),
+        header().string("Content-Type", "application/pdf"),
+        header()
+            .string(
+                "Content-Disposition",
+                allOf(startsWith("attachment"), containsString("Bericht.pdf"))),
+        header().string("X-Content-Type-Options", "nosniff"),
+        header().string("ETag", "W/\"" + row(attId).sha256() + "\""),
+        header().longValue("Content-Length", PDF_BYTES.length));
+    assertThat(res.getResponse().getContentAsByteArray()).isEqualTo(PDF_BYTES);
+  }
+
+  @Test
+  @DisplayName(
+      "i152_if_none_match_304_without_body: passender If-None-Match -> 304 ohne Body, mit ETag"
+          + " und Cache-Control")
+  void i152_if_none_match_304_without_body() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT 304");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final String etag = "W/\"" + row(attId).sha256() + "\"";
+
+    final MvcResult res =
+        fetch(
+            mvc, get(contentUrl(taskId, attId, "content")).header("If-None-Match", etag), creator);
+
+    expect(
+        res,
+        status().isNotModified(),
+        header().string("ETag", etag),
+        header().string("Cache-Control", containsString("private")));
+    assertThat(res.getResponse().getContentAsByteArray()).isEmpty();
+
+    // Vorschau: eigener ETag mit Breite
+    final String thumbnailEtag = "W/\"" + row(attId).sha256() + "-t600\"";
+    final MvcResult thumb =
+        fetch(
+            mvc,
+            get(contentUrl(taskId, attId, "thumbnail")).header("If-None-Match", thumbnailEtag),
+            creator);
+    expect(thumb, status().isNotModified(), header().string("ETag", thumbnailEtag));
+    assertThat(thumb.getResponse().getContentAsByteArray()).isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "i152_non_member_404_even_with_matching_etag: Nicht-Mitglied bekommt auch mit passendem"
+          + " ETag die neutrale 404 (Liste, Inhalt, Vorschau)")
+  void i152_non_member_404_even_with_matching_etag() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT fremd ETag");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final String etag = "W/\"" + row(attId).sha256() + "\"";
+    final String nonMember = token(NON_MEMBER_REF, NON_MEMBER_LOGIN);
+
+    for (final String kind : List.of("content", "download", "thumbnail")) {
+      final MvcResult res =
+          fetch(
+              mvc, get(contentUrl(taskId, attId, kind)).header("If-None-Match", etag), nonMember);
+      expect(res, status().isNotFound(), jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    }
+    mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + nonMember))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_ex_member_reads_list_content_thumbnail: ausgetretene Person liest Liste, Inhalt und"
+          + " Vorschau (READ-Mitglied)")
+  void i152_ex_member_reads_list_content_thumbnail() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Ausgetreten liest");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    addParticipants(mvc, creator, taskId, EX_REF);
+    exitParticipant(taskId, EX_REF);
+    final String ex = token(EX_REF, EX_LOGIN);
+
+    mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + ex))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].id").value(attId.toString()))
+        .andExpect(jsonPath("$[0].removable").value(false));
+    final MvcResult content = fetch(mvc, get(contentUrl(taskId, attId, "content")), ex);
+    expect(content, status().isOk());
+    assertThat(content.getResponse().getContentAsByteArray()).isEqualTo(PDF_BYTES);
+    expect(
+        fetch(mvc, get(contentUrl(taskId, attId, "thumbnail")), ex),
+        status().isOk(),
+        header().string("Content-Type", "image/jpeg"));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_thumbnail_jpeg_cached_10_days: Vorschau als image/jpeg, Cache-Control private"
+          + " 10 Tage, ETag mit Breite")
+  void i152_thumbnail_jpeg_cached_10_days() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Vorschau");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final AttachmentRow row = row(attId);
+
+    final MvcResult res = fetch(mvc, get(contentUrl(taskId, attId, "thumbnail")), creator);
+
+    expect(
+        res,
+        status().isOk(),
+        header().string("Content-Type", "image/jpeg"),
+        header()
+            .string(
+                "Cache-Control",
+                allOf(containsString("private"), containsString("max-age=864000"))),
+        header().string("ETag", "W/\"" + row.sha256() + "-t600\""),
+        header().string("X-Content-Type-Options", "nosniff"));
+    final byte[] jpeg = res.getResponse().getContentAsByteArray();
+    assertThat(jpeg).startsWith((byte) 0xFF, (byte) 0xD8, (byte) 0xFF);
+    final Path thumb = baseDir.resolve(AttachmentStorageKeys.thumbnailKey(row.storageKey()));
+    assertThat(jpeg).isEqualTo(Files.readAllBytes(thumb));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_thumbnail_office_404: DOCX ist nicht vorschaufaehig -> hasThumbnail false, kein"
+          + " Vorschau-Link, GET /thumbnail 404")
+  void i152_thumbnail_office_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Office");
+
+    final JsonNode body =
+        json(
+            upload(mvc, creator, taskId, file("Vertrag.docx", docx()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$[0].hasThumbnail").value(false))
+                .andExpect(
+                    jsonPath("$[0].mimeType")
+                        .value(
+                            "application/vnd.openxmlformats-officedocument"
+                                + ".wordprocessingml.document")));
+    final UUID attId = UUID.fromString(body.get(0).get("id").asText());
+    final JsonNode thumbnailLink = body.get(0).path("links").path("thumbnail");
+    assertThat(thumbnailLink.isNull() || thumbnailLink.isMissingNode()).isTrue();
+
+    expect(
+        fetch(mvc, get(contentUrl(taskId, attId, "thumbnail")), creator),
+        status().isNotFound(),
+        jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_thumbnail_self_heals_when_missing: fehlt die Vorschau-Datei, erzeugt der Abruf sie"
+          + " neu (200, Datei wieder da), ohne die Zeile zu aendern")
+  void i152_thumbnail_self_heals_when_missing() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Selbstheilung");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final AttachmentRow before = row(attId);
+    final Path thumb = baseDir.resolve(AttachmentStorageKeys.thumbnailKey(before.storageKey()));
+    assertThat(thumb).exists();
+    Files.delete(thumb);
+
+    final MvcResult res = fetch(mvc, get(contentUrl(taskId, attId, "thumbnail")), creator);
+
+    expect(res, status().isOk(), header().string("Content-Type", "image/jpeg"));
+    assertThat(res.getResponse().getContentAsByteArray()).isNotEmpty();
+    assertThat(thumb).exists();
+    final AttachmentRow after = row(attId);
+    assertThat(after.version()).isEqualTo(before.version());
+    assertThat(after.thumbnailPresent()).isEqualTo(before.thumbnailPresent());
+  }
+
+  @Test
+  @DisplayName(
+      "i152_missing_content_file_is_neutral_404: aktive Zeile, Datei fehlt auf der Platte ->"
+          + " 404 NOVA_NOT_FOUND statt 500")
+  void i152_missing_content_file_is_neutral_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Datei fehlt");
+    final UUID attId = uploadOne(mvc, creator, taskId, file("Notiz.txt", TXT_BYTES));
+    Files.delete(baseDir.resolve(row(attId).storageKey()));
+
+    for (final String kind : List.of("content", "download")) {
+      expect(
+          fetch(mvc, get(contentUrl(taskId, attId, kind)), creator),
+          status().isNotFound(),
+          jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "i152_foreign_or_deactivated_attachment_404: Anhang einer anderen Aufgabe, DEACTIVE-Zeile"
+          + " oder unbekannte UUID -> 404; keine UUID -> 400")
+  void i152_foreign_or_deactivated_attachment_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT fremd 1");
+    final UUID otherTaskId = createTask(mvc, creator, "Anhang-IT fremd 2");
+    final UUID own = uploadOne(mvc, creator, taskId, pdfFile("eigen.pdf"));
+    final UUID foreign = uploadOne(mvc, creator, otherTaskId, pdfFile("fremd.pdf"));
+
+    expect(
+        fetch(mvc, get(contentUrl(taskId, foreign, "content")), creator),
+        status().isNotFound(),
+        jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    expect(
+        fetch(mvc, get(contentUrl(taskId, UUID.randomUUID(), "content")), creator),
+        status().isNotFound(),
+        jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_ANHANG] SET ENTITY_STATUS = 'DEACTIVE' WHERE EXTERNALID = ?", own);
+    for (final String kind : List.of("content", "download", "thumbnail")) {
+      expect(
+          fetch(mvc, get(contentUrl(taskId, own, kind)), creator),
+          status().isNotFound(),
+          jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    }
+
+    mvc.perform(
+            get("/api/v1/tasks/{id}/attachments/kein-uuid/content", taskId)
+                .header("Authorization", "Bearer " + creator))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @DisplayName(
+      "i152_comment_attachment_served_via_task_endpoint: ein Kommentar-Anhang wird ueber den"
+          + " Aufgaben-Endpunkt ausgeliefert, steht aber nicht in der Liste")
+  void i152_comment_attachment_served_via_task_endpoint() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Kommentar-Anhang");
+    final long commentDbId = commentDbId(postComment(mvc, creator, taskId, "Mit Datei"));
+    final byte[] content = "Anhang am Kommentar".getBytes(StandardCharsets.UTF_8);
+    final long id = JDBC_ATTACHMENT_IDS.incrementAndGet();
+    final String key = AttachmentStorageKeys.contentKey(TENANT_A_ID, id, "txt");
+    contentProvider.writeContent(key, new ByteArrayResource(content));
+    insertAttachmentRowWithId(
+        id,
+        taskDbId(taskId),
+        commentDbId,
+        COMMENT_ATTACHMENT_SERVED,
+        "kommentar.txt",
+        content,
+        key);
+
+    final MvcResult res =
+        fetch(mvc, get(contentUrl(taskId, COMMENT_ATTACHMENT_SERVED, "content")), creator);
+    expect(
+        res,
+        status().isOk(),
+        header().string("Content-Type", containsString("text/plain")),
+        header().string("ETag", "W/\"" + sha256Hex(content) + "\""));
+    assertThat(res.getResponse().getContentAsByteArray()).isEqualTo(content);
+
+    mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(0));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_detail_contains_attachments_with_links_and_removable: Detail traegt attachments mit"
+          + " Links (ohne Kommentar-Anhaenge); removable fuer die Erstellerin true, fuer ein"
+          + " anderes Mitglied false")
+  void i152_detail_contains_attachments_with_links_and_removable() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Detail");
+    addParticipants(mvc, creator, taskId, MEMBER_REF);
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final long commentDbId = commentDbId(postComment(mvc, creator, taskId, "Kommentar"));
+    insertAttachmentRow(
+        taskDbId(taskId), commentDbId, "ACTIVE", COMMENT_ATTACHMENT_IN_DETAIL, "kommentar.txt");
+
+    mvc.perform(get("/api/v1/tasks/{id}", taskId).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.attachments.length()").value(1))
+        .andExpect(jsonPath("$.attachments[0].id").value(attId.toString()))
+        .andExpect(jsonPath("$.attachments[0].fileName").value("Bericht.pdf"))
+        .andExpect(
+            jsonPath("$.attachments[0].links.download")
+                .value(endsWith(contentUrl(taskId, attId, "download"))))
+        .andExpect(jsonPath("$.attachments[0].removable").value(true));
+
+    mvc.perform(
+            get("/api/v1/tasks/{id}", taskId)
+                .header("Authorization", "Bearer " + token(MEMBER_REF, MEMBER_LOGIN)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.attachments.length()").value(1))
+        .andExpect(jsonPath("$.attachments[0].removable").value(false));
+  }
+
   // ---- Hilfen: Requests ----------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -734,6 +1144,46 @@ class AttachmentControllerIT {
             .getResponse()
             .getContentAsString();
     return UUID.fromString(new ObjectMapper().readTree(response).get("id").asText());
+  }
+
+  /** Laedt eine Datei hoch (201) und liefert die UUID des neuen Anhangs. */
+  private static UUID uploadOne(
+      final MockMvc mvc, final String token, final UUID taskId, final MockMultipartFile file)
+      throws Exception {
+    final JsonNode body = json(upload(mvc, token, taskId, file).andExpect(status().isCreated()));
+    return UUID.fromString(body.get(0).get("id").asText());
+  }
+
+  private static String listUrl(final UUID taskId) {
+    return "/api/v1/tasks/" + taskId + "/attachments";
+  }
+
+  /** {@code kind} = {@code content}, {@code download} oder {@code thumbnail}. */
+  private static String contentUrl(final UUID taskId, final UUID attachmentId, final String kind) {
+    return "/api/v1/tasks/" + taskId + "/attachments/" + attachmentId + "/" + kind;
+  }
+
+  /**
+   * Ruft einen Binaer-Endpunkt ab. Die Antwort ist ein {@code StreamingResponseBody}: der erste
+   * Durchlauf startet die asynchrone Verarbeitung, {@code asyncDispatch} wartet auf das Kopieren
+   * und schliesst den Request ab. Ohne Async (304, Fehler) zaehlt der erste Durchlauf.
+   */
+  private static MvcResult fetch(
+      final MockMvc mvc, final MockHttpServletRequestBuilder request, final String token)
+      throws Exception {
+    final MvcResult first =
+        mvc.perform(request.header("Authorization", "Bearer " + token)).andReturn();
+    if (!first.getRequest().isAsyncStarted()) {
+      return first;
+    }
+    return mvc.perform(asyncDispatch(first)).andReturn();
+  }
+
+  private static void expect(final MvcResult result, final ResultMatcher... matchers)
+      throws Exception {
+    for (final ResultMatcher matcher : matchers) {
+      matcher.match(result);
+    }
   }
 
   private static JsonNode json(final ResultActions res) throws Exception {
@@ -875,6 +1325,34 @@ class AttachmentControllerIT {
     return id;
   }
 
+  /** Saet eine Anhang-Zeile mit vorgegebener ID und Schluessel (Datei liegt schon im Speicher). */
+  private void insertAttachmentRowWithId(
+      final long id,
+      final long taskDbId,
+      final Long commentDbId,
+      final UUID uuid,
+      final String fileName,
+      final byte[] content,
+      final String storageKey) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ANHANG]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, KOMMENTAR_ID, DATEINAME, MIME_TYP, DATEIENDUNG, GROESSE_BYTES, SHA256,"
+            + " SPEICHERSCHLUESSEL, HAT_VORSCHAU, HOCHGELADEN_VON_REF)"
+            + " VALUES (?, 'ACTIVE', 'attachment-it', SYSDATETIME(), ?, 1, ?, ?, ?, ?,"
+            + " 'text/plain', 'txt', ?, ?, ?, 0, ?)",
+        id,
+        uuid,
+        TENANT_A_ID,
+        taskDbId,
+        new SqlParameterValue(Types.BIGINT, commentDbId),
+        fileName,
+        content.length,
+        sha256Hex(content),
+        storageKey,
+        CREATOR_REF);
+  }
+
   private long taskDbId(final UUID taskId) {
     return jdbcTemplate.queryForObject(
         "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
@@ -981,6 +1459,22 @@ class AttachmentControllerIT {
     final byte[] content = new byte[Math.toIntExact(size)];
     Arrays.fill(content, (byte) 'a');
     return content;
+  }
+
+  /** Minimales DOCX: ZIP mit {@code [Content_Types].xml} und {@code word/document.xml}. */
+  private static byte[] docx() {
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (ZipOutputStream zip = new ZipOutputStream(out)) {
+      zip.putNextEntry(new ZipEntry("[Content_Types].xml"));
+      zip.write("<Types/>".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+      zip.putNextEntry(new ZipEntry("word/document.xml"));
+      zip.write("<w:document/>".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return out.toByteArray();
   }
 
   private static byte[] png() {
