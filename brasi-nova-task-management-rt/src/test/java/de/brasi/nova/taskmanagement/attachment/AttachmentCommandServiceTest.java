@@ -31,6 +31,7 @@ import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.model.EntityState;
+import io.keel.framework.api.security.permission.PermissionDeniedException;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
@@ -66,7 +67,10 @@ import org.springframework.util.unit.DataSize;
  * <p>Vertrag (Karte {@code participants-actions}): alle Reads vor der ersten Schreibung. Beim
  * Hochladen ist die erste Schreibung {@link AttachmentWriter#store}, danach folgen der Seam {@code
  * onAfterAttachmentsStoredForTest}, der versionierte TASK-save (Versionskonflikt ergibt 409 ohne
- * Bump), die Historie je Datei, Bump und Signal fuer alle Leser und den Akteur.
+ * Bump), die Historie je Datei, Bump und Signal fuer alle Leser und den Akteur. Beim Entfernen
+ * (A9): Guard (404), Anhang der Aufgabe ohne Kommentar (404), Rolle Hochladende oder Ersteller
+ * (403), Leser, erst dann die erste Schreibung (Anhang DEACTIVE), TASK-save, Historie, Bump und
+ * Signal.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -80,6 +84,8 @@ class AttachmentCommandServiceTest {
   private static final UUID READER_1 = UUID.fromString("b0000000-0000-4000-8000-000000000002");
   private static final UUID ARCHIVE_READER =
       UUID.fromString("c0000000-0000-4000-8000-000000000003");
+  private static final UUID UPLOADER = UUID.fromString("e0000000-0000-4000-8000-000000000005");
+  private static final UUID ATT_UUID = UUID.fromString("d0000000-0000-4000-8000-000000000004");
   private static final byte[] PDF_BYTES =
       "%PDF-1.7\n% Testinhalt\n".getBytes(StandardCharsets.ISO_8859_1);
   private static final byte[] TXT_BYTES = "Notiz".getBytes(StandardCharsets.UTF_8);
@@ -125,6 +131,8 @@ class AttachmentCommandServiceTest {
         .thenReturn(List.of(participant(ARCHIVE_READER, false)));
     when(writer.store(eq(task), isNull(), eq(ACTOR), anyList()))
         .thenAnswer(inv -> stored(inv.getArgument(3)));
+
+    when(attachmentRepo.save(any(TaskAttachment.class))).thenAnswer(inv -> inv.getArgument(0));
 
     service = newService();
   }
@@ -276,6 +284,125 @@ class AttachmentCommandServiceTest {
     verifyNoInteractions(guard, attachmentRepo, writer);
   }
 
+  // ---- A9: Entfernen ---------------------------------------------------------------------------
+
+  @Test
+  void i152_remove_role_check_before_any_write() {
+    // anderes Mitglied (weder Hochladende noch Ersteller) -> PermissionDeniedException
+    final TaskAttachment attachment = existing(UPLOADER, null);
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(attachment));
+    when(participantRepo.findByTaskIdAndParticipantRef(TASK_ID, ACTOR))
+        .thenReturn(List.of(participant(ACTOR, false)));
+
+    assertThatThrownBy(() -> service.remove(TASK_UUID, ATT_UUID))
+        .isInstanceOf(PermissionDeniedException.class);
+    verify(attachmentRepo, never()).save(any());
+    verify(taskRepo, never()).save(any());
+    verifyNoInteractions(history, generation, signal);
+    assertThat(attachment.getEntityState()).isEqualTo(EntityState.ACTIVE);
+  }
+
+  @Test
+  void i152_remove_reads_before_first_write() {
+    // Ersteller entfernt den Anhang einer anderen Person
+    final TaskAttachment attachment = existing(UPLOADER, null);
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(attachment));
+    when(participantRepo.findByTaskIdAndParticipantRef(TASK_ID, ACTOR))
+        .thenReturn(List.of(participant(ACTOR, true)));
+
+    service.remove(TASK_UUID, ATT_UUID);
+
+    final InOrder o = inOrder(guard, attachmentRepo, participantRepo, taskRepo);
+    o.verify(guard).requireWriteMember(TASK_ID, ACTOR, TENANT);
+    o.verify(attachmentRepo).findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID);
+    o.verify(participantRepo).findByTaskIdAndParticipantRef(TASK_ID, ACTOR);
+    o.verify(participantRepo).findArchiveReadersByTaskId(TASK_ID);
+    o.verify(attachmentRepo).save(attachment);
+    o.verify(taskRepo).save(task);
+
+    final InOrder states = inOrder(guard, userStateRepo, attachmentRepo, taskRepo);
+    states.verify(guard).requireWriteMember(TASK_ID, ACTOR, TENANT);
+    states.verify(userStateRepo).findActiveUserRefsByTaskId(TASK_ID);
+    states.verify(attachmentRepo).save(attachment);
+    states.verify(taskRepo).save(task);
+
+    final InOrder after = inOrder(taskRepo, history, generation, signal);
+    after.verify(taskRepo).save(task);
+    after.verify(history).record(TASK_ID, TENANT, ACTOR, "Datei entfernt", "a.pdf");
+    after.verify(generation).bumpSorted(eq(TENANT), any());
+    after.verify(signal).invalidate(eq(TENANT), any());
+
+    assertThat(attachment.getEntityState()).isEqualTo(EntityState.DEACTIVE);
+    assertThat(task.getLastActivityAt()).isAfter(before);
+    assertThat(bumpedRefs()).containsExactlyInAnyOrder(READER_1, ARCHIVE_READER, ACTOR);
+    assertThat(signalledRefs()).containsExactlyInAnyOrder(READER_1, ARCHIVE_READER, ACTOR);
+  }
+
+  @Test
+  void i152_remove_by_uploader_without_creator_role() {
+    final TaskAttachment attachment = existing(ACTOR, null);
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(attachment));
+    when(participantRepo.findByTaskIdAndParticipantRef(TASK_ID, ACTOR))
+        .thenReturn(List.of(participant(ACTOR, false)));
+
+    service.remove(TASK_UUID, ATT_UUID);
+
+    assertThat(attachment.getEntityState()).isEqualTo(EntityState.DEACTIVE);
+    verify(attachmentRepo).save(attachment);
+    verify(taskRepo).save(task);
+    verify(history).record(TASK_ID, TENANT, ACTOR, "Datei entfernt", "a.pdf");
+  }
+
+  @Test
+  void i152_remove_comment_or_unknown_attachment_is_404_without_write() {
+    // Kommentar-Anhaenge sind unveraenderlich: ueber die Aufgabe nicht entfernbar
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(existing(ACTOR, 77L)));
+    assertThatThrownBy(() -> service.remove(TASK_UUID, ATT_UUID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID)).thenReturn(List.of());
+    assertThatThrownBy(() -> service.remove(TASK_UUID, ATT_UUID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+
+    verify(attachmentRepo, never()).save(any());
+    verify(taskRepo, never()).save(any());
+    verifyNoInteractions(history, generation, signal);
+  }
+
+  @Test
+  void i152_remove_by_non_member_is_404_before_attachment_lookup() {
+    doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(guard)
+        .requireWriteMember(TASK_ID, ACTOR, TENANT);
+
+    assertThatThrownBy(() -> service.remove(TASK_UUID, ATT_UUID))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+    verifyNoInteractions(attachmentRepo, participantRepo, userStateRepo);
+    verify(taskRepo, never()).save(any());
+  }
+
+  @Test
+  void i152_remove_version_conflict_propagates_without_bump() {
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(existing(ACTOR, null)));
+    when(taskRepo.save(task))
+        .thenThrow(
+            new BusinessRuleException(
+                "Versionskonflikt", new OptimisticLockingFailureException("v")));
+
+    assertThatThrownBy(() -> service.remove(TASK_UUID, ATT_UUID))
+        .isInstanceOf(BusinessRuleException.class);
+    verify(history, never()).record(any(), any(), any(), any(), any());
+    verifyNoInteractions(generation, signal);
+  }
+
   // ---- Hilfen ------------------------------------------------------------------------------
 
   private AttachmentCommandService newService() {
@@ -368,6 +495,27 @@ class AttachmentCommandServiceTest {
       id++;
     }
     return result;
+  }
+
+  /** Ein gespeicherter, aktiver Anhang {@code a.pdf} der Aufgabe (oder eines Kommentars). */
+  private static TaskAttachment existing(final UUID uploadedBy, final Long commentId) {
+    final TaskAttachment a = new TaskAttachment();
+    a.setId(10_095L);
+    a.setUuid(ATT_UUID);
+    a.setTenantId(TENANT);
+    a.setEntityState(EntityState.ACTIVE);
+    a.setCreatedAt(LocalDateTime.now().minusDays(1));
+    a.setTaskId(TASK_ID);
+    a.setCommentId(commentId);
+    a.setFileName("a.pdf");
+    a.setMimeType(AttachmentFileType.PDF.mimeType());
+    a.setFileExtension("pdf");
+    a.setSizeBytes(PDF_BYTES.length);
+    a.setSha256(SHA);
+    a.setStorageKey(AttachmentStorageKeys.contentKey(TENANT, 10_095L, "pdf"));
+    a.setThumbnailPresent(true);
+    a.setUploadedByRef(uploadedBy);
+    return a;
   }
 
   private static TaskUserState state(final UUID userRef) {

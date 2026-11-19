@@ -210,7 +210,9 @@ class AffordanceSentinelsTest {
           "CommentController#createComment", "commentService", // CommentService.requireWriteMember
           "AssigneeController#exit", "assigneeService", //       AssigneeService.requireWriteMember
           // Intake #152: AttachmentUploadService -> AttachmentTaskAccess -> requireWriteMember
-          "AttachmentController#upload", "uploadService");
+          "AttachmentController#upload", "uploadService",
+          // Intake #152: AttachmentCommandService -> AttachmentTaskAccess -> requireWriteMember
+          "AttachmentController#remove", "commandService");
 
   /**
    * Explizite Allowlist: bewusst gate-freie Mutations-Handler (authenticated-only). {@code POST

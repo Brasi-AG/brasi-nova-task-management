@@ -59,9 +59,9 @@ public class AttachmentThumbnailGenerator {
   private static final int HALF_TURN = 180;
 
   /**
-   * Pixelbudget als Vielfaches von Breite mal Breite: Die gerenderte PDF-Seite und das
-   * Vorschaubild haben hoechstens {@code 4 * width * width} Pixel (bei 600 px rund 1,4 Mio. Pixel,
-   * knapp 6 MB als RGB), ein dekodiertes Bild hoechstens rund das Vierfache davon (siehe {@link
+   * Pixelbudget als Vielfaches von Breite mal Breite: Die gerenderte PDF-Seite und das Vorschaubild
+   * haben hoechstens {@code 4 * width * width} Pixel (bei 600 px rund 1,4 Mio. Pixel, knapp 6 MB
+   * als RGB), ein dekodiertes Bild hoechstens rund das Vierfache davon (siehe {@link
    * #subsamplingFactor}). Das Budget entspricht einem Quadrat doppelter Breite und Hoehe.
    */
   private static final long PIXEL_BUDGET_FACTOR = 4L;

@@ -30,8 +30,8 @@ public final class AttachmentFileNames {
    * und Rechts-nach-links-Markierung), U+202A bis U+202E (Bidi-Einbettungen und -Ueberschreibungen,
    * u. a. RTL-Override), U+2066 bis U+2069 (Bidi-Isolierungen), U+061C (arabische
    * Buchstabenmarkierung), U+200B bis U+200D (Zero-Width-Zeichen) und U+FEFF (Byte-Order-Mark bzw.
-   * Zero Width No-Break Space). So kann ein Name wie {@code rechnung<RLO>fdp.exe} nicht als
-   * {@code rechnungexe.pdf} erscheinen; die Endung wird nach der Bereinigung bestimmt ({@link
+   * Zero Width No-Break Space). So kann ein Name wie {@code rechnung<RLO>fdp.exe} nicht als {@code
+   * rechnungexe.pdf} erscheinen; die Endung wird nach der Bereinigung bestimmt ({@link
    * #extensionOf(String)}) und gegen die Erlaubtliste geprueft.
    *
    * @param originalName Dateiname, wie ihn der Client geliefert hat; darf {@code null} sein

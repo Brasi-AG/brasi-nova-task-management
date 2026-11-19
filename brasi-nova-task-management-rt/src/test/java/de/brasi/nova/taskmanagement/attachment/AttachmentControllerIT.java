@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -124,10 +125,10 @@ import org.springframework.web.context.WebApplicationContext;
  * Integrationstest fuer den {@link AttachmentController} gegen echtes MSSQL (Wegwerf-DB) und ein
  * eigenes Temp-Verzeichnis als Basispfad (Intake #152, Tasks A7 bis A9).
  *
- * <p>Mandanten: A 560 ohne Zeile in {@code TASK_ANHANG_GRENZE} (Tarif STANDARD, 5 MB), B 561 in
- * der Config-Liste {@code task-management.attachments.enterprise-tenant-ids} (ENTERPRISE, 15 MB), C
- * 562 mit aktiver Zeile EXPERT ohne eigene Obergrenze (10 MB) und einer DEACTIVE-Zeile ENTERPRISE,
- * die nicht wirken darf. Uploads per MockMvc {@code multipart(...)}; Zaehler (VERSION, Generation,
+ * <p>Mandanten: A 560 ohne Zeile in {@code TASK_ANHANG_GRENZE} (Tarif STANDARD, 5 MB), B 561 in der
+ * Config-Liste {@code task-management.attachments.enterprise-tenant-ids} (ENTERPRISE, 15 MB), C 562
+ * mit aktiver Zeile EXPERT ohne eigene Obergrenze (10 MB) und einer DEACTIVE-Zeile ENTERPRISE, die
+ * nicht wirken darf. Uploads per MockMvc {@code multipart(...)}; Zaehler (VERSION, Generation,
  * Dateien) werden als Differenz vorher/nachher geprueft, weil alle Methoden der Klasse dieselbe
  * Datenbank und denselben Basispfad teilen (Lesson {@code it-context-pitfalls}, Punkt 5).
  *
@@ -233,6 +234,8 @@ class AttachmentControllerIT {
       UUID.fromString("e1520000-0000-4000-8000-000000000002");
   private static final UUID COMMENT_ATTACHMENT_IN_DETAIL =
       UUID.fromString("e1520000-0000-4000-8000-000000000003");
+  private static final UUID COMMENT_ATTACHMENT_NOT_REMOVABLE =
+      UUID.fromString("e1520000-0000-4000-8000-000000000004");
 
   private static final KeyPair RSA_KEY_PAIR;
 
@@ -376,8 +379,7 @@ class AttachmentControllerIT {
                 .value(endsWith("/api/v1/tasks/" + taskId + "/attachments/" + id0 + "/download")))
         .andExpect(
             jsonPath("$[0].links.thumbnail")
-                .value(
-                    endsWith("/api/v1/tasks/" + taskId + "/attachments/" + id0 + "/thumbnail")));
+                .value(endsWith("/api/v1/tasks/" + taskId + "/attachments/" + id0 + "/thumbnail")));
     assertThat(body.get(0).get("createdAt").asText()).matches("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z");
     final JsonNode thumbnail1 = body.get(1).path("links").path("thumbnail");
     assertThat(thumbnail1.isNull() || thumbnail1.isMissingNode())
@@ -387,8 +389,7 @@ class AttachmentControllerIT {
     final List<AttachmentRow> rows = activeTaskRows(taskId);
     assertThat(rows).hasSize(2);
     assertThat(rows)
-        .allSatisfy(
-            r -> assertThat(r.storageKey()).matches("560/\\d+/\\d+\\.(pdf|txt)"));
+        .allSatisfy(r -> assertThat(r.storageKey()).matches("560/\\d+/\\d+\\.(pdf|txt)"));
     final AttachmentRow row0 = rowByUuid(rows, id0);
     final AttachmentRow row1 = rowByUuid(rows, id1);
     assertThat(row0.storageKey()).endsWith("/" + row0.id() + ".pdf");
@@ -578,8 +579,7 @@ class AttachmentControllerIT {
   }
 
   @Test
-  @DisplayName(
-      "i152_magic_mismatch_400: PNG-Inhalt mit Endung .pdf -> 400 NOVA_VALIDATION_FAILED")
+  @DisplayName("i152_magic_mismatch_400: PNG-Inhalt mit Endung .pdf -> 400 NOVA_VALIDATION_FAILED")
   void i152_magic_mismatch_400() throws Exception {
     final MockMvc mvc = buildMvc();
     final String creator = creatorToken();
@@ -818,8 +818,7 @@ class AttachmentControllerIT {
 
     for (final String kind : List.of("content", "download", "thumbnail")) {
       final MvcResult res =
-          fetch(
-              mvc, get(contentUrl(taskId, attId, kind)).header("If-None-Match", etag), nonMember);
+          fetch(mvc, get(contentUrl(taskId, attId, kind)).header("If-None-Match", etag), nonMember);
       expect(res, status().isNotFound(), jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
     }
     mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + nonMember))
@@ -1060,6 +1059,172 @@ class AttachmentControllerIT {
         .andExpect(jsonPath("$.attachments[0].removable").value(false));
   }
 
+  // ---- A9: Entfernen -------------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_uploader_removes_204_file_kept_history_activity: Hochladende entfernt -> 204,"
+          + " Zeile DEACTIVE, Datei bleibt, Historie, VERSION +1, LAST_ACTIVITY_AT, Bump; danach"
+          + " nicht mehr in der Liste und Inhalt 404")
+  void i152_uploader_removes_204_file_kept_history_activity() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final String member = token(MEMBER_REF, MEMBER_LOGIN);
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen Hochladende");
+    addParticipants(mvc, creator, taskId, MEMBER_REF);
+    final UUID attId = uploadOne(mvc, member, taskId, pdfFile("Bericht.pdf"));
+    final UUID keptId = uploadOne(mvc, member, taskId, file("bleibt.txt", TXT_BYTES));
+    final String key = row(attId).storageKey();
+    final int versionBefore = taskVersion(taskId);
+    final Timestamp lastActivityBefore = lastActivity(taskId);
+    final long creatorGenerationBefore = generation(TENANT_A_ID, CREATOR_REF);
+
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + member))
+        .andExpect(status().isNoContent());
+
+    assertThat(row(attId).entityStatus()).isEqualTo("DEACTIVE");
+    assertThat(row(keptId).entityStatus()).isEqualTo("ACTIVE");
+    assertThat(baseDir.resolve(key)).exists();
+    assertThat(baseDir.resolve(AttachmentStorageKeys.thumbnailKey(key))).exists();
+    assertThat(historyDetails(taskId, "Datei entfernt")).containsExactly("Bericht.pdf");
+    assertThat(taskVersion(taskId) - versionBefore).isEqualTo(1);
+    assertThat(lastActivity(taskId)).isAfter(lastActivityBefore);
+    assertThat(generation(TENANT_A_ID, CREATOR_REF) - creatorGenerationBefore).isEqualTo(1);
+
+    mvc.perform(get(listUrl(taskId)).header("Authorization", "Bearer " + member))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id=='" + attId + "')]").isEmpty())
+        .andExpect(jsonPath("$.length()").value(1));
+    expect(
+        fetch(mvc, get(contentUrl(taskId, attId, "content")), member),
+        status().isNotFound(),
+        jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_creator_removes_others_attachment_204: die Erstellerin entfernt den Anhang einer"
+          + " anderen Person -> 204, DEACTIVE")
+  void i152_creator_removes_others_attachment_204() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen Ersteller");
+    addParticipants(mvc, creator, taskId, MEMBER_REF);
+    final UUID attId =
+        uploadOne(mvc, token(MEMBER_REF, MEMBER_LOGIN), taskId, pdfFile("Bericht.pdf"));
+
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNoContent());
+
+    assertThat(row(attId).entityStatus()).isEqualTo("DEACTIVE");
+    assertThat(historyDetails(taskId, "Datei entfernt")).containsExactly("Bericht.pdf");
+  }
+
+  @Test
+  @DisplayName(
+      "i152_other_member_403_nothing_changed: Mitglied, weder Hochladende noch Erstellerin ->"
+          + " 403 NOVA_ACCESS_DENIED, VERSION gleich, Zeile ACTIVE")
+  void i152_other_member_403_nothing_changed() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen fremd");
+    addParticipants(mvc, creator, taskId, MEMBER_REF, OTHER_REF);
+    final UUID attId =
+        uploadOne(mvc, token(MEMBER_REF, MEMBER_LOGIN), taskId, pdfFile("Bericht.pdf"));
+    final int versionBefore = taskVersion(taskId);
+
+    mvc.perform(
+            delete(contentUrlBase(taskId, attId))
+                .header("Authorization", "Bearer " + token(OTHER_REF, OTHER_LOGIN)))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_ACCESS_DENIED"));
+
+    assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
+    assertThat(row(attId).entityStatus()).isEqualTo("ACTIVE");
+    assertThat(historyDetails(taskId, "Datei entfernt")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("i152_non_member_404: Nicht-Mitglied -> 404 NOVA_NOT_FOUND, nichts geaendert")
+  void i152_non_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen Nicht-Mitglied");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final int versionBefore = taskVersion(taskId);
+
+    mvc.perform(
+            delete(contentUrlBase(taskId, attId))
+                .header("Authorization", "Bearer " + token(NON_MEMBER_REF, NON_MEMBER_LOGIN)))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    assertThat(row(attId).entityStatus()).isEqualTo("ACTIVE");
+    assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i152_ex_member_404: ausgetretene Hochladende (kein WRITE-Mitglied mehr) -> 404, Zeile"
+          + " ACTIVE")
+  void i152_ex_member_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final String ex = token(EX_REF, EX_LOGIN);
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen Ausgetreten");
+    addParticipants(mvc, creator, taskId, EX_REF);
+    final UUID attId = uploadOne(mvc, ex, taskId, pdfFile("Bericht.pdf"));
+    exitParticipant(taskId, EX_REF);
+
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + ex))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    assertThat(row(attId).entityStatus()).isEqualTo("ACTIVE");
+  }
+
+  @Test
+  @DisplayName(
+      "i152_comment_attachment_via_task_delete_404: ein Kommentar-Anhang ist ueber den"
+          + " Aufgaben-Endpunkt nicht entfernbar -> 404, Zeile ACTIVE")
+  void i152_comment_attachment_via_task_delete_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen Kommentar-Anhang");
+    final long commentDbId = commentDbId(postComment(mvc, creator, taskId, "Mit Datei"));
+    insertAttachmentRow(
+        taskDbId(taskId), commentDbId, "ACTIVE", COMMENT_ATTACHMENT_NOT_REMOVABLE, "kommentar.txt");
+    final int versionBefore = taskVersion(taskId);
+
+    mvc.perform(
+            delete(contentUrlBase(taskId, COMMENT_ATTACHMENT_NOT_REMOVABLE))
+                .header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    assertThat(row(COMMENT_ATTACHMENT_NOT_REMOVABLE).entityStatus()).isEqualTo("ACTIVE");
+    assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
+  }
+
+  @Test
+  @DisplayName("i152_remove_twice_second_404: zweites Entfernen desselben Anhangs -> 404")
+  void i152_remove_twice_second_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Entfernen zweimal");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNoContent());
+    final int versionAfterFirst = taskVersion(taskId);
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    assertThat(taskVersion(taskId)).isEqualTo(versionAfterFirst);
+    assertThat(historyDetails(taskId, "Datei entfernt")).hasSize(1);
+  }
+
   // ---- Hilfen: Requests ----------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -1125,8 +1290,7 @@ class AttachmentControllerIT {
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
-                    new ObjectMapper()
-                        .writeValueAsString(Map.of("participantIds", List.of(refs)))))
+                    new ObjectMapper().writeValueAsString(Map.of("participantIds", List.of(refs)))))
         .andExpect(status().is2xxSuccessful());
   }
 
@@ -1156,6 +1320,11 @@ class AttachmentControllerIT {
 
   private static String listUrl(final UUID taskId) {
     return "/api/v1/tasks/" + taskId + "/attachments";
+  }
+
+  /** URL eines einzelnen Anhangs ({@code DELETE}). */
+  private static String contentUrlBase(final UUID taskId, final UUID attachmentId) {
+    return "/api/v1/tasks/" + taskId + "/attachments/" + attachmentId;
   }
 
   /** {@code kind} = {@code content}, {@code download} oder {@code thumbnail}. */
@@ -1654,9 +1823,7 @@ class AttachmentControllerIT {
         "de.brasi.nova.taskmanagement.time",
       },
       excludeFilters = {
-        @ComponentScan.Filter(
-            type = FilterType.ANNOTATION,
-            classes = SpringBootConfiguration.class)
+        @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = SpringBootConfiguration.class)
       })
   @EnableTransactionManagement
   @EnableNovaRepositories(

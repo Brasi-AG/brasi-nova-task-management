@@ -108,8 +108,15 @@ class AttachmentThumbnailGeneratorTest {
   void i152_decoded_image_never_narrower_than_preview() throws IOException {
     assertThat(generator.subsamplingFactor(1080, 1920)).isEqualTo(1);
     final int[][] sizes = {
-      {1080, 1920}, {1000, 1500}, {600, 2500}, {1200, 800}, {2400, 1600}, {600, 30_000},
-      {1000, 50_000}, {7000, 7000}, {3, 4_000_000}
+      {1080, 1920},
+      {1000, 1500},
+      {600, 2500},
+      {1200, 800},
+      {2400, 1600},
+      {600, 30_000},
+      {1000, 50_000},
+      {7000, 7000},
+      {3, 4_000_000}
     };
     for (final int[] size : sizes) {
       final int factor = generator.subsamplingFactor(size[0], size[1]);
