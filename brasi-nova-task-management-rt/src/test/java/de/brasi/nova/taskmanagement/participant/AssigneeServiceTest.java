@@ -51,11 +51,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -3418,26 +3422,41 @@ class AssigneeServiceTest {
     return bumped.getValue();
   }
 
-  @Test
+  /**
+   * Feste UUID-Paare fuer die Schreibfolge des PUT (Intake #167, Review Runde 2): {@code
+   * updateAssignees} schreibt Hinzukommende und Abgewaehlte in EINER nach UUID aufsteigend
+   * sortierten Folge; die Rollen-Reihenfolge "erst neu, dann abgewaehlt" gilt nicht mehr. Mit
+   * {@code UUID.randomUUID()} (auch {@code ASSIGNEE_REF} ist zufaellig) haengt die erwartete Folge
+   * vom Zufall ab, daher je ein Fall mit abgewaehlter Person vor und hinter der neuen.
+   */
+  static Stream<Arguments> putWriteOrders() {
+    return Stream.of(
+        Arguments.of("abgewaehlte_vor_neuer", ORDER_LOW, ORDER_HIGH, true),
+        Arguments.of("neue_vor_abgewaehlter", ORDER_HIGH, ORDER_LOW, false));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("putWriteOrders")
   @DisplayName(
       "i167_put_alle_reads_vor_der_ersten_schreibung: Zeilen und States der neuen und der"
           + " abgewaehlten Person sowie beide Leser-Lesungen laufen vor dem Sync-1-Seam; danach nur"
-          + " Schreibungen, TASK-save, Bump, Signal; Bump und Signal enthalten den Archivleser (#166)")
-  void i167_put_reads_before_first_write_and_archive_reader_bumped() {
+          + " Schreibungen in einer UUID-Folge, TASK-save, Bump, Signal; Bump und Signal enthalten"
+          + " den Archivleser (#166)")
+  void i167_put_reads_before_first_write_and_archive_reader_bumped(
+      final String order, final UUID removedRef, final UUID newRef, final boolean removedFirst) {
     final Long taskId = 16701L;
     final UUID taskUuid = UUID.randomUUID();
-    final UUID newRef = UUID.randomUUID();
     final UUID activeReader = UUID.randomUUID();
     final UUID archiveReader = UUID.randomUUID();
     final Task task = taskWithId(taskId, taskUuid);
     when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
-    final TaskParticipant removed = activeAssignee(taskId, ASSIGNEE_REF, false);
+    final TaskParticipant removed = activeAssignee(taskId, removedRef, false);
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
         .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true), removed));
-    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ASSIGNEE_REF))
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removedRef))
         .thenReturn(List.of(removed));
-    final TaskUserState removedState = userStateFor(taskId, ASSIGNEE_REF);
-    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, ASSIGNEE_REF))
+    final TaskUserState removedState = userStateFor(taskId, removedRef);
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, removedRef))
         .thenReturn(List.of(removedState));
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId))
         .thenReturn(
@@ -3462,14 +3481,30 @@ class AssigneeServiceTest {
             "TaskParticipantQueryRepository#findRowByUniqueKey",
             "TaskParticipantQueryRepository#findByTaskIdAndParticipantRef",
             "TaskUserStateQueryRepository#findByTaskIdAndUserRef");
-    assertThat(calls)
-        .containsSubsequence(
-            "UserStateService#reactivateAsAssignee",
+    assertThat(savedParticipantRefsInOrder())
+        .as("eine aufsteigende UUID-Folge ueber Hinzukommende und Abgewaehlte (%s)", order)
+        .containsExactlyElementsOf(
+            removedFirst ? List.of(removedRef, newRef) : List.of(newRef, removedRef));
+    // Je Person bleiben die Schreibungen gleich: abgewaehlt = Teilnehmerzeile, State; neu =
+    // Teilnehmerzeile, reactivateAsAssignee, Benachrichtigung. Nur die Reihenfolge der Personen
+    // folgt der UUID.
+    final List<String> removedWrites =
+        List.of("TaskParticipantQueryRepository#save", "TaskUserStateQueryRepository#save");
+    final List<String> addedWrites =
+        List.of(
             "TaskParticipantQueryRepository#save",
-            "TaskUserStateQueryRepository#save",
+            "UserStateService#reactivateAsAssignee",
+            "NotificationService#emit");
+    final List<String> expectedWrites = new ArrayList<>(removedFirst ? removedWrites : addedWrites);
+    expectedWrites.addAll(removedFirst ? addedWrites : removedWrites);
+    expectedWrites.addAll(
+        List.of(
             "BaseTaskRepository#save",
             "InboxGenerationService#bumpSorted",
-            "InboxSignalService#invalidate");
+            "InboxSignalService#invalidate"));
+    assertThat(calls)
+        .as("Schreibfolge je Person in UUID-Reihenfolge (%s)", order)
+        .containsSubsequence(expectedWrites.toArray(String[]::new));
     verify(userStateService)
         .reactivateAsAssignee(eq(taskId), eq(newRef), eq(TENANT_ID), eq(List.of()));
     assertThat(removedState.getUnsubscribedAt())
@@ -3477,7 +3512,7 @@ class AssigneeServiceTest {
         .isNotNull();
     assertThat(capturedBump())
         .as("geaenderte Personen, aktive Leser und Archivleser (Intake #166)")
-        .containsExactlyInAnyOrder(newRef, ASSIGNEE_REF, ACTOR_REF, activeReader, archiveReader);
+        .containsExactlyInAnyOrder(newRef, removedRef, ACTOR_REF, activeReader, archiveReader);
   }
 
   @Test
