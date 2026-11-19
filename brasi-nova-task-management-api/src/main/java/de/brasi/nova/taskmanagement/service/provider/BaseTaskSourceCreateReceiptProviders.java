@@ -29,6 +29,6 @@ public class BaseTaskSourceCreateReceiptProviders<T extends TaskSourceCreateRece
 
 
     // <NOVA_CLI_CUSTOM_CODE_START SECTION="Methods">
-
+    
     // <NOVA_CLI_CUSTOM_CODE_END SECTION="Methods">
 }
