@@ -3,9 +3,14 @@ package de.brasi.nova.taskmanagement.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.TaskAttachment;
+import de.brasi.nova.taskmanagement.entity.TaskAttachmentLimit;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.enums.AttachmentTariff;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
+import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentLimitRepository;
+import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -49,6 +54,9 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *
  * <p>Prueft alle Kombinationen aus {@link ParticipantKind} (PERSON, TEAM) und
  * {@link ExitKind} (HANDOVER, UNSUBSCRIBED).
+ *
+ * <p>Intake #152: zusaetzlich {@link AttachmentTariff} ueber {@link TaskAttachmentLimit} und der
+ * Ablauf Insert ohne Speicherschluessel, dann Update mit Schluessel fuer {@link TaskAttachment}.
  *
  * <p>Infrastruktur: Wegwerf-MSSQL-DB (wie {@code EnumRoundtripIT}), Flyway-V1 fuer vollstaendiges
  * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via
@@ -120,6 +128,12 @@ class KsfSaveEnumRoundtripIT {
 
   @Autowired
   private JdbcTemplate jdbcTemplate;
+
+  @Autowired
+  private BaseTaskAttachmentLimitRepository attachmentLimitRepository;
+
+  @Autowired
+  private BaseTaskAttachmentRepository attachmentRepository;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -245,6 +259,81 @@ class KsfSaveEnumRoundtripIT {
         ExitKind.UNSUBSCRIBED.name());
   }
 
+  // ---- 5. Intake #152: AttachmentTariff ueber TaskAttachmentLimit ----------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_attachment_limit_tariff_roundtrip: KSF-save mit EXPERT, Neuladen liefert EXPERT,"
+          + " Rohspalte TARIF haelt den name()-String")
+  void i152_attachment_limit_tariff_roundtrip() {
+    TaskAttachmentLimit limit = new TaskAttachmentLimit();
+    limit.setTenantId(TENANT_ID);
+    limit.setTariff(AttachmentTariff.EXPERT);
+    limit.setMaxFileBytes(null);
+
+    TaskAttachmentLimit saved = attachmentLimitRepository.save(limit);
+    assertThat(saved.getId())
+        .as("KSF save() muss eine echte ID vergeben (nicht null/0)")
+        .isNotNull()
+        .isGreaterThan(0L);
+    final long id = saved.getId();
+
+    TaskAttachmentLimit reloaded = attachmentLimitRepository.findById(id).orElseThrow();
+    assertThat(reloaded.getTariff()).isEqualTo(AttachmentTariff.EXPERT);
+    assertThat(reloaded.getMaxFileBytes()).as("MAX_DATEI_BYTES bleibt NULL").isNull();
+    assertThat(rawColumn("TASK_ANHANG_GRENZE", "TARIF", id)).isEqualTo("EXPERT");
+  }
+
+  // ---- 6. Intake #152: TaskAttachment Insert ohne Schluessel, dann Update mit Schluessel ----------
+
+  @Test
+  @DisplayName(
+      "i152_task_attachment_save_roundtrip_without_key_then_update: Insert mit storageKey null"
+          + " (VERSION 1), dann Schluessel aus der ID setzen und speichern (VERSION 2)")
+  void i152_task_attachment_save_roundtrip_without_key_then_update() {
+    final UUID uploadedBy = UUID.randomUUID();
+    TaskAttachment attachment = new TaskAttachment();
+    // Mandantenbezug: TENANT_ID-Spalte wird aus dem Entity-Feld geschrieben
+    attachment.setTenantId(TENANT_ID);
+    attachment.setTaskId(TASK_ID);
+    attachment.setCommentId(null);
+    attachment.setFileName("bericht.pdf");
+    attachment.setMimeType("application/pdf");
+    attachment.setFileExtension("pdf");
+    attachment.setSizeBytes(2048L);
+    attachment.setSha256("b".repeat(64));
+    attachment.setStorageKey(null);
+    attachment.setThumbnailPresent(false);
+    attachment.setUploadedByRef(uploadedBy);
+
+    TaskAttachment saved = attachmentRepository.save(attachment);
+    assertThat(saved.getId())
+        .as("KSF save() muss eine echte ID vergeben (nicht null/0)")
+        .isNotNull()
+        .isGreaterThan(0L);
+    final long id = saved.getId();
+    assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Insert").isEqualTo(1);
+    assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isNull();
+
+    // Schluessel entsteht erst nach der ID-Vergabe; Update auf derselben Instanz
+    final String storageKey = "560/0/" + id + ".pdf";
+    saved.setStorageKey(storageKey);
+    attachmentRepository.save(saved);
+
+    assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Update").isEqualTo(2);
+    assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isEqualTo(storageKey);
+
+    TaskAttachment reloaded = attachmentRepository.findById(id).orElseThrow();
+    assertThat(reloaded.getStorageKey()).isEqualTo("560/0/" + id + ".pdf");
+    assertThat(reloaded.getCommentId()).isNull();
+    assertThat(reloaded.getVersion()).isEqualTo(2);
+    assertThat(reloaded.getTaskId()).isEqualTo(TASK_ID);
+    assertThat(reloaded.getFileName()).isEqualTo("bericht.pdf");
+    assertThat(reloaded.getSizeBytes()).isEqualTo(2048L);
+    assertThat(reloaded.isThumbnailPresent()).isFalse();
+    assertThat(reloaded.getUploadedByRef()).isEqualTo(uploadedBy);
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------------
 
   /**
@@ -304,6 +393,18 @@ class KsfSaveEnumRoundtripIT {
     assertThat(actualEk)
         .as("Rohe DB-Spalte %s muss '%s' enthalten", ekCol, expectedEk)
         .isEqualTo(expectedEk);
+  }
+
+  /** Liest eine Textspalte roh per JDBC (Enum-Name, Speicherschluessel). */
+  private String rawColumn(String table, String column, long id) {
+    return jdbcTemplate.queryForObject(
+        "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", String.class, id);
+  }
+
+  /** Liest eine Ganzzahlspalte roh per JDBC (VERSION). */
+  private Integer rawInt(String table, String column, long id) {
+    return jdbcTemplate.queryForObject(
+        "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", Integer.class, id);
   }
 
   // ---- IT-Konfigurations-Context ------------------------------------------------------------------

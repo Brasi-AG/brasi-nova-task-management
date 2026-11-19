@@ -7,6 +7,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
+import java.sql.Types;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -25,6 +26,7 @@ import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -77,6 +79,27 @@ class FlywayMigrationIT {
           "TASK_TAG",
           "TASK_TAG_ASSIGNMENT",
           "TASK_REMINDER_RECEIPT");
+
+  /** Nova-Basisspalten (Vorlage V6 {@code TASK_SOURCE_CREATE_RECEIPT}). */
+  private static final List<String> NOVA_BASE_COLUMNS =
+      List.of(
+          "ID",
+          "ENTITY_STATUS",
+          "ANGELEGT_VON",
+          "AKTUALISIERT_VON",
+          "GELOESCHT_VON",
+          "ANGELEGT_AM",
+          "AKTUALISIERT_AM",
+          "GELOESCHT_AM",
+          "EXTERNALID",
+          "VERSION",
+          "TENANT_ID");
+
+  /** Gueltiger SHA-256-Hexwert (64 Zeichen) fuer Anhang-Inserts. */
+  private static final String SHA256_SAMPLE = "a".repeat(64);
+
+  /** Naechste freie ID fuer TASK_ANHANG_GRENZE-Inserts (Instanz je Testmethode, daher static). */
+  private static long nextLimitId = 8501L;
 
   private static HikariDataSource master;
   private static String dbName;
@@ -543,7 +566,268 @@ class FlywayMigrationIT {
         .isNull();
   }
 
+  // ---- 10. V14: Anhang-Tabellen TASK_ANHANG und TASK_ANHANG_GRENZE (Intake #152) ---
+  // Fremde Tabellen bleiben unberuehrt: die Sentinel-Pruefungen fuer PROD_FIRMA und PROD_BENUTZER
+  // (Abschnitt 2) laufen nach allen Migrationen einschliesslich V14 und vergleichen feldweise.
+
+  @Test
+  @DisplayName(
+      "i152_v14_task_anhang_columns: V14 in der History, Fachspalten mit Typ, Laenge und"
+          + " Nullbarkeit, Nova-Basisspalten wie V6")
+  void i152_v14_task_anhang_columns() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    assertThat(rows.stream().anyMatch(r -> "14".equals(String.valueOf(r.get("version")))))
+        .as("V14 in flyway_schema_history")
+        .isTrue();
+
+    // INFORMATION_SCHEMA.COLUMNS: Typ, Laenge, Nullbarkeit
+    assertThat(column("TASK_ANHANG", "TASK_ID")).isEqualTo(col("bigint", null, false));
+    assertThat(column("TASK_ANHANG", "KOMMENTAR_ID")).isEqualTo(col("bigint", null, true));
+    assertThat(column("TASK_ANHANG", "DATEINAME")).isEqualTo(col("nvarchar", 255, false));
+    assertThat(column("TASK_ANHANG", "MIME_TYP")).isEqualTo(col("nvarchar", 255, false));
+    assertThat(column("TASK_ANHANG", "DATEIENDUNG")).isEqualTo(col("nvarchar", 10, false));
+    assertThat(column("TASK_ANHANG", "GROESSE_BYTES")).isEqualTo(col("bigint", null, false));
+    assertThat(column("TASK_ANHANG", "SHA256")).isEqualTo(col("char", 64, false));
+    assertThat(column("TASK_ANHANG", "SPEICHERSCHLUESSEL")).isEqualTo(col("nvarchar", 400, true));
+    assertThat(column("TASK_ANHANG", "HAT_VORSCHAU")).isEqualTo(col("bit", null, false));
+    assertThat(column("TASK_ANHANG", "HOCHGELADEN_VON_REF"))
+        .isEqualTo(col("uniqueidentifier", null, false));
+    assertThat(columnNames("TASK_ANHANG")).containsAll(NOVA_BASE_COLUMNS);
+    assertThat(columnNames("TASK_ANHANG_GRENZE"))
+        .containsAll(NOVA_BASE_COLUMNS)
+        .contains("TARIF", "MAX_DATEI_BYTES");
+    assertThat(column("TASK_ANHANG_GRENZE", "TARIF")).isEqualTo(col("nvarchar", 255, false));
+    assertThat(column("TASK_ANHANG_GRENZE", "MAX_DATEI_BYTES"))
+        .isEqualTo(col("bigint", null, true));
+
+    // Basisspalten exakt wie TASK_SOURCE_CREATE_RECEIPT (V6): Typ, Laenge, Nullbarkeit
+    for (final String base : NOVA_BASE_COLUMNS) {
+      final ColumnSpec reference = column("TASK_SOURCE_CREATE_RECEIPT", base);
+      assertThat(column("TASK_ANHANG", base))
+          .as("TASK_ANHANG.%s wie V6", base)
+          .isEqualTo(reference);
+      assertThat(column("TASK_ANHANG_GRENZE", base))
+          .as("TASK_ANHANG_GRENZE.%s wie V6", base)
+          .isEqualTo(reference);
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "i152_v14_foreign_keys_and_indexes: FKs auf PROD_FIRMA, TASK, TASK_COMMENT und die"
+          + " Indizes mit Spaltenreihenfolge")
+  void i152_v14_foreign_keys_and_indexes() {
+    assertThat(foreignKeys("TASK_ANHANG"))
+        .containsExactlyInAnyOrder(
+            fk("TENANT_ID", "PROD_FIRMA", "ID"),
+            fk("TASK_ID", "TASK", "ID"),
+            fk("KOMMENTAR_ID", "TASK_COMMENT", "ID"));
+    assertThat(indexColumns("TASK_ANHANG", "IX_TASK_ANHANG_TASK"))
+        .containsExactly("TENANT_ID", "TASK_ID", "ENTITY_STATUS");
+    assertThat(indexColumns("TASK_ANHANG", "IX_TASK_ANHANG_KOMMENTAR"))
+        .containsExactly("TENANT_ID", "KOMMENTAR_ID");
+    assertIndexExists("TASK_ANHANG", "UQ_TASK_ANHANG_EXTERNALID");
+
+    assertThat(foreignKeys("TASK_ANHANG_GRENZE"))
+        .containsExactly(fk("TENANT_ID", "PROD_FIRMA", "ID"));
+    assertIndexExists("TASK_ANHANG_GRENZE", "UQ_TASK_ANHANG_GRENZE_EXTERNALID");
+    assertThat(indexColumns("TASK_ANHANG_GRENZE", "UX_TASK_ANHANG_GRENZE_TENANT_ACTIVE"))
+        .containsExactly("TENANT_ID");
+  }
+
+  @Test
+  @DisplayName(
+      "i152_v14_grenze_check_and_one_active_row_per_tenant: unbekannter Tarif und"
+          + " MAX_DATEI_BYTES 0 scheitern am CHECK, zweite aktive Zeile je Mandant am gefilterten"
+          + " Unique-Index, DEACTIVE plus ACTIVE erlaubt")
+  void i152_v14_grenze_check_and_one_active_row_per_tenant() {
+    // Mandanten anlegen, damit kein Insert am Firmen-FK scheitert (Grund wird per Name gepinnt)
+    ensureFirm(560L);
+    ensureFirm(561L);
+
+    assertThatThrownBy(() -> insertLimit(560L, "GOLD", null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("CHK_TASK_ANHANG_GRENZE_TARIF");
+    assertThatThrownBy(() -> insertLimit(560L, "EXPERT", 0L))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("CHK_TASK_ANHANG_GRENZE_MAX");
+    insertLimit(561L, "EXPERT", null);
+    assertThatThrownBy(() -> insertLimit(561L, "ENTERPRISE", null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("UX_TASK_ANHANG_GRENZE_TENANT_ACTIVE");
+    deactivateLimits(561L);
+    insertLimit(561L, "ENTERPRISE", null); // DEACTIVE + ACTIVE erlaubt
+
+    final Integer active =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_ANHANG_GRENZE]"
+                + " WHERE TENANT_ID = 561 AND ENTITY_STATUS = 'ACTIVE'",
+            Integer.class);
+    assertThat(active).as("genau eine aktive Grenze fuer Mandant 561").isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i152_v14_hat_vorschau_defaults_to_0: Insert ohne HAT_VORSCHAU und ohne Basiswerte ->"
+          + " Defaults greifen; GROESSE_BYTES 0 scheitert am CHECK")
+  void i152_v14_hat_vorschau_defaults_to_0() {
+    ensureTask(9701L);
+
+    // Insert ohne HAT_VORSCHAU, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION,
+    // KOMMENTAR_ID und SPEICHERSCHLUESSEL
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ANHANG] (ID, TENANT_ID, TASK_ID, DATEINAME, MIME_TYP,"
+            + " DATEIENDUNG, GROESSE_BYTES, SHA256, HOCHGELADEN_VON_REF)"
+            + " VALUES (8601, 500, 9701, N'bericht.pdf', 'application/pdf', 'pdf', 1024, ?,"
+            + " '77777777-0000-0000-0000-0000000000b1')",
+        SHA256_SAMPLE);
+
+    assertThat(readBit("TASK_ANHANG", "HAT_VORSCHAU", 8601L)).isFalse();
+    final Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT ENTITY_STATUS, VERSION, KOMMENTAR_ID, SPEICHERSCHLUESSEL,"
+                + " CASE WHEN EXTERNALID IS NULL THEN 0 ELSE 1 END AS HAS_EXTERNALID"
+                + " FROM [dbo].[TASK_ANHANG] WHERE ID = 8601");
+    assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(((Number) row.get("VERSION")).intValue()).isEqualTo(1);
+    assertThat(((Number) row.get("HAS_EXTERNALID")).intValue()).isEqualTo(1);
+    assertThat(row.get("KOMMENTAR_ID")).isNull();
+    assertThat(row.get("SPEICHERSCHLUESSEL")).isNull();
+
+    // CHK_TASK_ANHANG_GROESSE: leere Datei (0 Bytes) ist kein gueltiger Anhang
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "INSERT INTO [dbo].[TASK_ANHANG] (ID, TENANT_ID, TASK_ID, DATEINAME, MIME_TYP,"
+                        + " DATEIENDUNG, GROESSE_BYTES, SHA256, HOCHGELADEN_VON_REF)"
+                        + " VALUES (8602, 500, 9701, N'leer.txt', 'text/plain', 'txt', 0, ?,"
+                        + " '77777777-0000-0000-0000-0000000000b2')",
+                    SHA256_SAMPLE))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("CHK_TASK_ANHANG_GROESSE");
+  }
+
   // ---- Hilfsmethoden ---
+
+  /** Spaltendefinition aus INFORMATION_SCHEMA.COLUMNS (Typ, Zeichenlaenge, Nullbarkeit). */
+  private record ColumnSpec(String dataType, Integer maxLength, boolean nullable) {}
+
+  /** Fremdschluessel-Spalte mit Zieltabelle und Zielspalte. */
+  private record ForeignKey(String column, String refTable, String refColumn) {}
+
+  private static ColumnSpec col(
+      final String dataType, final Integer maxLength, final boolean nullable) {
+    return new ColumnSpec(dataType, maxLength, nullable);
+  }
+
+  private static ForeignKey fk(
+      final String column, final String refTable, final String refColumn) {
+    return new ForeignKey(column, refTable, refColumn);
+  }
+
+  /** Liefert die Spaltendefinition oder {@code null}, wenn die Spalte fehlt. */
+  private ColumnSpec column(final String table, final String column) {
+    final List<ColumnSpec> specs =
+        jdbcTemplate.query(
+            "SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE"
+                + " FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+            (rs, i) -> {
+              final int len = rs.getInt("CHARACTER_MAXIMUM_LENGTH");
+              return new ColumnSpec(
+                  rs.getString("DATA_TYPE"),
+                  rs.wasNull() ? null : len,
+                  "YES".equals(rs.getString("IS_NULLABLE")));
+            },
+            table,
+            column);
+    return specs.isEmpty() ? null : specs.get(0);
+  }
+
+  private List<String> columnNames(final String table) {
+    return jdbcTemplate.queryForList(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?",
+        String.class,
+        table);
+  }
+
+  private List<ForeignKey> foreignKeys(final String table) {
+    return jdbcTemplate.query(
+        "SELECT c.name AS COL, rt.name AS REF_TABLE, rc.name AS REF_COL"
+            + " FROM sys.foreign_key_columns fkc"
+            + " JOIN sys.tables t ON t.object_id = fkc.parent_object_id"
+            + " JOIN sys.columns c ON c.object_id = fkc.parent_object_id"
+            + "  AND c.column_id = fkc.parent_column_id"
+            + " JOIN sys.tables rt ON rt.object_id = fkc.referenced_object_id"
+            + " JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id"
+            + "  AND rc.column_id = fkc.referenced_column_id"
+            + " WHERE t.name = ?",
+        (rs, i) ->
+            new ForeignKey(rs.getString("COL"), rs.getString("REF_TABLE"), rs.getString("REF_COL")),
+        table);
+  }
+
+  /** Schluesselspalten eines Index in Reihenfolge (ohne INCLUDE-Spalten). */
+  private List<String> indexColumns(final String table, final String index) {
+    return jdbcTemplate.queryForList(
+        "SELECT c.name FROM sys.indexes i"
+            + " JOIN sys.tables t ON t.object_id = i.object_id"
+            + " JOIN sys.index_columns ic ON ic.object_id = i.object_id"
+            + "  AND ic.index_id = i.index_id"
+            + " JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id"
+            + " WHERE t.name = ? AND i.name = ? AND ic.is_included_column = 0"
+            + " ORDER BY ic.key_ordinal",
+        String.class,
+        table,
+        index);
+  }
+
+  private Boolean readBit(final String table, final String column, final long id) {
+    return jdbcTemplate.queryForObject(
+        "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", Boolean.class, id);
+  }
+
+  /** Legt eine Firma als Mandanten an, falls sie fehlt (FK-Ziel fuer TENANT_ID). */
+  private void ensureFirm(final long id) {
+    jdbcTemplate.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_FIRMA] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[PROD_FIRMA] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, NAME, GUELTIG_VON) "
+            + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, 'IT-FIRMA', CAST(GETDATE() AS DATE))",
+        id,
+        id,
+        id);
+  }
+
+  /** Legt eine Aufgabe des Sentinel-Mandanten 500 an, falls sie fehlt (FK-Ziel fuer TASK_ID). */
+  private void ensureTask(final long id) {
+    jdbcTemplate.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[TASK] "
+            + "(ID, TENANT_ID, TITLE, TASK_STATUS_ID, PRIORITY_ID, DIRECTION_ID, ORIGIN_TENANT_ID,"
+            + " LAST_ACTIVITY_AT) "
+            + "VALUES (?, 500, 'IT-Anhang-Aufgabe', 101, 201, 301, 500, GETDATE())",
+        id,
+        id);
+  }
+
+  private void insertLimit(final long tenantId, final String tariff, final Long maxFileBytes) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ANHANG_GRENZE] (ID, TENANT_ID, TARIF, MAX_DATEI_BYTES)"
+            + " VALUES (?, ?, ?, ?)",
+        nextLimitId++,
+        tenantId,
+        tariff,
+        new SqlParameterValue(Types.BIGINT, maxFileBytes));
+  }
+
+  private void deactivateLimits(final long tenantId) {
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_ANHANG_GRENZE] SET ENTITY_STATUS = 'DEACTIVE'"
+            + " WHERE TENANT_ID = ? AND ENTITY_STATUS = 'ACTIVE'",
+        tenantId);
+  }
 
   private void assertIndexExists(final String tableName, final String indexName) {
     final Integer count =
