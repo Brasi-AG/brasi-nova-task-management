@@ -4000,10 +4000,10 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "i145_put_weglassen_unveraendert: das Weglassen in PUT /assignees nutzt denselben"
-          + " Austrittskern, behaelt aber sein Verhalten (ASSIGNEE_FLAG bleibt, keine Historie, kein"
-          + " REMOVED)")
-  void i145_put_omission_behaviour_unchanged() {
+      "i164_put_weglassen_loescht_assignee_flag: das Weglassen in PUT /assignees nutzt denselben"
+          + " Austrittskern wie das Entfernen und setzt ASSIGNEE_FLAG zurueck (keine Historie,"
+          + " kein REMOVED)")
+  void i164_put_omission_clears_assignee_flag() {
     final Long taskId = 1458L;
     final UUID taskUuid = UUID.randomUUID();
     final Task task = taskWithId(taskId, taskUuid);
@@ -4022,7 +4022,7 @@ class AssigneeServiceTest {
 
     assertThat(removed.getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
     assertThat(removed.getExitAt()).isNotNull();
-    assertThat(removed.isAssigneeFlag()).isTrue();
+    assertThat(removed.isAssigneeFlag()).isFalse();
     assertThat(state.getUnsubscribedAt()).isNotNull();
     verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
     verify(notificationService, never())

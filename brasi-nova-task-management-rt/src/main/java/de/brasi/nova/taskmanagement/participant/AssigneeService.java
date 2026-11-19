@@ -149,7 +149,8 @@ public class AssigneeService {
    *       ASSIGN-Notification emittieren. Unveraendert bleibende Assignees werden nicht angefasst,
    *       ihr Mute bleibt bestehen.
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
-   *       setzen.
+   *       setzen und ASSIGNEE_FLAG=false (Intake #164, wie beim Entfernen); ein abgewaehlter
+   *       Ersteller wird nur de-assignt (ASSIGNEE_FLAG=false, kein Austritt).
    *   <li>Lock-Reihenfolge (Intake #167): alle Reads (Zeilen und States der neuen und der
    *       abgewaehlten Personen, Leser fuer Bump und Signal) stehen VOR der ersten Schreibung,
    *       danach die Schreibungen aller Personen (Hinzukommende und Abgewaehlte) in EINER nach UUID
@@ -216,7 +217,8 @@ public class AssigneeService {
     // BE-7 (A3): Creator-Schutz ist nun MITGLIEDSCHAFTS-Schutz (nicht mehr "Creator nie aus
     // toRemove"): ein ausgelassener Creator wird DE-ASSIGNT (ASSIGNEE_FLAG=false), behaelt aber
     // CREATOR_FLAG + PARTICIPANT_FLAG + aktiven UserState + EXIT_KIND=null (KEIN Austritt). Ein
-    // ausgelassener Nicht-Creator wird wie bisher mit EXIT_KIND=UNSUBSCRIBED ausgetreten.
+    // ausgelassener Nicht-Creator wird mit EXIT_KIND=UNSUBSCRIBED ausgetreten und verliert
+    // ASSIGNEE_FLAG (Intake #164, wie beim Entfernen).
     // Ebenfalls nach UUID sortiert (siehe toAdd).
     final List<UUID> toRemove =
         currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).sorted().toList();
@@ -388,8 +390,10 @@ public class AssigneeService {
               tenantId);
         } else {
           // Nicht-Creator: EXIT_KIND=UNSUBSCRIBED + EXIT_AT (echter Austritt) samt UNSUBSCRIBED_AT
-          // im
-          // UserState; gemeinsamer Kern mit removeParticipant (Intake #145), State vorab gelesen.
+          // im UserState; gemeinsamer Kern mit removeParticipant (Intake #145), State vorab
+          // gelesen. Intake #164: ASSIGNEE_FLAG wird wie beim Entfernen zurueckgesetzt, derselbe
+          // einzelne save wie bisher (keine zusaetzliche Schreibung, Sperrfolge unveraendert).
+          p.setAssigneeFlag(false);
           saveUnsubscribedParticipant(p);
           unsubscribeState(statesByRef.get(removedRef));
           log.info(
@@ -483,12 +487,12 @@ public class AssigneeService {
    *       ausgetretenen Archivleser der Aufgabe). Nach der ersten Schreibung liest der Pfad keine
    *       Teilnehmer-, State- oder Benutzerzeile mehr; so kann eine parallele Entfernung einer
    *       anderen Person nicht ueberkreuz warten (Deadlock 1205 unter sperrendem READ COMMITTED).
-   *   <li>Wirkung wie das Weglassen eines Nicht-Erstellers in {@link #updateAssignees}: derselbe
-   *       Austrittskern ({@link #saveUnsubscribedParticipant}, {@link #unsubscribeState}:
-   *       EXIT_KIND=UNSUBSCRIBED, EXIT_AT, UNSUBSCRIBED_AT im UserState), nur mit vorab gelesenem
-   *       State; zusaetzlich verliert ein entfernter Assignee seine Zuweisung
-   *       (ASSIGNEE_FLAG=false). Die Zeile bleibt ACTIVE, damit der READ-Guard das Archiv-Detail
-   *       weiter zulaesst. Keine neue Austrittsart.
+   *   <li>Wirkung wie das Weglassen eines Nicht-Erstellers in {@link #updateAssignees} (seit Intake
+   *       #164 identisch): ein entfernter Assignee verliert seine Zuweisung (ASSIGNEE_FLAG=false),
+   *       dann derselbe Austrittskern ({@link #saveUnsubscribedParticipant}, {@link
+   *       #unsubscribeState}: EXIT_KIND=UNSUBSCRIBED, EXIT_AT, UNSUBSCRIBED_AT im UserState), hier
+   *       mit vorab gelesenem State. Die Zeile bleibt ACTIVE, damit der READ-Guard das
+   *       Archiv-Detail weiter zulaesst. Keine neue Austrittsart.
    *   <li>Historieneintrag mit Namen-Snapshot der entfernten Person, dann REMOVED-Benachrichtigung
    *       an sie (nie an den Akteur; der Selbstfall ist oben schon 400). REMOVED ist von der
    *       Stummschaltung ausgenommen (Begruendung in {@code NotificationMuteFilter}), daher keine
@@ -710,8 +714,10 @@ public class AssigneeService {
 
   /**
    * Austrittskern, Teil 1 (Intake #145): setzt {@code EXIT_KIND=UNSUBSCRIBED} und {@code EXIT_AT}
-   * und speichert die Teilnehmerzeile. Rollenflags und {@code ENTITY_STATUS} bleiben unberuehrt;
-   * die Zeile bleibt ACTIVE (Archivzugriff). Liest nichts.
+   * und speichert die Teilnehmerzeile. Dieser Kern fasst die Rollenflags und {@code ENTITY_STATUS}
+   * nicht an; die Zeile bleibt ACTIVE (Archivzugriff). Ein austretender Assignee verliert {@code
+   * ASSIGNEE_FLAG}: der Aufrufer setzt es VOR dem Aufruf auf {@code false} (Entfernen #145,
+   * Weglassen im PUT #164), damit es bei dieser einen Schreibung bleibt. Liest nichts.
    *
    * @param participant die aktive, nicht ausgetretene Teilnehmerzeile eines Nicht-Erstellers
    */
@@ -992,9 +998,10 @@ public class AssigneeService {
       }
       // (b) ausgetretene ODER inaktive (DEACTIVE) PERSON-Zeile -> als REINEN Teilnehmer
       // reaktivieren (wie die Uebergabe: ENTITY_STATUS wieder ACTIVE). ASSIGNEE_FLAG MUSS false
-      // werden (D4-BLOCKER: ein abgewaehlter Ex-Assignee behaelt sonst ASSIGNEE_FLAG=1 und wuerde
-      // durch die Reaktivierung faelschlich wieder aktiver Assignee - findActiveAssigneesByTaskId
-      // filtert ASSIGNEE_FLAG=1 AND EXIT_KIND IS NULL). Add-Participants verleiht NIE Assignee.
+      // werden (D4-BLOCKER: eine Altdaten-Zeile eines Ex-Assignees traegt noch ASSIGNEE_FLAG=1 -
+      // das Weglassen im PUT loescht es erst seit Intake #164 - und wuerde durch die Reaktivierung
+      // faelschlich wieder aktiver Assignee; findActiveAssigneesByTaskId filtert ASSIGNEE_FLAG=1
+      // AND EXIT_KIND IS NULL). Add-Participants verleiht NIE Assignee.
       p.setParticipantFlag(true);
       p.setAssigneeFlag(false);
       p.setExitKind(null);

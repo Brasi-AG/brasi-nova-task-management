@@ -1458,14 +1458,32 @@ class AssigneeControllerIT {
                 .content(
                     om.writeValueAsString(Map.of("assignees", List.of(ASSIGNEE_REF.toString())))))
         .andExpect(status().isNoContent());
-    // ... dann abwaehlen (EXIT_KIND=UNSUBSCRIBED; ASSIGNEE_FLAG bleibt 1 auf der ausgetretenen
-    // Zeile).
+    // ... dann abwaehlen (Intake #164: EXIT_KIND=UNSUBSCRIBED und ASSIGNEE_FLAG=0 auf der
+    // ausgetretenen Zeile, wie beim Entfernen per DELETE).
     mvc.perform(
             put("/api/v1/tasks/" + taskId + "/assignees")
                 .header("Authorization", "Bearer " + tokenA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(om.writeValueAsString(Map.of("assignees", List.of()))))
         .andExpect(status().isNoContent());
+    final long dbId = taskDbId(taskId);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND EXIT_KIND = 'UNSUBSCRIBED'"
+                    + " AND ASSIGNEE_FLAG = 0",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Weglassen im PUT: ausgetreten (UNSUBSCRIBED), Zuweisung weg (Intake #164)")
+        .isEqualTo(1);
+
+    // Altdaten nachstellen: vor Intake #164 behielt eine so ausgetretene Zeile ASSIGNEE_FLAG=1.
+    // Die Reaktivierung per POST participants muss das Flag auch dann zuruecksetzen.
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_PARTICIPANT] SET ASSIGNEE_FLAG = 1"
+            + " WHERE TASK_ID = ? AND PARTICIPANT_REF = ?",
+        dbId,
+        ASSIGNEE_REF);
 
     // POST participants [ASSIGNEE_REF] -> reaktiviert als reiner Teilnehmer, ASSIGNEE_FLAG=0.
     mvc.perform(
