@@ -216,6 +216,15 @@ class MembershipConcurrencyIT {
   private static final UUID PAIR_P3 = UUID.fromString("00000059-00f3-0059-0000-000000000597");
   private static final UUID PAIR_P4 = UUID.fromString("00000059-00f4-0059-0000-000000000597");
 
+  /**
+   * PUT gegen HANDOVER (Codex-Review Runde 2): HO_A ist aktiver Assignee, HO_B reiner Beteiligter;
+   * nach UUID gilt HO_A &lt; HO_B. Der PUT des Erstellers nimmt HO_B hinzu und laesst HO_A weg,
+   * HO_B uebergibt gleichzeitig an HO_A.
+   */
+  private static final UUID HO_A = UUID.fromString("00000059-0101-0059-0000-000000000597");
+
+  private static final UUID HO_B = UUID.fromString("00000059-0102-0059-0000-000000000597");
+
   private static final long STATUS_OPEN = 101L;
   private static final long PRIORITY_NORMAL = 202L;
   private static final long DIRECTION = 301L;
@@ -228,6 +237,7 @@ class MembershipConcurrencyIT {
   private static final int PUT_EXIT = 4;
   private static final int ADD_SAME = 5;
   private static final int ADD_PAIRS = 6;
+  private static final int PUT_HANDOVER = 7;
 
   /** Fremdzeilen je Tabelle (Phase mit Fremdzeilen, siehe Klassen-Javadoc). */
   private static final int PADDING_ROWS = 2000;
@@ -330,6 +340,8 @@ class MembershipConcurrencyIT {
     seedBenutzer(jt, 597509L, PAIR_P2, "pair-p2@brasi.de");
     seedBenutzer(jt, 597510L, PAIR_P3, "pair-p3@brasi.de");
     seedBenutzer(jt, 597511L, PAIR_P4, "pair-p4@brasi.de");
+    seedBenutzer(jt, 597512L, HO_A, "ho-a@brasi.de");
+    seedBenutzer(jt, 597513L, HO_B, "ho-b@brasi.de");
     for (final Phase phase : Phase.values()) {
       // PUT x PUT: Ersteller, A, B und C sind aktive Assignees.
       seedMembers(
@@ -386,6 +398,14 @@ class MembershipConcurrencyIT {
           member(PAIR_P2, false, false, true),
           member(PAIR_P3, false, false, true),
           member(PAIR_P4, false, false, true));
+      // PUT gegen HANDOVER: Ersteller und HO_A Assignees, HO_B reiner Beteiligter.
+      seedMembers(
+          jt,
+          phase,
+          PUT_HANDOVER,
+          member(CREATOR_REF, true, true, false),
+          member(HO_A, false, true, false),
+          member(HO_B, false, false, false));
     }
   }
 
@@ -435,6 +455,15 @@ class MembershipConcurrencyIT {
           + " 409, nie 1205/500")
   void i167_unpadded_add_pairs() {
     addPairs(Phase.UNPADDED);
+  }
+
+  @Test
+  @Order(7)
+  @DisplayName(
+      "i167_ohne_fremdzeilen_put_x_handover: PUT (+B, -A) gegen HANDOVER von B an A, verzahnt;"
+          + " eine 204, eine 409, nie 1205/500")
+  void i167_unpadded_put_handover() {
+    putHandover(Phase.UNPADDED);
   }
 
   // ---- Szenarien mit Fremdzeilen (Index-Seeks wie im Betrieb)
@@ -499,6 +528,17 @@ class MembershipConcurrencyIT {
   void i167_parallel_add_of_two_persons_each_interleaved_never_deadlock() {
     ensurePadded();
     addPairs(Phase.PADDED);
+  }
+
+  @Test
+  @Order(17)
+  @DisplayName(
+      "i167_put_x_handover (Codex-Review Runde 2): der Ersteller nimmt B hinzu und laesst A weg,"
+          + " B uebergibt gleichzeitig an A; beide halten ihre erste Person und greifen zur zweiten"
+          + " -> eine 204, eine 409 (Versionskonflikt, voller Rollback), nie 1205/500")
+  void i167_parallel_put_and_handover_crossing_persons_never_deadlock() {
+    ensurePadded();
+    putHandover(Phase.PADDED);
   }
 
   // ---- Szenario-Ablaeufe
@@ -655,6 +695,54 @@ class MembershipConcurrencyIT {
    * andere ihre erste Person X-gesperrt haelt. Laese der Kern hier noch Zeilen, wartete jede auf
    * die andere (Deadlock 1205, so vor Fix-Runde 2). Danach Sync 2 wie in den anderen Szenarien.
    */
+  private void putHandover(final Phase phase) {
+    assertLockingReadCommitted();
+    final long taskId = phase.taskId(PUT_HANDOVER);
+    final UUID taskUuid = phase.taskUuid(PUT_HANDOVER);
+    final int taskVersionBefore = taskVersion(taskId);
+
+    // Gewinnerin: PUT des Erstellers {Ersteller, HO_B}, also +HO_B und -HO_A. Verliererin: HO_B
+    // uebergibt an HO_A (schon Assignee). Ohne gemeinsame UUID-Folge sperrt der PUT HO_B vor HO_A,
+    // der HANDOVER HO_A (Ziel) vor HO_B (Akteur). Die Verliererin beginnt erst, wenn die Gewinnerin
+    // ihre erste Person geschrieben hat; danach greifen beide zur zweiten.
+    final Outcome outcome =
+        runPair(
+            "i167-put-handover-" + phase,
+            true,
+            true,
+            CREATOR_REF,
+            () ->
+                service.updateAssignees(
+                    taskUuid, new AssigneeUpdateInput(Set.of(CREATOR_REF, HO_B))),
+            HO_B,
+            () -> service.exit(taskUuid, new ExitInput(ExitKind.HANDOVER, List.of(HO_A), false)));
+
+    // Beide schreiben HO_A und HO_B: nach dem Fix wartet die Verliererin an der ersten gemeinsamen
+    // Zeile auf die Gewinnerin (Serialisieren, kein Zyklus), auch mit Fremdzeilen.
+    assertNoDeadlockLoserMayWait(outcome);
+    assertThat(outcome.gates().betweenPersonsReached.get())
+        .as("beide erreichten den Treffpunkt nach ihrer ersten Person")
+        .isEqualTo(2);
+    assertWinnerCommittedLoserVersionConflict(outcome);
+    assertThat(taskVersion(taskId)).as("TASK-VERSION genau +1").isEqualTo(taskVersionBefore + 1);
+    assertThat(exitedUnsubscribed(taskId, HO_A)).as("HO_A abgewaehlt").isEqualTo(1);
+    assertThat(userStateUnsubscribed(taskId, HO_A)).as("State HO_A abgemeldet").isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID=? AND"
+                    + " PARTICIPANT_REF=? AND EXIT_KIND IS NULL AND ASSIGNEE_FLAG=1"
+                    + " AND ENTITY_STATUS='ACTIVE'",
+                taskId,
+                HO_B))
+        .as("HO_B aktiver Assignee (PUT), nicht ausgetreten (Handover zurueckgerollt)")
+        .isEqualTo(1);
+    assertThat(count("SELECT COUNT(*) FROM [dbo].[TASK_HANDOVER] WHERE TASK_ID=?", taskId))
+        .as("kein Handover-Ereignis der Verliererin")
+        .isZero();
+    assertThat(historyCount(taskId, HO_B)).as("keine Historie der Verliererin").isZero();
+    assertSingleSignalContaining(HO_B);
+  }
+
   private void addPairs(final Phase phase) {
     assertLockingReadCommitted();
     final long taskId = phase.taskId(ADD_PAIRS);
@@ -742,9 +830,25 @@ class MembershipConcurrencyIT {
       final Runnable winnerCall,
       final UUID loserActor,
       final Runnable loserCall) {
+    return runPair(label, interleaved, false, winnerActor, winnerCall, loserActor, loserCall);
+  }
+
+  /**
+   * Wie oben; mit {@code loserAfterWinnerFirstPerson} beginnt die Verliererin (nur verzahnt) erst,
+   * wenn die Gewinnerin ihre erste Person geschrieben hat ({@link Gates}).
+   */
+  private Outcome runPair(
+      final String label,
+      final boolean interleaved,
+      final boolean loserAfterWinnerFirstPerson,
+      final UUID winnerActor,
+      final Runnable winnerCall,
+      final UUID loserActor,
+      final Runnable loserCall) {
     inboxSignalPort.clear();
     notificationPushPort.clear();
-    final Gates gates = new Gates(jdbcTemplate, new JdbcTemplate(master), interleaved);
+    final Gates gates =
+        new Gates(jdbcTemplate, new JdbcTemplate(master), interleaved, loserAfterWinnerFirstPerson);
     GATES.set(gates);
     final AtomicReference<Throwable> winnerError = new AtomicReference<>();
     final AtomicReference<Throwable> loserError = new AtomicReference<>();
@@ -963,6 +1067,8 @@ class MembershipConcurrencyIT {
     private final AtomicBoolean loserPassedBetween = new AtomicBoolean(false);
     private final AtomicInteger betweenPersonsReached = new AtomicInteger();
     private final AtomicReference<String> blockedBetweenPersons = new AtomicReference<>();
+    private final boolean loserAfterWinnerFirstPerson;
+    private final CountDownLatch winnerFirstPersonDone = new CountDownLatch(1);
 
     /**
      * @param txJdbc JdbcTemplate der Anwendung; im Thread einer Transaktion laeuft er auf deren
@@ -972,9 +1078,23 @@ class MembershipConcurrencyIT {
      *     Treffpunkt nach der ersten aufgenommenen Person ({@link #betweenPersons})
      */
     Gates(final JdbcTemplate txJdbc, final JdbcTemplate probe, final boolean interleaved) {
+      this(txJdbc, probe, interleaved, false);
+    }
+
+    /**
+     * @param loserAfterWinnerFirstPerson nur verzahnt: die Verliererin beginnt ihre Schreibungen
+     *     erst, wenn die Gewinnerin ihre erste Person geschrieben hat; so haelt die Gewinnerin die
+     *     erste gemeinsame Zeile, und der Ausgang (wer committet) ist festgelegt
+     */
+    Gates(
+        final JdbcTemplate txJdbc,
+        final JdbcTemplate probe,
+        final boolean interleaved,
+        final boolean loserAfterWinnerFirstPerson) {
       this.txJdbc = txJdbc;
       this.probe = probe;
       this.interleaved = interleaved;
+      this.loserAfterWinnerFirstPerson = loserAfterWinnerFirstPerson;
     }
 
     /**
@@ -993,6 +1113,9 @@ class MembershipConcurrencyIT {
         return;
       }
       betweenPersonsReached.incrementAndGet();
+      if (winner) {
+        winnerFirstPersonDone.countDown();
+      }
       betweenPersonsArrived.countDown();
       final AtomicReference<String> observed = new AtomicReference<>();
       awaitOrObserveBlock(
@@ -1021,10 +1144,12 @@ class MembershipConcurrencyIT {
         Thread.currentThread().interrupt();
         gateTimedOut.set(true);
       }
-      if (LOSER.equals(role) && !interleaved) {
-        // Die Gewinnerin haelt keine Sperre, auf die die Verliererin hier warten koennte.
+      if (LOSER.equals(role) && (!interleaved || loserAfterWinnerFirstPerson)) {
+        // Die Gewinnerin haelt keine Sperre, auf die die Verliererin hier warten koennte. Verzahnt
+        // mit Vorlauf wartet die Verliererin nur bis nach der ersten Person der Gewinnerin.
+        final CountDownLatch until = interleaved ? winnerFirstPersonDone : winnerWritesDone;
         try {
-          if (!winnerWritesDone.await(GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+          if (!until.await(GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
             gateTimedOut.set(true);
           }
         } catch (final InterruptedException e) {
@@ -1060,6 +1185,7 @@ class MembershipConcurrencyIT {
     void finished(final String role) {
       if (WINNER.equals(role)) {
         winnerWritesDone.countDown();
+        winnerFirstPersonDone.countDown();
         winnerDone.countDown();
       } else {
         loserWritesDone.countDown();
@@ -1428,6 +1554,14 @@ class MembershipConcurrencyIT {
 
     @Override
     protected void onAfterParticipantAddForTest(final Long taskId, final UUID ref) {
+      final Gates gates = GATES.get();
+      if (gates != null) {
+        gates.betweenPersons();
+      }
+    }
+
+    @Override
+    protected void onAfterPersonWriteForTest(final Long taskId, final UUID ref) {
       final Gates gates = GATES.get();
       if (gates != null) {
         gates.betweenPersons();

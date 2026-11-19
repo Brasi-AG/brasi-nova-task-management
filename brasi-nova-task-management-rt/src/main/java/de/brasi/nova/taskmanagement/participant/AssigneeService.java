@@ -349,6 +349,8 @@ public class AssigneeService {
           taskId,
           actorRef,
           tenantId);
+      // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Person. Produktiv No-Op.
+      onAfterPersonWriteForTest(taskId, assigneeRef);
     }
 
     // Abgewaehlte Assignees abhandeln (A3: Creator = reiner Mitgliedschafts-Schutz).
@@ -392,6 +394,8 @@ public class AssigneeService {
       // (ASSIGNEE_FLAG bzw. EXIT_KIND/EXIT_AT/UNSUBSCRIBED_AT) -> Generation muss atomar gebumpt
       // werden. Ref in affectedRefs gesammelt; der (sortierte) Bump erfolgt gebuendelt NACH dem
       // TASK-save (Codex #6).
+      // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Person. Produktiv No-Op.
+      onAfterPersonWriteForTest(taskId, removedRef);
     }
 
     // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor TASK-save
@@ -1353,6 +1357,8 @@ public class AssigneeService {
             task.getTitle(),
             actorRef);
         notifyTargets.add(targetRef);
+        // Test-Seam (Codex-Review Runde 2, #167): nach den Schreibungen je Ziel. Produktiv No-Op.
+        onAfterPersonWriteForTest(taskId, targetRef);
       }
     }
 
@@ -1731,6 +1737,22 @@ public class AssigneeService {
    * @param ref UUID der gerade verarbeiteten Person
    */
   protected void onAfterParticipantAddForTest(final Long taskId, final UUID ref) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op, Codex-Review Runde 2 #167): Haken in {@link #updateAssignees} und
+   * {@link #exit} NACH den Schreibungen einer Person (Teilnehmerzeile, State, Benachrichtigung) und
+   * VOR der naechsten Person: im PUT nach jeder hinzukommenden und jeder abgewaehlten Person, beim
+   * HANDOVER nach jedem Ziel. Die Transaktion haelt hier die X-Sperren der bisher geschriebenen
+   * Personen. Der Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}, PUT gegen HANDOVER)
+   * verzahnt daran zwei Pfade, die dieselben Personen in verschiedener Reihenfolge schreiben. Im
+   * Produktivbetrieb ein No-Op.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param ref UUID der gerade geschriebenen Person
+   */
+  protected void onAfterPersonWriteForTest(final Long taskId, final UUID ref) {
     // No-Op im Produktivbetrieb.
   }
 
