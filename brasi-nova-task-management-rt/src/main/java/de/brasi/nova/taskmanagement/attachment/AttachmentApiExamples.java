@@ -3,8 +3,9 @@ package de.brasi.nova.taskmanagement.attachment;
 import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 
 /**
- * OpenAPI-Beispieltexte (JSON) fuer die Anhang-Operationen (Intake #152), hier fuer {@code POST
- * /api/v1/tasks/{id}/attachments}.
+ * OpenAPI-Beispieltexte (JSON) fuer die Anhang-Operationen (Intake #152): {@code POST} und {@code
+ * GET /api/v1/tasks/{id}/attachments} sowie die Auslieferung von Inhalt, Download und
+ * Vorschaubild.
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
@@ -185,6 +186,154 @@ public final class AttachmentApiExamples {
           + TRACE
           + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
           + " Aufgabe nicht gefunden.\"]}";
+
+  // ---- Lesen und Auslieferung (Task A8) -----------------------------------------------------
+
+  /** Beispiel-UUID einer anderen hochladenden Person. */
+  private static final String OTHER_UPLOADER_REF = "880e8400-e29b-41d4-a716-446655440004";
+
+  /** Pfad eines Anhangs in den Fehlerbeispielen der Auslieferung. */
+  private static final String PATH_ATTACHMENT = PATH_UPLOAD + "/" + PDF_REF;
+
+  /** Kopf eines 404-Beispiels bis zur Meldung. */
+  private static final String NOT_FOUND_HEAD =
+      ERROR_HEAD + "\"status\":404,\"error\":\"Not Found\",\"message\":\"";
+
+  /** Mitte eines 404-Beispiels: Schluessel, Trace-ID und Beginn von details. */
+  private static final String NOT_FOUND_MIDDLE =
+      "\",\"errorKey\":\"NOVA_NOT_FOUND\","
+          + TRACE
+          + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException: ";
+
+  /** Meldung und Ende eines 404-Beispiels mit unsichtbarer Aufgabe. */
+  private static final String TASK_NOT_FOUND_TAIL = "Aufgabe nicht gefunden.\"]}";
+
+  /** Meldung und Ende eines 404-Beispiels mit unbekanntem Anhang. */
+  private static final String ATTACHMENT_NOT_FOUND_TAIL = "Anhang nicht gefunden.\"]}";
+
+  /** Kopf eines 400-Beispiels mit einer Nicht-UUID als Anhang im Pfad, bis zum Pfad. */
+  private static final String BAD_ATTACHMENT_PATH_HEAD =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der URL-Parameter 'attachmentId' hat einen ungültigen Wert. Ein Wert"
+          + " vom Typ 'UUID' wird erwartet.\",\"path\":\""
+          + PATH_UPLOAD
+          + "/keine-uuid/";
+
+  /** Ende eines 400-Beispiels mit einer Nicht-UUID als Anhang im Pfad, nach dem Pfad. */
+  private static final String BAD_ATTACHMENT_PATH_TAIL =
+      "\",\"errorKey\":\"NOVA_TYPE_MISMATCH\"," + TRACE + "\"details\":[\"Wert: 'keine-uuid'\"]}";
+
+  /**
+   * 200 der Liste: Aufgaben-Anhaenge in Hochlade-Reihenfolge; das PDF hat der Anfrager selbst
+   * hochgeladen ({@code removable} true), die Textdatei eine andere Person ({@code removable}
+   * false, der Anfrager ist nicht Ersteller der Aufgabe).
+   */
+  public static final String LIST =
+      "[{\"id\":\""
+          + PDF_REF
+          + "\",\"fileName\":\"Bericht.pdf\",\"mimeType\":\"application/pdf\","
+          + "\"sizeBytes\":184320,\"hasThumbnail\":true,\"uploadedById\":\""
+          + UPLOADER_REF
+          + "\",\"createdAt\":\"2026-11-19T09:15:00Z\",\"removable\":true,"
+          + "\"links\":{\"content\":\""
+          + LINK_BASE
+          + PDF_REF
+          + "/content\",\"download\":\""
+          + LINK_BASE
+          + PDF_REF
+          + "/download\",\"thumbnail\":\""
+          + LINK_BASE
+          + PDF_REF
+          + "/thumbnail\"}},"
+          + "{\"id\":\""
+          + TXT_REF
+          + "\",\"fileName\":\"Notiz.txt\",\"mimeType\":\"text/plain\","
+          + "\"sizeBytes\":2048,\"hasThumbnail\":false,\"uploadedById\":\""
+          + OTHER_UPLOADER_REF
+          + "\",\"createdAt\":\"2026-11-19T09:20:00Z\",\"removable\":false,"
+          + "\"links\":{\"content\":\""
+          + LINK_BASE
+          + TXT_REF
+          + "/content\",\"download\":\""
+          + LINK_BASE
+          + TXT_REF
+          + "/download\",\"thumbnail\":null}}]";
+
+  /** 200 von Inhalt und Download: Binaerinhalt, hier der Anfang eines PDF in Base64. */
+  public static final String CONTENT_BINARY = "JVBERi0xLjcK";
+
+  /** 200 des Vorschaubilds: Binaerinhalt, hier der Anfang eines JPEG in Base64. */
+  public static final String THUMBNAIL_BINARY = "/9j/4AAQSkZJRgABAQAAAQABAAD/";
+
+  /** 400: keine gueltige UUID als Anhang im Pfad des Inhalts. */
+  public static final String BAD_REQUEST_CONTENT_PATH =
+      BAD_ATTACHMENT_PATH_HEAD + "content" + BAD_ATTACHMENT_PATH_TAIL;
+
+  /** 400: keine gueltige UUID als Anhang im Pfad des Downloads. */
+  public static final String BAD_REQUEST_DOWNLOAD_PATH =
+      BAD_ATTACHMENT_PATH_HEAD + "download" + BAD_ATTACHMENT_PATH_TAIL;
+
+  /** 400: keine gueltige UUID als Anhang im Pfad des Vorschaubilds. */
+  public static final String BAD_REQUEST_THUMBNAIL_PATH =
+      BAD_ATTACHMENT_PATH_HEAD + "thumbnail" + BAD_ATTACHMENT_PATH_TAIL;
+
+  /** 404 des Inhalts: Aufgabe nicht sichtbar oder Anfrager kein Mitglied. */
+  public static final String NOT_FOUND_CONTENT_TASK =
+      NOT_FOUND_HEAD
+          + "Aufgabe nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/content"
+          + NOT_FOUND_MIDDLE
+          + TASK_NOT_FOUND_TAIL;
+
+  /** 404 des Inhalts: Anhang unbekannt, deaktiviert, an anderer Aufgabe oder Datei fehlt. */
+  public static final String NOT_FOUND_CONTENT_ATTACHMENT =
+      NOT_FOUND_HEAD
+          + "Anhang nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/content"
+          + NOT_FOUND_MIDDLE
+          + ATTACHMENT_NOT_FOUND_TAIL;
+
+  /** 404 des Downloads: Aufgabe nicht sichtbar oder Anfrager kein Mitglied. */
+  public static final String NOT_FOUND_DOWNLOAD_TASK =
+      NOT_FOUND_HEAD
+          + "Aufgabe nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/download"
+          + NOT_FOUND_MIDDLE
+          + TASK_NOT_FOUND_TAIL;
+
+  /** 404 des Downloads: Anhang unbekannt, deaktiviert, an anderer Aufgabe oder Datei fehlt. */
+  public static final String NOT_FOUND_DOWNLOAD_ATTACHMENT =
+      NOT_FOUND_HEAD
+          + "Anhang nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/download"
+          + NOT_FOUND_MIDDLE
+          + ATTACHMENT_NOT_FOUND_TAIL;
+
+  /** 404 des Vorschaubilds: Aufgabe nicht sichtbar oder Anfrager kein Mitglied. */
+  public static final String NOT_FOUND_THUMBNAIL_TASK =
+      NOT_FOUND_HEAD
+          + "Aufgabe nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/thumbnail"
+          + NOT_FOUND_MIDDLE
+          + TASK_NOT_FOUND_TAIL;
+
+  /**
+   * 404 des Vorschaubilds: Anhang unbekannt oder deaktiviert, Typ ohne Vorschaubild, Datei fehlt
+   * oder Erzeugung gescheitert.
+   */
+  public static final String NOT_FOUND_THUMBNAIL_ATTACHMENT =
+      NOT_FOUND_HEAD
+          + "Anhang nicht gefunden.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/thumbnail"
+          + NOT_FOUND_MIDDLE
+          + ATTACHMENT_NOT_FOUND_TAIL;
 
   /** 409: nebenlaeufiger Versionskonflikt beim Fortschreiben der Aufgabe. */
   public static final String CONFLICT_VERSION =

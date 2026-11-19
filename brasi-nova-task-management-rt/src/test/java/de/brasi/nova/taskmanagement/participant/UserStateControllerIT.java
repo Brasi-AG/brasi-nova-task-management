@@ -737,6 +737,7 @@ class UserStateControllerIT {
   @org.springframework.context.annotation.ComponentScan(
       basePackages = {
         "de.brasi.nova.taskmanagement.resolver",
+        "de.brasi.nova.taskmanagement.attachment",
         "de.brasi.nova.taskmanagement.task",
         "de.brasi.nova.taskmanagement.time",
         "de.brasi.nova.taskmanagement.participant",

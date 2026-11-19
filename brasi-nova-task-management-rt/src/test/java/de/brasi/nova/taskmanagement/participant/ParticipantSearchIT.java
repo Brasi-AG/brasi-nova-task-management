@@ -455,6 +455,7 @@ class ParticipantSearchIT {
   @org.springframework.context.annotation.ComponentScan(
       basePackages = {
         "de.brasi.nova.taskmanagement.resolver",
+        "de.brasi.nova.taskmanagement.attachment",
         "de.brasi.nova.taskmanagement.task",
         "de.brasi.nova.taskmanagement.participant",
         "de.brasi.nova.taskmanagement.comment",

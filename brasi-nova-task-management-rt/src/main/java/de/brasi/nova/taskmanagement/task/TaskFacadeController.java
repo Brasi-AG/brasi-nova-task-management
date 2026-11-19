@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.task;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentController;
 import de.brasi.nova.taskmanagement.comment.CommentController;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.inbox.InboxSnapshotService;
@@ -130,6 +131,19 @@ import org.springframework.web.bind.annotation.RestController;
           linkTo = TaskHateoas.Targets.MUTE,
           controller = UserStateController.class,
           title = TaskHateoas.Titles.MUTE,
+          conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.ATTACHMENTS,
+          linkTo = TaskHateoas.Targets.LIST_ATTACHMENTS,
+          controller = AttachmentController.class,
+          title = TaskHateoas.Titles.ATTACHMENTS,
+          params = {@LinkParam(name = "id", source = "#dto.id")}),
+      @LinkRule(
+          rel = TaskHateoas.Rels.ADD_ATTACHMENT,
+          linkTo = TaskHateoas.Targets.UPLOAD_ATTACHMENTS,
+          controller = AttachmentController.class,
+          title = TaskHateoas.Titles.ADD_ATTACHMENT,
           conditions = {TaskHateoas.Specs.IS_WRITE_MEMBER},
           params = {@LinkParam(name = "id", source = "#dto.id")})
     },
@@ -444,7 +458,8 @@ public class TaskFacadeController {
                                 + "\"dueDate\": \"2026-12-31\","
                                 + "\"lastActivityAt\": \"2026-10-18T08:00:00Z\","
                                 + "\"commentCount\": 0,"
-                                + "\"history\": []"
+                                + "\"history\": [],"
+                                + "\"attachments\": []"
                                 + "}"))),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
     @ApiResponse(

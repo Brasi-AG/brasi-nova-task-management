@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentQueryService;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
@@ -83,7 +84,8 @@ class TaskDetailServiceTest {
             resolver,
             new AuditTimeConverter("Europe/Berlin"),
             membershipGuard,
-            sourceRegistry);
+            sourceRegistry,
+            mock(AttachmentQueryService.class));
 
     when(resolver.resolveTaskStatusCode(any())).thenReturn("OPEN");
     when(resolver.resolveTaskPriorityCode(any())).thenReturn("NORMAL");

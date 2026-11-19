@@ -50,6 +50,12 @@ public final class TaskHateoas {
     /** Item-Rel: Mute-Marker setzen (PUT /tasks/{id}/mute). */
     public static final String MUTE = "mute";
 
+    /** Item-Rel: Anhaenge lesen (GET /tasks/{id}/attachments, Intake #152). */
+    public static final String ATTACHMENTS = "attachments";
+
+    /** Item-Rel: Dateien anhaengen (POST /tasks/{id}/attachments, Intake #152). */
+    public static final String ADD_ATTACHMENT = "add-attachment";
+
     /** Collection-Rel: Aufgabe anlegen (POST /tasks). */
     public static final String CREATE = "create";
 
@@ -100,6 +106,9 @@ public final class TaskHateoas {
     /** PUT {@code /api/v1/tasks/{id}/mute} (Mute-Marker setzen). */
     public static final String MUTE = "userState.mute";
 
+    /** GET {@code /api/v1/tasks/{id}/attachments} (Anhaenge der Aufgabe lesen). */
+    public static final String LIST_ATTACHMENTS = "attachment.list";
+
     /** POST {@code /api/v1/tasks/{id}/attachments} (Dateien an die Aufgabe anhaengen). */
     public static final String UPLOAD_ATTACHMENTS = "attachment.upload";
   }
@@ -137,6 +146,12 @@ public final class TaskHateoas {
 
     /** Titel des {@code mute}-Links. */
     public static final String MUTE = "Mute-Marker setzen";
+
+    /** Titel des {@code attachments}-Links. */
+    public static final String ATTACHMENTS = "Anhaenge lesen";
+
+    /** Titel des {@code add-attachment}-Links. */
+    public static final String ADD_ATTACHMENT = "Datei anhaengen";
 
     /** Titel des {@code create}-Links. */
     public static final String CREATE = "Aufgabe anlegen";
