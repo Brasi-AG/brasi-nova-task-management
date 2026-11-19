@@ -425,8 +425,11 @@ public interface TaskKeysetQueryRepository extends BaseTaskRepository {
    * TASK_TAG}) und Personennamen ({@code PROD_BENUTZER}) werden dagegen im Live-Stand verglichen;
    * eine Umbenennung zwischen zwei Seiten erhoeht keine Generation und kann einen Treffer
    * verschieben oder auslassen (kein 410, keine Dublette, weil das Keyset die Position festhaelt).
-   * Zuordnungsaenderungen von Tags und Teilnehmern laufen ueber Mutationen mit Generation-Bump
-   * (Patch, Assignees, Participants, exit) und sind damit gebunden.
+   * Zuordnungsaenderungen von Tags und Teilnehmern laufen ueber Mutationen, die die Generation
+   * aller Leser der Aufgabe erhoehen, also der aktiven Leser und der ausgetretenen Archivleser
+   * (Patch, Kommentar, {@code PUT /assignees}, {@code POST /participants}, Entfernen und exit;
+   * Intake #145 und #166), und sind damit gebunden: ein alter Such-Cursor jedes dieser Leser
+   * liefert danach 410.
    *
    * @param userRef UUID des Benutzers
    * @param doneId aufgeloeste ID fuer "DONE"

@@ -3,6 +3,8 @@ package de.brasi.nova.taskmanagement.participant;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveSearchPageSchema;
 import de.brasi.nova.taskmanagement.participant.model.MarkerInput;
 import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
  * (READ-Member, ausgetretene eingeschlossen), weil das Gesehen-Markieren zum Lesen gehoert.
  */
 @RestController
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class UserStateController {
 
@@ -62,7 +65,15 @@ public class UserStateController {
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert)."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.PIN)))
   })
   @PutMapping("/{id}/pin")
   @HateoasLinkTarget(TaskHateoas.Targets.PIN)
@@ -92,7 +103,15 @@ public class UserStateController {
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert)."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.FLAG)))
   })
   @PutMapping("/{id}/flag")
   @HateoasLinkTarget(TaskHateoas.Targets.FLAG)
@@ -168,7 +187,8 @@ public class UserStateController {
         description =
             "Nebenlaeufiger Versionskonflikt: der persoenliche Benutzerzustand der Aufgabe wurde"
                 + " zwischenzeitlich durch einen parallelen Schreibzugriff geaendert; die Anfrage"
-                + " gegen den frischen Stand wiederholen.",
+                + " gegen den frischen Stand wiederholen."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",
@@ -265,7 +285,15 @@ public class UserStateController {
             @Content(
                 mediaType = "application/json",
                 schema = @Schema(implementation = ApiError.class),
-                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_SEEN)))
+                examples = @ExampleObject(value = ParticipantApiExamples.NOT_FOUND_SEEN))),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.SEEN)))
   })
   @PutMapping("/{id}/seen")
   public ResponseEntity<Void> seen(

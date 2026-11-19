@@ -78,7 +78,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *       Participant-VERSION-Optimistic-Lock (OptimisticLockingFailureException) ->
  *       Re-Read-Translate -> SKIP. Assert: beide 204 (beide aeusseren Tx committen, keine
  *       UnexpectedRollbackException), genau 1 Catch, {@code XACT_STATE()=1} (committable), 1 aktive
- *       Zeile, 1 UserState, Generation +1, TASK-VERSION unveraendert.
+ *       Zeile, 1 UserState, Generation +1, TASK-VERSION genau +1 (nur die Gewinnerin speichert die
+ *       Aufgabe, Intake #167).
  *   <li><b>{@link #insert_unique_recovery_via_seam_injection}</b> - EINTHREADIGER Beweis der
  *       UNIQUE-Insert-Recovery (DuplicateKeyException-Pfad): der Test-Seam injiziert zwischen
  *       Vorab-Read und save EINMALIG eine bereits committete Konflikt-Zeile ueber eine WIRKLICH
@@ -313,8 +314,8 @@ class ParticipantAddConcurrencyIT {
     assertThat(userStateRows(TASK_REACT_ID, REACT_REF)).as("genau 1 UserState").isEqualTo(1);
     assertThat(generation(REACT_REF)).as("Generation exakt +1 (kein Doppel-Bump)").isEqualTo(1L);
     assertThat(taskVersion(TASK_REACT_UUID))
-        .as("TASK-VERSION unveraendert (additive Union)")
-        .isEqualTo(versionBefore);
+        .as("TASK-VERSION genau +1: nur die Gewinnerin speichert die Aufgabe (Intake #167)")
+        .isEqualTo(versionBefore + 1);
     // Intake #147: genau eine PARTICIPANT-Benachrichtigung - die Gewinnerin meldet, die
     // Verliererin (Re-Read-SKIP) nicht; kein Doppel-emit wie beim Generation-Bump.
     verify(notificationService, times(1))
@@ -355,7 +356,9 @@ class ParticipantAddConcurrencyIT {
       assertThat(activeUserStateRows(TASK_ORDER_ID, ref)).isEqualTo(1);
       assertThat(generation(ref)).as("genau ein Bump pro reaktiviertem Ref").isEqualTo(1L);
     }
-    assertThat(taskVersion(TASK_ORDER_UUID)).isEqualTo(taskVersionBefore);
+    // Intake #167: genau eine Aufnahme speichert die Aufgabe; die andere aendert nichts (SKIP je
+    // Ref).
+    assertThat(taskVersion(TASK_ORDER_UUID)).isEqualTo(taskVersionBefore + 1);
     // Intake #147: je reaktivierter Person genau eine PARTICIPANT-Benachrichtigung, trotz der
     // gegenlaeufigen Ref-Reihenfolge beider Requests (der Verlierer je Ref meldet nichts).
     for (final UUID ref : List.of(ORDER_REF_A, ORDER_REF_B)) {

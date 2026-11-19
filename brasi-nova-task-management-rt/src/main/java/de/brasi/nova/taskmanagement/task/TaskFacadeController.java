@@ -13,6 +13,8 @@ import de.brasi.nova.taskmanagement.task.model.TaskCreateFromSourceInput;
 import de.brasi.nova.taskmanagement.task.model.TaskCreateInput;
 import de.brasi.nova.taskmanagement.task.model.TaskDetailModel;
 import de.brasi.nova.taskmanagement.task.model.TaskPatchInput;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import de.brasi.nova.taskmanagement.web.model.CreatedResourceResponse;
 import io.keel.framework.api.hateoas.annotation.CollectionLinkRule;
 import io.keel.framework.api.hateoas.annotation.EnableNovaHateoas;
@@ -24,6 +26,7 @@ import io.keel.framework.api.openapi.annotation.ApiFindResponse;
 import io.keel.framework.api.security.PermissionEvaluator;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.api.security.user.UserAccessor;
+import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -58,6 +61,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Client-Eingabedaten.
  */
 @RestController
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 @EnableNovaHateoas(entityClass = Task.class)
 @LinkRules(
@@ -203,7 +207,15 @@ public class TaskFacadeController {
                 + " priorityCode, unbekannter/inaktiver Assignee oder Tag, mehr als 100"
                 + " assignees/tagIds)."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
-    @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung.")
+    @ApiResponse(responseCode = "403", description = "Fehlende TASK_WRITE-Berechtigung."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TASK_CREATE)))
   })
   @PostMapping
   @HateoasLinkTarget(TaskHateoas.Targets.CREATE)
@@ -258,8 +270,13 @@ public class TaskFacadeController {
         content = @Content),
     @ApiResponse(
         responseCode = "409",
-        description = "Key fuer andere Eingabe verwendet.",
-        content = @Content)
+        description =
+            "Key fuer andere Eingabe verwendet." + LockConflictApiExamples.DESCRIPTION_SUFFIX,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TASK_CREATE_FROM_SOURCE)))
   })
   @PostMapping("/from-source")
   @HateoasLinkTarget(TaskHateoas.Targets.CREATE_FROM_SOURCE)
@@ -316,7 +333,15 @@ public class TaskFacadeController {
     @ApiResponse(
         responseCode = "404",
         description =
-            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert).")
+            "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert)."),
+    @ApiResponse(
+        responseCode = "409",
+        description = LockConflictApiExamples.DESCRIPTION,
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = LockConflictApiExamples.TASK_PATCH)))
   })
   @PatchMapping("/{id}")
   @HateoasLinkTarget(TaskHateoas.Targets.PATCH)

@@ -6,6 +6,8 @@ import de.brasi.nova.taskmanagement.participant.model.ExitInput;
 import de.brasi.nova.taskmanagement.participant.model.ParticipantAddInput;
 import de.brasi.nova.taskmanagement.security.TaskManagementPermissions;
 import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.keel.framework.api.security.permission.RequiresPermission;
 import io.keel.framework.web.exception.ApiError;
@@ -38,6 +40,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Client-Eingabedaten.
  */
 @RestController
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class AssigneeController {
 
@@ -113,7 +116,7 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe, z. B. gleichzeitige"
                 + " Mitgliederaenderung, Kommentar oder Patch; die Anfrage gegen den frischen Stand"
                 + " wiederholen. (2) Die vorhandene Teilnehmerzeile einer neu zuzuweisenden Person"
@@ -123,7 +126,8 @@ public class AssigneeController {
                 + " neuen Teilnehmerzeile derselben Person tritt ein Unique- oder Sequenzkonflikt"
                 + " auf, noch bevor die Aufgabe gespeichert wird; die Anfrage wiederholen."
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei"
-                + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert.",
+                + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",
@@ -245,7 +249,8 @@ public class AssigneeController {
             "Der Creator kann die Aufgabe nur per HANDOVER mit shouldStay=true abgeben;"
                 + " ensureAssignee-Auswahlvertrag fail-closed (Ziel-Zeile TEAM oder fremdes"
                 + " Basis-TENANT_ID); oder nebenlaeufiger Versionskonflikt (Retry gegen frischen"
-                + " Stand).",
+                + " Stand)."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",
@@ -374,16 +379,22 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts geaendert. (1) Nebenlaeufiger Konflikt:"
-                + " paralleler Schreibzugriff auf dieselbe Teilnehmerzeile oder den persoenlichen"
-                + " Zustand der Person (Versionskonflikt) bzw. gleichzeitiges erstes Hinzufuegen;"
-                + " die Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent)."
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Nebenlaeufiger Konflikt:"
+                + " paralleler Schreibzugriff auf die Aufgabe (Versionskonflikt), z. B. ein"
+                + " gleichzeitiges Hinzufuegen einer anderen Person, eine Mitgliederaenderung oder"
+                + " ein Austritt, auf dieselbe Teilnehmerzeile oder den persoenlichen Zustand der"
+                + " Person bzw. gleichzeitiges erstes Hinzufuegen; die Anfrage gegen den frischen"
+                + " Stand wiederholen (der Aufruf ist idempotent). Wird dieselbe Person gleichzeitig"
+                + " hinzugefuegt, gelingen beide Aufrufe nur, wenn ihre Teilnehmerzeile schon"
+                + " existiert (Reaktivierung); beim gleichzeitigen ersten Anlegen kann einer der"
+                + " beiden Aufrufe 409 bekommen."
                 + " (2) Die vorhandene Teilnehmerzeile einer Person ist keine PERSON-Zeile des"
                 + " Mandanten (TEAM-Zeile oder fremder Mandant, Datenfehler); sie wird nicht"
                 + " ueberschrieben und die Anfrage scheitert, bis der Datenbestand bereinigt ist."
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei aktivem"
                 + " Benutzer) sind kein Konfliktgrund: sie werden"
-                + " reaktiviert.",
+                + " reaktiviert."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",
@@ -520,14 +531,15 @@ public class AssigneeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Drei Ursachen, in allen Faellen wurde nichts geaendert. (1) Die Person ist der"
+            "Mehrere Ursachen, in allen Faellen wurde nichts geaendert. (1) Die Person ist der"
                 + " Ersteller der Aufgabe; er bleibt dauerhaft Mitglied. (2) Nebenlaeufiger"
                 + " Versionskonflikt: paralleler Schreibzugriff auf die Aufgabe oder die"
                 + " Teilnehmerzeile, z. B. gleichzeitige Mitgliederaenderung oder Austritt; die"
                 + " Anfrage gegen den frischen Stand wiederholen (der Aufruf ist idempotent). (3)"
                 + " Gleichzeitiger Insert: beim Anlegen des Historieneintrags oder der"
                 + " Benachrichtigung tritt ein Sequenzkonflikt auf, noch bevor die Aufgabe"
-                + " gespeichert wird; die Anfrage wiederholen.",
+                + " gespeichert wird; die Anfrage wiederholen."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",

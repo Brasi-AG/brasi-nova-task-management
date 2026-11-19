@@ -4,6 +4,8 @@ import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveSearchPageSchema;
 import de.brasi.nova.taskmanagement.task.TaskHateoas;
+import de.brasi.nova.taskmanagement.web.LockConflictApiExamples;
+import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 import io.keel.framework.api.hateoas.annotation.HateoasLinkTarget;
 import io.keel.framework.web.exception.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +39,7 @@ import org.springframework.web.bind.annotation.RestController;
  * CommentQueryService} (Lesen).
  */
 @RestController
+@TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
 @RequestMapping("/api/v1/tasks")
 public class CommentController {
 
@@ -218,7 +221,7 @@ public class CommentController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Zwei Ursachen, in beiden Faellen wurde nichts gespeichert (weder Kommentar noch"
+            "Mehrere Ursachen, in allen Faellen wurde nichts gespeichert (weder Kommentar noch"
                 + " Aufnahme). (1) Nebenlaeufiger Konflikt: die Aufgabe (Zaehler und Aktivitaet)"
                 + " oder bei der Aufnahme einer erwaehnten Person deren Teilnehmerzeile bzw."
                 + " persoenlicher Zustand wurde zwischenzeitlich geaendert (Versionskonflikt) oder"
@@ -228,7 +231,8 @@ public class CommentController {
                 + " fremder Mandant, Datenfehler); sie wird nicht ueberschrieben und die Anfrage"
                 + " scheitert, bis der Datenbestand bereinigt ist. Ausgetretene Personen oder solche mit"
                 + " deaktivierter Teilnehmerzeile (bei aktivem Benutzer) sind als"
-                + " Erwaehnte kein Konfliktgrund: sie werden reaktiviert.",
+                + " Erwaehnte kein Konfliktgrund: sie werden reaktiviert."
+                + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
                 mediaType = "application/json",

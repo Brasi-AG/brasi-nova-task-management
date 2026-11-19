@@ -15,8 +15,8 @@ import org.springframework.stereotype.Service;
  * Snapshot-Rejection (Finding 2 / Option B).
  *
  * <p>Keine eigene {@code @Transactional}: Die Schreibpfade laufen in der Transaktion des Aufrufers
- * ({@link AssigneeService#updateAssignees}/{@link AssigneeService#exit} sind {@code @Transactional}).
- * Damit ist der Bump atomar mit der ausloesenden Membership-Mutation.
+ * ({@link AssigneeService#updateAssignees}/{@link AssigneeService#exit} sind
+ * {@code @Transactional}). Damit ist der Bump atomar mit der ausloesenden Membership-Mutation.
  *
  * <p><b>Deadlock-Robustheit (Codex #6):</b> Wo ueber MEHRERE Refs gebumpt wird
  * (create/updateAssignees/addParticipants/patch/createComment/exit), erfolgt der Bump ueber den
@@ -30,14 +30,19 @@ import org.springframework.stereotype.Service;
  * mutiert (LAST_ACTIVITY_AT/VERSION via {@code taskRepository.save}), persistiert die TASK-Mutation
  * ZUERST und ruft {@link #bumpSorted(long, Collection)} erst DANACH (in derselben Tx) auf. Damit
  * wird ueberall zuerst die TASK-Zeile und erst dann die {@code TASK_INBOX_GENERATION}-Zeilen
- * gesperrt - keine invertierte TASK-vs-Generation-Lock-Ordnung zwischen Pfaden. Pfade ohne
- * TASK-save ({@code addParticipants}, {@code MarkerService}) koennen diese Inversion nicht ausloesen;
- * sie nutzen {@code bumpSorted}/{@code bump} dennoch fuer eine konsistente Generation-Lock-Ordnung.
+ * gesperrt - keine invertierte TASK-vs-Generation-Lock-Ordnung zwischen Pfaden. {@code
+ * addParticipants} speichert bei echter Aenderung seit Intake #167 ebenfalls die Aufgabe
+ * (versioniert) und bumpt danach; nur der Pfad ohne TASK-save ({@code MarkerService}, reine
+ * State-Aenderungen) kann diese Inversion nicht ausloesen und nutzt {@code bump} dennoch fuer eine
+ * konsistente Generation-Lock-Ordnung.
  *
- * <p>Aktivitaets-Mutationen materialisieren aktive und historische Archiv-Leser vor dem TASK-save.
- * Danach bumpen sie die deduplizierte Ref-Menge in globaler UUID-Reihenfolge, damit auch alte
- * Archiv-Cursor ausgetretener Leser mit 410 abgelehnt werden. Die zusaetzlichen Reader vergroessern
- * die Generation-Lock-Flaeche dieser drei Schreibpfade.
+ * <p>Aktivitaets- und Mitgliedschaftsmutationen ({@code patch}, {@code createComment}, {@code
+ * exit}, {@code updateAssignees}, {@code addParticipants}, {@code removeParticipant})
+ * materialisieren aktive und historische Archiv-Leser vor dem TASK-save. Die Mitgliedschaftspfade
+ * lesen sie seit Intake #167 sogar vor der ersten Schreibung. Danach bumpen sie die deduplizierte
+ * Ref-Menge in globaler UUID-Reihenfolge, damit auch alte Archiv-Cursor ausgetretener Leser mit 410
+ * abgelehnt werden. Die zusaetzlichen Reader vergroessern die Generation-Lock-Flaeche dieser
+ * Schreibpfade.
  */
 @Service
 public class InboxGenerationService {
@@ -68,7 +73,7 @@ public class InboxGenerationService {
    * (Start 0). Laueft in der Transaktion des Aufrufers.
    *
    * @param tenantId interner Mandanten-Schluessel (fuer die Anlage der Erstzeile)
-   * @param userRef  UUID des Benutzers
+   * @param userRef UUID des Benutzers
    * @throws IllegalStateException wenn der atomare Increment nicht genau eine Zeile trifft (kein
    *     stiller Fehl-Bump, der eine Snapshot-Invalidierung verschlucken wuerde)
    */
@@ -86,18 +91,18 @@ public class InboxGenerationService {
   }
 
   /**
-   * Bumpt die Generation EINER Ref-Menge in DETERMINISTISCH SORTIERTER Reihenfolge
-   * ({@code UUID.compareTo}). Zentralisiert die EINE Lock-Ordnung fuer alle Multi-Ref-Bump-Pfade
-   * (create/updateAssignees/addParticipants/patch/createComment/exit), sodass parallele
-   * Mutationen mit ueberlappender Teilnehmermenge die {@code TASK_INBOX_GENERATION}-Zeilen stets in
-   * gleicher Reihenfolge sperren (keine ueberkreuzte Lock-Order -&gt; kein Deadlock).
+   * Bumpt die Generation EINER Ref-Menge in DETERMINISTISCH SORTIERTER Reihenfolge ({@code
+   * UUID.compareTo}). Zentralisiert die EINE Lock-Ordnung fuer alle Multi-Ref-Bump-Pfade
+   * (create/updateAssignees/addParticipants/patch/createComment/exit), sodass parallele Mutationen
+   * mit ueberlappender Teilnehmermenge die {@code TASK_INBOX_GENERATION}-Zeilen stets in gleicher
+   * Reihenfolge sperren (keine ueberkreuzte Lock-Order -&gt; kein Deadlock).
    *
    * <p>Aendert NICHT, WELCHE Refs gebumpt werden - nur die Reihenfolge. Jeder einzelne Bump laueft
    * ueber {@link #bump(long, UUID)} (inkl. race-sicherer Erstanlage + Ein-Zeilen-Invariante).
    *
    * @param tenantId interner Mandanten-Schluessel (fuer die Anlage der Erstzeile)
-   * @param refs     die zu bumpenden Benutzer-UUIDs (beliebige Reihenfolge; intern sortiert).
-   *                 {@code null}-Elemente sind nicht zulaessig.
+   * @param refs die zu bumpenden Benutzer-UUIDs (beliebige Reihenfolge; intern sortiert). {@code
+   *     null}-Elemente sind nicht zulaessig.
    */
   public void bumpSorted(final long tenantId, final Collection<UUID> refs) {
     if (refs == null || refs.isEmpty()) {
@@ -107,9 +112,9 @@ public class InboxGenerationService {
   }
 
   /**
-   * Stellt idempotent sicher, dass eine Generationszeile (Start 0) existiert. Re-Read-Translate gegen
-   * den UNIQUE-Race (nebenlaeufiger Erst-Insert): bei {@link BusinessRuleException} erneut lesen;
-   * existiert die Zeile nun, idempotent weiter, sonst rethrow.
+   * Stellt idempotent sicher, dass eine Generationszeile (Start 0) existiert. Re-Read-Translate
+   * gegen den UNIQUE-Race (nebenlaeufiger Erst-Insert): bei {@link BusinessRuleException} erneut
+   * lesen; existiert die Zeile nun, idempotent weiter, sonst rethrow.
    */
   private void ensure(final long tenantId, final UUID userRef) {
     if (!repository.findByUserRef(userRef).isEmpty()) {
