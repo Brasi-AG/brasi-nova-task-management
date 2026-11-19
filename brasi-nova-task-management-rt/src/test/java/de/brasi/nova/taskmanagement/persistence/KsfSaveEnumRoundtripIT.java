@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
@@ -324,14 +325,18 @@ class KsfSaveEnumRoundtripIT {
         .isNotNull()
         .isGreaterThan(0L);
     final long id = saved.getId();
+    assertThat(saved.getVersion()).as("Instanzversion nach dem Insert (AuditAspect)").isEqualTo(1);
     assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Insert").isEqualTo(1);
     assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isNull();
 
-    // Schluessel entsteht erst nach der ID-Vergabe; Update auf derselben Instanz
+    // Muster fuer AttachmentWriter (A7): Schluessel entsteht erst nach der ID-Vergabe; Update auf
+    // der vom Insert zurueckgegebenen Instanz. Der AuditAspect hebt die Version auf 2,
+    // MutationExecutor#performUpdate bindet WHERE VERSION = 1 (Datenbankstand nach dem Insert).
     final String storageKey = "560/0/" + id + ".pdf";
     saved.setStorageKey(storageKey);
-    attachmentRepository.save(saved);
+    TaskAttachment updated = attachmentRepository.save(saved);
 
+    assertThat(updated.getVersion()).as("Instanzversion nach dem Update").isEqualTo(2);
     assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Update").isEqualTo(2);
     assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isEqualTo(storageKey);
 
@@ -440,6 +445,9 @@ class KsfSaveEnumRoundtripIT {
     FlywayAutoConfiguration.class,
     // KSF-Persistence: NovaRepository-Proxies, SequenceSchemaManager (-> SYS_SEQUENCE auto-create)
     KsfPersistenceAutoConfiguration.class,
+    // AOP-Proxies wie in Produktion: ohne sie bleibt der KSF-AuditAspect (Versionssprung bei
+    // save, Audit-Felder) wirkungslos und jedes Update scheitert am Versionsvergleich
+    AopAutoConfiguration.class,
   })
   static class ItConfig {
 

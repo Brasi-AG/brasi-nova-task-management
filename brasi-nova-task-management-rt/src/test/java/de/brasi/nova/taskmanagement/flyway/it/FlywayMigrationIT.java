@@ -732,13 +732,12 @@ class FlywayMigrationIT {
         jdbcTemplate.query(
             "SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE"
                 + " FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
-            (rs, i) -> {
-              final int len = rs.getInt("CHARACTER_MAXIMUM_LENGTH");
-              return new ColumnSpec(
-                  rs.getString("DATA_TYPE"),
-                  rs.wasNull() ? null : len,
-                  "YES".equals(rs.getString("IS_NULLABLE")));
-            },
+            // Laenge per getObject: NULL (bigint, bit, uniqueidentifier) bleibt null statt 0
+            (rs, i) ->
+                new ColumnSpec(
+                    rs.getString("DATA_TYPE"),
+                    rs.getObject("CHARACTER_MAXIMUM_LENGTH", Integer.class),
+                    "YES".equals(rs.getString("IS_NULLABLE"))),
             table,
             column);
     return specs.isEmpty() ? null : specs.get(0);
