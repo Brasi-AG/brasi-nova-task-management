@@ -317,10 +317,8 @@ public class AttachmentCommandService {
 
   /** Wirft 400, wenn das Ziel mit den neuen Dateien mehr aktive Anhaenge als erlaubt haette. */
   private void requireRoomFor(final long activeCount, final int newFiles) {
-    final int maxPerTarget = properties.maxPerTarget();
-    if (activeCount + newFiles > maxPerTarget) {
-      throw new EntityValidationException(
-          "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.");
+    if (activeCount + newFiles > properties.maxPerTarget()) {
+      throw new EntityValidationException(properties.tooManyAttachmentsMessage());
     }
   }
 
