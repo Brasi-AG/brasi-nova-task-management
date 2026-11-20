@@ -1814,13 +1814,17 @@ class AssigneeServiceTest {
     when(taskRepository.findByUuid(taskUuid.toString()))
         .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
     final AssigneeService spied = org.mockito.Mockito.spy(service);
+    // Intake #180: addParticipants nutzt die Kern-Variante mit dem Verlaufstext des POST.
     org.mockito.Mockito.doReturn(List.of(ref))
         .when(spied)
-        .addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+        .addAsParticipants(
+            eq(taskId), eq(TENANT_ID), any(), eq(AssigneeService.HISTORY_PARTICIPANT_ADDED));
 
     spied.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
 
-    verify(spied).addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+    verify(spied)
+        .addAsParticipants(
+            eq(taskId), eq(TENANT_ID), any(), eq(AssigneeService.HISTORY_PARTICIPANT_ADDED));
     verify(notificationService, times(1))
         .emit(
             eq(ref),

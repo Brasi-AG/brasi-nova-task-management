@@ -83,6 +83,25 @@ public class AssigneeService {
   static final String REMOVE_CREATOR_MESSAGE =
       "Der Ersteller kann nicht aus der Aufgabe entfernt werden.";
 
+  /** Verlaufstext je neu zugewiesener Person im {@code PUT /assignees} (Intake #180). */
+  static final String HISTORY_ASSIGNED = "hat eine Person zugewiesen";
+
+  /**
+   * Verlaufstext je Person, deren Zuweisung im {@code PUT /assignees} entfaellt, auch beim
+   * Ersteller, der nur de-assignt wird (Intake #180).
+   */
+  static final String HISTORY_UNASSIGNED = "hat eine Zuweisung entfernt";
+
+  /** Verlaufstext je aufgenommener Person im {@code POST /participants} (Intake #180). */
+  static final String HISTORY_PARTICIPANT_ADDED = "hat einen Beteiligten hinzugefuegt";
+
+  /** Verlaufstext je per Erwaehnung im Kommentar aufgenommener Person (Intake #180). */
+  static final String HISTORY_PARTICIPANT_MENTIONED =
+      "hat einen Beteiligten per Erwaehnung hinzugefuegt";
+
+  /** Hoechstlaenge des Verlaufsdetails (Spalte {@code CHANGE_DETAIL}, Intake #180). */
+  private static final int HISTORY_DETAIL_MAX_LENGTH = 500;
+
   private final BaseTaskRepository taskRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
   private final TaskUserStateQueryRepository userStateQueryRepository;
@@ -151,10 +170,15 @@ public class AssigneeService {
    *   <li>Abgewaehlte Assignees (vorher drin, jetzt nicht mehr): EXIT_KIND=UNSUBSCRIBED + EXIT_AT
    *       setzen und ASSIGNEE_FLAG=false (Intake #164, wie beim Entfernen); ein abgewaehlter
    *       Ersteller wird nur de-assignt (ASSIGNEE_FLAG=false, kein Austritt).
+   *   <li>Verlauf (Intake #180): je neu zugewiesener Person ein Eintrag {@link #HISTORY_ASSIGNED},
+   *       je Person, deren Zuweisung entfaellt (auch der Ersteller), ein Eintrag {@link
+   *       #HISTORY_UNASSIGNED}; Akteur ist die handelnde Person, Detail der Name der betroffenen
+   *       Person (Namen-Snapshot, hoechstens 500 Zeichen, sonst ihre UUID).
    *   <li>Lock-Reihenfolge (Intake #167): alle Reads (Zeilen und States der neuen und der
-   *       abgewaehlten Personen, Leser fuer Bump und Signal) stehen VOR der ersten Schreibung,
-   *       danach die Schreibungen aller Personen (Hinzukommende und Abgewaehlte) in EINER nach UUID
-   *       sortierten Folge, der versionierte TASK-save, der sortierte Bump.
+   *       abgewaehlten Personen, deren Namen, Leser fuer Bump und Signal) stehen VOR der ersten
+   *       Schreibung, danach die Schreibungen aller Personen (Hinzukommende und Abgewaehlte) in
+   *       EINER nach UUID sortierten Folge, die Verlaufseintraege in derselben Folge, der
+   *       versionierte TASK-save, der sortierte Bump.
    *   <li>Bei echter Aenderung: Generation-Bump und nach Commit {@link
    *       InboxSignalService#invalidate} fuer die geaenderten Personen, alle aktiven Leser und alle
    *       ausgetretenen Archivleser (Intake #166, {@link #collectTaskReaders}).
@@ -223,16 +247,26 @@ public class AssigneeService {
     final List<UUID> toRemove =
         currentRefs.stream().filter(ref -> !desiredRefs.contains(ref)).sorted().toList();
 
+    // Intake #180: Namen-Snapshot fuer den Verlauf der neu zuzuweisenden und der abgewaehlten
+    // Personen in EINER Abfrage des Benutzerstamms, vor der ersten Schreibung (Sperrfolge). Ein
+    // No-Op-PUT liest nichts. Nicht (mehr) aktive Personen fehlen in der Antwort; fuer abgewaehlte
+    // steht dann die UUID im Verlauf.
+    final Map<UUID, String> historyNames;
+    if (toAdd.isEmpty() && toRemove.isEmpty()) {
+      historyNames = Map.of();
+    } else {
+      final Set<UUID> nameRefs = new LinkedHashSet<>(toAdd);
+      nameRefs.addAll(toRemove);
+      historyNames = resolveDisplayNames(nameRefs);
+    }
+
     // Final-Review P1-2: neu zuzuweisende UUIDs muessen aktive Benutzer DES Mandanten sein.
     // Sonst entstuenden orphan-/cross-tenant-Participant/UserState/Notification. Unbekannt/fremd/
-    // inaktiv -> 400 (EntityValidationException), bevor irgendetwas angelegt wird.
+    // inaktiv -> 400 (EntityValidationException), bevor irgendetwas angelegt wird. Die aktiven
+    // Benutzer sind genau die Schluessel des Namen-Snapshots (dieselbe Abfrage).
     if (!toAdd.isEmpty()) {
-      final Set<UUID> activeUserRefs =
-          userReadRepository.findActiveByUuids(toAdd).stream()
-              .map(User::getUuid)
-              .collect(Collectors.toSet());
       final Set<UUID> unknown =
-          toAdd.stream().filter(ref -> !activeUserRefs.contains(ref)).collect(Collectors.toSet());
+          toAdd.stream().filter(ref -> !historyNames.containsKey(ref)).collect(Collectors.toSet());
       if (!unknown.isEmpty()) {
         throw new EntityValidationException(
             "Unbekannte oder nicht zugelassene Assignee-Benutzer: " + unknown);
@@ -416,9 +450,22 @@ public class AssigneeService {
       onAfterPersonWriteForTest(taskId, personRef);
     }
 
-    // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor TASK-save
-    // und Bump. Produktiv No-Op.
+    // Test-Seam (Intake #167): nach den eigenen Teilnehmer- und State-Schreibungen, vor Historie,
+    // TASK-save und Bump. Produktiv No-Op.
     onAfterMembershipWritesForTest(taskId);
+
+    // Intake #180: je geaenderter Person ein Verlaufseintrag (Akteur = handelnde Person, Detail =
+    // Namen-Snapshot von oben), in derselben UUID-Folge wie die Schreibungen und vor dem
+    // TASK-save. Neu zugewiesen: HISTORY_ASSIGNED; Zuweisung entfallen (Austritt oder De-Assign
+    // des Erstellers): HISTORY_UNASSIGNED. Keine Lesung mehr nach der ersten Schreibung.
+    for (final UUID ref : affectedRefs) {
+      taskHistoryService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          toAddSet.contains(ref) ? HISTORY_ASSIGNED : HISTORY_UNASSIGNED,
+          historyDetail(ref, historyNames));
+    }
 
     // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).
     // Idempotente No-Op-PUTs (Ziel-Menge == aktueller Stand, inkl. Creator-Schutz-No-Ops) duerfen
@@ -759,6 +806,9 @@ public class AssigneeService {
    *       (idempotent); ausgetretene oder inaktive (DEACTIVE) PERSON-Zeile -> als REINER Teilnehmer
    *       reaktivieren (ASSIGNEE_FLAG=false, ENTITY_STATUS=ACTIVE); TEAM-Zeile oder fremdes
    *       Basis-TENANT_ID -> 409 ohne Mutation; keine Zeile -> neu anlegen (reiner Teilnehmer).
+   *   <li>Verlauf (Intake #180): der Kern schreibt je angelegter oder reaktivierter Person einen
+   *       Eintrag {@link #HISTORY_PARTICIPANT_ADDED} (Akteur = handelnde Person, Detail = Name der
+   *       Person); schon aktive Personen und Race-Verlierer bekommen keinen.
    *   <li>Vor der ersten Schreibung (Intake #167): die Leser fuer Bump und Signal lesen ({@link
    *       #collectTaskReaders}: aktive Leser und ausgetretene Archivleser).
    *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
@@ -833,12 +883,14 @@ public class AssigneeService {
     final Set<UUID> readers = collectTaskReaders(taskId);
 
     // Gemeinsamer Aufnahme-Kern (auch von CommentService#createComment genutzt, Intake #156): legt
-    // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie und liefert die tatsaechlich
+    // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie, schreibt je aufgenommener Person
+    // den Verlaufseintrag (Intake #180, hier mit dem Text des POST) und liefert die tatsaechlich
     // aufgenommenen Refs. Benachrichtigung, TASK-save, Bump und Signal bleiben hier beim Aufrufer.
-    // Test-Seams (Intake #167) davor und danach: vor der ersten und nach der letzten
-    // Mitgliedschafts-Schreibung (vor Benachrichtigung, TASK-save und Bump). Produktiv No-Op.
+    // Test-Seams (Intake #167) davor und danach: vor der ersten Mitgliedschafts-Schreibung und
+    // nach dem Kern samt Verlauf (vor Benachrichtigung, TASK-save und Bump). Produktiv No-Op.
     onBeforeMembershipWritesForTest(taskId);
-    final List<UUID> affectedRefs = addAsParticipants(taskId, tenantId, refs);
+    final List<UUID> affectedRefs =
+        addAsParticipants(taskId, tenantId, refs, HISTORY_PARTICIPANT_ADDED);
     onAfterMembershipWritesForTest(taskId);
 
     // D7 changed-Guard: ein reiner No-Op (alle schon aktiv, auch als Verliererin eines
@@ -887,27 +939,10 @@ public class AssigneeService {
   }
 
   /**
-   * Gemeinsamer Kern des Hinzufuegens als Beteiligter (Intake #156): legt je Ref einen reinen
-   * Teilnehmer samt persoenlichem State an bzw. reaktiviert einen ausgetretenen als reinen
-   * Teilnehmer (nie Assignee, ein Mute bleibt, {@link UserStateService#reactivate}) und behandelt
-   * den gleich-Ref-Race idempotent ({@link #saveParticipantHandlingRace}).
-   *
-   * <p>Schreibt AUSSCHLIESSLICH die Zeilen {@code TASK_PARTICIPANT} und {@code TASK_USER_STATE}:
-   * keine Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save. Das ist Sache des
-   * Aufrufers, weil dessen Lock-Reihenfolge die Stelle vorgibt: zuerst alle Mitgliedschafts-Reads
-   * und -Writes, dann das Speichern der Aufgabe, dann der sortierte Bump (Karten {@code
-   * participants-actions} und {@code inbox-snapshot}). {@link #addParticipants} meldet danach
-   * PARTICIPANT, {@code CommentService#createComment} die MENTION.
-   *
-   * <p>Die Refs muessen vom Aufrufer als aktive Benutzer DES Mandanten geprueft sein. Sie werden
-   * dedupliziert und nach UUID sortiert verarbeitet, damit parallele Aufrufe mit mehreren Refs
-   * dieselben Zeilen in gleicher Reihenfolge sperren. Muss in der Transaktion des Aufrufers laufen.
-   *
-   * <p>Lock-Reihenfolge (Intake #167, Fix-Runde 2): zuerst fuer ALLE Refs die Unique-Key-Zeile und,
-   * wo angelegt oder reaktiviert wird, der State; erst danach die Schreibungen je Ref mit den vorab
-   * gelesenen Zeilen ({@link UserStateService#reactivate(Long, UUID, Long, List)}, {@link
-   * UserStateService#ensure(Long, UUID, Long, List)}). Zwischen zwei Schreibungen liest der Kern
-   * nichts mehr; nur der Fehlerzweig eines gleich-Ref-Race liest die Zeile erneut.
+   * Aufnahme per Erwaehnung im Kommentar (Intake #156, {@code CommentService#createComment}):
+   * gemeinsamer Kern des Hinzufuegens als Beteiligter mit dem Verlaufstext {@link
+   * #HISTORY_PARTICIPANT_MENTIONED} (Intake #180). Einzelheiten bei der paketsichtbaren Variante
+   * mit frei waehlbarem Verlaufstext, die auch {@link #addParticipants} nutzt.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
@@ -918,6 +953,52 @@ public class AssigneeService {
   @Transactional(propagation = Propagation.MANDATORY)
   public List<UUID> addAsParticipants(
       final Long taskId, final long tenantId, final Collection<UUID> refs) {
+    return addAsParticipants(taskId, tenantId, refs, HISTORY_PARTICIPANT_MENTIONED);
+  }
+
+  /**
+   * Gemeinsamer Kern des Hinzufuegens als Beteiligter (Intake #156): legt je Ref einen reinen
+   * Teilnehmer samt persoenlichem State an bzw. reaktiviert einen ausgetretenen als reinen
+   * Teilnehmer (nie Assignee, ein Mute bleibt, {@link UserStateService#reactivate}) und behandelt
+   * den gleich-Ref-Race idempotent ({@link #saveParticipantHandlingRace}).
+   *
+   * <p>Schreibt die Zeilen {@code TASK_PARTICIPANT} und {@code TASK_USER_STATE} und danach je
+   * tatsaechlich angelegter oder reaktivierter Person einen Verlaufseintrag mit {@code historyText}
+   * (Intake #180: Akteur = handelnde Person aus dem Security-Kontext, Detail = Name der Person,
+   * hoechstens 500 Zeichen, sonst ihre UUID); schon aktive Mitglieder und Race-Verlierer bekommen
+   * keinen. Keine Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save. Das ist
+   * Sache des Aufrufers, weil dessen Lock-Reihenfolge die Stelle vorgibt: zuerst alle
+   * Mitgliedschafts-Reads und -Writes, dann das Speichern der Aufgabe, dann der sortierte Bump
+   * (Karten {@code participants-actions} und {@code inbox-snapshot}). {@link #addParticipants}
+   * meldet danach PARTICIPANT, {@code CommentService#createComment} die MENTION.
+   *
+   * <p>Die Refs muessen vom Aufrufer als aktive Benutzer DES Mandanten geprueft sein. Sie werden
+   * dedupliziert und nach UUID sortiert verarbeitet, damit parallele Aufrufe mit mehreren Refs
+   * dieselben Zeilen in gleicher Reihenfolge sperren. Muss in der Transaktion des Aufrufers laufen.
+   *
+   * <p>Lock-Reihenfolge (Intake #167, Fix-Runde 2): zuerst fuer ALLE Refs die Unique-Key-Zeile und,
+   * wo angelegt oder reaktiviert wird, der State; erst danach die Schreibungen je Ref mit den vorab
+   * gelesenen Zeilen ({@link UserStateService#reactivate(Long, UUID, Long, List)}, {@link
+   * UserStateService#ensure(Long, UUID, Long, List)}). Zwischen zwei Schreibungen liest der Kern
+   * nichts mehr; nur der Fehlerzweig eines gleich-Ref-Race liest die Zeile erneut. Die Namen der
+   * Kandidaten fuer den Verlauf (Intake #180) liest der Kern ebenfalls vorab, in einer Abfrage und
+   * nur, wenn es Kandidaten gibt; die Verlaufseintraege folgen nach allen Schreibungen in
+   * UUID-Reihenfolge.
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param tenantId interner Mandanten-Schluessel
+   * @param refs aufzunehmende Benutzer-UUIDs (beliebige Reihenfolge, Duplikate erlaubt)
+   * @param historyText Verlaufstext je aufgenommener Person ({@link #HISTORY_PARTICIPANT_ADDED}
+   *     oder {@link #HISTORY_PARTICIPANT_MENTIONED})
+   * @return die tatsaechlich neu angelegten oder reaktivierten Refs in aufsteigender UUID-
+   *     Reihenfolge; aktive Mitglieder und Race-Verlierer (den meldet der Gewinner) fehlen
+   */
+  List<UUID> addAsParticipants(
+      final Long taskId,
+      final long tenantId,
+      final Collection<UUID> refs,
+      final String historyText) {
+    final UUID actorRef = CurrentActor.require(userAccessor).user().id();
     final List<UUID> sortedRefs = new ArrayList<>(new LinkedHashSet<>(refs));
     sortedRefs.sort(UUID::compareTo);
     // Intake #167, Fix-Runde 2: alle Reads VOR der ersten Schreibung. Frueher las der Kern je
@@ -928,6 +1009,7 @@ public class AssigneeService {
     // Schreibung. Den State braucht nur, wer angelegt oder reaktiviert wird.
     final Map<UUID, Optional<TaskParticipant>> rows = new HashMap<>();
     final Map<UUID, List<TaskUserState>> states = new HashMap<>();
+    final List<UUID> candidates = new ArrayList<>();
     for (final UUID ref : sortedRefs) {
       final Optional<TaskParticipant> row =
           findPersonRowByUniqueKey(
@@ -939,8 +1021,13 @@ public class AssigneeService {
       rows.put(ref, row);
       if (row.isEmpty() || !isActiveRow(row.get())) {
         states.put(ref, userStateQueryRepository.findByTaskIdAndUserRef(taskId, ref));
+        candidates.add(ref);
       }
     }
+    // Intake #180: Namen-Snapshot fuer den Verlauf, nur fuer die Kandidaten (keine oder keine
+    // aktive Zeile) und nur, wenn es welche gibt; vor der ersten Schreibung (Sperrfolge).
+    final Map<UUID, String> historyNames =
+        candidates.isEmpty() ? Map.of() : resolveDisplayNames(candidates);
     final List<UUID> affectedRefs = new ArrayList<>();
     for (final UUID ref : sortedRefs) {
       if (addSingleParticipant(taskId, ref, tenantId, rows.get(ref), states.get(ref))) {
@@ -949,6 +1036,12 @@ public class AssigneeService {
       // Test-Seam (Codex-Review #167): nach der Aufnahme je Person, vor der naechsten. Produktiv
       // No-Op.
       onAfterParticipantAddForTest(taskId, ref);
+    }
+    // Intake #180: je tatsaechlich aufgenommener Person ein Verlaufseintrag, in UUID-Reihenfolge
+    // nach allen Personen-Schreibungen. Keine Lesung mehr.
+    for (final UUID ref : affectedRefs) {
+      taskHistoryService.record(
+          taskId, tenantId, actorRef, historyText, historyDetail(ref, historyNames));
     }
     return affectedRefs;
   }
@@ -1769,11 +1862,13 @@ public class AssigneeService {
   /**
    * Test-Seam (Default No-Op, Intake #167): Haken in {@link #updateAssignees}, {@link
    * #addParticipants} und {@link #exit} NACH den eigenen Teilnehmer- und State-Schreibungen und VOR
-   * Historie, Benachrichtigung, TASK-save und Generation-Bump. Die Transaktion haelt hier ihre
-   * X-Sperren auf den eigenen Mitgliedschafts-Zeilen. Der Nebenlaeufigkeits-IT ({@code
-   * MembershipConcurrencyIT}) laesst an diesem Punkt (Sync 2) beide Transaktionen ihre Sperren
-   * gleichzeitig halten; danach darf keine Lesung mehr auf die Zeilen der anderen warten, sonst
-   * verklemmen beide (Deadlock 1205). Im Produktivbetrieb ein No-Op.
+   * Historie, Benachrichtigung, TASK-save und Generation-Bump; in {@link #addParticipants} liegt er
+   * hinter dem Aufnahme-Kern und damit hinter dessen Verlaufseintraegen (Intake #180, reine
+   * Einfuegungen ohne Lesung). Die Transaktion haelt hier ihre X-Sperren auf den eigenen
+   * Mitgliedschafts-Zeilen. Der Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}) laesst an
+   * diesem Punkt (Sync 2) beide Transaktionen ihre Sperren gleichzeitig halten; danach darf keine
+   * Lesung mehr auf die Zeilen der anderen warten, sonst verklemmen beide (Deadlock 1205). Im
+   * Produktivbetrieb ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
    */
@@ -1851,13 +1946,48 @@ public class AssigneeService {
   private Map<UUID, String> resolveNames(final Set<UUID> targets, final UUID actorRef) {
     final Set<UUID> all = new LinkedHashSet<>(targets);
     all.add(actorRef);
-    return userReadRepository.findActiveByUuids(all).stream()
+    return resolveDisplayNames(all);
+  }
+
+  /**
+   * Loest die Anzeigenamen der Personen in EINER Abfrage des Benutzerstamms auf (Namen-Snapshot).
+   * Nur aktive Benutzer des Mandanten erscheinen; ohne Anzeigenamen steht die UUID als Name.
+   *
+   * @param refs die Personen (nicht leer, sonst entstuende ein leeres {@code IN ()})
+   * @return Anzeigename je aktiver Person
+   */
+  private Map<UUID, String> resolveDisplayNames(final Collection<UUID> refs) {
+    return userReadRepository.findActiveByUuids(refs).stream()
         .filter(u -> u.getUuid() != null)
         .collect(
             Collectors.toMap(
                 User::getUuid,
                 u -> u.getFullName() != null ? u.getFullName() : u.getUuid().toString(),
                 (a, b) -> a));
+  }
+
+  /**
+   * Detail eines Verlaufseintrags zu einer Person (Intake #180): ihr Name aus dem Namen-Snapshot,
+   * ohne Namen ihre UUID, gekuerzt auf die Spaltenbreite von {@code CHANGE_DETAIL}.
+   */
+  private static String historyDetail(final UUID ref, final Map<UUID, String> names) {
+    return truncateDetail(names.getOrDefault(ref, ref.toString()));
+  }
+
+  /**
+   * Kuerzt ein Verlaufsdetail auf {@link #HISTORY_DETAIL_MAX_LENGTH} Zeichen inklusive Ellipse
+   * ("..."), ohne ein Surrogatpaar zu trennen; wie {@code TaskCommandService#truncate}.
+   */
+  private static String truncateDetail(final String s) {
+    if (s.length() <= HISTORY_DETAIL_MAX_LENGTH) {
+      return s;
+    }
+    int end = HISTORY_DETAIL_MAX_LENGTH - 3;
+    if (Character.isHighSurrogate(s.charAt(end - 1))) {
+      // Das letzte Zeichen waere ein High-Surrogate ohne sein Low-Surrogate: ebenfalls weglassen.
+      end--;
+    }
+    return s.substring(0, end) + "...";
   }
 
   /**
