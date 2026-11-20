@@ -259,6 +259,16 @@ class SpringDocApiDocsIT {
         .as("TaskPatchInput.description ist vom Typ string: " + description)
         .contains("\"string\"");
 
+    // 5c. #183: priorityCode ist ein nullable String (null = auf NORMAL zuruecksetzen).
+    final JsonNode priorityCode = patchSchema.path("properties").path("priorityCode");
+    assertThat(priorityCode.isMissingNode()).as("TaskPatchInput.priorityCode vorhanden").isFalse();
+    assertThat(isNullable(priorityCode))
+        .as("TaskPatchInput.priorityCode muss nullable sein: " + priorityCode)
+        .isTrue();
+    assertThat(priorityCode.toString())
+        .as("TaskPatchInput.priorityCode ist vom Typ string: " + priorityCode)
+        .contains("\"string\"");
+
     // 6. Keyset-Items typisiert: GET /api/v1/tasks (aktive Aufgaben) -> 200-Schema referenziert den
     //    Typparameter TaskSummaryModel, nicht einen untypisierten KeysetPage (Codex-P2)
     final JsonNode activeSchema =

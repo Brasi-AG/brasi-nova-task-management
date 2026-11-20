@@ -50,4 +50,27 @@ class TaskPatchInputTest {
   void emptyLeavesDescriptionAbsent() {
     assertThat(TaskPatchInput.empty().description().isPresent()).isFalse();
   }
+
+  @Test
+  void priorityCodeIsDeserializedAsPresentValueOrExplicitNull() throws Exception {
+    final ObjectMapper mapper = mapper();
+
+    final TaskPatchInput gesetzt =
+        mapper.readValue("{\"priorityCode\":\"HIGH\"}", TaskPatchInput.class);
+    assertThat(gesetzt.priorityCode().isPresent()).isTrue();
+    assertThat(gesetzt.priorityCode().get()).isEqualTo("HIGH");
+
+    final TaskPatchInput zurueckgesetzt =
+        mapper.readValue("{\"priorityCode\":null}", TaskPatchInput.class);
+    assertThat(zurueckgesetzt.priorityCode().isPresent()).isTrue();
+    assertThat(zurueckgesetzt.priorityCode().get()).isNull();
+
+    final TaskPatchInput ohne = mapper.readValue("{\"title\":\"T\"}", TaskPatchInput.class);
+    assertThat(ohne.priorityCode().isPresent()).isFalse();
+  }
+
+  @Test
+  void emptyLeavesPriorityCodeAbsent() {
+    assertThat(TaskPatchInput.empty().priorityCode().isPresent()).isFalse();
+  }
 }
