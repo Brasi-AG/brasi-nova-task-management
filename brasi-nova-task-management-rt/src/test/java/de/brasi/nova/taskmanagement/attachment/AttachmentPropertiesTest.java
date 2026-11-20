@@ -66,6 +66,22 @@ class AttachmentPropertiesTest {
   }
 
   @Test
+  void i152_too_many_attachments_message_names_the_configured_limit() {
+    assertThat(bound.tooManyAttachmentsMessage())
+        .isEqualTo("Höchstens 20 aktive Anhänge je Aufgabe bzw. je Kommentar.");
+    assertThat(
+            new AttachmentProperties(
+                    bound.storage(),
+                    bound.enterpriseTenantIds(),
+                    3,
+                    bound.limits(),
+                    bound.thumbnail(),
+                    bound.cache())
+                .tooManyAttachmentsMessage())
+        .isEqualTo("Höchstens 3 aktive Anhänge je Aufgabe bzw. je Kommentar.");
+  }
+
+  @Test
   void i152_multipart_and_tomcat_limits_fit_twenty_files() {
     // Review Focus 1 und 2
     assertThat(raw.getProperty("spring.servlet.multipart.max-file-size"))

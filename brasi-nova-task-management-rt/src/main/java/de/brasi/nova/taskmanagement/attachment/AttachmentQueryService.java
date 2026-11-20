@@ -14,8 +14,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -30,8 +34,8 @@ import org.springframework.core.io.InputStreamResource;
 import org.springframework.stereotype.Service;
 
 /**
- * Lesen und Ausliefern von Anhaengen an Aufgaben (Intake #152): Liste, Inhalt, Vorschaubild und die
- * Anhaenge im Aufgaben-Detail.
+ * Lesen und Ausliefern von Anhaengen an Aufgaben (Intake #152): Liste, Inhalt, Vorschaubild, die
+ * Anhaenge im Aufgaben-Detail und die Kommentar-Anhaenge der Kommentarliste.
  *
  * <p>Jeder Abruf prueft zuerst die READ-Mitgliedschaft ({@code
  * TaskMembershipGuard#requireReadMember} ueber {@link AttachmentTaskAccess#requireReadMember});
@@ -136,6 +140,35 @@ public class AttachmentQueryService {
       throw new EntityNotFoundException(TASK_NOT_FOUND);
     }
     return toModels(task, actorRef);
+  }
+
+  /**
+   * Liefert die Anhaenge aller Kommentare der Aufgabe fuer die Kommentarliste (Intake #152 B1),
+   * ohne eigene Mitgliedschaftspruefung: der Aufrufer ({@code CommentQueryService#getComments}) hat
+   * Aufgabe, Mandant und READ-Mitgliedschaft bereits geprueft.
+   *
+   * <p>Genau eine Abfrage je Aufruf, unabhaengig von der Zahl der Kommentare. {@code removable} ist
+   * stets {@code false}: Kommentar-Anhaenge sind unveraenderlich. Die Links zeigen auf den
+   * Aufgaben-Pfad.
+   *
+   * @param task bereits gepruefte Aufgabe
+   * @return interne Kommentar-ID auf die Anhaenge des Kommentars in Hochlade-Reihenfolge;
+   *     unveraenderlich, Kommentare ohne Anhang fehlen
+   */
+  public Map<Long, List<AttachmentModel>> commentAttachmentsByCommentId(final Task task) {
+    final List<TaskAttachment> attachments =
+        attachmentRepository.findActiveCommentAttachmentsByTaskId(task.getId());
+    if (attachments.isEmpty()) {
+      return Map.of();
+    }
+    final Map<Long, List<AttachmentModel>> byComment = new LinkedHashMap<>();
+    for (final TaskAttachment attachment : attachments) {
+      byComment
+          .computeIfAbsent(attachment.getCommentId(), commentId -> new ArrayList<>())
+          .add(modelMapper.toModel(attachment, task.getUuid(), false));
+    }
+    byComment.replaceAll((commentId, models) -> List.copyOf(models));
+    return Collections.unmodifiableMap(byComment);
   }
 
   /**

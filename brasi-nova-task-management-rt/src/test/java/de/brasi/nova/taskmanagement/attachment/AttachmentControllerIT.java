@@ -773,6 +773,58 @@ class AttachmentControllerIT {
 
   @Test
   @DisplayName(
+      "i152_accept_is_ignored_on_binary_endpoints: Inhalt, Download und Vorschau liefern bei Accept"
+          + " application/json (und bei einem Typ ohne JSON) 200 mit ihrem Content-Type und dem"
+          + " Inhalt; ein unbekannter Anhang ergibt 404 im KSF-Format, nie 500")
+  void i152_accept_is_ignored_on_binary_endpoints() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Accept");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+
+    for (final String accept : List.of("application/json", "image/png", "text/html")) {
+      final String label = "Accept " + accept;
+      final MvcResult content =
+          fetch(mvc, get(contentUrl(taskId, attId, "content")).header("Accept", accept), creator);
+      expect(
+          content,
+          status().isOk(),
+          header().string("Content-Type", "application/pdf"),
+          header().string("Content-Disposition", startsWith("inline")));
+      assertThat(content.getResponse().getContentAsByteArray()).as(label).isEqualTo(PDF_BYTES);
+
+      final MvcResult download =
+          fetch(mvc, get(contentUrl(taskId, attId, "download")).header("Accept", accept), creator);
+      expect(
+          download,
+          status().isOk(),
+          header().string("Content-Type", "application/pdf"),
+          header().string("Content-Disposition", startsWith("attachment")));
+      assertThat(download.getResponse().getContentAsByteArray()).as(label).isEqualTo(PDF_BYTES);
+
+      final MvcResult thumbnail =
+          fetch(mvc, get(contentUrl(taskId, attId, "thumbnail")).header("Accept", accept), creator);
+      expect(thumbnail, status().isOk(), header().string("Content-Type", "image/jpeg"));
+      assertThat(thumbnail.getResponse().getContentAsByteArray())
+          .as(label)
+          .startsWith((byte) 0xFF, (byte) 0xD8, (byte) 0xFF);
+
+      for (final String kind : List.of("content", "download", "thumbnail")) {
+        expect(
+            fetch(
+                mvc,
+                get(contentUrl(taskId, UUID.randomUUID(), kind)).header("Accept", accept),
+                creator),
+            status().isNotFound(),
+            header().string("Content-Type", containsString("json")),
+            jsonPath("$.status").value(404),
+            jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+      }
+    }
+  }
+
+  @Test
+  @DisplayName(
       "i152_if_none_match_304_without_body: passender If-None-Match -> 304 ohne Body, mit ETag"
           + " und Cache-Control")
   void i152_if_none_match_304_without_body() throws Exception {

@@ -120,6 +120,9 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  *       {@code UserStateController#seen} (MarkerService -> requireReadMember, Intake #150)
  *   <li>{@code CommentControllerIT.comment_membership_guard_wire_und_keine_verweigerten_writes} ->
  *       {@code CommentController#createComment} (CommentService.requireWriteMember)
+ *   <li>{@code CommentAttachmentIT.i152_non_member_404_before_file_validation} (Intake #152) ->
+ *       {@code CommentController#createCommentWithAttachments} (CommentAttachmentService ->
+ *       AttachmentTaskAccess.requireWriteMember)
  *   <li>{@code AssigneeControllerIT.s4_exit_non_member_404} und
  *       {@code AssigneeControllerIT.exit_non_member_malformter_body_400} ->
  *       {@code AssigneeController#exit} (AssigneeService.requireWriteMember)
@@ -212,7 +215,9 @@ class AffordanceSentinelsTest {
           // Intake #152: AttachmentUploadService -> AttachmentTaskAccess -> requireWriteMember
           "AttachmentController#upload", "uploadService",
           // Intake #152: AttachmentCommandService -> AttachmentTaskAccess -> requireWriteMember
-          "AttachmentController#remove", "commandService");
+          "AttachmentController#remove", "commandService",
+          // Intake #152 B3: CommentAttachmentService -> AttachmentTaskAccess -> requireWriteMember
+          "CommentController#createCommentWithAttachments", "commentAttachmentService");
 
   /**
    * Explizite Allowlist: bewusst gate-freie Mutations-Handler (authenticated-only). {@code POST

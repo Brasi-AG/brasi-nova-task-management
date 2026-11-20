@@ -1,8 +1,14 @@
 package de.brasi.nova.taskmanagement.comment;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
+import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
+import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
+import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
@@ -71,6 +77,9 @@ public class CommentService {
   private final TaskMembershipGuard membershipGuard;
   private final NotificationMuteFilter muteFilter;
   private final AssigneeService assigneeService;
+  private final AttachmentWriter attachmentWriter;
+  private final AttachmentModelMapper attachmentModelMapper;
+  private final AttachmentProperties attachmentProperties;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -86,7 +95,10 @@ public class CommentService {
       final AuditTimeConverter auditTimeConverter,
       final TaskMembershipGuard membershipGuard,
       final NotificationMuteFilter muteFilter,
-      final AssigneeService assigneeService) {
+      final AssigneeService assigneeService,
+      final AttachmentWriter attachmentWriter,
+      final AttachmentModelMapper attachmentModelMapper,
+      final AttachmentProperties attachmentProperties) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -100,10 +112,32 @@ public class CommentService {
     this.membershipGuard = membershipGuard;
     this.muteFilter = muteFilter;
     this.assigneeService = assigneeService;
+    this.attachmentWriter = attachmentWriter;
+    this.attachmentModelMapper = attachmentModelMapper;
+    this.attachmentProperties = attachmentProperties;
   }
 
   /**
-   * Erstellt einen neuen Kommentar fuer eine Aufgabe.
+   * Erstellt einen neuen Kommentar ohne Anhaenge (JSON-Weg). Delegiert an {@link
+   * #createComment(UUID, CommentCreateInput, List)} mit leerer Anhangliste; die Antwort traegt
+   * {@code attachments = []}.
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @param input Kommentar-Eingabe
+   * @return {@link CommentModel} des neuen Kommentars
+   * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
+   * @throws EntityValidationException wenn Text leer/null oder Eltern-Kommentar ungueltig
+   */
+  @Transactional
+  public CommentModel createComment(final UUID taskExternalId, final CommentCreateInput input) {
+    return createComment(taskExternalId, input, List.of());
+  }
+
+  /**
+   * Erstellt einen neuen Kommentar fuer eine Aufgabe, optional mit Anhaengen (Intake #152).
+   * Kommentar und Anhaenge entstehen in derselben Transaktion: scheitert ein Schritt, rollt alles
+   * zurueck, und der {@link AttachmentWriter} entfernt die in dieser Transaktion geschriebenen
+   * Dateien.
    *
    * <p>Ablauf:
    *
@@ -119,6 +153,10 @@ public class CommentService {
    *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false); erst nach
    *       dem TASK-save, damit ANGELEGT_AM unter der Aufgabensperre entsteht und sich mit {@code
    *       MarkerService#markSeen} serialisiert (Review #150).
+   *   <li>Nur bei Anhaengen (Intake #152): Hoechstzahl je Kommentar sichern (400 bei mehr als
+   *       {@link AttachmentProperties#maxPerTarget()}), dann Anhangzeilen und Dateien am neuen
+   *       Kommentar speichern ({@link AttachmentWriter#store}, laeuft in dieser Transaktion). Keine
+   *       Lesung von {@code TASK_ANHANG}: ein neuer Kommentar hat noch keine Anhaenge.
    *   <li>REPLY/MENTION/COMMENT-Benachrichtigungen emittieren (Deduplizierung). Neu Aufgenommene
    *       bekommen nur die MENTION, keine PARTICIPANT-Benachrichtigung.
    *   <li>Inbox-Generation-Bump + Invalidate fuer alle aktiven Teilnehmer der Aufgabe (der
@@ -128,12 +166,24 @@ public class CommentService {
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param input Kommentar-Eingabe
-   * @return {@link CommentModel} des neuen Kommentars
+   * @param attachments gepruefte und vorbereitete Dateien in Upload-Reihenfolge; leer fuer einen
+   *     Kommentar ohne Anhaenge, nie {@code null}
+   * @return {@link CommentModel} des neuen Kommentars mit den gespeicherten Anhaengen (in der
+   *     Reihenfolge der Eingabe, nicht entfernbar)
    * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
-   * @throws EntityValidationException wenn Text leer/null oder Eltern-Kommentar ungueltig
+   * @throws NullPointerException wenn {@code attachments} {@code null} ist (der Aufrufer uebergibt
+   *     {@code List.of()}); die Pruefung steht vor jedem Zugriff
+   * @throws EntityValidationException wenn Text leer/null, Eltern-Kommentar ungueltig oder mehr
+   *     Anhaenge als erlaubt
+   * @throws java.io.UncheckedIOException wenn eine Anhang-Datei nicht geschrieben werden kann
    */
   @Transactional
-  public CommentModel createComment(final UUID taskExternalId, final CommentCreateInput input) {
+  public CommentModel createComment(
+      final UUID taskExternalId,
+      final CommentCreateInput input,
+      final List<PreparedAttachment> attachments) {
+    Objects.requireNonNull(
+        attachments, "Die Liste der Anhänge darf nicht null sein (leer für keinen Anhang).");
 
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
@@ -308,6 +358,13 @@ public class CommentService {
         actorRef,
         tenantId);
 
+    // Intake #152 B2: Anhaenge am neuen Kommentar speichern, NACH dem Kommentar-Insert (die
+    // Kommentar-ID entsteht erst dort) und VOR jeder Benachrichtigung. Scheitert das Speichern,
+    // rollt die ganze Transaktion zurueck (Kommentar, Zaehler, Aufnahme) und es wird niemand
+    // benachrichtigt; der Writer raeumt die schon geschriebenen Dateien selbst weg.
+    final List<AttachmentModel> attachmentModels =
+        storeCommentAttachments(task, saved.getId(), actorRef, taskExternalId, attachments);
+
     // Benachrichtigungs-Fan-out (NACH dem TASK-save) aus den VOR dem save geladenen Mengen -
     // Deduplizierung + kein Selbst-Notify. Die Empfaenger-Filterung (Self-Exclusion, REPLY-Vorrang,
     // WRITE-Member) ist bereits in replyRecipient/mentionTargets/assigneeRefs materialisiert; hier
@@ -393,7 +450,55 @@ public class CommentService {
         false,
         createdAt,
         // Eigener Kommentar: fuer den Autor nie neu (Intake #150).
-        false);
+        false,
+        // Intake #152: gespeicherte Anhaenge in Eingabereihenfolge; ohne Anhaenge leer, nie null.
+        attachmentModels);
+  }
+
+  /**
+   * Speichert die Anhaenge eines neuen Kommentars (Intake #152 B2). Laeuft in der Transaktion von
+   * {@link #createComment(UUID, CommentCreateInput, List)} nach dem Kommentar-Insert und vor jeder
+   * Benachrichtigung.
+   *
+   * <p>Ohne Anhaenge passiert nichts (weder {@link AttachmentWriter#store} noch der Test-Seam).
+   * Sonst sichert die Methode die Hoechstzahl je Kommentar erneut ab (die eigentliche Pruefung
+   * liegt vor der Transaktion im {@code AttachmentUploadPreparer}); ein neuer Kommentar hat noch
+   * keine aktiven Anhaenge, daher genuegt die Zahl der neuen Dateien ohne Lesung von {@code
+   * TASK_ANHANG}. Die Antwort-Modelle sind nie entfernbar: Kommentar-Anhaenge lassen sich nicht
+   * einzeln entfernen.
+   *
+   * @param task Aufgabe des Kommentars
+   * @param commentId interne ID des neuen Kommentars
+   * @param actorRef UUID der hochladenden Person
+   * @param taskExternalId externe UUID der Aufgabe (Pfad der Links)
+   * @param attachments gepruefte und vorbereitete Dateien
+   * @return Modelle der gespeicherten Anhaenge in der Reihenfolge, die der Writer liefert
+   * @throws EntityValidationException wenn mehr Anhaenge als erlaubt uebergeben wurden (HTTP 400)
+   */
+  private List<AttachmentModel> storeCommentAttachments(
+      final Task task,
+      final Long commentId,
+      final UUID actorRef,
+      final UUID taskExternalId,
+      final List<PreparedAttachment> attachments) {
+    if (attachments.isEmpty()) {
+      return List.of();
+    }
+    if (attachments.size() > attachmentProperties.maxPerTarget()) {
+      throw new EntityValidationException(attachmentProperties.tooManyAttachmentsMessage());
+    }
+    final List<TaskAttachment> stored =
+        attachmentWriter.store(task, commentId, actorRef, attachments);
+    onAfterAttachmentsStoredForTest(commentId);
+    log.info(
+        "CommentService.createComment: {} Anhang/Anhaenge an Kommentar (id={}) der Aufgabe {}"
+            + " gespeichert.",
+        stored.size(),
+        commentId,
+        taskExternalId);
+    return stored.stream()
+        .map(attachment -> attachmentModelMapper.toModel(attachment, taskExternalId, false))
+        .toList();
   }
 
   /**
@@ -513,6 +618,20 @@ public class CommentService {
    * @param taskId interne Aufgaben-ID
    */
   protected void onBeforeTaskSaveForTest(final Long taskId) {
+    // No-Op im Produktivbetrieb.
+  }
+
+  /**
+   * Test-Seam (Default No-Op): Haken GENAU NACH {@link AttachmentWriter#store} und VOR der ersten
+   * Benachrichtigung in {@link #createComment(UUID, CommentCreateInput, List)}; laeuft nur, wenn
+   * Anhaenge uebergeben wurden (Intake #152). Ermoeglicht Rollback-ITs: eine Test-Subklasse wirft
+   * hier, nachdem Anhangzeilen und Dateien dieser Transaktion geschrieben sind, und prueft, dass
+   * danach weder Kommentar noch Anhaenge noch Dateien bleiben. Im Produktivbetrieb ein No-Op; nur
+   * Test-Subklassen ueberschreiben diesen Haken.
+   *
+   * @param commentId interne ID des neuen Kommentars
+   */
+  protected void onAfterAttachmentsStoredForTest(final Long commentId) {
     // No-Op im Produktivbetrieb.
   }
 }

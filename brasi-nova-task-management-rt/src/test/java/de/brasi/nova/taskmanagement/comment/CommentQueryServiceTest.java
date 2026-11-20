@@ -5,14 +5,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentContentProvider;
+import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
+import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
+import de.brasi.nova.taskmanagement.attachment.AttachmentQueryService;
+import de.brasi.nova.taskmanagement.attachment.AttachmentTaskAccess;
+import de.brasi.nova.taskmanagement.attachment.AttachmentThumbnailGenerator;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
+import de.brasi.nova.taskmanagement.repository.TaskAttachmentQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskCommentQueryRepository;
+import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskUserStateQueryRepository;
 import de.brasi.nova.taskmanagement.security.TaskMembershipGuard;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
@@ -35,6 +48,11 @@ import org.junit.jupiter.api.Test;
  * Unit-Tests fuer {@link CommentQueryService} (alle Abhaengigkeiten gemockt, kein DB). Deckt die
  * parentCommentId-Aufloesung (intern -> UUID), Reihenfolge-Erhalt, leere Liste und die drei
  * getrennten 404-Faelle (fehlend / fremder Mandant / DEACTIVE) ab (BE-2-SPEC P2).
+ *
+ * <p>Intake #152 Teil B1: die Kommentar-Anhaenge kommen ueber einen echten {@link
+ * AttachmentQueryService} (gemocktes {@link TaskAttachmentQueryRepository}, echter {@link
+ * AttachmentModelMapper}); so ist belegt, dass je Liste genau eine Abfrage laeuft und die Anhaenge
+ * je Kommentar gruppiert werden.
  */
 class CommentQueryServiceTest {
 
@@ -53,6 +71,7 @@ class CommentQueryServiceTest {
   private AuditTimeConverter auditTimeConverter;
   private TaskMembershipGuard membershipGuard;
   private TaskUserStateQueryRepository userStateQueryRepository;
+  private TaskAttachmentQueryRepository attachmentRepository;
   private CommentQueryService service;
 
   @BeforeEach
@@ -63,6 +82,20 @@ class CommentQueryServiceTest {
     auditTimeConverter = new AuditTimeConverter("Europe/Berlin");
     membershipGuard = mock(TaskMembershipGuard.class);
     userStateQueryRepository = mock(TaskUserStateQueryRepository.class);
+    attachmentRepository = mock(TaskAttachmentQueryRepository.class);
+    // Intake #152 B1: echter AttachmentQueryService; fuer die Kommentarliste braucht er nur das
+    // Repository und den Mapper, die uebrigen Abhaengigkeiten bleiben unbenutzte Mocks.
+    final AttachmentQueryService attachmentQueryService =
+        new AttachmentQueryService(
+            userAccessor,
+            new AttachmentTaskAccess(taskRepository, membershipGuard),
+            attachmentRepository,
+            mock(TaskParticipantQueryRepository.class),
+            mock(AttachmentContentProvider.class),
+            mock(AttachmentThumbnailGenerator.class),
+            new AttachmentModelMapper(auditTimeConverter, "/task-management"),
+            new AttachmentProperties(
+                new AttachmentProperties.Storage(null), List.of(), 20, null, null, null));
     service =
         new CommentQueryService(
             taskRepository,
@@ -70,7 +103,8 @@ class CommentQueryServiceTest {
             userAccessor,
             auditTimeConverter,
             membershipGuard,
-            userStateQueryRepository);
+            userStateQueryRepository,
+            attachmentQueryService);
 
     TenantContextHolder.setTenant(new TenantInfo(TENANT_UUID, TENANT_ID));
     when(userAccessor.requireCurrentUser()).thenReturn(new AuthUser(AUTHOR, "it-user"));
@@ -236,7 +270,127 @@ class CommentQueryServiceTest {
     assertThat(result).extracting(CommentModel::id).containsExactly(C1_UUID);
   }
 
+  // ---- Intake #152 B1: Anhaenge in der Kommentarliste -----------------------------------------
+
+  private static final long TASK_DB_ID = 590601L;
+
+  @Test
+  @DisplayName(
+      "#152 Kommentar-Anhaenge: eine Abfrage je Liste, je Kommentar gruppiert (C1: 2, C2: 1, C3:"
+          + " 0), nicht entfernbar, Links auf dem Aufgaben-Pfad")
+  void i152_comment_attachments_grouped_in_one_query() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
+        .thenReturn(
+            List.of(
+                comment(1L, C1_UUID, null, "eins", T1),
+                comment(2L, C2_UUID, null, "zwei", T1),
+                comment(3L, C3_UUID, null, "drei", T2)));
+    final UUID a1 = UUID.fromString("00000059-0a01-0059-0000-000000000a01");
+    final UUID a2 = UUID.fromString("00000059-0a02-0059-0000-000000000a02");
+    final UUID a3 = UUID.fromString("00000059-0a03-0059-0000-000000000a03");
+    when(attachmentRepository.findActiveCommentAttachmentsByTaskId(TASK_DB_ID))
+        .thenReturn(
+            List.of(
+                attachment(11L, a1, 1L, "erster.pdf", "pdf"),
+                attachment(12L, a2, 1L, "zweiter.txt", "txt"),
+                attachment(13L, a3, 2L, "dritter.pdf", "pdf")));
+
+    final List<CommentModel> result = service.getComments(TASK_UUID);
+
+    assertThat(result).extracting(CommentModel::id).containsExactly(C1_UUID, C2_UUID, C3_UUID);
+    assertThat(result).extracting(m -> m.attachments().size()).containsExactly(2, 1, 0);
+    assertThat(result.get(0).attachments())
+        .as("Reihenfolge der Abfrage bleibt je Kommentar erhalten")
+        .extracting(AttachmentModel::id)
+        .containsExactly(a1, a2);
+    assertThat(result.get(0).attachments())
+        .extracting(AttachmentModel::fileName)
+        .containsExactly("erster.pdf", "zweiter.txt");
+    assertThat(result.get(1).attachments())
+        .extracting(AttachmentModel::fileName)
+        .containsExactly("dritter.pdf");
+    assertThat(result.get(2).attachments()).as("ohne Anhang: leere Liste, nie null").isEmpty();
+    for (final CommentModel model : result) {
+      for (final AttachmentModel a : model.attachments()) {
+        assertThat(a.removable()).as("Kommentar-Anhaenge sind nie entfernbar").isFalse();
+        final String expected =
+            "/task-management/api/v1/tasks/" + TASK_UUID + "/attachments/" + a.id() + "/content";
+        assertThat(a.links().content()).isEqualTo(expected);
+      }
+    }
+
+    // Genau eine Abfrage fuer die ganze Liste (kein N+1, keine Abfrage je Kommentar).
+    verify(attachmentRepository, times(1)).findActiveCommentAttachmentsByTaskId(TASK_DB_ID);
+    verify(attachmentRepository, never()).findActiveTaskAttachments(anyLong());
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Kommentar-Anhaenge: Anhang eines nicht (mehr) aktiven Kommentars erscheint nirgends")
+  void i152_attachment_of_inactive_comment_is_ignored() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    when(commentQueryRepository.findActiveByTaskIdOrdered(anyLong()))
+        .thenReturn(List.of(comment(1L, C1_UUID, null, "eins", T1)));
+    when(attachmentRepository.findActiveCommentAttachmentsByTaskId(TASK_DB_ID))
+        .thenReturn(
+            List.of(
+                attachment(
+                    21L,
+                    UUID.fromString("00000059-0a21-0059-0000-000000000a21"),
+                    99L,
+                    "verwaist.pdf",
+                    "pdf")));
+
+    final List<CommentModel> result = service.getComments(TASK_UUID);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).attachments()).isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Kommentar-Anhaenge: READ-Guard scheitert -> keine Anhang-Abfrage (Lesen erst nach dem"
+          + " Guard)")
+  void i152_comment_attachments_read_only_after_read_guard() {
+    taskFound(EntityState.ACTIVE, TENANT_ID);
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireReadMember(TASK_DB_ID, AUTHOR, TENANT_ID);
+
+    assertThatThrownBy(() -> service.getComments(TASK_UUID))
+        .isInstanceOf(EntityNotFoundException.class);
+
+    verify(attachmentRepository, never()).findActiveCommentAttachmentsByTaskId(anyLong());
+  }
+
   // ---- Hilfen --------------------------------------------------------------------------------
+
+  /** Aktiver Anhang am Kommentar mit der internen ID {@code commentId}. */
+  private static TaskAttachment attachment(
+      final long id,
+      final UUID uuid,
+      final long commentId,
+      final String fileName,
+      final String extension) {
+    final TaskAttachment a = new TaskAttachment();
+    a.setId(id);
+    a.setUuid(uuid);
+    a.setTenantId(TENANT_ID);
+    a.setEntityState(EntityState.ACTIVE);
+    a.setCreatedAt(T1);
+    a.setTaskId(TASK_DB_ID);
+    a.setCommentId(commentId);
+    a.setFileName(fileName);
+    a.setMimeType("pdf".equals(extension) ? "application/pdf" : "text/plain");
+    a.setFileExtension(extension);
+    a.setSizeBytes(1234L);
+    a.setSha256("0123456789abcdef".repeat(4));
+    a.setStorageKey(TENANT_ID + "/0/" + id + "." + extension);
+    a.setThumbnailPresent(false);
+    a.setUploadedByRef(AUTHOR);
+    return a;
+  }
 
   private void taskFound(final EntityState state, final long tenantId) {
     final Task task = new Task();

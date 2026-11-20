@@ -1,6 +1,7 @@
 package de.brasi.nova.taskmanagement.comment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,12 +36,14 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -72,6 +75,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -2187,7 +2191,134 @@ class CommentControllerIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- Intake #152 B1: Anhaenge in der Kommentarliste und in der Antwort ----------------------
+
+  @Test
+  @DisplayName(
+      "i152_get_comments_contains_attachment_metadata: GET /comments traegt je Kommentar die"
+          + " aktiven Anhaenge chronologisch (Name, Links auf dem Aufgaben-Pfad, nicht entfernbar);"
+          + " Aufgaben-Anhaenge und entfernte Kommentar-Anhaenge erscheinen nicht, ein Kommentar"
+          + " ohne Anhang hat eine leere Liste")
+  void i152_get_comments_contains_attachment_metadata() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-152-Anhaenge");
+    final UUID c1 = postComment(mvc, om, tokenA, taskUuid, "Mit Anhaengen", null);
+    final UUID c2 = postComment(mvc, om, tokenA, taskUuid, "Ohne Anhang", null);
+    final long taskId = taskDbId(taskUuid);
+    final long c1Id = commentDbId(c1);
+
+    final UUID first = UUID.randomUUID();
+    final UUID second = UUID.randomUUID();
+    // Der zweite Anhang wird zuerst eingefuegt, ist aber juenger: die Reihenfolge kommt aus
+    // ANGELEGT_AM, nicht aus der Einfuegereihenfolge.
+    insertAttachmentRow(taskId, c1Id, "ACTIVE", second, "zweiter.txt", -10);
+    insertAttachmentRow(taskId, c1Id, "ACTIVE", first, "erster.txt", -20);
+    insertAttachmentRow(taskId, c1Id, "DEACTIVE", UUID.randomUUID(), "entfernt.txt", -30);
+    insertAttachmentRow(taskId, null, "ACTIVE", UUID.randomUUID(), "aufgabe.txt", -40);
+    final String firstBase = "/api/v1/tasks/" + taskUuid + "/attachments/" + first;
+
+    mvc.perform(
+            get("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(2))
+        .andExpect(jsonPath("$[0].id").value(c1.toString()))
+        .andExpect(jsonPath("$[0].attachments.length()").value(2))
+        .andExpect(jsonPath("$[0].attachments[0].id").value(first.toString()))
+        .andExpect(jsonPath("$[0].attachments[0].fileName").value("erster.txt"))
+        .andExpect(jsonPath("$[0].attachments[0].mimeType").value("text/plain"))
+        .andExpect(jsonPath("$[0].attachments[0].uploadedById").value(USER_A_REF.toString()))
+        .andExpect(jsonPath("$[0].attachments[0].removable").value(false))
+        .andExpect(
+            jsonPath("$[0].attachments[0].links.content").value(endsWith(firstBase + "/content")))
+        .andExpect(
+            jsonPath("$[0].attachments[0].links.download").value(endsWith(firstBase + "/download")))
+        .andExpect(jsonPath("$[0].attachments[1].id").value(second.toString()))
+        .andExpect(jsonPath("$[0].attachments[1].fileName").value("zweiter.txt"))
+        .andExpect(jsonPath("$[0].attachments[1].removable").value(false))
+        .andExpect(jsonPath("$[1].id").value(c2.toString()))
+        .andExpect(jsonPath("$[1].attachments").isArray())
+        .andExpect(jsonPath("$[1].attachments.length()").value(0));
+  }
+
+  @Test
+  @DisplayName(
+      "i152_json_create_response_has_empty_attachments: POST /comments (JSON) -> 201 mit"
+          + " attachments = [] (nie null, nie fehlend)")
+  void i152_json_create_response_has_empty_attachments() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-152-JSON");
+
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("text", "Ohne Datei"))))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.text").value("Ohne Datei"))
+        .andExpect(jsonPath("$.attachments").isArray())
+        .andExpect(jsonPath("$.attachments.length()").value(0));
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  /** IDs der per JDBC gesaeten Anhang-Zeilen (Intake #152), weit weg von der KSF-Sequenz. */
+  private static final AtomicLong JDBC_ATTACHMENT_IDS = new AtomicLong(8_200_000_000L);
+
+  /** Interne TASK_COMMENT.ID zur externen UUID. */
+  private long commentDbId(final UUID commentExternalId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT ID FROM [dbo].[TASK_COMMENT] WHERE EXTERNALID = ?", Long.class, commentExternalId);
+  }
+
+  /**
+   * Saet eine Text-Anhang-Zeile per JDBC (ohne Datei, Schluessel NULL; Intake #152). {@code
+   * commentDbId} null = Anhang direkt an der Aufgabe; {@code ageSeconds} verschiebt ANGELEGT_AM
+   * relativ zu jetzt (negativ = aelter).
+   */
+  private void insertAttachmentRow(
+      final long taskDbId,
+      final Long commentDbId,
+      final String entityStatus,
+      final UUID uuid,
+      final String fileName,
+      final int ageSeconds) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ANHANG]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, KOMMENTAR_ID, DATEINAME, MIME_TYP, DATEIENDUNG, GROESSE_BYTES, SHA256,"
+            + " SPEICHERSCHLUESSEL, HAT_VORSCHAU, HOCHGELADEN_VON_REF)"
+            + " VALUES (?, ?, 'comment-it', DATEADD(SECOND, ?, SYSDATETIME()), ?, 1, ?, ?, ?, ?,"
+            + " 'text/plain', 'txt', 12, ?, NULL, 0, ?)",
+        JDBC_ATTACHMENT_IDS.incrementAndGet(),
+        entityStatus,
+        ageSeconds,
+        uuid,
+        TENANT_A_ID,
+        taskDbId,
+        new SqlParameterValue(Types.BIGINT, commentDbId),
+        fileName,
+        "0123456789abcdef".repeat(4),
+        USER_A_REF);
+  }
 
   /** Postet einen Kommentar via POST und liefert dessen externe UUID. */
   private UUID postComment(

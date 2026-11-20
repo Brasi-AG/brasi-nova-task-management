@@ -86,10 +86,8 @@ public class AttachmentUploadPreparer {
     if (files == null || files.isEmpty()) {
       throw new EntityValidationException("Es wurde keine Datei übergeben.");
     }
-    final int maxPerTarget = properties.maxPerTarget();
-    if ((long) activeCount + files.size() > maxPerTarget) {
-      throw new EntityValidationException(
-          "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.");
+    if ((long) activeCount + files.size() > properties.maxPerTarget()) {
+      throw new EntityValidationException(properties.tooManyAttachmentsMessage());
     }
     final AttachmentFileLimit limit = limitPolicy.limitFor(tenantId);
 
