@@ -133,6 +133,25 @@ class CommentPartReaderTest {
         .isInstanceOf(HttpMessageNotReadableException.class);
   }
 
+  @Test
+  @DisplayName(
+      "#152 FIX2 Lesefehler am Teil -> HttpMessageNotReadableException mit neutralem Text, ohne"
+          + " IOException als Ursache und ohne Pfad")
+  void i152_unreadable_part_has_neutral_message_and_no_cause() {
+    assertThatThrownBy(() -> READER.read(new UnreadablePart()))
+        .isInstanceOfSatisfying(
+            HttpMessageNotReadableException.class,
+            failure -> {
+              // KSF schreibt die tiefste Ursache nach details: das muss die Ausnahme selbst sein.
+              assertThat(failure.getCause()).isNull();
+              assertThat(failure.getMostSpecificCause()).isSameAs(failure);
+              assertThat(failure.getMostSpecificCause().getMessage())
+                  .isEqualTo("Teil 'comment' konnte nicht gelesen werden.")
+                  .doesNotContain("upload_123")
+                  .doesNotContain("IOException");
+            });
+  }
+
   // ---- Hilfen ---------------------------------------------------------------------------------
 
   private static byte[] bytes(final String json) {
