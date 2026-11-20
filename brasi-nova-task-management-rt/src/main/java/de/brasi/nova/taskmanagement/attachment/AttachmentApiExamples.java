@@ -108,7 +108,7 @@ public final class AttachmentApiExamples {
 
   private static final String TEXT_TYPE =
       "Der Dateityp „.exe“ ist nicht erlaubt. Erlaubt sind: pdf, xls, xlsx, doc, docx, ppt, pptx,"
-          + " txt, png, jpg, jpeg.";
+          + " txt, csv, png, jpg, jpeg, mp4.";
   private static final String TEXT_EMPTY = "Die Datei „Notiz.txt“ ist leer.";
   private static final String TEXT_TARIFF_LIMIT =
       "Die Datei „Bericht.pdf“ ist größer als die Grenze von 5 MB des Tarifs STANDARD.";

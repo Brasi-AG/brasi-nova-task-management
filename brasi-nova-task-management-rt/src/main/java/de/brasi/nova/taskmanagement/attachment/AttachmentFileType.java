@@ -12,12 +12,12 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Erlaubte Dateitypen fuer Anhaenge (Intake #152): PDF, Excel, Word, PowerPoint, Text und die
- * Bildformate PNG und JPEG.
+ * Erlaubte Dateitypen fuer Anhaenge (Intake #152, #184): PDF, Excel, Word, PowerPoint, Text, CSV,
+ * die Bildformate PNG und JPEG sowie Video im Format MP4.
  *
  * <p>Ein Typ gilt nur, wenn die Endung in der Erlaubtliste steht <em>und</em> der Inhalt dazu passt
  * (Pruefung durch {@link AttachmentFileInspector}). Vorschaubilder gibt es nur fuer PDF und Bilder
- * ({@link #previewable()}).
+ * ({@link #previewable()}); CSV und MP4 haben keine Vorschau.
  */
 public enum AttachmentFileType {
   /** PDF-Dokument. */
@@ -28,6 +28,8 @@ public enum AttachmentFileType {
   JPEG("image/jpeg", true, "jpg", "jpeg"),
   /** Reiner Text. */
   TXT("text/plain", false, "txt"),
+  /** Tabelle als Text mit Trennzeichen (CSV); wie {@link #TXT} ohne Zeichensatz im MIME-Typ. */
+  CSV("text/csv", false, "csv"),
   /** Word-Dokument (Binaerformat). */
   DOC("application/msword", false, "doc"),
   /** Word-Dokument (Office Open XML). */
@@ -39,11 +41,13 @@ public enum AttachmentFileType {
   /** PowerPoint-Praesentation (Binaerformat). */
   PPT("application/vnd.ms-powerpoint", false, "ppt"),
   /** PowerPoint-Praesentation (Office Open XML). */
-  PPTX("application/vnd.openxmlformats-officedocument.presentationml.presentation", false, "pptx");
+  PPTX("application/vnd.openxmlformats-officedocument.presentationml.presentation", false, "pptx"),
+  /** Video im Format MP4. */
+  MP4("video/mp4", false, "mp4");
 
   /** Reihenfolge der Typen im Text der Erlaubtliste (wie in der Fehlermeldung). */
   private static final List<AttachmentFileType> DISPLAY_ORDER =
-      List.of(PDF, XLS, XLSX, DOC, DOCX, PPT, PPTX, TXT, PNG, JPEG);
+      List.of(PDF, XLS, XLSX, DOC, DOCX, PPT, PPTX, TXT, CSV, PNG, JPEG, MP4);
 
   private static final String ALLOWED_EXTENSIONS_TEXT =
       DISPLAY_ORDER.stream()
@@ -106,7 +110,7 @@ public enum AttachmentFileType {
    * Text der Erlaubtliste fuer Fehlermeldungen.
    *
    * @return alle erlaubten Endungen, kommagetrennt: {@code pdf, xls, xlsx, doc, docx, ppt, pptx,
-   *     txt, png, jpg, jpeg}
+   *     txt, csv, png, jpg, jpeg, mp4}
    */
   public static String allowedExtensionsText() {
     return ALLOWED_EXTENSIONS_TEXT;

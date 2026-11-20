@@ -33,7 +33,7 @@ public record CommentWithAttachmentsSchema(
                     description =
                         "Anzuhaengende Dateien, je Datei ein Teil mit dem Namen files (mindestens"
                             + " eine, hoechstens 20). Erlaubt sind pdf, xls, xlsx, doc, docx, ppt,"
-                            + " pptx, txt, png, jpg und jpeg."),
+                            + " pptx, txt, csv, png, jpg, jpeg und mp4."),
             schema =
                 @Schema(
                     type = "string",
