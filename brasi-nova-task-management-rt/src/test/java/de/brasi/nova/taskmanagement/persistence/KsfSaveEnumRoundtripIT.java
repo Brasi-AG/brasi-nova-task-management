@@ -3,9 +3,14 @@ package de.brasi.nova.taskmanagement.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.TaskAttachment;
+import de.brasi.nova.taskmanagement.entity.TaskAttachmentLimit;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
+import de.brasi.nova.taskmanagement.entity.enums.AttachmentTariff;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
+import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentLimitRepository;
+import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -30,6 +35,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
@@ -42,17 +48,20 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 /**
- * KSF-save()-Enum-Roundtrip-IT (Codex-Auflagenpflicht aus Task 5-Regate): beweist, dass
- * {@link BaseTaskParticipantRepository#save(Object)} via KSF-{@code NovaRepository} korrekt
- * persistiert und dass das Entity-Enum-Feld exakt zurueckkommt UND die rohe DB-Spalte den
- * {@code name()}-String haelt.
+ * KSF-save()-Enum-Roundtrip-IT (Codex-Auflagenpflicht aus Task 5-Regate): beweist, dass {@link
+ * BaseTaskParticipantRepository#save(Object)} via KSF-{@code NovaRepository} korrekt persistiert
+ * und dass das Entity-Enum-Feld exakt zurueckkommt UND die rohe DB-Spalte den {@code name()}-String
+ * haelt.
  *
- * <p>Prueft alle Kombinationen aus {@link ParticipantKind} (PERSON, TEAM) und
- * {@link ExitKind} (HANDOVER, UNSUBSCRIBED).
+ * <p>Prueft alle Kombinationen aus {@link ParticipantKind} (PERSON, TEAM) und {@link ExitKind}
+ * (HANDOVER, UNSUBSCRIBED).
+ *
+ * <p>Intake #152: zusaetzlich {@link AttachmentTariff} ueber {@link TaskAttachmentLimit} und der
+ * Ablauf Insert ohne Speicherschluessel, dann Update mit Schluessel fuer {@link TaskAttachment}.
  *
  * <p>Infrastruktur: Wegwerf-MSSQL-DB (wie {@code EnumRoundtripIT}), Flyway-V1 fuer vollstaendiges
- * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via
- * {@code SequenceSchemaManager.ensureSchemaExists()} angelegt).
+ * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via {@code
+ * SequenceSchemaManager.ensureSchemaExists()} angelegt).
  *
  * <p>Uebersprungen, wenn kein MSSQL-Zugang konfiguriert ist ({@link RefSchemaItEnabled}).
  */
@@ -115,11 +124,13 @@ class KsfSaveEnumRoundtripIT {
     }
   }
 
-  @Autowired
-  private BaseTaskParticipantRepository repository;
+  @Autowired private BaseTaskParticipantRepository repository;
 
-  @Autowired
-  private JdbcTemplate jdbcTemplate;
+  @Autowired private JdbcTemplate jdbcTemplate;
+
+  @Autowired private BaseTaskAttachmentLimitRepository attachmentLimitRepository;
+
+  @Autowired private BaseTaskAttachmentRepository attachmentRepository;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -129,7 +140,9 @@ class KsfSaveEnumRoundtripIT {
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
             + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, CAST(GETDATE() AS DATE))",
-        TENANT_ID, TENANT_ID, TENANT_ID);
+        TENANT_ID,
+        TENANT_ID,
+        TENANT_ID);
 
     // TASK-Zeile (FK fuer TASK_PARTICIPANT.TASK_ID); Seed-IDs 101/201/301 via Flyway V1
     jt.update(
@@ -140,7 +153,10 @@ class KsfSaveEnumRoundtripIT {
             + " LAST_ACTIVITY_AT, COMMENT_COUNT) "
             + "VALUES (?, 'ACTIVE', 'ksf-save-it', GETDATE(), NEWID(), 1, ?, "
             + " 'IT-Save-Test-Task', 101, 201, 301, ?, GETDATE(), 0)",
-        TASK_ID, TASK_ID, TENANT_ID, TENANT_ID);
+        TASK_ID,
+        TASK_ID,
+        TENANT_ID,
+        TENANT_ID);
   }
 
   @BeforeEach
@@ -154,7 +170,8 @@ class KsfSaveEnumRoundtripIT {
     TenantContextHolder.clear();
   }
 
-  // ---- 1. ParticipantKind.PERSON -- kein ExitKind --------------------------------------------------
+  // ---- 1. ParticipantKind.PERSON -- kein ExitKind
+  // --------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_participant_kind_person_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -174,15 +191,14 @@ class KsfSaveEnumRoundtripIT {
     assertThat(found.getParticipantKind())
         .as("Entity-Enum-Feld muss exakt zurueckkommen")
         .isEqualTo(ParticipantKind.PERSON);
-    assertThat(found.getExitKind())
-        .as("exitKind soll null sein (nicht gesetzt)")
-        .isNull();
+    assertThat(found.getExitKind()).as("exitKind soll null sein (nicht gesetzt)").isNull();
 
     assertRawColumn(
         saved.getId(), "PARTICIPANT_KIND", ParticipantKind.PERSON.name(), "EXIT_KIND", null);
   }
 
-  // ---- 2. ParticipantKind.TEAM -- kein ExitKind ----------------------------------------------------
+  // ---- 2. ParticipantKind.TEAM -- kein ExitKind
+  // ----------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_participant_kind_team_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -198,10 +214,12 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getParticipantKind()).isEqualTo(ParticipantKind.TEAM);
     assertThat(loaded.get().getExitKind()).isNull();
 
-    assertRawColumn(saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND", null);
+    assertRawColumn(
+        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND", null);
   }
 
-  // ---- 3. ExitKind.HANDOVER ------------------------------------------------------------------------
+  // ---- 3. ExitKind.HANDOVER
+  // ------------------------------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_exit_kind_handover_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -219,11 +237,15 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getExitKind()).isEqualTo(ExitKind.HANDOVER);
 
     assertRawColumn(
-        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.PERSON.name(), "EXIT_KIND",
+        saved.getId(),
+        "PARTICIPANT_KIND",
+        ParticipantKind.PERSON.name(),
+        "EXIT_KIND",
         ExitKind.HANDOVER.name());
   }
 
-  // ---- 4. ExitKind.UNSUBSCRIBED --------------------------------------------------------------------
+  // ---- 4. ExitKind.UNSUBSCRIBED
+  // --------------------------------------------------------------------
 
   @Test
   @DisplayName("ksf_save_exit_kind_unsubscribed_roundtrip: Entity-Feld und DB-Spalte identisch")
@@ -241,19 +263,104 @@ class KsfSaveEnumRoundtripIT {
     assertThat(loaded.get().getExitKind()).isEqualTo(ExitKind.UNSUBSCRIBED);
 
     assertRawColumn(
-        saved.getId(), "PARTICIPANT_KIND", ParticipantKind.TEAM.name(), "EXIT_KIND",
+        saved.getId(),
+        "PARTICIPANT_KIND",
+        ParticipantKind.TEAM.name(),
+        "EXIT_KIND",
         ExitKind.UNSUBSCRIBED.name());
   }
 
-  // ---- Hilfsmethoden -------------------------------------------------------------------------------
+  // ---- 5. Intake #152: AttachmentTariff ueber TaskAttachmentLimit
+  // ----------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_attachment_limit_tariff_roundtrip: KSF-save mit EXPERT, Neuladen liefert EXPERT,"
+          + " Rohspalte TARIF haelt den name()-String")
+  void i152_attachment_limit_tariff_roundtrip() {
+    TaskAttachmentLimit limit = new TaskAttachmentLimit();
+    limit.setTenantId(TENANT_ID);
+    limit.setTariff(AttachmentTariff.EXPERT);
+    limit.setMaxFileBytes(null);
+
+    TaskAttachmentLimit saved = attachmentLimitRepository.save(limit);
+    assertThat(saved.getId())
+        .as("KSF save() muss eine echte ID vergeben (nicht null/0)")
+        .isNotNull()
+        .isGreaterThan(0L);
+    final long id = saved.getId();
+
+    TaskAttachmentLimit reloaded = attachmentLimitRepository.findById(id).orElseThrow();
+    assertThat(reloaded.getTariff()).isEqualTo(AttachmentTariff.EXPERT);
+    assertThat(reloaded.getMaxFileBytes()).as("MAX_DATEI_BYTES bleibt NULL").isNull();
+    assertThat(rawColumn("TASK_ANHANG_GRENZE", "TARIF", id)).isEqualTo("EXPERT");
+  }
+
+  // ---- 6. Intake #152: TaskAttachment Insert ohne Schluessel, dann Update mit Schluessel
+  // ----------
+
+  @Test
+  @DisplayName(
+      "i152_task_attachment_save_roundtrip_without_key_then_update: Insert mit storageKey null"
+          + " (VERSION 1), dann Schluessel aus der ID setzen und speichern (VERSION 2)")
+  void i152_task_attachment_save_roundtrip_without_key_then_update() {
+    final UUID uploadedBy = UUID.randomUUID();
+    TaskAttachment attachment = new TaskAttachment();
+    // Mandantenbezug: TENANT_ID-Spalte wird aus dem Entity-Feld geschrieben
+    attachment.setTenantId(TENANT_ID);
+    attachment.setTaskId(TASK_ID);
+    attachment.setCommentId(null);
+    attachment.setFileName("bericht.pdf");
+    attachment.setMimeType("application/pdf");
+    attachment.setFileExtension("pdf");
+    attachment.setSizeBytes(2048L);
+    attachment.setSha256("b".repeat(64));
+    attachment.setStorageKey(null);
+    attachment.setThumbnailPresent(false);
+    attachment.setUploadedByRef(uploadedBy);
+
+    TaskAttachment saved = attachmentRepository.save(attachment);
+    assertThat(saved.getId())
+        .as("KSF save() muss eine echte ID vergeben (nicht null/0)")
+        .isNotNull()
+        .isGreaterThan(0L);
+    final long id = saved.getId();
+    assertThat(saved.getVersion()).as("Instanzversion nach dem Insert (AuditAspect)").isEqualTo(1);
+    assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Insert").isEqualTo(1);
+    assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isNull();
+
+    // Muster fuer AttachmentWriter (A7): Schluessel entsteht erst nach der ID-Vergabe; Update auf
+    // der vom Insert zurueckgegebenen Instanz. Der AuditAspect hebt die Version auf 2,
+    // MutationExecutor#performUpdate bindet WHERE VERSION = 1 (Datenbankstand nach dem Insert).
+    final String storageKey = "560/0/" + id + ".pdf";
+    saved.setStorageKey(storageKey);
+    TaskAttachment updated = attachmentRepository.save(saved);
+
+    assertThat(updated.getVersion()).as("Instanzversion nach dem Update").isEqualTo(2);
+    assertThat(rawInt("TASK_ANHANG", "VERSION", id)).as("VERSION nach dem Update").isEqualTo(2);
+    assertThat(rawColumn("TASK_ANHANG", "SPEICHERSCHLUESSEL", id)).isEqualTo(storageKey);
+
+    TaskAttachment reloaded = attachmentRepository.findById(id).orElseThrow();
+    assertThat(reloaded.getStorageKey()).isEqualTo("560/0/" + id + ".pdf");
+    assertThat(reloaded.getCommentId()).isNull();
+    assertThat(reloaded.getVersion()).isEqualTo(2);
+    assertThat(reloaded.getTaskId()).isEqualTo(TASK_ID);
+    assertThat(reloaded.getFileName()).isEqualTo("bericht.pdf");
+    assertThat(reloaded.getSizeBytes()).isEqualTo(2048L);
+    assertThat(reloaded.isThumbnailPresent()).isFalse();
+    assertThat(reloaded.getUploadedByRef()).isEqualTo(uploadedBy);
+  }
+
+  // ---- Hilfsmethoden
+  // -------------------------------------------------------------------------------
 
   /**
-   * Erstellt eine neue, ungespeicherte {@link TaskParticipant}-Instanz mit dem angegebenen
-   * {@link ParticipantKind} und optionalem {@link ExitKind}.
+   * Erstellt eine neue, ungespeicherte {@link TaskParticipant}-Instanz mit dem angegebenen {@link
+   * ParticipantKind} und optionalem {@link ExitKind}.
    *
-   * <p>Wichtig: {@code tenantId} muss explizit gesetzt werden — KSF schreibt die
-   * {@code TENANT_ID}-Spalte aus dem Entity-Feld, NICHT aus dem {@code TenantContextHolder}.
-   * Der {@code TenantContextHolder} wird nur fuer den Lese-Scope (Criteria/findById) benoetigt.
+   * <p>Wichtig: {@code tenantId} muss explizit gesetzt werden — KSF schreibt die {@code
+   * TENANT_ID}-Spalte aus dem Entity-Feld, NICHT aus dem {@code TenantContextHolder}. Der {@code
+   * TenantContextHolder} wird nur fuer den Lese-Scope (Criteria/findById) benoetigt.
    */
   private TaskParticipant newParticipant(
       ParticipantKind kind, ExitKind exitKind, LocalDateTime exitAt) {
@@ -275,38 +382,43 @@ class KsfSaveEnumRoundtripIT {
   /**
    * Prueft die rohen DB-Spaltenwerte fuer PARTICIPANT_KIND und EXIT_KIND direkt per JDBC.
    *
-   * @param id            gespeicherte Entity-ID
-   * @param pkCol         Spaltenname PARTICIPANT_KIND
-   * @param expectedPk    erwarteter PARTICIPANT_KIND-Wert (name()-String)
-   * @param ekCol         Spaltenname EXIT_KIND
-   * @param expectedEk    erwarteter EXIT_KIND-Wert (name()-String oder null)
+   * @param id gespeicherte Entity-ID
+   * @param pkCol Spaltenname PARTICIPANT_KIND
+   * @param expectedPk erwarteter PARTICIPANT_KIND-Wert (name()-String)
+   * @param ekCol Spaltenname EXIT_KIND
+   * @param expectedEk erwarteter EXIT_KIND-Wert (name()-String oder null)
    */
   private void assertRawColumn(
-      long id,
-      String pkCol,
-      String expectedPk,
-      String ekCol,
-      String expectedEk) {
+      long id, String pkCol, String expectedPk, String ekCol, String expectedEk) {
     String actualPk =
         jdbcTemplate.queryForObject(
-            "SELECT " + pkCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?",
-            String.class,
-            id);
+            "SELECT " + pkCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?", String.class, id);
     assertThat(actualPk)
         .as("Rohe DB-Spalte %s muss den name()-String enthalten", pkCol)
         .isEqualTo(expectedPk);
 
     String actualEk =
         jdbcTemplate.queryForObject(
-            "SELECT " + ekCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?",
-            String.class,
-            id);
+            "SELECT " + ekCol + " FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?", String.class, id);
     assertThat(actualEk)
         .as("Rohe DB-Spalte %s muss '%s' enthalten", ekCol, expectedEk)
         .isEqualTo(expectedEk);
   }
 
-  // ---- IT-Konfigurations-Context ------------------------------------------------------------------
+  /** Liest eine Textspalte roh per JDBC (Enum-Name, Speicherschluessel). */
+  private String rawColumn(String table, String column, long id) {
+    return jdbcTemplate.queryForObject(
+        "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", String.class, id);
+  }
+
+  /** Liest eine Ganzzahlspalte roh per JDBC (VERSION). */
+  private Integer rawInt(String table, String column, long id) {
+    return jdbcTemplate.queryForObject(
+        "SELECT " + column + " FROM [dbo].[" + table + "] WHERE ID = ?", Integer.class, id);
+  }
+
+  // ---- IT-Konfigurations-Context
+  // ------------------------------------------------------------------
 
   /**
    * Minimaler Spring-Kontext: DataSource + Flyway (Schema) + KSF-Persistence (Repositories +
@@ -333,6 +445,9 @@ class KsfSaveEnumRoundtripIT {
     FlywayAutoConfiguration.class,
     // KSF-Persistence: NovaRepository-Proxies, SequenceSchemaManager (-> SYS_SEQUENCE auto-create)
     KsfPersistenceAutoConfiguration.class,
+    // AOP-Proxies wie in Produktion: ohne sie bleibt der KSF-AuditAspect (Versionssprung bei
+    // save, Audit-Felder) wirkungslos und jedes Update scheitert am Versionsvergleich
+    AopAutoConfiguration.class,
   })
   static class ItConfig {
 

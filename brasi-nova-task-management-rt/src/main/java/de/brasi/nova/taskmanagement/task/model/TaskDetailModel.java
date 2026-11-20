@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.task.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import io.keel.framework.api.service.model.BaseModel;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -46,6 +47,10 @@ import lombok.experimental.Accessors;
  * TASK_USER_STATE.SEEN_AT}, gesetzt nur ueber {@code PUT /api/v1/tasks/{id}/seen}) als UTC-Instant,
  * {@code null} ohne Marker. Das Feld wird ueber den fluent-Setter gesetzt, damit der
  * Voll-Konstruktor unveraendert bleibt.
+ *
+ * <p>Intake #152 (additiv): {@code attachments} sind die aktiven Anhaenge der Aufgabe (ohne
+ * Kommentar-Anhaenge) in Hochlade-Reihenfolge, je mit Abruf-Links und {@code removable} fuer den
+ * Anfrager; gesetzt ueber den fluent-Setter, der Voll-Konstruktor bleibt unveraendert.
  *
  * <p>Die fluent-Accessoren ({@code @Accessors(fluent = true)}) erhalten die record-stilige Lese-API
  * ({@code title()}, {@code isPinned()}, {@code source()}, ...), sodass bestehende Java-Konsumenten
@@ -184,6 +189,10 @@ public class TaskDetailModel extends BaseModel<TaskDetailModel> {
       example = "2026-11-17T09:30:00Z",
       nullable = true)
   private Instant lastSeenAt;
+
+  @JsonProperty("attachments")
+  @Schema(description = "Anhänge der Aufgabe (ohne Kommentar-Anhänge), chronologisch.")
+  private List<AttachmentModel> attachments;
 
   /** Parameterloser Konstruktor (Jackson/Framework). */
   public TaskDetailModel() {

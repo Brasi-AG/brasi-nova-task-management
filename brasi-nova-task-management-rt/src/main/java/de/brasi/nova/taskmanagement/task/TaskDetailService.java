@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.task;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentQueryService;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskHistoryEntry;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
@@ -51,6 +52,7 @@ public class TaskDetailService {
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
   private final TaskSourceRegistry sourceRegistry;
+  private final AttachmentQueryService attachmentQueryService;
 
   /** Konstruktor-Injektion. */
   public TaskDetailService(
@@ -64,7 +66,8 @@ public class TaskDetailService {
       final DictionaryCodeResolver resolver,
       final AuditTimeConverter auditTimeConverter,
       final TaskMembershipGuard membershipGuard,
-      final TaskSourceRegistry sourceRegistry) {
+      final TaskSourceRegistry sourceRegistry,
+      final AttachmentQueryService attachmentQueryService) {
     this.taskRepository = taskRepository;
     this.historyRepository = historyRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -76,6 +79,7 @@ public class TaskDetailService {
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
     this.sourceRegistry = sourceRegistry;
+    this.attachmentQueryService = attachmentQueryService;
   }
 
   /**
@@ -252,6 +256,11 @@ public class TaskDetailService {
             .findFirst()
             .map(auditTimeConverter::toInstant)
             .orElse(null));
+
+    // Intake #152: Aufgaben-Anhaenge (ohne Kommentar-Anhaenge), erst nach dem READ-Guard oben.
+    // Ohne eigenen Guard und ohne isWriteMember: removable kommt aus der Teilnehmerzeile des
+    // Anfragers, damit das Detail die Schreib-Mitgliedschaft nur einmal (Link-Bedingung) prueft.
+    model.attachments(attachmentQueryService.taskAttachmentsForDetail(task, userRef, tenantId));
 
     model.setEntity(task);
     model.setModelState(

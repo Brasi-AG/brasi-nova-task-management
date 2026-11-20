@@ -1,0 +1,476 @@
+package de.brasi.nova.taskmanagement.attachment;
+
+import static de.brasi.nova.taskmanagement.attachment.AttachmentFileType.DOCX;
+import static de.brasi.nova.taskmanagement.attachment.AttachmentFileType.JPEG;
+import static de.brasi.nova.taskmanagement.attachment.AttachmentFileType.PDF;
+import static de.brasi.nova.taskmanagement.attachment.AttachmentFileType.PNG;
+import static de.brasi.nova.taskmanagement.attachment.AttachmentFileType.TXT;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import javax.imageio.ImageIO;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.InputStreamSource;
+import org.springframework.util.unit.DataSize;
+
+/**
+ * Unit-Tests fuer {@link AttachmentThumbnailGenerator} (Intake #152, Task A5; Review Focus 5).
+ *
+ * <p>Vertrag: JPEG mit konfigurierter Breite (600 px) von der ersten PDF-Seite bzw. vom
+ * verkleinerten Bild (nie vergroessert, Seitenverhaeltnis bleibt); leer fuer nicht vorschaufaehige
+ * Typen, bei jedem Fehler und bei Bildern ueber der Pixel-Obergrenze der Quelle (ohne Dekodieren).
+ * Testdaten werden im Test erzeugt (PDF per PDFBox {@link PDDocument}, Bilder per {@link ImageIO});
+ * PDFBox kommt erst mit A5 ins POM.
+ *
+ * <p>Pool mit Zeitlimit (Codex-Review b43db8d): eine langsame Erzeugung (Test-Naht mit eigener
+ * Erzeugungsfunktion) ergibt nach dem Zeitlimit leer und wird unterbrochen, ein voller Pool ergibt
+ * sofort leer; die normale Erzeugung laeuft unveraendert ueber den Pool.
+ */
+class AttachmentThumbnailGeneratorTest {
+
+  /** Pixelbudget des Generators bei Breite 600: 4 * 600 * 600. */
+  private static final long BUDGET = 4L * 600 * 600;
+
+  /** Ergebnis der Test-Erzeugungsfunktionen (kein echtes JPEG noetig). */
+  private static final byte[] MARKER = {1, 2, 3};
+
+  private final AttachmentThumbnailGenerator generator =
+      new AttachmentThumbnailGenerator(properties(), pool(2, 8, Duration.ofSeconds(10)));
+
+  @AfterEach
+  void stopPool() {
+    generator.destroy();
+  }
+
+  @Test
+  void i152_slow_generation_returns_empty_after_timeout_and_is_cancelled() throws Exception {
+    final CountDownLatch release = new CountDownLatch(1);
+    final CountDownLatch interrupted = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator slow =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofMillis(200)),
+            (type, content) -> {
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    try {
+      final long start = System.nanoTime();
+
+      assertThat(slow.generate(PDF, source(pdfWithPages(1)))).isEmpty();
+
+      final Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+      assertThat(elapsed).isGreaterThanOrEqualTo(Duration.ofMillis(200));
+      assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
+      // Future#cancel(true) unterbricht die Erzeugung auf dem Pool
+      assertThat(interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      release.countDown();
+      slow.destroy();
+    }
+  }
+
+  @Test
+  void i152_full_pool_returns_empty_without_waiting_for_timeout() throws Exception {
+    final CountDownLatch started = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator busy =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(30)),
+            (type, content) -> {
+              started.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    final ExecutorService caller = Executors.newSingleThreadExecutor();
+    try {
+      final Future<Optional<byte[]>> first =
+          caller.submit(() -> busy.generate(PNG, source(png(10, 10))));
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+      final long start = System.nanoTime();
+
+      // Einziger Thread belegt, keine Warteschlange: abgelehnt, ohne das Zeitlimit abzuwarten
+      assertThat(busy.generate(PNG, source(png(10, 10)))).isEmpty();
+
+      assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(5));
+      release.countDown();
+      assertThat(first.get(5, TimeUnit.SECONDS)).containsSame(MARKER);
+    } finally {
+      release.countDown();
+      caller.shutdownNow();
+      busy.destroy();
+    }
+  }
+
+  @Test
+  void i152_failing_generation_on_pool_returns_empty() {
+    final AttachmentThumbnailGenerator failing =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(5)),
+            (type, content) -> {
+              throw new IllegalStateException("Testfehler");
+            });
+    try {
+      assertThat(failing.generate(PNG, source(utf8("x")))).isEmpty();
+    } finally {
+      failing.destroy();
+    }
+  }
+
+  @Test
+  void i152_renderer_gets_content_read_before_submission() throws Exception {
+    final byte[] png = png(10, 10);
+    final AtomicReference<byte[]> seen = new AtomicReference<>();
+    final AttachmentThumbnailGenerator recording =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(5)),
+            (type, content) -> {
+              seen.set(content);
+              return Optional.of(MARKER);
+            });
+    try {
+      assertThat(recording.generate(PNG, source(png))).containsSame(MARKER);
+      assertThat(seen.get()).isEqualTo(png);
+    } finally {
+      recording.destroy();
+    }
+  }
+
+  @Test
+  void i152_waiting_generation_cancelled_by_shutdown_returns_empty() throws Exception {
+    final CountDownLatch started = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator stopping =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 1, Duration.ofSeconds(30)),
+            (type, content) -> {
+              started.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    final byte[] png = png(10, 10);
+    final AtomicReference<Optional<byte[]>> waitingResult = new AtomicReference<>();
+    final AtomicReference<Throwable> waitingError = new AtomicReference<>();
+    final Thread first = new Thread(() -> stopping.generate(PNG, source(png)));
+    final Thread waiting =
+        new Thread(
+            () -> {
+              try {
+                waitingResult.set(stopping.generate(PNG, source(png)));
+              } catch (Throwable t) {
+                waitingError.set(t);
+              }
+            });
+    try {
+      first.start();
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+      // Der zweite Aufruf liegt in der Warteschlange und wartet mit Zeitlimit auf sein Future
+      waiting.start();
+      final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (waiting.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) {
+        Thread.onSpinWait();
+      }
+      assertThat(waiting.getState()).isEqualTo(Thread.State.TIMED_WAITING);
+
+      // Herunterfahren bricht das wartende Future ab (CancellationException im Aufrufer)
+      stopping.destroy();
+      waiting.join(TimeUnit.SECONDS.toMillis(5));
+
+      assertThat(waiting.isAlive()).isFalse();
+      assertThat(waitingError.get()).isNull();
+      assertThat(waitingResult.get()).isEmpty();
+    } finally {
+      release.countDown();
+      stopping.destroy();
+      first.join(TimeUnit.SECONDS.toMillis(5));
+    }
+  }
+
+  @Test
+  void i152_stopped_pool_returns_empty() throws IOException {
+    generator.destroy();
+
+    assertThat(generator.generate(PNG, source(png(10, 10)))).isEmpty();
+  }
+
+  @Test
+  void i152_pdf_first_page_has_configured_width() throws IOException {
+    final byte[] jpeg = generator.generate(PDF, source(pdfWithPages(2))).orElseThrow();
+
+    assertThat(jpeg).startsWith((byte) 0xFF, (byte) 0xD8);
+    assertThat(decode(jpeg).getWidth()).isEqualTo(600);
+  }
+
+  @Test
+  void i152_png_scaled_keeps_aspect() throws IOException {
+    final BufferedImage t = decode(generator.generate(PNG, source(png(1200, 800))).orElseThrow());
+
+    assertThat(t.getWidth()).isEqualTo(600);
+    assertThat(t.getHeight()).isEqualTo(400);
+  }
+
+  @Test
+  void i152_small_image_not_upscaled() throws IOException {
+    final byte[] jpeg = generator.generate(JPEG, source(jpeg(300, 200))).orElseThrow();
+
+    assertThat(jpeg).startsWith((byte) 0xFF, (byte) 0xD8);
+    assertThat(decode(jpeg).getWidth()).isEqualTo(300);
+  }
+
+  @Test
+  void i152_corrupt_pdf_returns_empty() {
+    assertThat(generator.generate(PDF, source(bytes("%PDF-1.7 kaputt")))).isEmpty();
+  }
+
+  @Test
+  void i152_office_and_txt_return_empty() {
+    assertThat(generator.generate(DOCX, source(anyBytes()))).isEmpty();
+    assertThat(generator.generate(TXT, source(utf8("x")))).isEmpty();
+  }
+
+  @Test
+  void i152_pixel_bomb_returns_empty_without_decoding() {
+    // Review Focus 5: PNG-Signatur + IHDR 30000x30000 + abgeschnittenes IDAT (wenige Bytes);
+    // Dekodieren wuerde rund 2,7 GB fuer das Bild anlegen
+    assertThat(generator.generate(PNG, source(pngHeaderOnly(30_000, 30_000)))).isEmpty();
+  }
+
+  @Test
+  void i152_tall_narrow_image_is_subsampled() throws IOException {
+    // Pixelbudget 4 * 600 * 600: unter dem Budget Faktor 1, schmal und hoch wird unterabgetastet
+    assertThat(generator.subsamplingFactor(1200, 800)).isEqualTo(1);
+    assertThat(generator.subsamplingFactor(300, 200)).isEqualTo(1);
+    assertThat(generator.subsamplingFactor(2400, 1600)).isEqualTo(2);
+    // Deckel w / previewWidth: Dekodat mindestens so breit wie das Vorschaubild (169 px)
+    assertThat(generator.subsamplingFactor(600, 30_000)).isEqualTo(3);
+    assertThat(generator.subsamplingFactor(1000, 50_000)).isEqualTo(5);
+
+    final BufferedImage t =
+        decode(generator.generate(PNG, source(binaryPng(600, 30_000))).orElseThrow());
+
+    assertThat(t.getWidth()).isLessThan(600);
+    assertThat((long) t.getWidth() * t.getHeight()).isLessThanOrEqualTo(BUDGET);
+  }
+
+  @Test
+  void i152_decoded_image_never_narrower_than_preview() throws IOException {
+    assertThat(generator.subsamplingFactor(1080, 1920)).isEqualTo(1);
+    final int[][] sizes = {
+      {1080, 1920},
+      {1000, 1500},
+      {600, 2500},
+      {1200, 800},
+      {2400, 1600},
+      {600, 30_000},
+      {1000, 50_000},
+      {7000, 7000},
+      {3, 4_000_000}
+    };
+    for (final int[] size : sizes) {
+      final int factor = generator.subsamplingFactor(size[0], size[1]);
+      final int decodedWidth = (size[0] + factor - 1) / factor; // wie ImageIO-Subsampling
+      assertThat(decodedWidth)
+          .as("Dekodatbreite fuer %d x %d", size[0], size[1])
+          .isGreaterThanOrEqualTo(generator.previewWidth(size[0], size[1]));
+    }
+
+    final BufferedImage t =
+        decode(generator.generate(PNG, source(binaryPng(1080, 1920))).orElseThrow());
+
+    assertThat(t.getWidth()).isEqualTo(600);
+    assertThat(t.getHeight()).isEqualTo(1067);
+  }
+
+  @Test
+  void i152_extremely_narrow_source_returns_empty() throws IOException {
+    // Schon ein Pixel Breite sprengt das Pixelbudget: kein Vorschaubild, kein Riesenbild
+    assertThat(generator.previewWidth(1, 1_500_000)).isZero();
+    assertThat(generator.generate(PDF, source(pdfWithPage(new PDRectangle(0.001f, 40_000)))))
+        .isEmpty();
+  }
+
+  @Test
+  void i152_tall_pdf_page_rendered_within_budget() throws IOException {
+    final byte[] pdf = pdfWithPage(new PDRectangle(612, 14_400));
+
+    final BufferedImage t = decode(generator.generate(PDF, source(pdf)).orElseThrow());
+
+    assertThat(t.getWidth()).isLessThan(600);
+    assertThat((long) t.getWidth() * t.getHeight()).isLessThanOrEqualTo(BUDGET);
+  }
+
+  private static InputStreamSource source(final byte[] content) {
+    return new ByteArrayResource(content);
+  }
+
+  private static byte[] bytes(final String text) {
+    return text.getBytes(StandardCharsets.ISO_8859_1);
+  }
+
+  private static byte[] utf8(final String text) {
+    return text.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static BufferedImage decode(final byte[] image) throws IOException {
+    final BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(image));
+    assertThat(decoded).isNotNull();
+    return decoded;
+  }
+
+  /** PDF mit {@code pages} leeren A4-Seiten. */
+  private static byte[] pdfWithPages(final int pages) throws IOException {
+    try (PDDocument document = new PDDocument()) {
+      for (int i = 0; i < pages; i++) {
+        document.addPage(new PDPage(PDRectangle.A4));
+      }
+      final ByteArrayOutputStream out = new ByteArrayOutputStream();
+      document.save(out);
+      return out.toByteArray();
+    }
+  }
+
+  /** PDF mit einer Seite der angegebenen Groesse. */
+  private static byte[] pdfWithPage(final PDRectangle size) throws IOException {
+    try (PDDocument document = new PDDocument()) {
+      document.addPage(new PDPage(size));
+      final ByteArrayOutputStream out = new ByteArrayOutputStream();
+      document.save(out);
+      return out.toByteArray();
+    }
+  }
+
+  /** Schwarz-weisses PNG (klein im Testspeicher auch bei grossen Abmessungen). */
+  private static byte[] binaryPng(final int width, final int height) throws IOException {
+    final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    assertThat(ImageIO.write(image, "png", out)).isTrue();
+    return out.toByteArray();
+  }
+
+  private static byte[] png(final int width, final int height) throws IOException {
+    return image(width, height, "png");
+  }
+
+  private static byte[] jpeg(final int width, final int height) throws IOException {
+    return image(width, height, "jpg");
+  }
+
+  private static byte[] image(final int width, final int height, final String format)
+      throws IOException {
+    final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    assertThat(ImageIO.write(image, format, out)).isTrue();
+    return out.toByteArray();
+  }
+
+  /** Ein gueltiges docx-artiges ZIP (Inhalt fuer den Generator egal). */
+  private static byte[] anyBytes() {
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (ZipOutputStream zip = new ZipOutputStream(out)) {
+      zip.putNextEntry(new ZipEntry("[Content_Types].xml"));
+      zip.write("<Types/>".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+      zip.putNextEntry(new ZipEntry("word/document.xml"));
+      zip.write("<document/>".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return out.toByteArray();
+  }
+
+  /**
+   * PNG-Signatur, gueltiger IHDR-Chunk mit den Abmessungen (8 Bit RGB) und ein abgeschnittener
+   * IDAT-Chunk (angekuendigt 1000 Bytes, geliefert 8) – Abmessungen lesbar, Bild nicht dekodierbar.
+   */
+  private static byte[] pngHeaderOnly(final int width, final int height) {
+    final ByteBuffer ihdr = ByteBuffer.allocate(13);
+    ihdr.putInt(width).putInt(height);
+    ihdr.put((byte) 8).put((byte) 2).put((byte) 0).put((byte) 0).put((byte) 0);
+
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.writeBytes(
+        new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}); // PNG-Signatur
+    writeChunk(out, "IHDR", ihdr.array());
+    out.writeBytes(ByteBuffer.allocate(4).putInt(1000).array());
+    out.writeBytes("IDAT".getBytes(StandardCharsets.US_ASCII));
+    out.writeBytes(new byte[] {0x78, (byte) 0x9C, 0, 0, 0, 0, 0, 0});
+    return out.toByteArray();
+  }
+
+  private static void writeChunk(
+      final ByteArrayOutputStream out, final String type, final byte[] data) {
+    final byte[] typeBytes = type.getBytes(StandardCharsets.US_ASCII);
+    final CRC32 crc = new CRC32();
+    crc.update(typeBytes);
+    crc.update(data);
+    out.writeBytes(ByteBuffer.allocate(4).putInt(data.length).array());
+    out.writeBytes(typeBytes);
+    out.writeBytes(data);
+    out.writeBytes(ByteBuffer.allocate(4).putInt((int) crc.getValue()).array());
+  }
+
+  /** Pool-Konfiguration fuer den Test. */
+  private static AttachmentThumbnailPoolProperties pool(
+      final int poolSize, final int queueCapacity, final Duration timeout) {
+    return new AttachmentThumbnailPoolProperties(
+        poolSize, queueCapacity, timeout, "test-attachment-thumbnail-");
+  }
+
+  /** Properties mit den Vorgaben aus application.properties (Breite 600, Qualitaet 0,85). */
+  private static AttachmentProperties properties() {
+    return new AttachmentProperties(
+        new AttachmentProperties.Storage(null),
+        List.of(),
+        20,
+        new AttachmentProperties.Limits(
+            DataSize.ofMegabytes(5),
+            DataSize.ofMegabytes(5),
+            DataSize.ofMegabytes(10),
+            DataSize.ofMegabytes(10),
+            DataSize.ofMegabytes(15),
+            DataSize.ofMegabytes(15)),
+        new AttachmentProperties.Thumbnail(600, 0.85f, 50_000_000L),
+        new AttachmentProperties.Cache(Duration.ofDays(1), Duration.ofDays(10)));
+  }
+}

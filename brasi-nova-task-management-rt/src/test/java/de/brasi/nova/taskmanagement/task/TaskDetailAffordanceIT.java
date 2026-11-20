@@ -334,11 +334,14 @@ class TaskDetailAffordanceIT {
     allowedTopLevel.add("_links");
     // Intake #150: additives Feld lastSeenAt (Gesehen-Zeitpunkt, null ohne Marker).
     allowedTopLevel.add("lastSeenAt");
+    // Intake #152: additives Feld attachments (Aufgaben-Anhaenge, ohne Kommentar-Anhaenge).
+    allowedTopLevel.add("attachments");
     final java.util.List<String> actualTopLevel = new java.util.ArrayList<>();
     root.fieldNames().forEachRemaining(actualTopLevel::add);
     assertThat(actualTopLevel)
         .as(
-            "Top-Level-Wire muss GENAU die 21 Alt-Felder + modelState + _links + lastSeenAt tragen"
+            "Top-Level-Wire muss GENAU die 21 Alt-Felder + modelState + _links + lastSeenAt"
+                + " + attachments tragen"
                 + " (kein version:null, kein sonstiges unerwartetes BaseModel-Feld). Ist=%s",
             actualTopLevel)
         .containsExactlyInAnyOrderElementsOf(allowedTopLevel);
@@ -703,6 +706,107 @@ class TaskDetailAffordanceIT {
         .andExpect(status().isNotFound());
   }
 
+  // ---- Intake #152: Anhaenge am Detail ------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_write_member_sees_attachments_and_add_attachment: WRITE-Mitglied -> Feld attachments"
+          + " (Liste) und die Links attachments und add-attachment auf die Anhang-Endpunkte")
+  void i152_write_member_sees_attachments_and_add_attachment() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String writeMember =
+        buildJwt(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, writeMember, "Affordance-Anhaenge-Write");
+
+    final JsonNode root =
+        om.readTree(
+            mvc.perform(
+                    get("/api/v1/tasks/" + taskId).header("Authorization", "Bearer " + writeMember))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+    assertThat(root.path("attachments").isArray())
+        .as("Detail traegt attachments als Liste: %s", root)
+        .isTrue();
+    assertThat(root.path("attachments").size()).isZero();
+    final JsonNode links = root.path("_links");
+    assertThat(links.has(TaskHateoas.Rels.ATTACHMENTS))
+        .as("attachments-Rel fuer READ-Mitglieder vorhanden: %s", links)
+        .isTrue();
+    assertThat(links.path(TaskHateoas.Rels.ATTACHMENTS).path("href").asText())
+        .endsWith("/api/v1/tasks/" + taskId + "/attachments");
+    assertThat(links.has(TaskHateoas.Rels.ADD_ATTACHMENT))
+        .as("add-attachment-Rel fuer WRITE-Mitglieder vorhanden: %s", links)
+        .isTrue();
+    assertThat(links.path(TaskHateoas.Rels.ADD_ATTACHMENT).path("href").asText())
+        .endsWith("/api/v1/tasks/" + taskId + "/attachments");
+    assertThat(TaskHateoas.Rels.ATTACHMENTS).isEqualTo("attachments");
+    assertThat(TaskHateoas.Rels.ADD_ATTACHMENT).isEqualTo("add-attachment");
+  }
+
+  @Test
+  @DisplayName(
+      "i152_ex_member_sees_attachments_without_add_attachment: ausgetretenes Mitglied -> Feld"
+          + " attachments und Link attachments, aber kein add-attachment")
+  void i152_ex_member_sees_attachments_without_add_attachment() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String writeMember =
+        buildJwt(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, writeMember, "Affordance-Anhaenge-ExMember");
+    final Long internalId =
+        jdbcTemplate.queryForObject(
+            "SELECT ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+    final long participantId = 900300L + USER_A2_DB_ID;
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_PARTICIPANT]"
+            + " (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
+            + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
+            + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND, EXIT_AT)"
+            + " VALUES (?, 'ACTIVE', 'affordance-it', SYSDATETIME(), NEWID(), 1, ?,"
+            + " ?, ?, 'PERSON', ?, 0, 0, 1, 'UNSUBSCRIBED', '2020-01-01T00:00:00')",
+        participantId,
+        TENANT_A_ID,
+        internalId,
+        USER_A2_REF,
+        TENANT_A_ID);
+
+    final String exMember =
+        buildJwt(TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN, "task-management:TASK_READ");
+    final JsonNode root =
+        om.readTree(
+            mvc.perform(
+                    get("/api/v1/tasks/" + taskId).header("Authorization", "Bearer " + exMember))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+    assertThat(root.path("attachments").isArray())
+        .as("Ex-Mitglied sieht das Feld attachments: %s", root)
+        .isTrue();
+    final JsonNode links = root.path("_links");
+    assertThat(links.has(TaskHateoas.Rels.ATTACHMENTS))
+        .as("attachments-Rel ist unbedingt (READ-Mitglied): %s", links)
+        .isTrue();
+    assertThat(links.has(TaskHateoas.Rels.ADD_ATTACHMENT))
+        .as("add-attachment-Rel nur fuer WRITE-Mitglieder: %s", links)
+        .isFalse();
+  }
+
   // ---- Hilfen --------------------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -819,6 +923,7 @@ class TaskDetailAffordanceIT {
         "de.brasi.nova.taskmanagement.task",
         "de.brasi.nova.taskmanagement.participant",
         "de.brasi.nova.taskmanagement.comment",
+        "de.brasi.nova.taskmanagement.attachment",
         "de.brasi.nova.taskmanagement.inbox",
         "de.brasi.nova.taskmanagement.tag",
         "de.brasi.nova.taskmanagement.notification",

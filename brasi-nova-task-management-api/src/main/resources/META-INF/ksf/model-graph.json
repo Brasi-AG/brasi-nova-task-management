@@ -147,6 +147,204 @@
       ]
     },
     {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskAttachment",
+      "kind": "ENTITY",
+      "name": "TaskAttachment",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_ANHANG" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "taskId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "TASK_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "commentId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "KOMMENTAR_ID",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "fileName",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "DATEINAME",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "mimeType",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "MIME_TYP",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "fileExtension",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "DATEIENDUNG",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sizeBytes",
+          "javaType": "long",
+          "source": "PERSISTED",
+          "columnName": "GROESSE_BYTES",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "sha256",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "SHA256",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "storageKey",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "SPEICHERSCHLUESSEL",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "thumbnailPresent",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "HAT_VORSCHAU",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "uploadedByRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "HOCHGELADEN_VON_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskAttachmentCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskAttachmentUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskAttachmentModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskAttachmentInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskAttachmentLimit",
+      "kind": "ENTITY",
+      "name": "TaskAttachmentLimit",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_ANHANG_GRENZE" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "tariff",
+          "javaType": "de.brasi.nova.taskmanagement.entity.enums.AttachmentTariff",
+          "source": "PERSISTED",
+          "columnName": "TARIF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "maxFileBytes",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "MAX_DATEI_BYTES",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskAttachmentLimitCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskAttachmentLimitUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskAttachmentLimitModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskAttachmentLimitInfoModel"
+        }
+      ]
+    },
+    {
       "id": "de.brasi.nova.taskmanagement.entity.TaskComment",
       "kind": "ENTITY",
       "name": "TaskComment",

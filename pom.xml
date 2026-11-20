@@ -30,6 +30,8 @@
 		<maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
 		<maven-dependency-plugin.version>3.8.1</maven-dependency-plugin.version>
 		<exec-maven-plugin.version>3.5.0</exec-maven-plugin.version>
+		<!-- Apache PDFBox: Vorschaubild der ersten PDF-Seite fuer Anhaenge (Intake #152) -->
+		<pdfbox.version>3.0.3</pdfbox.version>
 	</properties>
 
 	<dependencyManagement>
@@ -59,6 +61,21 @@
 				<version>2025.0.0</version>
 				<type>pom</type>
 				<scope>import</scope>
+			</dependency>
+			<!--
+				PDFBox fuer Anhang-Vorschaubilder. commons-logging ausgeschlossen: spring-jcl stellt
+				dieselbe API bereit (keine doppelten Klassen org.apache.commons.logging.*).
+			-->
+			<dependency>
+				<groupId>org.apache.pdfbox</groupId>
+				<artifactId>pdfbox</artifactId>
+				<version>${pdfbox.version}</version>
+				<exclusions>
+					<exclusion>
+						<groupId>commons-logging</groupId>
+						<artifactId>commons-logging</artifactId>
+					</exclusion>
+				</exclusions>
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
