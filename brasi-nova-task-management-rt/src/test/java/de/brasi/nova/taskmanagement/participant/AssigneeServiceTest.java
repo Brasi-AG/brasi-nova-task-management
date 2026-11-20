@@ -4219,6 +4219,33 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
+      "i180_leerer_name_uuid_fallback: ein leerer oder nur aus Leerzeichen bestehender"
+          + " Anzeigename wird im Verlaufsdetail durch die UUID ersetzt")
+  void i180_blank_name_falls_back_to_uuid() {
+    final Long taskId = 18010L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID emptyNameRef = UUID.randomUUID();
+    final UUID blankNameRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur", emptyNameRef, "", blankNameRef, "   "));
+
+    service.updateAssignees(
+        taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, emptyNameRef, blankNameRef)));
+
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_ASSIGNED, emptyNameRef.toString());
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_ASSIGNED, blankNameRef.toString());
+    verify(taskHistoryService, times(2)).record(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
       "i180_hinzufuegen_je_person_ein_eintrag: POST /participants mit neuer, ausgetretener und"
           + " aktiver Person schreibt genau zwei Eintraege 'hat einen Beteiligten hinzugefuegt'"
           + " (neu und reaktiviert, je mit Namen), keinen fuer die aktive Person und keinen mit dem"

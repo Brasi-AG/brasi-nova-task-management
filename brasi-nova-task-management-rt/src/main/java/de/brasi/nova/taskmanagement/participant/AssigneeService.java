@@ -1998,7 +1998,7 @@ public class AssigneeService {
 
   /**
    * Loest die Anzeigenamen der Personen in EINER Abfrage des Benutzerstamms auf (Namen-Snapshot).
-   * Nur aktive Benutzer des Mandanten erscheinen; ohne Anzeigenamen steht die UUID als Name.
+   * Nur aktive Benutzer des Mandanten erscheinen; ohne Namen (auch leer) steht die UUID als Name.
    *
    * @param refs die Personen (nicht leer, sonst entstuende ein leeres {@code IN ()})
    * @return Anzeigename je aktiver Person
@@ -2009,7 +2009,10 @@ public class AssigneeService {
         .collect(
             Collectors.toMap(
                 User::getUuid,
-                u -> u.getFullName() != null ? u.getFullName() : u.getUuid().toString(),
+                u -> {
+                  final String fullName = u.getFullName();
+                  return fullName == null || fullName.isBlank() ? u.getUuid().toString() : fullName;
+                },
                 (a, b) -> a));
   }
 
