@@ -27,14 +27,19 @@ import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,7 +77,11 @@ class AttachmentQueryServiceTest {
   private static final String KEY = AttachmentStorageKeys.contentKey(TENANT, ATT_ID, "pdf");
   private static final byte[] PDF_BYTES =
       "%PDF-1.7\n% Testinhalt\n".getBytes(StandardCharsets.ISO_8859_1);
-  private static final byte[] JPEG = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 7, 7};
+  /** Echtes JPEG in der konfigurierten Breite: der Vorschau-ETag liest die Breite aus dem Kopf. */
+  private static final byte[] JPEG = jpeg(600, 400);
+
+  /** Echtes JPEG schmaler als konfiguriert (z. B. vor einer Aenderung der Vorschaubreite). */
+  private static final byte[] NARROW_JPEG = jpeg(300, 200);
 
   @Mock private UserAccessor userAccessor;
   @Mock private BaseTaskRepository taskRepo;
@@ -155,6 +164,56 @@ class AttachmentQueryServiceTest {
     }
     verifyNoInteractions(generator);
     verify(provider, never()).writeThumbnail(any(), any());
+  }
+
+  @Test
+  void i152_thumbnail_etag_carries_width_of_delivered_image() throws Exception {
+    // Gespeichertes Vorschaubild mit 300 px bei konfigurierter Breite 600
+    when(provider.openThumbnail(KEY)).thenAnswer(inv -> Optional.of(stream(NARROW_JPEG)));
+
+    final AttachmentDelivery d = service.serveThumbnail(TASK_UUID, ATT_UUID, null);
+
+    assertThat(d.etag()).isEqualTo("W/\"" + SHA + "-t300\"");
+    try (InputStream in = d.stream()) {
+      assertThat(in.readAllBytes()).isEqualTo(NARROW_JPEG);
+    }
+
+    // Ein ETag mit der konfigurierten Breite bestaetigt das alte Bild nicht
+    final AttachmentDelivery configured =
+        service.serveThumbnail(TASK_UUID, ATT_UUID, AttachmentEtags.thumbnailEtag(SHA, 600));
+    assertThat(configured.notModified()).isFalse();
+    assertThat(configured.etag()).endsWith("-t300\"");
+    configured.stream().close();
+
+    final AttachmentDelivery unchanged =
+        service.serveThumbnail(TASK_UUID, ATT_UUID, AttachmentEtags.thumbnailEtag(SHA, 300));
+    assertThat(unchanged.notModified()).isTrue();
+    assertThat(unchanged.stream()).isNull();
+    verifyNoInteractions(generator);
+  }
+
+  @Test
+  void i152_regenerated_thumbnail_etag_carries_generated_width() throws Exception {
+    when(provider.openThumbnail(KEY)).thenReturn(Optional.empty());
+    when(generator.generate(eq(PDF), any())).thenReturn(Optional.of(NARROW_JPEG));
+
+    final AttachmentDelivery d = service.serveThumbnail(TASK_UUID, ATT_UUID, null);
+
+    assertThat(d.etag()).isEqualTo(AttachmentEtags.thumbnailEtag(SHA, 300));
+    d.stream().close();
+    verify(provider).writeThumbnail(KEY, NARROW_JPEG);
+  }
+
+  @Test
+  void i152_unreadable_stored_thumbnail_is_404() {
+    final byte[] broken = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 7, 7};
+    when(provider.openThumbnail(KEY)).thenAnswer(inv -> Optional.of(stream(broken)));
+
+    assertThatThrownBy(() -> service.serveThumbnail(TASK_UUID, ATT_UUID, null))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+    assertThat(AttachmentQueryService.jpegWidth(broken)).isEmpty();
+    assertThat(AttachmentQueryService.jpegWidth(JPEG)).hasValue(600);
   }
 
   @Test
@@ -322,6 +381,24 @@ class AttachmentQueryServiceTest {
 
   private static InputStream jpegStream() {
     return new ByteArrayInputStream(JPEG);
+  }
+
+  private static InputStream stream(final byte[] bytes) {
+    return new ByteArrayInputStream(bytes);
+  }
+
+  /** Einfarbiges RGB-JPEG der angegebenen Groesse. */
+  private static byte[] jpeg(final int width, final int height) {
+    final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try {
+      if (!ImageIO.write(image, "jpg", out)) {
+        throw new IllegalStateException("Kein JPEG-Schreiber verfuegbar.");
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return out.toByteArray();
   }
 
   /** Properties mit den Vorgaben aus application.properties (Vorschau 600 px, P1D und P10D). */

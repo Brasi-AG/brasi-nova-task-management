@@ -14,10 +14,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import javax.imageio.stream.MemoryCacheImageInputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamResource;
@@ -33,8 +39,10 @@ import org.springframework.stereotype.Service;
  * innerhalb seiner Aufgabe gefunden (Aufgaben- und Kommentar-Anhaenge, nur ACTIVE); sonst {@code
  * Anhang nicht gefunden.}.
  *
- * <p>Auslieferung: Ein passender {@code If-None-Match} ergibt 304, ohne die Datei zu oeffnen. Sonst
- * wird der Strom hier geoeffnet, damit eine fehlende Datei synchron als neutrale 404 entsteht (mit
+ * <p>Auslieferung: Beim Inhalt ergibt ein passender {@code If-None-Match} 304, ohne die Datei zu
+ * oeffnen; das Vorschaubild wird vor dem Vergleich gelesen bzw. erzeugt, weil sein ETag die Breite
+ * des ausgelieferten Bilds traegt. Sonst wird der Strom hier geoeffnet, damit eine fehlende Datei
+ * synchron als neutrale 404 entsteht (mit
  * Fehler-Log, Anhang-UUID ohne Pfad) und nicht erst beim Schreiben der Antwort. Fehlt das
  * Vorschaubild eines vorschaufaehigen Typs, wird es aus dem Inhalt erzeugt und abgelegt
  * (Selbstheilung). Ein gespeichertes Vorschaubild wird vollstaendig gelesen und mit bekannter
@@ -48,6 +56,8 @@ public class AttachmentQueryService {
   private static final String ATTACHMENT_NOT_FOUND = "Anhang nicht gefunden.";
   private static final String TASK_NOT_FOUND = "Aufgabe nicht gefunden.";
   private static final String THUMBNAIL_MIME_TYPE = "image/jpeg";
+  private static final String JPEG_FORMAT = "jpeg";
+  private static final int FIRST_IMAGE = 0;
 
   private final UserAccessor userAccessor;
   private final AttachmentTaskAccess taskAccess;
@@ -68,7 +78,7 @@ public class AttachmentQueryService {
    * @param contentProvider Zugriff auf die Dateien
    * @param thumbnailGenerator erzeugt fehlende Vorschaubilder
    * @param modelMapper bildet Anhaenge auf das API-Modell ab
-   * @param properties Vorschaubreite und Cache-Dauer
+   * @param properties Cache-Dauer
    */
   public AttachmentQueryService(
       final UserAccessor userAccessor,
@@ -160,12 +170,18 @@ public class AttachmentQueryService {
    * Liefert das Vorschaubild (JPEG) eines Anhangs der Aufgabe. Fehlt die Datei des Vorschaubilds,
    * wird es aus dem Inhalt erzeugt und abgelegt; die Datenbank bleibt unveraendert.
    *
+   * <p>Der ETag traegt die tatsaechliche Breite des ausgelieferten Bilds (aus dem JPEG-Kopf, ohne
+   * Dekodieren), nicht die konfigurierte: ein vor einer Aenderung der Vorschaubreite gespeichertes
+   * Vorschaubild behaelt so seinen ETag. Deshalb wird das Bild vor dem ETag-Vergleich gelesen bzw.
+   * erzeugt.
+   *
    * @param taskExternalId externe UUID der Aufgabe
    * @param attachmentId externe UUID des Anhangs
    * @param ifNoneMatch Wert des Headers {@code If-None-Match} oder {@code null}
    * @return 304-Ergebnis ohne Strom oder das Vorschaubild
    * @throws EntityNotFoundException wenn Aufgabe oder Anhang nicht sichtbar sind, der Typ kein
-   *     Vorschaubild hat, die Inhaltsdatei fehlt oder die Erzeugung scheitert (HTTP 404)
+   *     Vorschaubild hat, die Inhaltsdatei fehlt, die Erzeugung scheitert oder das Vorschaubild
+   *     kein lesbares JPEG ist (HTTP 404)
    */
   public AttachmentDelivery serveThumbnail(
       final UUID taskExternalId, final UUID attachmentId, final String ifNoneMatch) {
@@ -174,20 +190,54 @@ public class AttachmentQueryService {
         AttachmentFileType.fromExtension(attachment.getFileExtension())
             .filter(AttachmentFileType::previewable)
             .orElseThrow(() -> new EntityNotFoundException(ATTACHMENT_NOT_FOUND));
+    final String storageKey = requireStorageKey(attachment);
+    final Optional<InputStream> stored = contentProvider.openThumbnail(storageKey);
+    final byte[] jpeg =
+        stored.isPresent()
+            ? readStoredThumbnail(stored.get())
+            : regenerateThumbnail(attachment, type, storageKey);
     final String etag =
-        AttachmentEtags.thumbnailEtag(attachment.getSha256(), properties.thumbnail().width());
+        AttachmentEtags.thumbnailEtag(attachment.getSha256(), requireJpegWidth(attachment, jpeg));
     final Duration maxAge = properties.cache().thumbnailMaxAge();
     if (AttachmentEtags.matches(ifNoneMatch, etag)) {
       return AttachmentDelivery.unchanged(etag, maxAge);
     }
-    final String storageKey = requireStorageKey(attachment);
-    final Optional<InputStream> stored = contentProvider.openThumbnail(storageKey);
-    if (stored.isPresent()) {
-      final byte[] jpeg = readStoredThumbnail(stored.get());
-      return thumbnailDelivery(etag, new ByteArrayInputStream(jpeg), jpeg.length, maxAge);
-    }
-    final byte[] jpeg = regenerateThumbnail(attachment, type, storageKey);
     return thumbnailDelivery(etag, new ByteArrayInputStream(jpeg), jpeg.length, maxAge);
+  }
+
+  /**
+   * Liest die Breite eines JPEG aus dem Bildkopf ({@link ImageReader#getWidth}, ohne Dekodieren).
+   *
+   * @param jpeg Bytes des Bilds
+   * @return Breite in Pixeln; leer, wenn die Bytes kein lesbares JPEG sind
+   */
+  static OptionalInt jpegWidth(final byte[] jpeg) {
+    final Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(JPEG_FORMAT);
+    if (!readers.hasNext()) {
+      return OptionalInt.empty();
+    }
+    final ImageReader reader = readers.next();
+    try (ImageInputStream input = new MemoryCacheImageInputStream(new ByteArrayInputStream(jpeg))) {
+      reader.setInput(input, true, true);
+      final int width = reader.getWidth(FIRST_IMAGE);
+      return width > 0 ? OptionalInt.of(width) : OptionalInt.empty();
+    } catch (IOException | RuntimeException e) {
+      return OptionalInt.empty();
+    } finally {
+      reader.dispose();
+    }
+  }
+
+  /** Breite des Vorschaubilds fuer den ETag; kein lesbares JPEG ergibt die neutrale 404 (WARN). */
+  private static int requireJpegWidth(final TaskAttachment attachment, final byte[] jpeg) {
+    final OptionalInt width = jpegWidth(jpeg);
+    if (width.isEmpty()) {
+      log.warn(
+          "Vorschaubild fuer Anhang {} ist kein lesbares JPEG; Abruf mit 404 beantwortet.",
+          attachment.getUuid());
+      throw new EntityNotFoundException(ATTACHMENT_NOT_FOUND);
+    }
+    return width.getAsInt();
   }
 
   /** Laedt die Anhaenge der Aufgabe und berechnet {@code removable} aus einer Teilnehmerzeile. */
