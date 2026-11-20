@@ -63,11 +63,18 @@ public class Task extends NovaEntity<Task> {
   @NovaFkScope(mode = NovaFkScope.Mode.GLOBAL)
   private Long taskStatusId;
 
-  /** FK auf {@code DIC_TASK_PRIORITY} (global). */
+  /**
+   * FK auf {@code DIC_TASK_PRIORITY} (global).
+   *
+   * <p>{@code updateable = true} (Intake #183): Die Prioritaet muss sich ueber {@code PATCH
+   * /tasks/{id}} (priorityCode) aendern koennen. KSF filtert FK-Spalten per Default (updateable =
+   * false) aus dem UPDATE-SET, sodass {@code setPriorityId(...)} beim {@code save()} still
+   * verworfen wuerde (analog {@code taskStatusId}).
+   */
   @NovaColumn(
       name = "PRIORITY_ID",
       nullable = false,
-      foreignKey = @NovaForeignKey(referencedEntity = TaskPriority.class))
+      foreignKey = @NovaForeignKey(referencedEntity = TaskPriority.class, updateable = true))
   @NovaFkScope(mode = NovaFkScope.Mode.GLOBAL)
   private Long priorityId;
 

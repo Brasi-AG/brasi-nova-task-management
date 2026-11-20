@@ -11,7 +11,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate, description).
+ * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate, description,
+ * priorityCode).
  *
  * <p>{@link PatchValue#absent()} bedeutet: Feld nicht aendern. {@link PatchValue#of(Object)}
  * bedeutet: Feld auf den angegebenen Wert setzen. {@link PatchValue#ofNull()} bedeutet: Feld
