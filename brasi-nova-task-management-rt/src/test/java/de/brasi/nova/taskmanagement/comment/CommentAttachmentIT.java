@@ -206,6 +206,19 @@ class CommentAttachmentIT {
 
   private static final String NON_MEMBER_LOGIN = "non-member-comment-attachment@brasi.de";
 
+  /** Nutzer des Mandanten A ohne Teilnehmerzeile, mit eigenem Namen (Erwaehnung im Verlauf). */
+  private static final UUID MENTIONED_REF = UUID.randomUUID();
+
+  private static final String MENTIONED_LOGIN = "mentioned-comment-attachment@brasi.de";
+  private static final String MENTIONED_NAME = "Anhang Erwaehnte Person";
+
+  /** Wie AssigneeService.HISTORY_PARTICIPANT_MENTIONED (dort nur im Paket sichtbar). */
+  private static final String HISTORY_MENTIONED =
+      "hat einen Beteiligten per Erwaehnung hinzugefuegt";
+
+  /** Verlaufstext des Hinzufuegens per POST /participants (darf hier nicht entstehen). */
+  private static final String HISTORY_ADDED = "hat einen Beteiligten hinzugefuegt";
+
   private static final String WITH_ATTACHMENTS_URL = "/api/v1/tasks/{id}/comments/with-attachments";
 
   /** Text der 400 bei mehr als 20 Dateien (aus {@code AttachmentUploadPreparer#prepare}). */
@@ -304,6 +317,7 @@ class CommentAttachmentIT {
     seedBenutzerIfAbsent(jt, 5703L, OTHER_REF, OTHER_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, 5704L, EX_REF, EX_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, 5705L, NON_MEMBER_REF, NON_MEMBER_LOGIN, TENANT_A_ID);
+    seedBenutzerIfAbsent(jt, 5706L, MENTIONED_REF, MENTIONED_LOGIN, MENTIONED_NAME, TENANT_A_ID);
   }
 
   // ---- Anlegen mit Anhaengen ----------------------------------------------------------------
@@ -751,6 +765,42 @@ class CommentAttachmentIT {
     assertThat(notificationCountOfRecipient(taskId, CREATOR_REF) - creatorBefore).isZero();
   }
 
+  // ---- Verlauf (Intake #180) ------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i180_comment_with_attachment_mention_records_one_history_entry: Kommentar mit Anhang und"
+          + " Erwaehnung eines Nicht-Mitglieds -> 201, genau ein neuer Verlaufseintrag 'hat einen"
+          + " Beteiligten per Erwaehnung hinzugefuegt' (Akteur Autorin, Detail Name der Person),"
+          + " keiner 'hat einen Beteiligten hinzugefuegt'; die erneute Erwaehnung der nun"
+          + " aufgenommenen Person in einem zweiten Kommentar mit Anhang ergibt keinen Eintrag")
+  void i180_comment_with_attachment_mention_records_one_history_entry() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT Verlauf Erwaehnung");
+    final String mention = commentJson("Bitte ansehen", MENTIONED_REF);
+
+    final int beforeMention = historyTotal(taskId);
+    postWithAttachments(mvc, creator, taskId, mention, file("Notiz.txt", TXT_BYTES))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.attachments.length()").value(1));
+    assertThat(historyTotal(taskId) - beforeMention).as("genau ein Eintrag").isEqualTo(1);
+    assertThat(historyEntries(taskId, CREATOR_REF, HISTORY_MENTIONED, MENTIONED_NAME))
+        .as("Akteur ist die Autorin, Detail der Name der aufgenommenen Person")
+        .isEqualTo(1);
+    assertThat(historyEntries(taskId, CREATOR_REF, HISTORY_ADDED, MENTIONED_NAME))
+        .as("nicht der Text des POST /participants")
+        .isZero();
+
+    final int beforeMemberMention = historyTotal(taskId);
+    postWithAttachments(mvc, creator, taskId, mention, pdfFile("Bericht.pdf"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.attachments.length()").value(1));
+    assertThat(historyTotal(taskId) - beforeMemberMention)
+        .as("Erwaehnung eines Mitglieds: kein Eintrag")
+        .isZero();
+  }
+
   // ---- Rollback --------------------------------------------------------------------------------
 
   @Test
@@ -1077,6 +1127,29 @@ class CommentAttachmentIT {
         "SELECT ID FROM [dbo].[TASK_COMMENT] WHERE EXTERNALID = ?", Long.class, commentId);
   }
 
+  /** Alle Verlaufseintraege einer Aufgabe. */
+  private int historyTotal(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskId);
+  }
+
+  /** Verlaufseintraege einer Aufgabe mit Akteur, Text und Detail (Name der Person). */
+  private int historyEntries(
+      final UUID taskId, final UUID actorRef, final String text, final String detail) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND h.ACTOR_REF = ?"
+            + " AND h.TEXT = ? AND h.CHANGE_DETAIL = ?",
+        Integer.class,
+        taskId,
+        actorRef,
+        text,
+        detail);
+  }
+
   /** Saet einen aktiven Text-Anhang direkt an der Aufgabe per JDBC (ohne Datei). */
   private void insertTaskAttachmentRow(final long taskDbId, final String fileName) {
     jdbcTemplate.update(
@@ -1256,16 +1329,27 @@ class CommentAttachmentIT {
       final UUID externalId,
       final String loginName,
       final long tenantId) {
+    seedBenutzerIfAbsent(jt, id, externalId, loginName, "IT Test User", tenantId);
+  }
+
+  private static void seedBenutzerIfAbsent(
+      final JdbcTemplate jt,
+      final long id,
+      final UUID externalId,
+      final String loginName,
+      final String fullName,
+      final long tenantId) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_BENUTZER] WHERE ID = ?) "
             + "INSERT INTO [dbo].[PROD_BENUTZER] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
-            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, 'IT Test User')",
+            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
         id,
         id,
         externalId,
         tenantId,
-        loginName);
+        loginName,
+        fullName);
   }
 
   private static String toPem(final byte[] der) {
