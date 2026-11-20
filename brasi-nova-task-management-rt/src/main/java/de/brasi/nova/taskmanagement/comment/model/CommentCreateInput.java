@@ -28,7 +28,7 @@ import java.util.UUID;
 @Schema(
     description =
         "Eingabe eines Kommentars: Text (Pflicht), optional Eltern-Kommentar und erwaehnte"
-            + " Benutzer. Beim Kommentar mit Anhaengen steht sie als JSON im Teil comment.")
+            + " Benutzer.")
 public record CommentCreateInput(
     @Schema(
             description =

@@ -2,7 +2,6 @@ package de.brasi.nova.taskmanagement.comment;
 
 import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
 import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
-import de.brasi.nova.taskmanagement.attachment.AttachmentUploadPreparer;
 import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
 import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
 import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
@@ -172,6 +171,8 @@ public class CommentService {
    * @return {@link CommentModel} des neuen Kommentars mit den gespeicherten Anhaengen (in der
    *     Reihenfolge der Eingabe, nicht entfernbar)
    * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
+   * @throws NullPointerException wenn {@code attachments} {@code null} ist (der Aufrufer uebergibt
+   *     {@code List.of()}); die Pruefung steht vor jedem Zugriff
    * @throws EntityValidationException wenn Text leer/null, Eltern-Kommentar ungueltig oder mehr
    *     Anhaenge als erlaubt
    * @throws java.io.UncheckedIOException wenn eine Anhang-Datei nicht geschrieben werden kann
@@ -181,6 +182,8 @@ public class CommentService {
       final UUID taskExternalId,
       final CommentCreateInput input,
       final List<PreparedAttachment> attachments) {
+    Objects.requireNonNull(
+        attachments, "Die Liste der Anhänge darf nicht null sein (leer für keinen Anhang).");
 
     final CurrentActor actor = CurrentActor.require(userAccessor);
     final long tenantId = actor.tenant().id();
@@ -459,7 +462,7 @@ public class CommentService {
    *
    * <p>Ohne Anhaenge passiert nichts (weder {@link AttachmentWriter#store} noch der Test-Seam).
    * Sonst sichert die Methode die Hoechstzahl je Kommentar erneut ab (die eigentliche Pruefung
-   * liegt vor der Transaktion im {@link AttachmentUploadPreparer}); ein neuer Kommentar hat noch
+   * liegt vor der Transaktion im {@code AttachmentUploadPreparer}); ein neuer Kommentar hat noch
    * keine aktiven Anhaenge, daher genuegt die Zahl der neuen Dateien ohne Lesung von {@code
    * TASK_ANHANG}. Die Antwort-Modelle sind nie entfernbar: Kommentar-Anhaenge lassen sich nicht
    * einzeln entfernen.
@@ -481,10 +484,8 @@ public class CommentService {
     if (attachments.isEmpty()) {
       return List.of();
     }
-    final int maxPerTarget = attachmentProperties.maxPerTarget();
-    if (attachments.size() > maxPerTarget) {
-      throw new EntityValidationException(
-          AttachmentUploadPreparer.tooManyAttachmentsMessage(maxPerTarget));
+    if (attachments.size() > attachmentProperties.maxPerTarget()) {
+      throw new EntityValidationException(attachmentProperties.tooManyAttachmentsMessage());
     }
     final List<TaskAttachment> stored =
         attachmentWriter.store(task, commentId, actorRef, attachments);

@@ -42,8 +42,9 @@ public interface TaskAttachmentQueryRepository extends BaseTaskAttachmentReposit
    * Liefert die aktiven Anhaenge direkt an der Aufgabe (ohne Kommentar-Anhaenge) in
    * Hochlade-Reihenfolge.
    *
-   * <p>Ordnung {@code ANGELEGT_AM ASC, EXTERNALID ASC} (deterministischer Tiebreak bei gleichem
-   * Zeitstempel).
+   * <p>Ordnung {@code ANGELEGT_AM ASC, ID ASC}: Bei gleichem Zeitstempel entscheidet die interne
+   * {@code ID} (Sequenz, also die Reihenfolge des Hochladens), nicht die zufaellige {@code
+   * EXTERNALID}.
    *
    * @param taskId interne Aufgaben-ID
    * @return aktive Aufgaben-Anhaenge, chronologisch aufsteigend
@@ -55,14 +56,14 @@ public interface TaskAttachmentQueryRepository extends BaseTaskAttachmentReposit
               + "AND TASK_ID = :taskId "
               + "AND KOMMENTAR_ID IS NULL "
               + "AND ENTITY_STATUS = 'ACTIVE' "
-              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC",
+              + "ORDER BY ANGELEGT_AM ASC, ID ASC",
       mssql =
           "SELECT * FROM [dbo].[TASK_ANHANG] "
               + "WHERE TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND KOMMENTAR_ID IS NULL "
               + "AND ENTITY_STATUS = 'ACTIVE' "
-              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC")
+              + "ORDER BY ANGELEGT_AM ASC, ID ASC")
   List<TaskAttachment> findActiveTaskAttachments(@Param("taskId") Long taskId);
 
   /**
@@ -71,7 +72,8 @@ public interface TaskAttachmentQueryRepository extends BaseTaskAttachmentReposit
    *
    * <p>Ob der Kommentar selbst noch aktiv ist, prueft die Abfrage nicht: der Aufrufer ordnet die
    * Anhaenge den aktiven Kommentaren zu, Anhaenge anderer Kommentare fallen dabei weg. Ordnung
-   * {@code ANGELEGT_AM ASC, EXTERNALID ASC} (deterministischer Tiebreak bei gleichem Zeitstempel).
+   * {@code ANGELEGT_AM ASC, ID ASC}: Bei gleichem Zeitstempel entscheidet die interne {@code ID}
+   * (Sequenz, also die Reihenfolge des Hochladens), nicht die zufaellige {@code EXTERNALID}.
    *
    * @param taskId interne Aufgaben-ID
    * @return aktive Kommentar-Anhaenge der Aufgabe, chronologisch aufsteigend
@@ -83,14 +85,14 @@ public interface TaskAttachmentQueryRepository extends BaseTaskAttachmentReposit
               + "AND TASK_ID = :taskId "
               + "AND KOMMENTAR_ID IS NOT NULL "
               + "AND ENTITY_STATUS = 'ACTIVE' "
-              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC",
+              + "ORDER BY ANGELEGT_AM ASC, ID ASC",
       mssql =
           "SELECT * FROM [dbo].[TASK_ANHANG] "
               + "WHERE TENANT_ID = :tenantId "
               + "AND TASK_ID = :taskId "
               + "AND KOMMENTAR_ID IS NOT NULL "
               + "AND ENTITY_STATUS = 'ACTIVE' "
-              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC")
+              + "ORDER BY ANGELEGT_AM ASC, ID ASC")
   List<TaskAttachment> findActiveCommentAttachmentsByTaskId(@Param("taskId") Long taskId);
 
   /**

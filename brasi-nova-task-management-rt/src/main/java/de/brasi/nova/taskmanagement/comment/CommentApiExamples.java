@@ -2,15 +2,20 @@ package de.brasi.nova.taskmanagement.comment;
 
 /**
  * OpenAPI-Beispieltexte (JSON) fuer die Operationen {@code createComment} ({@code POST
- * /api/v1/tasks/{id}/comments}) und {@code getComments} ({@code GET} auf demselben Pfad).
+ * /api/v1/tasks/{id}/comments}), {@code getComments} ({@code GET} auf demselben Pfad) und {@code
+ * createCommentWithAttachments} ({@code POST /api/v1/tasks/{id}/comments/with-attachments}).
  *
  * <p>Die Beispiele sind Compile-Zeit-Konstanten, weil Annotationswerte konstant sein muessen. Die
  * Fehlerbeispiele bilden die echte Antwort der KSF-Fehlerbehandlung ab (Schema {@code ApiError} mit
  * {@code errorKey}, Karte {@code ksf/error-format}); das 401-Beispiel die problem+json-Antwort der
- * Security-Filterkette. {@code CommentControllerIT} haelt sie gegen die Live-Antworten fest. Die
- * Schemas liegen in den Komponenten und werden hier nicht veraendert: Eine Aenderung gemeinsamer
- * Komponenten wuerde die Fingerprints der Nachbar-Operationen in der OpenAPI-Basisliste
- * verschieben.
+ * Security-Filterkette. {@code CommentControllerIT} haelt die Beispiele von {@code createComment}
+ * und {@code getComments} gegen die Live-Antworten fest. Fuer die Beispiele von {@code
+ * createCommentWithAttachments} (Konstanten mit {@code _WITH_ATTACHMENTS}) gibt es keinen solchen
+ * Test: {@code CommentAttachmentIT} prueft das Verhalten, nicht die Beispieltexte. Ihre Fehlertexte
+ * sind von Hand wortgleich mit den Quellen gehalten (Hinweis bei den Texten unten); wer einen Text
+ * der Quellen aendert, muss das Beispiel mitziehen. Die Schemas liegen in den Komponenten und
+ * werden hier nicht veraendert: Eine Aenderung gemeinsamer Komponenten wuerde die Fingerprints der
+ * Nachbar-Operationen in der OpenAPI-Basisliste verschieben.
  */
 final class CommentApiExamples {
 

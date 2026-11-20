@@ -1470,6 +1470,23 @@ class CommentServiceTest {
 
   @Test
   @DisplayName(
+      "#152 attachments = null wird am Eingang abgelehnt (NullPointerException mit deutscher"
+          + " Meldung), vor jedem Zugriff auf Benutzer, Aufgabe oder Speicher")
+  void i152_null_attachments_rejected_at_entry() {
+    final Task task = stubAttachmentTask();
+
+    assertThatThrownBy(() -> service.createComment(task.getUuid(), input("Text"), null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("Anhänge");
+
+    verifyNoInteractions(
+        attachmentWriter, notificationService, inboxGenerationService, inboxSignalService);
+    verify(taskRepository, never()).save(any());
+    verify(commentRepository, never()).save(any(TaskComment.class));
+  }
+
+  @Test
+  @DisplayName(
       "#152 Schreibfehler beim Speichern der Anhaenge wird durchgereicht: keine Benachrichtigung,"
           + " kein Bump, kein Signal (die Transaktion rollt zurueck)")
   void i152_writer_failure_propagates_without_notifications() {

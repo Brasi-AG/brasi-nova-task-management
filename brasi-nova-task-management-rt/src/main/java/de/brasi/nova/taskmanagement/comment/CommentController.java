@@ -389,15 +389,19 @@ public class CommentController {
     @ApiResponse(
         responseCode = "400",
         description =
-            "Ungueltige Anfrage, nichts wurde gespeichert. Teil comment: fehlt, kein gueltiges"
-                + " JSON, text fehlt oder ist leer, mehr als 100 oder ein null-Element in mentions"
-                + " (geprueft beim Lesen des Teils, vor Mitgliedschaft und Dateien),"
-                + " Eltern-Kommentar unbekannt, zu einer anderen Aufgabe gehoerig oder nicht aktiv."
-                + " Teile files: fehlen, Dateityp nicht erlaubt, leere Datei, Datei groesser als"
-                + " die Grenze des Tarifs oder die harte Obergrenze (auch die ganze Anfrage zu"
-                + " gross), Inhalt passt nicht zur Endung, mehr als 20 Dateien. Ausserdem kein"
-                + " lesbares multipart/form-data oder keine UUID im Pfad. Eine unbekannte, inaktive"
-                + " oder mandantenfremde UUID in mentions ist kein Fehler (still verworfen).",
+            "Ungueltige Anfrage, nichts wurde gespeichert. Vor der Pruefung der Mitgliedschaft,"
+                + " also auch fuer Nicht-Mitglieder, werden geprueft und mit 400 abgelehnt: ein"
+                + " fehlender Teil comment oder files, ein nicht lesbares JSON im Teil comment, ein"
+                + " fehlender oder leerer text, mehr als 100 oder ein null-Element in mentions, die"
+                + " Groessengrenze des Multipart-Requests (eine Datei ueber der harten Obergrenze"
+                + " oder die ganze Anfrage zu gross), ein nicht lesbares multipart/form-data und"
+                + " eine ungueltige UUID im Pfad. Erst danach, und nur fuer aktive Mitglieder"
+                + " (Nicht-Mitglieder erhalten die neutrale 404), werden die Dateien geprueft:"
+                + " Dateityp nicht erlaubt, leere Datei, Datei groesser als die Grenze des Tarifs,"
+                + " Inhalt passt nicht zur Endung, mehr als 20 Dateien. Zuletzt wird der"
+                + " Eltern-Kommentar geprueft: unbekannt, zu einer anderen Aufgabe gehoerig oder"
+                + " nicht aktiv. Eine unbekannte, inaktive oder mandantenfremde UUID in mentions"
+                + " ist kein Fehler (still verworfen).",
         content =
             @Content(
                 mediaType = "application/json",

@@ -39,6 +39,17 @@ public record AttachmentProperties(
   }
 
   /**
+   * Meldungstext, wenn ein Ziel mehr aktive Anhaenge als erlaubt bekaeme. Gemeinsamer Text aller
+   * Pruefungen der Hoechstzahl (Upload, Speichern an der Aufgabe, Speichern am Kommentar); die Zahl
+   * ist {@link #maxPerTarget()}.
+   *
+   * @return Meldungstext fuer die {@code EntityValidationException} (HTTP 400)
+   */
+  public String tooManyAttachmentsMessage() {
+    return "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.";
+  }
+
+  /**
    * Speicherort der Anhang-Dateien.
    *
    * @param baseDir Basispfad im Dateisystem; darf fehlen, die Pruefung erfolgt erst bei der
