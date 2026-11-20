@@ -48,6 +48,7 @@ import io.keel.framework.api.validation.EntityValidationException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -1804,22 +1805,37 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "addParticipants_nutzt_gemeinsamen_kern: addParticipants ruft addAsParticipants und"
-          + " benachrichtigt genau die zurueckgemeldeten Personen (PARTICIPANT, Akteur = Ausloeser)")
+      "addParticipants_nutzt_gemeinsamen_kern: addParticipants legt die Person ueber den"
+          + " gemeinsamen Aufnahme-Kern an (Teilnehmerzeile, State), schreibt den Verlauf mit dem"
+          + " Text des POST und benachrichtigt genau die aufgenommene Person (PARTICIPANT, Akteur ="
+          + " Ausloeser), nicht die schon aktive")
   void addParticipants_nutzt_gemeinsamen_kern() {
     final Long taskId = 214L;
     final UUID taskUuid = UUID.randomUUID();
-    final UUID ref = UUID.randomUUID();
+    final UUID ref = UUID.fromString("00000000-0000-0000-0000-0000000000b1");
+    final UUID activeRef = UUID.fromString("00000000-0000-0000-0000-0000000000b2");
     when(taskRepository.findByUuid(taskUuid.toString()))
         .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
-    final AssigneeService spied = org.mockito.Mockito.spy(service);
-    org.mockito.Mockito.doReturn(List.of(ref))
-        .when(spied)
-        .addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(personRow(taskId, activeRef, EntityState.ACTIVE)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
 
-    spied.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(activeRef, ref)));
 
-    verify(spied).addAsParticipants(eq(taskId), eq(TENANT_ID), any());
+    // Der Kern legt nur die neue Person an; die schon aktive bleibt unberuehrt.
+    assertThat(savedParticipantRefsInOrder()).containsExactly(ref);
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID), any());
+    verify(userStateService, never()).ensure(eq(taskId), eq(activeRef), eq(TENANT_ID), any());
+    // Intake #180: der Verlauf kommt aus addParticipants mit dem Text des POST, je Aufgenommener.
+    verify(taskHistoryService)
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(ACTOR_REF),
+            eq(AssigneeService.HISTORY_PARTICIPANT_ADDED),
+            any());
+    verify(taskHistoryService, times(1)).record(any(), any(), any(), any(), any());
     verify(notificationService, times(1))
         .emit(
             eq(ref),
@@ -1829,7 +1845,9 @@ class AssigneeServiceTest {
             any(),
             any(),
             eq(ACTOR_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
+    verify(inboxGenerationService, never()).bump(TENANT_ID, activeRef);
   }
 
   @Test
@@ -3359,6 +3377,15 @@ class AssigneeServiceTest {
 
   /** Service, der am Sync-1-Seam die bis dahin gelaufenen Aufrufe festhaelt. */
   private AssigneeService serviceRecordingAtSeam(final List<String> atSeam) {
+    return serviceRecordingAtSeams(atSeam, new ArrayList<>());
+  }
+
+  /**
+   * Service, der am Sync-1-Seam ({@code onBeforeMembershipWritesForTest}) und am Sync-2-Seam
+   * ({@code onAfterMembershipWritesForTest}) je die bis dahin gelaufenen Aufrufe festhaelt.
+   */
+  private AssigneeService serviceRecordingAtSeams(
+      final List<String> atSeam, final List<String> atAfterSeam) {
     final Object[] observed = orderObserved();
     return new AssigneeService(
         taskRepository,
@@ -3379,6 +3406,12 @@ class AssigneeServiceTest {
       protected void onBeforeMembershipWritesForTest(final Long id) {
         atSeam.clear();
         atSeam.addAll(orderedCalls(observed));
+      }
+
+      @Override
+      protected void onAfterMembershipWritesForTest(final Long id) {
+        atAfterSeam.clear();
+        atAfterSeam.addAll(orderedCalls(observed));
       }
     };
   }
@@ -4001,8 +4034,8 @@ class AssigneeServiceTest {
   @Test
   @DisplayName(
       "i164_put_weglassen_loescht_assignee_flag: das Weglassen in PUT /assignees nutzt denselben"
-          + " Austrittskern wie das Entfernen und setzt ASSIGNEE_FLAG zurueck (keine Historie,"
-          + " kein REMOVED)")
+          + " Austrittskern wie das Entfernen und setzt ASSIGNEE_FLAG zurueck (kein Verlaufseintrag"
+          + " des Entfernens, kein REMOVED; den Zuweisungs-Eintrag prueft i180)")
   void i164_put_omission_clears_assignee_flag() {
     final Long taskId = 1458L;
     final UUID taskUuid = UUID.randomUUID();
@@ -4024,10 +4057,410 @@ class AssigneeServiceTest {
     assertThat(removed.getExitAt()).isNotNull();
     assertThat(removed.isAssigneeFlag()).isFalse();
     assertThat(state.getUnsubscribedAt()).isNotNull();
-    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+    verify(taskHistoryService, never())
+        .record(any(), any(), any(), eq("hat einen Beteiligten entfernt"), any());
     verify(notificationService, never())
         .emit(any(), any(), eq(NotificationTypeCodes.REMOVED), any(), any(), any(), any());
     verify(taskRepository).save(task);
+  }
+
+  // ---- Intake #180: Verlaufseintraege je betroffener Person (PUT, Hinzufuegen, Erwaehnung) ------
+
+  /** Verlaufstext einer neuen Zuweisung per PUT /assignees (Intake #180). */
+  private static final String I180_ASSIGNED = "hat eine Person zugewiesen";
+
+  /** Verlaufstext einer entfallenen Zuweisung per PUT /assignees (Intake #180). */
+  private static final String I180_UNASSIGNED = "hat eine Zuweisung entfernt";
+
+  /** Verlaufstext einer Aufnahme per POST /participants (Intake #180). */
+  private static final String I180_PARTICIPANT_ADDED = "hat einen Beteiligten hinzugefuegt";
+
+  /** Verlaufstext einer Aufnahme per Erwaehnung im Kommentar (Intake #180). */
+  private static final String I180_PARTICIPANT_MENTIONED =
+      "hat einen Beteiligten per Erwaehnung hinzugefuegt";
+
+  /** Vorhandener Verlaufstext des Austritts UNSUBSCRIBED (bleibt unveraendert). */
+  private static final String I180_LEFT = "hat die Aufgabe verlassen";
+
+  @Test
+  @DisplayName(
+      "i180_put_je_person_ein_eintrag: PUT mit +N und -R (Nicht-Ersteller) schreibt genau zwei"
+          + " Verlaufseintraege des Akteurs: 'hat eine Person zugewiesen' mit dem Namen von N und"
+          + " 'hat eine Zuweisung entfernt' mit dem Namen von R; die Namen beider Personen sind vor"
+          + " der ersten Schreibung gelesen, die Eintraege folgen auf die erste Teilnehmer-"
+          + "Schreibung und stehen vor dem TASK-save")
+  void i180_put_records_one_entry_per_assigned_and_unassigned_person() {
+    final Long taskId = 18001L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID removedRef = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant removed = activeAssignee(taskId, removedRef, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true), removed));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removedRef))
+        .thenReturn(List.of(removed));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, removedRef))
+        .thenReturn(List.of(userStateFor(taskId, removedRef)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur", newRef, "Nora Neu", removedRef, "Rolf Raus"));
+    final List<String> atSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeam(atSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, newRef)));
+
+    final List<String> calls = orderedCalls(observed);
+    verify(taskHistoryService).record(taskId, TENANT_ID, ACTOR_REF, I180_ASSIGNED, "Nora Neu");
+    verify(taskHistoryService).record(taskId, TENANT_ID, ACTOR_REF, I180_UNASSIGNED, "Rolf Raus");
+    assertReadsBeforeFirstWrite(calls, atSeam);
+    assertThat(requestedNameRefs())
+        .as("Namen der neuen und der abgewaehlten Person vor der ersten Schreibung gelesen")
+        .contains(newRef, removedRef);
+    assertI180HistoryOrder(calls, 2);
+    final InOrder order =
+        inOrder(userReadRepository, participantQueryRepository, taskHistoryService);
+    order.verify(userReadRepository, org.mockito.Mockito.atLeastOnce()).findActiveByUuids(any());
+    order
+        .verify(participantQueryRepository, org.mockito.Mockito.atLeastOnce())
+        .save(any(TaskParticipant.class));
+    order.verify(taskHistoryService, times(2)).record(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i180_put_ersteller_de_assign: der Ersteller, der im PUT nur de-assignt wird (kein Austritt),"
+          + " ergibt genau einen Eintrag 'hat eine Zuweisung entfernt' mit dem Namen des Erstellers"
+          + " und dem Akteur als Ausloeser")
+  void i180_put_creator_deassign_records_unassigned_with_creator_name() {
+    final Long taskId = 18002L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID creatorRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    final TaskParticipant creator = activeAssignee(taskId, creatorRef, true);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(creator, activeAssignee(taskId, ACTOR_REF, false)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, creatorRef))
+        .thenReturn(List.of(creator));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur", creatorRef, "Erna Ersteller"));
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF)));
+
+    assertThat(creator.isAssigneeFlag()).as("Ersteller de-assignt").isFalse();
+    assertThat(creator.getExitKind()).as("Ersteller bleibt Mitglied").isNull();
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_UNASSIGNED, "Erna Ersteller");
+    assertThat(requestedNameRefs()).as("Name des Erstellers gelesen").contains(creatorRef);
+    assertI180HistoryOrder(orderedCalls(observed), 1);
+  }
+
+  @Test
+  @DisplayName(
+      "i180_put_ohne_aenderung: ein PUT mit unveraenderter Menge schreibt keinen Verlaufseintrag")
+  void i180_put_without_change_records_nothing() {
+    final Long taskId = 18003L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(
+            List.of(
+                activeAssignee(taskId, ACTOR_REF, true),
+                activeAssignee(taskId, ASSIGNEE_REF, false)));
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, ASSIGNEE_REF)));
+
+    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "i180_put_detail_gekuerzt_und_uuid_fallback: ein Name ueber 500 Zeichen wird im Detail auf"
+          + " hoechstens 500 Zeichen gekuerzt; ohne aufloesbaren Namen steht die UUID im Detail")
+  void i180_put_detail_truncated_to_500_and_uuid_fallback() {
+    final Long taskId = 18004L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID removedRef = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final String longName = "L".repeat(600);
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    final TaskParticipant removed = activeAssignee(taskId, removedRef, false);
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true), removed));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, removedRef))
+        .thenReturn(List.of(removed));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    // Die abgewaehlte Person ist im Benutzerstamm nicht (mehr) aktiv: kein Name aufloesbar.
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur", newRef, longName));
+
+    service.updateAssignees(taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, newRef)));
+
+    final ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+    verify(taskHistoryService)
+        .record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), eq(I180_ASSIGNED), detail.capture());
+    assertThat(detail.getValue())
+        .as("Detail auf die Spaltenbreite CHANGE_DETAIL (500) gekuerzt")
+        .hasSizeLessThanOrEqualTo(500)
+        .startsWith("L".repeat(400));
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_UNASSIGNED, removedRef.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "i180_leerer_name_uuid_fallback: ein leerer oder nur aus Leerzeichen bestehender"
+          + " Anzeigename wird im Verlaufsdetail durch die UUID ersetzt")
+  void i180_blank_name_falls_back_to_uuid() {
+    final Long taskId = 18010L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID emptyNameRef = UUID.randomUUID();
+    final UUID blankNameRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur", emptyNameRef, "", blankNameRef, "   "));
+
+    service.updateAssignees(
+        taskUuid, new AssigneeUpdateInput(Set.of(ACTOR_REF, emptyNameRef, blankNameRef)));
+
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_ASSIGNED, emptyNameRef.toString());
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_ASSIGNED, blankNameRef.toString());
+    verify(taskHistoryService, times(2)).record(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i180_hinzufuegen_je_person_ein_eintrag: POST /participants mit neuer, ausgetretener und"
+          + " aktiver Person schreibt genau zwei Eintraege 'hat einen Beteiligten hinzugefuegt'"
+          + " (neu und reaktiviert, je mit Namen), keinen fuer die aktive Person und keinen mit dem"
+          + " Erwaehnungs-Text; Namen vor der ersten Schreibung, Eintraege danach, NACH dem Sync-2-"
+          + "Seam (onAfterMembershipWritesForTest: dort steht noch kein Verlaufseintrag, weil jede"
+          + " Verlaufszeile eine KSF-Sequenz vergibt) und vor dem TASK-save")
+  void i180_add_records_post_text_per_added_or_reactivated_person() {
+    final Long taskId = 18005L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID newRef = UUID.randomUUID();
+    final UUID exitedRef = UUID.randomUUID();
+    final UUID activeRef = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, exitedRef))
+        .thenReturn(List.of(exitedRow(taskId, exitedRef)));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(personRow(taskId, activeRef, EntityState.ACTIVE)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(newRef, "Nils Neu", exitedRef, "Ella Exit", activeRef, "Arno Aktiv"));
+    final List<String> atSeam = new ArrayList<>();
+    final List<String> atAfterSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeams(atSeam, atAfterSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.addParticipants(
+        taskUuid, new ParticipantAddInput(List.of(newRef, exitedRef, activeRef)));
+
+    final List<String> calls = orderedCalls(observed);
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_PARTICIPANT_ADDED, "Nils Neu");
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_PARTICIPANT_ADDED, "Ella Exit");
+    verify(taskHistoryService, never())
+        .record(any(), any(), any(), eq(I180_PARTICIPANT_MENTIONED), any());
+    assertReadsBeforeFirstWrite(calls, atSeam);
+    assertThat(requestedNameRefs()).contains(newRef, exitedRef);
+    assertI180HistoryOrder(calls, 2);
+    // Sync 2 (onAfterMembershipWritesForTest) liegt nach den Mitgliedschafts-Schreibungen und VOR
+    // dem ersten Verlaufseintrag: Verlauf vergibt eine KSF-Sequenz (optimistische Sperre), vor
+    // Sync 2 kollidierte sie bei zwei verzahnten Aufnahmen (MembershipConcurrencyIT ADD_PAIRS).
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam sind Teilnehmer und State geschrieben, Aufrufe: %s", atAfterSeam)
+        .contains("TaskParticipantQueryRepository#save", "UserStateService#ensure");
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam steht noch kein Verlaufseintrag, Aufrufe: %s", atAfterSeam)
+        .doesNotContain("TaskHistoryService#record");
+    assertThat(calls.subList(atAfterSeam.size(), calls.size()))
+        .as("nach dem Sync-2-Seam folgen beide Verlaufseintraege, Aufrufe: %s", calls)
+        .containsSubsequence("TaskHistoryService#record", "TaskHistoryService#record");
+  }
+
+  @Test
+  @DisplayName(
+      "i180_hinzufuegen_ohne_aenderung: schon aktive Person und Verliererin eines gleich-Ref-Race"
+          + " schreiben keinen Verlaufseintrag")
+  void i180_add_without_change_and_race_loser_record_nothing() {
+    final Long taskId = 18006L;
+    final UUID taskUuid = UUID.randomUUID();
+    final UUID activeRef = UUID.randomUUID();
+    final UUID raceRef = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(personRow(taskId, activeRef, EntityState.ACTIVE)));
+    // raceRef: Vorab-Read leer, der Insert scheitert am Unique-Key, der Re-Read zeigt die aktive
+    // Gewinnerzeile -> idempotenter SKIP.
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, raceRef))
+        .thenReturn(List.of(personRow(taskId, raceRef, EntityState.ACTIVE)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenThrow(
+            new BusinessRuleException(
+                "Konflikt", new DuplicateKeyException("UQ_TASK_PARTICIPANT_TASK_USER")));
+
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(activeRef, raceRef)));
+
+    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "i180_erwaehnung_kern: addAsParticipants (Aufnahme per Erwaehnung) schreibt fuer die"
+          + " aufgenommene Person genau einen Eintrag 'hat einen Beteiligten per Erwaehnung"
+          + " hinzugefuegt' mit dem Akteur aus dem Kontext und ihrem Namen, keinen fuer das schon"
+          + " aktive Mitglied und keinen mit dem POST-Text; Namen vor der ersten Schreibung")
+  void i180_mention_kernel_records_mention_text_for_admitted_person_only() {
+    final Long taskId = 18007L;
+    final UUID mentionedRef = UUID.randomUUID();
+    final UUID memberRef = UUID.randomUUID();
+    when(participantQueryRepository.findRowByUniqueKey(taskId, memberRef))
+        .thenReturn(List.of(personRow(taskId, memberRef, EntityState.ACTIVE)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    stubUserNames(Map.of(mentionedRef, "Mia Erwaehnt", memberRef, "Max Mitglied"));
+    final Object[] observed = {
+      participantQueryRepository,
+      userStateQueryRepository,
+      userStateService,
+      userReadRepository,
+      taskHistoryService
+    };
+    org.mockito.Mockito.clearInvocations(observed);
+
+    final List<UUID> affected =
+        service.addAsParticipants(taskId, TENANT_ID, List.of(mentionedRef, memberRef));
+
+    assertThat(affected).containsExactly(mentionedRef);
+    verify(taskHistoryService)
+        .record(taskId, TENANT_ID, ACTOR_REF, I180_PARTICIPANT_MENTIONED, "Mia Erwaehnt");
+    verify(taskHistoryService, never())
+        .record(any(), any(), any(), eq(I180_PARTICIPANT_ADDED), any());
+    assertThat(requestedNameRefs()).contains(mentionedRef);
+    assertI180HistoryOrder(orderedCalls(observed), 1);
+  }
+
+  @Test
+  @DisplayName(
+      "i180_erwaehnung_nur_mitglied: erwaehnt der Kommentar nur ein aktives Mitglied, nimmt der"
+          + " Kern niemanden auf und schreibt keinen Verlaufseintrag")
+  void i180_mention_kernel_member_only_records_nothing() {
+    final Long taskId = 18008L;
+    final UUID memberRef = UUID.randomUUID();
+    when(participantQueryRepository.findRowByUniqueKey(taskId, memberRef))
+        .thenReturn(List.of(personRow(taskId, memberRef, EntityState.ACTIVE)));
+
+    final List<UUID> affected = service.addAsParticipants(taskId, TENANT_ID, List.of(memberRef));
+
+    assertThat(affected).isEmpty();
+    verify(taskHistoryService, never()).record(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i180_austritt_unsubscribed: POST /exit UNSUBSCRIBED schreibt genau einen Eintrag 'hat die"
+          + " Aufgabe verlassen' mit dem Akteur und seinem Namen (Bestand, nur abgesichert)")
+  void i180_exit_unsubscribed_records_exactly_one_left_entry() {
+    final Long taskId = 18009L;
+    final UUID taskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(taskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, false)));
+    stubUserNames(Map.of(ACTOR_REF, "Anna Akteur"));
+
+    service.exit(taskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    verify(taskHistoryService, times(1)).record(any(), any(), any(), any(), any());
+    verify(taskHistoryService).record(taskId, TENANT_ID, ACTOR_REF, I180_LEFT, "Anna Akteur");
+  }
+
+  /**
+   * Stubt den Benutzerstamm: {@code findActiveByUuids} liefert nur die Personen aus {@code names}
+   * (aktiv) mit ihrem Anzeigenamen; alle anderen gelten als nicht aktiv.
+   */
+  private void stubUserNames(final Map<UUID, String> names) {
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              final Collection<UUID> requested = inv.getArgument(0);
+              final List<User> users = new ArrayList<>();
+              for (final UUID ref : requested) {
+                if (names.containsKey(ref)) {
+                  final User u = org.mockito.Mockito.mock(User.class);
+                  when(u.getUuid()).thenReturn(ref);
+                  when(u.getFullName()).thenReturn(names.get(ref));
+                  users.add(u);
+                }
+              }
+              return users;
+            })
+        .when(userReadRepository)
+        .findActiveByUuids(any());
+  }
+
+  /** Alle bei {@code findActiveByUuids} angefragten Personen (Validierung und Namen-Snapshot). */
+  private Set<UUID> requestedNameRefs() {
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> requested = ArgumentCaptor.forClass(Collection.class);
+    verify(userReadRepository, org.mockito.Mockito.atLeastOnce())
+        .findActiveByUuids(requested.capture());
+    final Set<UUID> all = new java.util.HashSet<>();
+    requested.getAllValues().forEach(all::addAll);
+    return all;
+  }
+
+  /**
+   * Sperrfolge der Verlaufseintraege (Intake #180): kein Read nach der ersten Schreibung, die Namen
+   * (Benutzerstamm) sind vor der ersten Teilnehmer-Schreibung gelesen, der erste Eintrag folgt auf
+   * sie, der letzte steht vor dem TASK-save (falls der Pfad die Aufgabe speichert), und es sind
+   * genau {@code expectedRecords} Eintraege.
+   */
+  private static void assertI180HistoryOrder(final List<String> calls, final int expectedRecords) {
+    assertReadsBeforeFirstWriteOnly(calls);
+    final int lastNameRead = calls.lastIndexOf("UserReadRepository#findActiveByUuids");
+    final int firstPersonWrite = calls.indexOf("TaskParticipantQueryRepository#save");
+    final int firstRecord = calls.indexOf("TaskHistoryService#record");
+    final int lastRecord = calls.lastIndexOf("TaskHistoryService#record");
+    final int taskSave = calls.indexOf("BaseTaskRepository#save");
+    assertThat(lastNameRead).as("Namen gelesen, Aufrufe: %s", calls).isGreaterThanOrEqualTo(0);
+    assertThat(firstPersonWrite)
+        .as("Namen vor der ersten Teilnehmer-Schreibung, Aufrufe: %s", calls)
+        .isGreaterThan(lastNameRead);
+    assertThat(firstRecord)
+        .as("Verlauf nach der ersten Teilnehmer-Schreibung, Aufrufe: %s", calls)
+        .isGreaterThan(firstPersonWrite);
+    assertThat(calls.stream().filter("TaskHistoryService#record"::equals).count())
+        .as("Zahl der Verlaufseintraege, Aufrufe: %s", calls)
+        .isEqualTo(expectedRecords);
+    if (taskSave >= 0) {
+      assertThat(lastRecord)
+          .as("Verlauf vor dem TASK-save der Aufgabe, Aufrufe: %s", calls)
+          .isLessThan(taskSave);
+    }
   }
 
   /** Kein Schreibzugriff, keine Benachrichtigung, kein Bump und kein Signal des Entfernens. */

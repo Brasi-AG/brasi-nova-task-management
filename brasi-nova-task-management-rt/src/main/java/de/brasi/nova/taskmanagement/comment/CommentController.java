@@ -262,6 +262,9 @@ public class CommentController {
                 + " scheitert, bis der Datenbestand bereinigt ist. Ausgetretene Personen oder solche mit"
                 + " deaktivierter Teilnehmerzeile (bei aktivem Benutzer) sind als"
                 + " Erwaehnte kein Konfliktgrund: sie werden reaktiviert."
+                + " (3) Sequenzkonflikt des Verlaufs: jede als Beteiligte aufgenommene erwaehnte"
+                + " Person schreibt einen Verlaufseintrag."
+                + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
@@ -500,6 +503,9 @@ public class CommentController {
                 + " (3) Die vorhandene Teilnehmerzeile einer erwaehnten Person, die aufgenommen"
                 + " werden soll, ist keine PERSON-Zeile des Mandanten (Datenfehler); die Anfrage"
                 + " scheitert, bis der Datenbestand bereinigt ist."
+                + " (4) Sequenzkonflikt des Verlaufs: jede als Beteiligte aufgenommene erwaehnte"
+                + " Person schreibt einen Verlaufseintrag."
+                + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(

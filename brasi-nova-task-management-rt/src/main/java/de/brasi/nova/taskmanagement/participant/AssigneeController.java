@@ -127,6 +127,10 @@ public class AssigneeController {
                 + " auf, noch bevor die Aufgabe gespeichert wird; die Anfrage wiederholen."
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei"
                 + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert."
+                + " (4) Sequenzkonflikt des Verlaufs: jede neu zugewiesene und jede abgewaehlte"
+                + " Person schreibt einen Verlaufseintrag, daher kann auch ein PUT, der nur eine"
+                + " Zuweisung entfernt, mit 409 scheitern."
+                + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
@@ -394,6 +398,9 @@ public class AssigneeController {
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei aktivem"
                 + " Benutzer) sind kein Konfliktgrund: sie werden"
                 + " reaktiviert."
+                + " (3) Sequenzkonflikt des Verlaufs: jede neu hinzugefuegte oder reaktivierte"
+                + " Person schreibt einen Verlaufseintrag."
+                + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
