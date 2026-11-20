@@ -92,6 +92,7 @@ class TaskCommandServiceTest {
   private static final long PRIORITY_ID_LOW = 201L;
   private static final long PRIORITY_ID_NORMAL = 202L;
   private static final long PRIORITY_ID_HIGH = 203L;
+  private static final long PRIORITY_ID_URGENT = 204L;
 
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskParticipantRepository participantRepository;
@@ -1379,6 +1380,28 @@ class TaskCommandServiceTest {
 
   @Test
   @DisplayName(
+      "patch_prioritaet_urgent_setzen: present(URGENT) -> priorityId 204, genau ein Verlaufseintrag"
+          + " 'Prioritaet geaendert' mit 'NORMAL -> URGENT', save, keine Benachrichtigung (#183)")
+  void patch_prioritaet_urgent_setzen() {
+    final Long taskId = 194L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubCreatorAndActor();
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of(TaskPriorityCodes.URGENT)));
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet auf URGENT gesetzt")
+        .isEqualTo(PRIORITY_ID_URGENT);
+    verifyPriorityHistory(taskId, "NORMAL -> URGENT");
+    verify(historyService, times(1)).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository).save(task);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
       "patch_prioritaet_null_bei_high_setzt_auf_normal_zurueck: present(null) -> NORMAL, Verlauf"
           + " 'HIGH -> NORMAL' + save (#183)")
   void patch_prioritaet_null_bei_high_setzt_auf_normal_zurueck() {
@@ -2241,9 +2264,11 @@ class TaskCommandServiceTest {
   private void stubPriorities() {
     when(resolver.resolveTaskPriority(TaskPriorityCodes.LOW)).thenReturn(PRIORITY_ID_LOW);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.HIGH)).thenReturn(PRIORITY_ID_HIGH);
+    when(resolver.resolveTaskPriority(TaskPriorityCodes.URGENT)).thenReturn(PRIORITY_ID_URGENT);
     when(resolver.resolveTaskPriorityCode(PRIORITY_ID_LOW)).thenReturn(TaskPriorityCodes.LOW);
     when(resolver.resolveTaskPriorityCode(PRIORITY_ID_NORMAL)).thenReturn(TaskPriorityCodes.NORMAL);
     when(resolver.resolveTaskPriorityCode(PRIORITY_ID_HIGH)).thenReturn(TaskPriorityCodes.HIGH);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_URGENT)).thenReturn(TaskPriorityCodes.URGENT);
   }
 
   /**

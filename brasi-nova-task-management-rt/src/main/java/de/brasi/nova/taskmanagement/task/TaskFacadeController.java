@@ -332,10 +332,10 @@ public class TaskFacadeController {
    * Patcht eine bestehende Aufgabe (title, dueDate, statusCode, tagIds, startDate, description,
    * priorityCode).
    *
-   * <p>{@code priorityCode} (Intake #183): Code aus dem Dictionary taskPriority (HIGH, NORMAL,
-   * LOW); absent = unveraendert, null = auf NORMAL zuruecksetzen. Unbekannter, leerer oder
-   * inaktiver Code ist 400. Eine Aenderung schreibt einen Verlaufseintrag, eine Benachrichtigung
-   * gibt es nicht.
+   * <p>{@code priorityCode} (Intake #183): Code aus dem Dictionary taskPriority (derzeit LOW,
+   * NORMAL, HIGH, URGENT); absent = unveraendert, null = auf NORMAL zuruecksetzen. Unbekannter,
+   * leerer oder inaktiver Code ist 400. Eine Aenderung schreibt einen Verlaufseintrag, eine
+   * Benachrichtigung gibt es nicht.
    *
    * @param id externe UUID der Aufgabe
    * @param input Patch-Eingabe
@@ -348,9 +348,9 @@ public class TaskFacadeController {
               + " startDate, description, priorityCode). Nur gesendete Felder werden geaendert"
               + " (PatchValue-Semantik: absent = unveraendert, null = Datumsfeld bzw. Beschreibung"
               + " loeschen bzw. priorityCode auf NORMAL zuruecksetzen). priorityCode ist ein Code"
-              + " aus dem Dictionary taskPriority (HIGH, NORMAL, LOW); eine Aenderung schreibt den"
-              + " Verlaufseintrag 'Prioritaet geaendert' (z. B. 'NORMAL -> HIGH') und loest keine"
-              + " Benachrichtigung aus.")
+              + " aus dem Dictionary taskPriority (derzeit LOW, NORMAL, HIGH, URGENT); eine"
+              + " Aenderung schreibt den Verlaufseintrag 'Prioritaet geaendert' (z. B. 'NORMAL ->"
+              + " HIGH') und loest keine Benachrichtigung aus.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
     @ApiResponse(

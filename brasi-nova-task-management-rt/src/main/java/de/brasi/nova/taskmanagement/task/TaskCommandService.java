@@ -407,14 +407,14 @@ public class TaskCommandService {
    * nichts aus.
    *
    * <p><b>priorityCode (Intake #183):</b> Absent = Prioritaet unveraendert; ein Code aus {@code
-   * DIC_TASK_PRIORITY} (HIGH, NORMAL, LOW) setzt die Prioritaet; {@code null} setzt sie auf {@code
-   * NORMAL} zurueck. Unbekannter, leerer oder inaktiver Code fuehrt zu HTTP 400 (Meldung {@code
-   * Ungueltiger priorityCode: 'code'.}) und wird VOR jeder Mutation geprueft (alles oder nichts,
-   * auch zusammen mit anderen Feldern). Verglichen wird ueber die Dictionary-IDs: Eine Aenderung
-   * schreibt genau einen Verlaufseintrag "Prioritaet geaendert" mit den kanonischen Codes (z. B.
-   * {@code NORMAL -> HIGH}); ein unveraenderter Wert (gleiche ID, auch {@code null} bei bereits
-   * NORMAL) schreibt keinen Verlauf und loest allein weder Save noch Bump/Invalidate aus. Eine
-   * Prioritaetsaenderung loest keine Benachrichtigung aus.
+   * DIC_TASK_PRIORITY} (derzeit LOW, NORMAL, HIGH, URGENT) setzt die Prioritaet; {@code null} setzt
+   * sie auf {@code NORMAL} zurueck. Unbekannter, leerer oder inaktiver Code fuehrt zu HTTP 400
+   * (Meldung {@code Ungueltiger priorityCode: 'code'.}) und wird VOR jeder Mutation geprueft (alles
+   * oder nichts, auch zusammen mit anderen Feldern). Verglichen wird ueber die Dictionary-IDs: Eine
+   * Aenderung schreibt genau einen Verlaufseintrag "Prioritaet geaendert" mit den kanonischen Codes
+   * (z. B. {@code NORMAL -> HIGH}); ein unveraenderter Wert (gleiche ID, auch {@code null} bei
+   * bereits NORMAL) schreibt keinen Verlauf und loest allein weder Save noch Bump/Invalidate aus.
+   * Eine Prioritaetsaenderung loest keine Benachrichtigung aus.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
