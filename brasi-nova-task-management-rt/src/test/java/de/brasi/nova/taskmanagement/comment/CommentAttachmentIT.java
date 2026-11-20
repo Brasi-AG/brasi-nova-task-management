@@ -851,6 +851,10 @@ class CommentAttachmentIT {
   /**
    * Sendet {@code POST /comments/with-attachments}: Teil {@code comment} als JSON mit Content-Type
    * {@code application/json} (weggelassen bei {@code null}), dazu die Teile {@code files}.
+   *
+   * <p>Der Teil {@code comment} geht als {@link MockPart}: Der Controller nimmt ihn als {@code
+   * Part} an (Intake #152 Teil B), und MockMvc stellt ueber {@code file(...)} hinzugefuegte Teile
+   * nur als {@code MultipartFile} bereit, nicht ueber {@code getPart}.
    */
   private static ResultActions postWithAttachments(
       final MockMvc mvc,
@@ -861,12 +865,10 @@ class CommentAttachmentIT {
       throws Exception {
     final MockMultipartHttpServletRequestBuilder request = multipart(WITH_ATTACHMENTS_URL, taskId);
     if (commentJson != null) {
-      request.file(
-          new MockMultipartFile(
-              "comment",
-              "",
-              MediaType.APPLICATION_JSON_VALUE,
-              commentJson.getBytes(StandardCharsets.UTF_8)));
+      final MockPart comment =
+          new MockPart("comment", commentJson.getBytes(StandardCharsets.UTF_8));
+      comment.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+      request.part(comment);
     }
     for (final MockMultipartFile file : files) {
       request.file(file);
