@@ -299,8 +299,10 @@ final class CommentApiExamples {
   /** Schluss des Validierungsbeispiels. */
   private static final String VALIDATION_TAIL = "\"]}";
 
-  // Texte wortgleich mit CommentService, AttachmentUploadPreparer und MultipartErrorAdvice; die
-  // Zahlen sind die Vorgaben aus application.properties.
+  // Texte wortgleich mit CommentService (Eltern-Kommentar), AttachmentUploadPreparer (Dateityp,
+  // Tarifgrenze) und MultipartErrorAdvice (fehlender Teil). Der Anzahl-Text kommt aus
+  // AttachmentProperties#tooManyAttachmentsMessage (genutzt von CommentService und
+  // AttachmentUploadPreparer); die Zahlen sind die Vorgaben aus application.properties.
   private static final String TEXT_PARENT = "Der angegebene Eltern-Kommentar ist ungueltig.";
   private static final String TEXT_TYPE =
       "Der Dateityp „.exe“ ist nicht erlaubt. Erlaubt sind: pdf, xls, xlsx, doc, docx, ppt, pptx,"

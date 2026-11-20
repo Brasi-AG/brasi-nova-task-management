@@ -108,6 +108,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.mock.web.MockPart;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -773,8 +774,9 @@ class CommentAttachmentIT {
   }
 
   /**
-   * Wie {@link #postWithAttachments}, aber der Teil {@code comment} traegt den angegebenen
-   * Content-Type (bei {@code null} gar keinen, so sendet ein Browser {@code FormData.append}).
+   * Wie {@link #postWithAttachments}, aber der Teil {@code comment} wird wie von einem Browser mit
+   * {@code FormData.append} gesendet: ohne Dateinamen und mit dem angegebenen Content-Type (bei
+   * {@code null} gar keinen).
    */
   private static ResultActions postWithCommentPart(
       final MockMvc mvc,
@@ -785,9 +787,11 @@ class CommentAttachmentIT {
       final MockMultipartFile... files)
       throws Exception {
     final MockMultipartHttpServletRequestBuilder request = multipart(WITH_ATTACHMENTS_URL, taskId);
-    request.file(
-        new MockMultipartFile(
-            "comment", "", partContentType, commentPart.getBytes(StandardCharsets.UTF_8)));
+    final MockPart comment = new MockPart("comment", commentPart.getBytes(StandardCharsets.UTF_8));
+    if (partContentType != null) {
+      comment.getHeaders().setContentType(MediaType.parseMediaType(partContentType));
+    }
+    request.part(comment);
     for (final MockMultipartFile file : files) {
       request.file(file);
     }

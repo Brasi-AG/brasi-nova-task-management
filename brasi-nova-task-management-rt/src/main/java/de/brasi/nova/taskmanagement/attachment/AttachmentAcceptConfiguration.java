@@ -7,6 +7,8 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
@@ -34,8 +36,15 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * antworten dann wie bei jedem Client ohne {@code Accept} (JSON im Fehlerformat, unveraendert
  * Status und {@code errorKey}). Alle anderen Methoden und alle Anfragen, die JSON annehmen, bleiben
  * unberuehrt; es gibt keine globale Aenderung der Inhaltsaushandlung.
+ *
+ * <p>Annahme: Die weitergereichten Resolver sind die, die beim Aufruf von {@code
+ * extendHandlerExceptionResolvers} bereits registriert sind ({@code List.copyOf} friert sie ein);
+ * {@link Ordered#LOWEST_PRECEDENCE} stellt sicher, dass diese Konfiguration nach allen {@link
+ * WebMvcConfigurer} mit eigener {@code @Order} laeuft (bei gleichem Rang entscheidet die
+ * Registrierungsreihenfolge).
  */
 @Configuration
+@Order(Ordered.LOWEST_PRECEDENCE)
 public class AttachmentAcceptConfiguration implements WebMvcConfigurer {
 
   /** HAL-JSON: neben JSON der einzige Typ, in dem KSF Fehlerkoerper schreibt. */

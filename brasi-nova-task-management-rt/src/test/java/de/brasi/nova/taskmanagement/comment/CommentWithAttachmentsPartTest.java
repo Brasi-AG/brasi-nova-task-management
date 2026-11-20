@@ -27,8 +27,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.mock.web.MockPart;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
@@ -44,9 +46,10 @@ import org.springframework.web.multipart.MultipartFile;
  *
  * <p>Erwartet: Der Teil wird als JSON angenommen, gleich ob er mit {@code application/json}, mit
  * {@code text/plain} oder ohne Content-Type ankommt (ein Browser sendet {@code
- * FormData.append('comment', JSON.stringify(...))} ohne Typ); vorher endeten die beiden letzten
- * Faelle mit 415. Ungueltiges JSON und ein leerer Text ergeben 400 im KSF-Format mit dem {@code
- * errorKey} {@code NOVA_MESSAGE_NOT_READABLE}, ohne dass ein Service aufgerufen wird.
+ * FormData.append('comment', JSON.stringify(...))} ohne Typ und ohne Dateinamen; der Test sendet
+ * den Teil deshalb als {@link MockPart} ohne Dateinamen); vorher endeten die beiden letzten Faelle
+ * mit 415. Ungueltiges JSON und ein leerer Text ergeben 400 im KSF-Format mit dem {@code errorKey}
+ * {@code NOVA_MESSAGE_NOT_READABLE}, ohne dass ein Service aufgerufen wird.
  */
 class CommentWithAttachmentsPartTest {
 
@@ -190,12 +193,17 @@ class CommentWithAttachmentsPartTest {
 
   // ---- Hilfen ---------------------------------------------------------------------------------
 
-  /** Sendet den Teil {@code comment} mit dem Typ (bei {@code null} ohne) und eine PDF-Datei. */
+  /**
+   * Sendet den Teil {@code comment} wie ein Browser mit {@code FormData.append}: ohne Dateinamen
+   * und mit dem Typ (bei {@code null} ganz ohne Content-Type), dazu eine PDF-Datei.
+   */
   private ResultActions post(final String contentType, final String commentJson) throws Exception {
     final MockMultipartHttpServletRequestBuilder request = multipart(URL, TASK_ID);
-    request.file(
-        new MockMultipartFile(
-            "comment", "", contentType, commentJson.getBytes(StandardCharsets.UTF_8)));
+    final MockPart comment = new MockPart("comment", commentJson.getBytes(StandardCharsets.UTF_8));
+    if (contentType != null) {
+      comment.getHeaders().setContentType(MediaType.parseMediaType(contentType));
+    }
+    request.part(comment);
     request.file(new MockMultipartFile("files", "Bericht.pdf", "application/pdf", PDF_BYTES));
     return mvc.perform(request);
   }

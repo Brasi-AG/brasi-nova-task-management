@@ -54,6 +54,13 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
  * KSF-Nachrichtenkonvertern ({@code NovaHalAutoConfiguration}: nur JSON und HAL-JSON), dazu der
  * begrenzte Executor der Auslieferung ({@link AttachmentStreamingConfiguration}).
  *
+ * <p>Der Pool hat einen Thread. Die Faelle, in denen die Auslieferung gelingen muss, laufen auf
+ * einem Pool mit Warteschlange ({@link QueuedPoolConfig}): Der Thread wird erst nach dem Ergebnis
+ * der Anfrage wieder frei, und eine folgende Auslieferung wuerde ohne Warteschlange in dieser
+ * Luecke abgelehnt (503 statt 200). Nur der 503-Fall laeuft auf einem Pool ohne Warteschlange
+ * ({@link SaturatedPoolConfig}) und in einem eigenen Kontext, den er mit sich beendet; so kann kein
+ * blockierter Thread in einen anderen Test hineinwirken.
+ *
  * <p>Ursache, die der Test festhaelt: Der Erfolg ist unabhaengig von {@code Accept}, aber ein
  * Fehler (404, 400, 503) wurde gegen {@code Accept} ausgehandelt und endete bei einem Client, der
  * kein JSON annimmt (etwa {@code image/png}), mit 500. Erwartet ist der fachliche Status mit JSON
@@ -76,22 +83,17 @@ class AttachmentAcceptHeaderTest {
       List.of("application/json", "application/hal+json", "*/*", "application/*");
 
   private static final AttachmentQueryService QUERY_SERVICE = mock(AttachmentQueryService.class);
-  private static final CountDownLatch RELEASE = new CountDownLatch(1);
   private static AnnotationConfigWebApplicationContext context;
   private static MockMvc mvc;
 
   @BeforeAll
   static void startContext() {
-    context = new AnnotationConfigWebApplicationContext();
-    context.setServletContext(new MockServletContext());
-    context.register(TestConfig.class);
-    context.refresh();
+    context = newContext(QueuedPoolConfig.class);
     mvc = MockMvcBuilders.webAppContextSetup(context).build();
   }
 
   @AfterAll
   static void closeContext() {
-    RELEASE.countDown();
     context.close();
   }
 
@@ -182,14 +184,16 @@ class AttachmentAcceptHeaderTest {
       "i152_rejected_delivery_is_503_for_non_json_accept: voller Pool -> 503 mit Retry-After und"
           + " JSON im KSF-Format, auch wenn Accept JSON nicht annimmt")
   void i152_rejected_delivery_is_503_for_non_json_accept() throws Exception {
-    final ThreadPoolTaskExecutor pool = context.getBean(ExecutorHolder.class).executor();
-    saturate(pool);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AnnotationConfigWebApplicationContext saturated = newContext(SaturatedPoolConfig.class);
     try {
+      final MockMvc saturatedMvc = MockMvcBuilders.webAppContextSetup(saturated).build();
+      saturate(saturated.getBean(ExecutorHolder.class).executor(), release);
       for (final String kind : KINDS) {
         stubDelivery(kind);
-        final MvcResult first = perform(request(kind, "image/png", null));
+        final MvcResult first = perform(saturatedMvc, request(kind, "image/png", null));
         assertThat(first.getRequest().isAsyncStarted()).as(kind).isTrue();
-        final MvcResult result = perform(dispatchAsync(first));
+        final MvcResult result = perform(saturatedMvc, dispatchAsync(first));
 
         assertThat(result.getResponse().getStatus()).as(kind).isEqualTo(503);
         assertThat(result.getResponse().getHeader("Retry-After")).as(kind).isEqualTo("5");
@@ -197,7 +201,8 @@ class AttachmentAcceptHeaderTest {
         assertThat(json(result).path("status").asInt()).as(kind).isEqualTo(503);
       }
     } finally {
-      RELEASE.countDown();
+      release.countDown();
+      saturated.close();
     }
   }
 
@@ -295,7 +300,22 @@ class AttachmentAcceptHeaderTest {
   }
 
   private static MvcResult perform(final RequestBuilder request) throws Exception {
-    return mvc.perform(request).andReturn();
+    return perform(mvc, request);
+  }
+
+  private static MvcResult perform(final MockMvc target, final RequestBuilder request)
+      throws Exception {
+    return target.perform(request).andReturn();
+  }
+
+  /** Startet einen Web-Kontext des Tests mit der angegebenen Pool-Ausstattung. */
+  private static AnnotationConfigWebApplicationContext newContext(final Class<?> poolConfig) {
+    final AnnotationConfigWebApplicationContext created =
+        new AnnotationConfigWebApplicationContext();
+    created.setServletContext(new MockServletContext());
+    created.register(TestConfig.class, poolConfig);
+    created.refresh();
+    return created;
   }
 
   private static JsonNode json(final MvcResult result) throws Exception {
@@ -316,15 +336,17 @@ class AttachmentAcceptHeaderTest {
   }
 
   /**
-   * Belegt den einzigen Thread des Pools; ohne Warteschlange wird jede weitere Aufgabe abgelehnt.
+   * Belegt den einzigen Thread des Pools bis {@code release}; ohne Warteschlange wird jede weitere
+   * Aufgabe abgelehnt.
    */
-  private static void saturate(final ThreadPoolTaskExecutor pool) throws InterruptedException {
+  private static void saturate(final ThreadPoolTaskExecutor pool, final CountDownLatch release)
+      throws InterruptedException {
     final CountDownLatch running = new CountDownLatch(1);
     pool.execute(
         () -> {
           running.countDown();
           try {
-            RELEASE.await(10, TimeUnit.SECONDS);
+            release.await(10, TimeUnit.SECONDS);
           } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
           }
@@ -388,11 +410,6 @@ class AttachmentAcceptHeaderTest {
     }
 
     @Bean
-    AttachmentStreamingProperties streamingProperties() {
-      return new AttachmentStreamingProperties(1, 1, 0, "accept-test-", Duration.ofSeconds(5));
-    }
-
-    @Bean
     StreamingRejectionAdvice streamingRejectionAdvice(
         final GlobalApiExceptionHandler handler, final AttachmentStreamingProperties properties) {
       return new StreamingRejectionAdvice(handler, properties);
@@ -412,6 +429,31 @@ class AttachmentAcceptHeaderTest {
     @Bean
     AttachmentAcceptConfiguration attachmentAcceptConfiguration() {
       return new AttachmentAcceptConfiguration();
+    }
+  }
+
+  /**
+   * Pool mit einem Thread und Warteschlange: Eine Auslieferung wird nie abgelehnt, auch wenn der
+   * Thread der vorigen noch nicht wieder frei ist. Bewusst ohne {@code @Configuration}, siehe
+   * {@link TestConfig}.
+   */
+  static class QueuedPoolConfig {
+
+    @Bean
+    AttachmentStreamingProperties streamingProperties() {
+      return new AttachmentStreamingProperties(1, 1, 4, "accept-test-", Duration.ofSeconds(5));
+    }
+  }
+
+  /**
+   * Pool mit einem Thread ohne Warteschlange: Ist der Thread belegt, wird jede weitere Auslieferung
+   * abgelehnt (503). Bewusst ohne {@code @Configuration}, siehe {@link TestConfig}.
+   */
+  static class SaturatedPoolConfig {
+
+    @Bean
+    AttachmentStreamingProperties streamingProperties() {
+      return new AttachmentStreamingProperties(1, 1, 0, "accept-test-", Duration.ofSeconds(5));
     }
   }
 }
