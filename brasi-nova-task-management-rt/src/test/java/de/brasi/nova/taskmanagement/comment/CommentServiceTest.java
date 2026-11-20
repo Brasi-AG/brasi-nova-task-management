@@ -5,15 +5,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentFileType;
+import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
+import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
+import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
+import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
+import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskUserState;
@@ -38,12 +47,16 @@ import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.validation.EntityValidationException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,10 +66,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.core.io.ByteArrayResource;
 
 /**
  * Unit-Tests fuer {@link CommentService} (gemockt, kein DB-Zugriff).
@@ -74,6 +89,11 @@ import org.mockito.quality.Strictness;
  *   <li>404 bei unbekannter Aufgabe
  *   <li>400 bei leerem Text / ungueltigem Eltern-Kommentar / null-Element in mentions
  * </ol>
+ *
+ * <p>Intake #152 Teil B2: Anhaenge werden in derselben Transaktion nach dem Kommentar-Insert und
+ * vor jeder Benachrichtigung gespeichert ({@link AttachmentWriter} gemockt, echter {@link
+ * AttachmentModelMapper}); scheitert das Speichern, gibt es keine Benachrichtigung, keinen Bump und
+ * kein Signal.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -97,11 +117,20 @@ class CommentServiceTest {
   @Mock private UserAccessor userAccessor;
   @Mock private TaskMembershipGuard membershipGuard;
   @Mock private AssigneeService assigneeService;
+  @Mock private AttachmentWriter attachmentWriter;
 
+  private AttachmentModelMapper attachmentModelMapper;
+  private AttachmentProperties attachmentProperties;
   private CommentService service;
 
   @BeforeEach
   void setUp() {
+    attachmentModelMapper =
+        new AttachmentModelMapper(new AuditTimeConverter("Europe/Berlin"), "/task-management");
+    // Intake #152: hoechstens 20 Anhaenge je Kommentar (Sicherung im CommentService).
+    attachmentProperties =
+        new AttachmentProperties(
+            new AttachmentProperties.Storage(null), List.of(), 20, null, null, null);
     service =
         new CommentService(
             taskRepository,
@@ -116,7 +145,10 @@ class CommentServiceTest {
             new AuditTimeConverter("Europe/Berlin"),
             membershipGuard,
             new NotificationMuteFilter(userStateQueryRepository),
-            assigneeService);
+            assigneeService,
+            attachmentWriter,
+            attachmentModelMapper,
+            attachmentProperties);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -1379,6 +1411,261 @@ class CommentServiceTest {
             any(),
             eq(ACTOR_REF));
     verify(inboxGenerationService, times(1)).bump(TENANT_ID, BOB_UUID);
+  }
+
+  // ===========================================================================================
+  // Intake #152 B2: Kommentar und Anhaenge in einer Transaktion
+  // ===========================================================================================
+
+  private static final Long ATT_TASK_ID = 152L;
+  private static final Long COMMENT_ID = 15_201L;
+  private static final UUID COMMENT_UUID = UUID.randomUUID();
+
+  @Test
+  @DisplayName(
+      "#152 Anhaenge nach dem Kommentar-Insert und vor jeder Benachrichtigung gespeichert:"
+          + " TASK-save -> Kommentar-save -> store(task, Kommentar-ID, Akteur, Dateien) -> emit")
+  void i152_attachments_stored_after_comment_insert_before_notifications() {
+    final Task task = stubAttachmentTask();
+    stubWriterStoresAll();
+    final PreparedAttachment prepared = prepared("a.pdf");
+
+    service.createComment(task.getUuid(), input("Siehe Anhang"), List.of(prepared));
+
+    final InOrder o =
+        inOrder(taskRepository, commentRepository, attachmentWriter, notificationService);
+    o.verify(taskRepository).save(task);
+    o.verify(commentRepository).save(any(TaskComment.class));
+    o.verify(attachmentWriter).store(task, COMMENT_ID, ACTOR_REF, List.of(prepared));
+    o.verify(notificationService, atLeastOnce())
+        .emit(any(), any(), any(), any(), any(), any(), any());
+    verify(attachmentWriter, times(1)).store(any(), any(), any(), any());
+    // Benachrichtigungen unveraendert wie beim reinen Kommentar: der Assignee bekommt COMMENT.
+    verify(notificationService, times(1))
+        .emit(
+            eq(ALICE_UUID),
+            eq(ATT_TASK_ID),
+            eq(NotificationTypeCodes.COMMENT),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+  }
+
+  @Test
+  @DisplayName(
+      "#152 JSON-Variante (2 Parameter) und leere Liste speichern keine Anhaenge; Antwort mit"
+          + " attachments = []")
+  void i152_json_variant_stores_no_attachments() {
+    final Task task = stubAttachmentTask();
+
+    final CommentModel json = service.createComment(task.getUuid(), input("Nur Text"));
+    final CommentModel empty =
+        service.createComment(task.getUuid(), input("Leere Liste"), List.of());
+
+    verifyNoInteractions(attachmentWriter);
+    assertThat(json.attachments()).isNotNull().isEmpty();
+    assertThat(empty.attachments()).isNotNull().isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Schreibfehler beim Speichern der Anhaenge wird durchgereicht: keine Benachrichtigung,"
+          + " kein Bump, kein Signal (die Transaktion rollt zurueck)")
+  void i152_writer_failure_propagates_without_notifications() {
+    final Task task = stubAttachmentTask();
+    when(attachmentWriter.store(any(), any(), any(), any()))
+        .thenThrow(new UncheckedIOException(new IOException("voll")));
+
+    assertThatThrownBy(
+            () ->
+                service.createComment(
+                    task.getUuid(), input("Siehe Anhang"), List.of(prepared("a.pdf"))))
+        .isInstanceOf(UncheckedIOException.class);
+
+    verifyNoInteractions(notificationService, inboxGenerationService, inboxSignalService);
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Antwort enthaelt die gespeicherten Anhaenge in Eingabereihenfolge (nicht entfernbar,"
+          + " Links auf dem Aufgaben-Pfad)")
+  void i152_response_contains_attachment_models() {
+    final Task task = stubAttachmentTask();
+    stubWriterStoresAll();
+
+    final CommentModel model =
+        service.createComment(
+            task.getUuid(), input("Siehe Anhang"), List.of(prepared("a.pdf"), prepared("b.pdf")));
+
+    assertThat(model.id()).isEqualTo(COMMENT_UUID);
+    assertThat(model.text()).isEqualTo("Siehe Anhang");
+    assertThat(model.isNew()).isFalse();
+    assertThat(model.attachments())
+        .extracting(AttachmentModel::fileName)
+        .containsExactly("a.pdf", "b.pdf");
+    for (final AttachmentModel attachment : model.attachments()) {
+      assertThat(attachment.removable()).as("Kommentar-Anhaenge nie entfernbar").isFalse();
+      assertThat(attachment.uploadedById()).isEqualTo(ACTOR_REF);
+      final String expected =
+          "/task-management/api/v1/tasks/"
+              + task.getUuid()
+              + "/attachments/"
+              + attachment.id()
+              + "/content";
+      assertThat(attachment.links().content()).isEqualTo(expected);
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Seam onAfterAttachmentsStoredForTest(Kommentar-ID) laeuft nach store und vor der"
+          + " ersten Benachrichtigung; ohne Anhaenge laeuft er nicht")
+  void i152_seam_after_store_before_notifications() {
+    final Task task = stubAttachmentTask();
+    final List<String> events = new ArrayList<>();
+    when(attachmentWriter.store(any(), any(), any(), any()))
+        .thenAnswer(
+            inv -> {
+              events.add("store");
+              return storedFrom(inv.getArgument(3));
+            });
+    when(notificationService.emit(any(), any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            inv -> {
+              events.add("emit");
+              return UUID.randomUUID();
+            });
+    final CommentService seamService = serviceWithSeam(events);
+
+    seamService.createComment(task.getUuid(), input("Siehe Anhang"), List.of(prepared("a.pdf")));
+
+    assertThat(events).containsExactly("store", "seam:" + COMMENT_ID, "emit");
+
+    events.clear();
+    seamService.createComment(task.getUuid(), input("Ohne Anhang"));
+    assertThat(events).as("ohne Anhaenge kein store und kein Seam").containsExactly("emit");
+  }
+
+  @Test
+  @DisplayName(
+      "#152 Sicherung: mehr als maxPerTarget (20) Anhaenge je Kommentar -> Abbruch ohne store und"
+          + " ohne Benachrichtigung; genau 20 werden gespeichert")
+  void i152_more_than_max_per_target_rejected_without_store() {
+    final Task task = stubAttachmentTask();
+    stubWriterStoresAll();
+    final PreparedAttachment prepared = prepared("a.pdf");
+
+    assertThatThrownBy(
+            () ->
+                service.createComment(
+                    task.getUuid(), input("Zu viele"), Collections.nCopies(21, prepared)))
+        .isInstanceOf(RuntimeException.class);
+    verifyNoInteractions(attachmentWriter, notificationService);
+
+    final CommentModel model =
+        service.createComment(task.getUuid(), input("Genau 20"), Collections.nCopies(20, prepared));
+    assertThat(model.attachments()).hasSize(20);
+  }
+
+  /**
+   * Stubt eine offene Aufgabe mit einem Leser und einem Assignee (ALICE); der Kommentar-save
+   * vergibt {@link #COMMENT_ID} und {@link #COMMENT_UUID}.
+   */
+  private Task stubAttachmentTask() {
+    final Task task = taskWithId(ATT_TASK_ID, UUID.randomUUID(), 0);
+    when(taskRepository.findByUuid(task.getUuid().toString())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(commentRepository.save(any(TaskComment.class)))
+        .thenAnswer(
+            inv -> {
+              final TaskComment c = inv.getArgument(0);
+              c.setId(COMMENT_ID);
+              c.setUuid(COMMENT_UUID);
+              c.setCreatedAt(LocalDateTime.now());
+              return c;
+            });
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(ATT_TASK_ID))
+        .thenReturn(List.of(stateWithUserRef(ALICE_UUID, ATT_TASK_ID)));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(ATT_TASK_ID))
+        .thenReturn(List.of(assigneeWith(ALICE_UUID)));
+    return task;
+  }
+
+  /** Der gemockte Writer gibt je vorbereiteter Datei einen gespeicherten Anhang zurueck. */
+  private void stubWriterStoresAll() {
+    when(attachmentWriter.store(any(), any(), any(), any()))
+        .thenAnswer(inv -> storedFrom(inv.getArgument(3)));
+  }
+
+  /** Gespeicherte Anhaenge zu den vorbereiteten Dateien, in Eingabereihenfolge. */
+  private static List<TaskAttachment> storedFrom(final List<PreparedAttachment> prepared) {
+    final List<TaskAttachment> stored = new ArrayList<>();
+    long id = 900L;
+    for (final PreparedAttachment p : prepared) {
+      final TaskAttachment a = new TaskAttachment();
+      a.setId(id);
+      a.setUuid(UUID.randomUUID());
+      a.setTenantId(TENANT_ID);
+      a.setEntityState(io.keel.framework.api.model.EntityState.ACTIVE);
+      a.setCreatedAt(LocalDateTime.now());
+      a.setTaskId(ATT_TASK_ID);
+      a.setCommentId(COMMENT_ID);
+      a.setFileName(p.fileName());
+      a.setMimeType(p.type().mimeType());
+      a.setFileExtension(p.extension());
+      a.setSizeBytes(p.sizeBytes());
+      a.setSha256(p.sha256Hex());
+      a.setStorageKey(TENANT_ID + "/0/" + id + "." + p.extension());
+      a.setThumbnailPresent(p.hasThumbnail());
+      a.setUploadedByRef(ACTOR_REF);
+      stored.add(a);
+      id++;
+    }
+    return stored;
+  }
+
+  /** Gepruefte PDF-Datei ohne Vorschaubild. */
+  private static PreparedAttachment prepared(final String fileName) {
+    final byte[] content = "%PDF-1.7\n".getBytes(StandardCharsets.ISO_8859_1);
+    return new PreparedAttachment(
+        fileName,
+        AttachmentFileType.PDF,
+        "pdf",
+        content.length,
+        "0123456789abcdef".repeat(4),
+        new ByteArrayResource(content),
+        null);
+  }
+
+  private static CommentCreateInput input(final String text) {
+    return new CommentCreateInput(text, null, List.of());
+  }
+
+  /** CommentService wie im Setup, aber mit Seam, der {@code seam:<Kommentar-ID>} protokolliert. */
+  private CommentService serviceWithSeam(final List<String> events) {
+    return new CommentService(
+        taskRepository,
+        commentRepository,
+        userStateQueryRepository,
+        participantQueryRepository,
+        notificationService,
+        inboxSignalService,
+        inboxGenerationService,
+        userReadRepository,
+        userAccessor,
+        new AuditTimeConverter("Europe/Berlin"),
+        membershipGuard,
+        new NotificationMuteFilter(userStateQueryRepository),
+        assigneeService,
+        attachmentWriter,
+        attachmentModelMapper,
+        attachmentProperties) {
+      @Override
+      protected void onAfterAttachmentsStoredForTest(final Long commentId) {
+        events.add("seam:" + commentId);
+      }
+    };
   }
 
   /** Stubt eine offene Aufgabe ohne Leser, ohne Assignees und mit funktionierenden Saves. */

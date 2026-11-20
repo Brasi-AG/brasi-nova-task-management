@@ -10,6 +10,7 @@ import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
 import de.brasi.nova.taskmanagement.attachment.AttachmentQueryService;
 import de.brasi.nova.taskmanagement.attachment.AttachmentTaskAccess;
 import de.brasi.nova.taskmanagement.attachment.AttachmentThumbnailGenerator;
+import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
@@ -1096,7 +1097,10 @@ class CommentConcurrencyIT {
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
-        final AssigneeService assigneeService) {
+        final AssigneeService assigneeService,
+        final AttachmentWriter attachmentWriter,
+        final AttachmentModelMapper attachmentModelMapper,
+        final AttachmentProperties attachmentProperties) {
       super(
           taskRepository,
           commentRepository,
@@ -1111,7 +1115,10 @@ class CommentConcurrencyIT {
           membershipGuard,
           new de.brasi.nova.taskmanagement.notification.NotificationMuteFilter(
               userStateQueryRepository),
-          assigneeService);
+          assigneeService,
+          attachmentWriter,
+          attachmentModelMapper,
+          attachmentProperties);
     }
 
     void armTaskSaveInjector(final Runnable injector) {
@@ -1382,6 +1389,17 @@ class CommentConcurrencyIT {
           attachmentQueryService);
     }
 
+    /**
+     * Intake #152: Writer der Anhaenge fuer den Konstruktor des CommentService; dieser IT legt nur
+     * Kommentare ohne Anhaenge an, der Writer wird nie aufgerufen.
+     */
+    @Bean
+    AttachmentWriter attachmentWriter(
+        final TaskAttachmentQueryRepository attachmentRepository,
+        final AttachmentContentProvider attachmentContentProvider) {
+      return new AttachmentWriter(attachmentRepository, attachmentContentProvider);
+    }
+
     @Bean
     TestCommentService testCommentService(
         final BaseTaskRepository taskRepository,
@@ -1395,7 +1413,10 @@ class CommentConcurrencyIT {
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
-        final AssigneeService assigneeService) {
+        final AssigneeService assigneeService,
+        final AttachmentWriter attachmentWriter,
+        final AttachmentModelMapper attachmentModelMapper,
+        final AttachmentProperties attachmentProperties) {
       return new TestCommentService(
           taskRepository,
           commentRepository,
@@ -1408,7 +1429,10 @@ class CommentConcurrencyIT {
           userAccessor,
           auditTimeConverter,
           membershipGuard,
-          assigneeService);
+          assigneeService,
+          attachmentWriter,
+          attachmentModelMapper,
+          attachmentProperties);
     }
   }
 }
