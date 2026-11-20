@@ -18,6 +18,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -150,8 +151,8 @@ public class AttachmentController {
               + " Aufgabe: die letzte Aktivitaet wird fortgeschrieben, je Datei entsteht ein"
               + " Historieneintrag, und die Inbox aller Leser wird aktualisiert; eine eigene"
               + " Benachrichtigung gibt es nicht. Hochladen duerfen nur aktive Mitglieder der"
-              + " Aufgabe; fuer alle anderen ist die Aufgabe nicht sichtbar (404), auch wenn die"
-              + " Dateien ungueltig sind.",
+              + " Aufgabe; fuer alle anderen ist die Aufgabe nicht sichtbar (404), auch bei"
+              + " ungueltigem Dateityp, Inhalt oder Tarifgrenze.",
       requestBody =
           @io.swagger.v3.oas.annotations.parameters.RequestBody(
               description =
@@ -188,9 +189,10 @@ public class AttachmentController {
         responseCode = "400",
         description =
             "Ungueltige Anfrage, nichts wurde gespeichert: Dateityp nicht erlaubt, leere Datei,"
-                + " Datei groesser als die Grenze des Tarifs oder die harte Obergrenze, Inhalt"
-                + " passt nicht zur Endung, die Aufgabe haette mehr als 20 aktive Anhaenge, Teil"
-                + " files fehlt, kein lesbares multipart/form-data oder keine UUID im Pfad.",
+                + " Datei groesser als die Grenze des Tarifs oder die harte Obergrenze (auch die"
+                + " ganze Anfrage zu gross), Inhalt passt nicht zur Endung, die Aufgabe haette mehr"
+                + " als 20 aktive Anhaenge, Teil files fehlt, kein lesbares multipart/form-data"
+                + " oder keine UUID im Pfad.",
         content =
             @Content(
                 mediaType = "application/json",
@@ -245,7 +247,8 @@ public class AttachmentController {
         responseCode = "404",
         description =
             "Aufgabe nicht gefunden, fremder Mandant, deaktiviert oder kein aktives Mitglied der"
-                + " Aufgabe (neutral maskiert, auch bei ungueltigen Dateien).",
+                + " Aufgabe (neutral maskiert, auch bei ungueltigem Dateityp, Inhalt oder"
+                + " Tarifgrenze).",
         content =
             @Content(
                 mediaType = "application/json",
@@ -725,9 +728,9 @@ public class AttachmentController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Konflikt: die Aufgabe wurde zwischenzeitlich geaendert"
-                + " (Versionskonflikt); nichts wurde geaendert. Die Anfrage gegen den frischen"
-                + " Stand wiederholen."
+            "Nebenlaeufiger Konflikt: die Aufgabe oder der Anhang wurde zwischenzeitlich"
+                + " geaendert (Versionskonflikt); nichts wurde geaendert. Die Anfrage gegen den"
+                + " frischen Stand wiederholen."
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(
@@ -757,6 +760,10 @@ public class AttachmentController {
   /**
    * Baut die Antwort einer Auslieferung: 304 nur mit ETag und Cache-Control, sonst 200 mit allen
    * Headern und einem Body, der den im Service geoeffneten Strom kopiert und schliesst.
+   *
+   * <p>Die Header entstehen, bevor der Body den Strom uebernimmt. Wirft der Bau eine Ausnahme (etwa
+   * eine ungueltige Inhaltsart), wird der schon geoeffnete Strom hier geschlossen, denn dann laeuft
+   * der Body nie.
    */
   private static ResponseEntity<StreamingResponseBody> deliver(
       final AttachmentDelivery delivery, final ContentDisposition.Builder disposition) {
@@ -767,6 +774,28 @@ public class AttachmentController {
           .cacheControl(cacheControl)
           .build();
     }
+    final InputStream stream = delivery.stream();
+    final HttpHeaders headers;
+    try {
+      headers = deliveryHeaders(delivery, disposition, cacheControl);
+    } catch (RuntimeException e) {
+      closeAfterFailure(stream, e);
+      throw e;
+    }
+    final StreamingResponseBody body =
+        out -> {
+          try (InputStream in = stream) {
+            in.transferTo(out);
+          }
+        };
+    return new ResponseEntity<>(body, headers, HttpStatus.OK);
+  }
+
+  /** Baut die Header der 200-Antwort einer Auslieferung. */
+  private static HttpHeaders deliveryHeaders(
+      final AttachmentDelivery delivery,
+      final ContentDisposition.Builder disposition,
+      final CacheControl cacheControl) {
     final HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.parseMediaType(delivery.mimeType()));
     if (delivery.contentLength() >= 0) {
@@ -779,13 +808,15 @@ public class AttachmentController {
         delivery.fileName() == null
             ? disposition.build()
             : disposition.filename(delivery.fileName(), StandardCharsets.UTF_8).build());
-    final InputStream stream = delivery.stream();
-    final StreamingResponseBody body =
-        out -> {
-          try (InputStream in = stream) {
-            in.transferTo(out);
-          }
-        };
-    return new ResponseEntity<>(body, headers, HttpStatus.OK);
+    return headers;
+  }
+
+  /** Schliesst den Strom nach einem Fehler; ein Fehler beim Schliessen wird nur angehaengt. */
+  private static void closeAfterFailure(final InputStream stream, final RuntimeException failure) {
+    try {
+      stream.close();
+    } catch (IOException closeFailure) {
+      failure.addSuppressed(closeFailure);
+    }
   }
 }

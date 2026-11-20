@@ -13,8 +13,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Prueft ohne Spring-Kontext, dass die Rels {@code attachments} und {@code add-attachment} nur am
  * Aufgaben-Detail erscheinen (Intake #152): Die Link-Regeln am {@link TaskFacadeController} tragen
- * {@link LinkContext#DETAIL_ONLY}, alle uebrigen Item-Regeln bleiben in Liste und Detail
- * ({@link LinkContext#ALL}). Die Listenzeilen der Inbox behalten damit ihre bisherige Rel-Menge.
+ * {@link LinkContext#DETAIL_ONLY}, alle uebrigen Item-Regeln bleiben in Liste und Detail ({@link
+ * LinkContext#ALL}). Die Listenzeilen der Inbox behalten damit ihre bisherige Rel-Menge.
  */
 class AttachmentLinkRuleContextTest {
 

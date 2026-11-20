@@ -55,23 +55,26 @@ public class MultipartErrorAdvice {
   }
 
   /**
-   * Eine Datei oder der Request ist groesser als die Multipart-Grenze des Servers.
+   * Eine Datei oder der Request ist groesser als die Multipart-Grenze des Servers. Die Ausnahme
+   * entsteht sowohl bei einer zu grossen Datei ({@code max-file-size}) als auch bei einem zu
+   * grossen Request insgesamt ({@code max-request-size}); der Text nennt deshalb beides und die
+   * harte Obergrenze je Datei.
    *
    * @param ex Ausnahme von Spring beim Lesen des Requests
    * @param request aktueller Request
-   * @return 400 mit der harten Obergrenze im Text
+   * @return 400 mit der harten Obergrenze je Datei im Text
    */
   @ExceptionHandler(MaxUploadSizeExceededException.class)
   public ResponseEntity<ApiError> handleMaxUploadSize(
       final MaxUploadSizeExceededException ex, final HttpServletRequest request) {
-    final String limit =
-        new AttachmentFileLimit(null, properties.limits().hardMax().toBytes()).displaySize();
+    final String limit = AttachmentFileLimit.displaySize(properties.limits().hardMax().toBytes());
     log.info(
         "Multipart-Request {} ueber der Groessengrenze abgelehnt: {}",
         request.getRequestURI(),
         ex.getMessage());
     return validationError(
-        "Die Datei ist größer als die zulässige Obergrenze von " + limit + ".", request);
+        "Die Anfrage oder eine Datei ist zu groß. Je Datei sind höchstens " + limit + " zulässig.",
+        request);
   }
 
   /**

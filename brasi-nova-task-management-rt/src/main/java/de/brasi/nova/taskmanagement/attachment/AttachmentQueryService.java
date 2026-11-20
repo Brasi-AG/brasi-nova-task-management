@@ -37,7 +37,8 @@ import org.springframework.stereotype.Service;
  * wird der Strom hier geoeffnet, damit eine fehlende Datei synchron als neutrale 404 entsteht (mit
  * Fehler-Log, Anhang-UUID ohne Pfad) und nicht erst beim Schreiben der Antwort. Fehlt das
  * Vorschaubild eines vorschaufaehigen Typs, wird es aus dem Inhalt erzeugt und abgelegt
- * (Selbstheilung). Dieser Service schreibt nie in die Datenbank.
+ * (Selbstheilung). Ein gespeichertes Vorschaubild wird vollstaendig gelesen und mit bekannter
+ * Laenge ausgeliefert. Dieser Service schreibt nie in die Datenbank.
  */
 @Service
 public class AttachmentQueryService {
@@ -182,7 +183,8 @@ public class AttachmentQueryService {
     final String storageKey = requireStorageKey(attachment);
     final Optional<InputStream> stored = contentProvider.openThumbnail(storageKey);
     if (stored.isPresent()) {
-      return thumbnailDelivery(etag, stored.get(), AttachmentDelivery.UNKNOWN_LENGTH, maxAge);
+      final byte[] jpeg = readStoredThumbnail(stored.get());
+      return thumbnailDelivery(etag, new ByteArrayInputStream(jpeg), jpeg.length, maxAge);
     }
     final byte[] jpeg = regenerateThumbnail(attachment, type, storageKey);
     return thumbnailDelivery(etag, new ByteArrayInputStream(jpeg), jpeg.length, maxAge);
@@ -281,6 +283,19 @@ public class AttachmentQueryService {
           e.getClass().getSimpleName());
     }
     return jpeg;
+  }
+
+  /**
+   * Liest ein gespeichertes Vorschaubild vollstaendig und schliesst den Strom. Vorschaubilder sind
+   * klein; so ist die Laenge bekannt ({@code Content-Length}) und kein Dateistrom bleibt ueber die
+   * asynchrone Grenze der Auslieferung offen.
+   */
+  private static byte[] readStoredThumbnail(final InputStream stream) {
+    try (InputStream in = stream) {
+      return in.readAllBytes();
+    } catch (IOException e) {
+      throw new UncheckedIOException("Vorschaubild eines Anhangs nicht lesbar.", e);
+    }
   }
 
   private static AttachmentDelivery thumbnailDelivery(

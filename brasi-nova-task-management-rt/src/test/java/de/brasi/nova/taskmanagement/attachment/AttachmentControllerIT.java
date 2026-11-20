@@ -880,6 +880,10 @@ class AttachmentControllerIT {
     assertThat(jpeg).startsWith((byte) 0xFF, (byte) 0xD8, (byte) 0xFF);
     final Path thumb = baseDir.resolve(AttachmentStorageKeys.thumbnailKey(row.storageKey()));
     assertThat(jpeg).isEqualTo(Files.readAllBytes(thumb));
+    // Das gespeicherte Vorschaubild geht mit bekannter Laenge hinaus (nicht chunked).
+    final String contentLength = res.getResponse().getHeader("Content-Length");
+    assertThat(contentLength).isNotNull();
+    assertThat(Long.parseLong(contentLength)).isPositive().isEqualTo(jpeg.length);
   }
 
   @Test

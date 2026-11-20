@@ -27,10 +27,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p>Rollback: je Transaktion wird genau eine {@link TransactionSynchronization} registriert. Sie
  * merkt sich die Schluessel der Dateien, die <em>in dieser Transaktion</em> tatsaechlich
- * geschrieben wurden (erst nach erfolgreichem {@code writeContent}), und loescht nach einem
- * Rollback nur diese (Inhalt und Vorschaubild) ueber {@link
- * AttachmentContentProvider#deleteQuietly}. Fremde oder vorher vorhandene Dateien werden nie
- * angefasst.
+ * geschrieben wurden (erst nach erfolgreichem {@code writeContent}), und stoesst nach einem
+ * Rollback fuer genau diese Schluessel das Aufraeumen ueber {@link
+ * AttachmentContentProvider#deleteQuietly} an. Eine vorher vorhandene Inhaltsdatei wird nie
+ * angefasst: {@code writeContent} ueberschreibt sie nicht, ihr Schluessel wird nicht gemerkt.
+ * {@code deleteQuietly} entfernt allerdings immer Inhaltsdatei und Vorschaubild eines Schluessels
+ * zusammen; ein schon vorhandenes Vorschaubild zu einem hier geschriebenen Schluessel (das {@code
+ * writeThumbnail} nicht ueberschreibt) ginge also mit. Fremde Schluessel bleiben unberuehrt.
  */
 @Component
 public class AttachmentWriter {
@@ -173,7 +176,7 @@ public class AttachmentWriter {
       if (status == STATUS_ROLLED_BACK) {
         for (final String storageKey : writtenKeys) {
           contentProvider.deleteQuietly(storageKey);
-          log.info("Anhang-Datei {} nach Rollback der Transaktion entfernt.", storageKey);
+          log.info("Aufraeumen der Anhang-Datei {} nach Rollback angestossen.", storageKey);
         }
       } else if (status == STATUS_UNKNOWN && !writtenKeys.isEmpty()) {
         log.warn(

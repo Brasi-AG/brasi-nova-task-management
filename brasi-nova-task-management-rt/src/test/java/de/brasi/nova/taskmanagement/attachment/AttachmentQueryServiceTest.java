@@ -149,6 +149,7 @@ class AttachmentQueryServiceTest {
     final AttachmentDelivery d = service.serveThumbnail(TASK_UUID, ATT_UUID, null);
 
     assertThat(d.mimeType()).isEqualTo("image/jpeg");
+    assertThat(d.contentLength()).isEqualTo(JPEG.length);
     try (InputStream in = d.stream()) {
       assertThat(in.readAllBytes()).isEqualTo(JPEG);
     }

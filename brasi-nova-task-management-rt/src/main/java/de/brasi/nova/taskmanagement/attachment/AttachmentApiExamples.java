@@ -112,7 +112,7 @@ public final class AttachmentApiExamples {
   private static final String TEXT_TARIFF_LIMIT =
       "Die Datei „Bericht.pdf“ ist größer als die Grenze von 5 MB des Tarifs STANDARD.";
   private static final String TEXT_HARD_LIMIT =
-      "Die Datei ist größer als die zulässige Obergrenze von 15 MB.";
+      "Die Anfrage oder eine Datei ist zu groß. Je Datei sind höchstens 15 MB zulässig.";
   private static final String TEXT_COUNT =
       "Höchstens 20 aktive Anhänge je Aufgabe bzw. je Kommentar.";
   private static final String TEXT_CONTENT =

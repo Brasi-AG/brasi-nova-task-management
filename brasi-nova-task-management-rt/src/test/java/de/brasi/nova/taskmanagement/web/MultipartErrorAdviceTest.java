@@ -51,7 +51,9 @@ class MultipartErrorAdviceTest {
         .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
         .andExpect(
             jsonPath("$.message")
-                .value("Die Datei ist größer als die zulässige Obergrenze von 15 MB."));
+                .value(
+                    "Die Anfrage oder eine Datei ist zu groß."
+                        + " Je Datei sind höchstens 15 MB zulässig."));
   }
 
   @Test

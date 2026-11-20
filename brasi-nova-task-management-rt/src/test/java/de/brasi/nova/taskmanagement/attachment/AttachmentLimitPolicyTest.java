@@ -91,6 +91,9 @@ class AttachmentLimitPolicyTest {
     assertThat(new AttachmentFileLimit(STANDARD, 5_242_880L).displaySize()).isEqualTo("5 MB");
     assertThat(new AttachmentFileLimit(ENTERPRISE, 12_582_912L + 524_288L).displaySize())
         .isEqualTo("12,5 MB");
+    // Ohne Tarif, etwa fuer die harte Obergrenze in Fehlertexten.
+    assertThat(AttachmentFileLimit.displaySize(15_728_640L)).isEqualTo("15 MB");
+    assertThat(AttachmentFileLimit.displaySize(12_582_912L + 524_288L)).isEqualTo("12,5 MB");
   }
 
   /** Grenze fuer einen Mandanten ausserhalb der Config-Liste mit genau einer Tabellenzeile. */
