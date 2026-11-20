@@ -1570,8 +1570,7 @@ class AttachmentControllerIT {
         status().isOk(),
         header().string("Content-Type", containsString(mimeType)),
         header()
-            .string(
-                "Content-Disposition", allOf(startsWith("inline"), containsString(fileName))),
+            .string("Content-Disposition", allOf(startsWith("inline"), containsString(fileName))),
         header().string("X-Content-Type-Options", "nosniff"),
         header().longValue("Content-Length", expected.length));
     assertThat(content.getResponse().getContentAsByteArray())

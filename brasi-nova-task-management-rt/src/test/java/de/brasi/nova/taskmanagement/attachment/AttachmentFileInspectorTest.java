@@ -165,7 +165,7 @@ class AttachmentFileInspectorTest {
   }
 
   /**
-   * Intake #184: Kein MP4 sind fremder Inhalt, andere Major Brands (QuickTime {@code "qt  "}, 3GPP
+   * Intake #184: Kein MP4 sind fremder Inhalt, andere Major Brands (QuickTime {@code "qt "}, 3GPP
    * {@code 3gp4}, nicht genannte Marken; die kompatiblen Marken {@code isom} und {@code mp41} der
    * Box zaehlen nicht), Dateien unter 12 Bytes und eine ftyp-Box an Byte 0 statt an Byte 4.
    */
