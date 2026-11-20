@@ -6,9 +6,9 @@ package de.brasi.nova.taskmanagement.attachment;
  * <p>Der ETag des Inhalts ist die beim Hochladen gespeicherte Pruefsumme ({@code SHA256}) als
  * schwacher ETag {@code W/"<sha256>"}; das Vorschaubild traegt zusaetzlich die tatsaechliche Breite
  * des ausgelieferten Bilds ({@code W/"<sha256>-t<breite>"}), damit ein Vorschaubild anderer Breite
- * nicht als unveraendert gilt und ein bereits gespeichertes seinen ETag behaelt.
- * {@link #matches(String, String)} vergleicht schwach (RFC 9110, {@code If-None-Match}): mit oder
- * ohne {@code W/}, kommagetrennte Liste, {@code *} passt immer.
+ * nicht als unveraendert gilt und ein bereits gespeichertes seinen ETag behaelt. {@link
+ * #matches(String, String)} vergleicht schwach (RFC 9110, {@code If-None-Match}): mit oder ohne
+ * {@code W/}, kommagetrennte Liste, {@code *} passt immer.
  */
 final class AttachmentEtags {
 

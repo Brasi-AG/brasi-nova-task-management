@@ -280,9 +280,11 @@ public class AttachmentController {
     @ApiResponse(
         responseCode = "409",
         description =
-            "Nebenlaeufiger Konflikt: die Aufgabe wurde zwischenzeitlich geaendert"
-                + " (Versionskonflikt); nichts wurde gespeichert, auch keine Datei. Die Anfrage"
-                + " gegen den frischen Stand wiederholen."
+            "Nebenlaeufiger Konflikt, in allen Faellen wurde nichts gespeichert, auch keine Datei."
+                + " (1) Die Aufgabe wurde zwischenzeitlich geaendert (Versionskonflikt); die"
+                + " Anfrage gegen den frischen Stand wiederholen. (2) Gleichzeitiger Insert: schon"
+                + " beim Anlegen des ersten Anhangs kann bei gleichzeitiger Vergabe neuer Nummern"
+                + " ein Sequenzkonflikt auftreten; die Anfrage wiederholen."
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
             @Content(

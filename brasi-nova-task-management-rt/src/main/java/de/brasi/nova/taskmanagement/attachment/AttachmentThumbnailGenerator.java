@@ -105,8 +105,8 @@ public class AttachmentThumbnailGenerator implements DisposableBean {
   private final ThreadPoolTaskExecutor executor;
 
   /**
-   * Erzeugt den Generator und startet seinen Pool. {@code @Autowired} waehlt diesen Konstruktor fuer
-   * Spring, weil es daneben die Test-Naht gibt.
+   * Erzeugt den Generator und startet seinen Pool. {@code @Autowired} waehlt diesen Konstruktor
+   * fuer Spring, weil es daneben die Test-Naht gibt.
    *
    * @param properties Anhang-Konfiguration; verwendet wird {@link AttachmentProperties#thumbnail()}
    * @param pool Groesse, Warteschlange, Zeitlimit und Thread-Namen des Erzeugungs-Pools

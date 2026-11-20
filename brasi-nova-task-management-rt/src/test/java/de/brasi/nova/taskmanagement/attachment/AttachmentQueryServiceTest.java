@@ -80,6 +80,7 @@ class AttachmentQueryServiceTest {
   private static final String KEY = AttachmentStorageKeys.contentKey(TENANT, ATT_ID, "pdf");
   private static final byte[] PDF_BYTES =
       "%PDF-1.7\n% Testinhalt\n".getBytes(StandardCharsets.ISO_8859_1);
+
   /** Echtes JPEG in der konfigurierten Breite: der Vorschau-ETag liest die Breite aus dem Kopf. */
   private static final byte[] JPEG = jpeg(600, 400);
 
