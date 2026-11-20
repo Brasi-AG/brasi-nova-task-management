@@ -79,8 +79,7 @@ public class AttachmentAcceptConfiguration implements WebMvcConfigurer {
     }
 
     @Override
-    @Nullable
-    public ModelAndView resolveException(
+    @Nullable public ModelAndView resolveException(
         final HttpServletRequest request,
         final HttpServletResponse response,
         @Nullable final Object handler,
