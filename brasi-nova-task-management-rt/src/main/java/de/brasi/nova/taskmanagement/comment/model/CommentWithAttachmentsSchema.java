@@ -17,9 +17,10 @@ import java.util.List;
 @Schema(
     name = "CommentWithAttachments",
     description =
-        "Multipart-Formular mit dem Kommentar im Teil comment (JSON mit Content-Type"
-            + " application/json, Felder wie bei POST /api/v1/tasks/{id}/comments) und einer oder"
-            + " mehreren Dateien im Teil files.",
+        "Multipart-Formular mit dem Kommentar im Teil comment (JSON, empfohlen mit Content-Type"
+            + " application/json, Felder wie bei POST /api/v1/tasks/{id}/comments; ohne"
+            + " Content-Type oder als text/plain wird dasselbe JSON ebenfalls angenommen) und einer"
+            + " oder mehreren Dateien im Teil files.",
     requiredProperties = {"comment", "files"})
 public record CommentWithAttachmentsSchema(
     // Ohne eigene Beschreibung: swagger-core schriebe sie in die gemeinsame Komponente

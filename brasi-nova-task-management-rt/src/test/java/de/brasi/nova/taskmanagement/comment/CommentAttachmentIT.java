@@ -461,6 +461,99 @@ class CommentAttachmentIT {
     assertUnchanged(taskId, before);
   }
 
+  // ---- Teil comment ohne JSON-Content-Type (P415) --------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i152_comment_part_without_content_type_201: Teil comment ohne Content-Type (so sendet ihn"
+          + " FormData.append) wird als JSON gelesen -> 201 mit Anhang; Umlaute unveraendert, ein"
+          + " Kommentar und eine Anhangzeile mehr")
+  void i152_comment_part_without_content_type_201() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT ohne Content-Type");
+    final Snapshot before = snapshot(taskId);
+
+    postWithCommentPart(
+            mvc, creator, taskId, null, commentJson("Größe prüfen"), pdfFile("Bericht.pdf"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.text").value("Größe prüfen"))
+        .andExpect(jsonPath("$.attachments.length()").value(1))
+        .andExpect(jsonPath("$.attachments[0].fileName").value("Bericht.pdf"));
+
+    assertThat(commentRowCount(taskId) - before.commentRows()).isEqualTo(1);
+    assertThat(attachmentRowCount(taskId) - before.attachmentRows()).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i152_comment_part_text_plain_201: Teil comment als text/plain wird als JSON gelesen -> 201"
+          + " mit Anhang, ein Kommentar und eine Anhangzeile mehr")
+  void i152_comment_part_text_plain_201() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT text/plain");
+    final Snapshot before = snapshot(taskId);
+
+    postWithCommentPart(
+            mvc,
+            creator,
+            taskId,
+            MediaType.TEXT_PLAIN_VALUE,
+            commentJson("Als Klartext gesendet"),
+            pdfFile("Bericht.pdf"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.text").value("Als Klartext gesendet"))
+        .andExpect(jsonPath("$.attachments.length()").value(1));
+
+    assertThat(commentRowCount(taskId) - before.commentRows()).isEqualTo(1);
+    assertThat(attachmentRowCount(taskId) - before.attachmentRows()).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i152_comment_part_invalid_json_400_same_key: ungueltiges JSON im Teil comment (ohne Typ,"
+          + " text/plain, application/json) -> 400 im KSF-Format mit demselben errorKey wie die"
+          + " JSON-Variante; auch fuer Nicht-Mitglieder 400 statt 404 (der Teil wird vor der"
+          + " Mitgliedschaft gelesen); nichts gespeichert")
+  void i152_comment_part_invalid_json_400_same_key() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT ungueltiges JSON");
+    final Snapshot before = snapshot(taskId);
+    final String invalid = "{\"text\": kein json";
+
+    // Referenz: der JSON-Weg ohne Anhaenge
+    final JsonNode reference =
+        json(
+            mvc.perform(
+                    post("/api/v1/tasks/{id}/comments", taskId)
+                        .header("Authorization", bearer(creator))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalid))
+                .andExpect(status().isBadRequest()));
+    final String expectedKey = reference.get("errorKey").asText();
+    assertThat(expectedKey).isEqualTo("NOVA_MESSAGE_NOT_READABLE");
+
+    for (final String contentType :
+        new String[] {null, MediaType.TEXT_PLAIN_VALUE, "application/json"}) {
+      for (final String token : List.of(creator, token(NON_MEMBER_REF, NON_MEMBER_LOGIN))) {
+        final JsonNode body =
+            json(
+                postWithCommentPart(
+                        mvc, token, taskId, contentType, invalid, pdfFile("Bericht.pdf"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.status").value(400)));
+        assertThat(body.get("errorKey").asText()).isEqualTo(expectedKey);
+        assertThat(body.get("message").asText()).isEqualTo(reference.get("message").asText());
+        assertThat(body.get("path").asText())
+            .isEqualTo("/api/v1/tasks/" + taskId + "/comments/with-attachments");
+      }
+    }
+
+    assertUnchanged(taskId, before);
+  }
+
   // ---- Rechte ---------------------------------------------------------------------------------
 
   @Test
@@ -673,6 +766,28 @@ class CommentAttachmentIT {
               MediaType.APPLICATION_JSON_VALUE,
               commentJson.getBytes(StandardCharsets.UTF_8)));
     }
+    for (final MockMultipartFile file : files) {
+      request.file(file);
+    }
+    return mvc.perform(request.header("Authorization", bearer(token)));
+  }
+
+  /**
+   * Wie {@link #postWithAttachments}, aber der Teil {@code comment} traegt den angegebenen
+   * Content-Type (bei {@code null} gar keinen, so sendet ein Browser {@code FormData.append}).
+   */
+  private static ResultActions postWithCommentPart(
+      final MockMvc mvc,
+      final String token,
+      final UUID taskId,
+      final String partContentType,
+      final String commentPart,
+      final MockMultipartFile... files)
+      throws Exception {
+    final MockMultipartHttpServletRequestBuilder request = multipart(WITH_ATTACHMENTS_URL, taskId);
+    request.file(
+        new MockMultipartFile(
+            "comment", "", partContentType, commentPart.getBytes(StandardCharsets.UTF_8)));
     for (final MockMultipartFile file : files) {
       request.file(file);
     }

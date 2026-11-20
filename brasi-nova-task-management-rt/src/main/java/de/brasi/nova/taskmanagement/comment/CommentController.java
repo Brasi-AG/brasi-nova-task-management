@@ -53,6 +53,7 @@ public class CommentController {
   private final CommentService commentService;
   private final CommentQueryService commentQueryService;
   private final CommentAttachmentService commentAttachmentService;
+  private final CommentPartReader commentPartReader;
 
   /**
    * Konstruktor-Injektion der Kommentar-Services.
@@ -61,14 +62,17 @@ public class CommentController {
    * @param commentQueryService liest die Kommentare
    * @param commentAttachmentService prueft die Dateien eines Kommentars mit Anhaengen und legt ihn
    *     an
+   * @param commentPartReader liest den Teil {@code comment} des Multipart-Requests als JSON
    */
   public CommentController(
       final CommentService commentService,
       final CommentQueryService commentQueryService,
-      final CommentAttachmentService commentAttachmentService) {
+      final CommentAttachmentService commentAttachmentService,
+      final CommentPartReader commentPartReader) {
     this.commentService = commentService;
     this.commentQueryService = commentQueryService;
     this.commentAttachmentService = commentAttachmentService;
+    this.commentPartReader = commentPartReader;
   }
 
   /**
@@ -311,8 +315,13 @@ public class CommentController {
    * zeigt {@code add-comment}. Den Ablauf beschreibt {@link
    * CommentAttachmentService#createCommentWithAttachments}.
    *
+   * <p>Den Teil {@code comment} liest {@link CommentPartReader} als JSON, gleich mit welchem
+   * Content-Type er ankommt: {@code application/json} ist empfohlen, ein Teil ohne Content-Type
+   * oder mit {@code text/plain} (so sendet ihn ein Browser mit {@code FormData.append}) wird mit
+   * demselben JSON angenommen. Das Lesen steht vor der Pruefung der Mitgliedschaft.
+   *
    * @param id externe UUID der Aufgabe
-   * @param comment Kommentar-Eingabe aus dem JSON-Teil {@code comment}
+   * @param comment Rohinhalt des Teils {@code comment} (JSON, UTF-8)
    * @param files hochgeladene Dateien (Teile {@code files}, mindestens einer)
    * @return 201 Created mit {@link CommentModel} des neuen Kommentars samt Anhaengen
    */
@@ -320,9 +329,11 @@ public class CommentController {
       summary = "Kommentar mit Anhängen erstellen",
       description =
           "Erstellt einen Kommentar mit einer oder mehreren Dateien als multipart/form-data: der"
-              + " Teil comment enthaelt den Kommentar als JSON (Content-Type application/json,"
-              + " Felder wie bei POST /api/v1/tasks/{id}/comments), je Datei ein Teil files. Der"
-              + " Text ist Pflicht; ein Kommentar ohne Datei geht ueber POST"
+              + " Teil comment enthaelt den Kommentar als JSON (empfohlen Content-Type"
+              + " application/json, Felder wie bei POST /api/v1/tasks/{id}/comments), je Datei ein"
+              + " Teil files. Ein Teil comment ohne Content-Type oder mit text/plain, wie ihn ein"
+              + " Browser mit FormData.append('comment', JSON.stringify(...)) sendet, wird mit"
+              + " demselben JSON ebenfalls angenommen (UTF-8). Der Text ist Pflicht; ein Kommentar ohne Datei geht ueber POST"
               + " /api/v1/tasks/{id}/comments. Fuer den Kommentar gelten dieselben Regeln wie dort:"
               + " optional Antwort auf einen anderen Kommentar (parentCommentId), Erwaehnungen als"
               + " explizite UUIDs in mentions (erwaehnte Nicht-Mitglieder werden mit der"
@@ -350,9 +361,10 @@ public class CommentController {
       requestBody =
           @io.swagger.v3.oas.annotations.parameters.RequestBody(
               description =
-                  "Multipart-Formular mit dem Kommentar im Teil comment (JSON) und mindestens"
-                      + " einer Datei im Teil files (mehrere Teile mit demselben Namen fuer"
-                      + " mehrere Dateien).",
+                  "Multipart-Formular mit dem Kommentar im Teil comment (JSON, empfohlen mit"
+                      + " Content-Type application/json; ohne Content-Type oder als text/plain"
+                      + " wird dasselbe JSON ebenfalls angenommen) und mindestens einer Datei im"
+                      + " Teil files (mehrere Teile mit demselben Namen fuer mehrere Dateien).",
               required = true,
               content =
                   @Content(
@@ -486,10 +498,11 @@ public class CommentController {
   public ResponseEntity<CommentModel> createCommentWithAttachments(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
-      @Parameter(hidden = true) @RequestPart("comment") final CommentCreateInput comment,
+      @Parameter(hidden = true) @RequestPart("comment") final byte[] comment,
       @Parameter(hidden = true) @RequestPart("files") final List<MultipartFile> files) {
+    final CommentCreateInput input = commentPartReader.read(comment);
     final CommentModel model =
-        commentAttachmentService.createCommentWithAttachments(id, comment, files);
+        commentAttachmentService.createCommentWithAttachments(id, input, files);
     return ResponseEntity.status(HttpStatus.CREATED).body(model);
   }
 }
