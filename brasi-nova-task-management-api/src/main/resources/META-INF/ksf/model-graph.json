@@ -2624,7 +2624,7 @@
       "targetCardinality": "ZERO_OR_MANY",
       "nullable": false,
       "unique": false,
-      "updateable": false,
+      "updateable": true,
       "tenantScope": { "mode": "GLOBAL", "property": null },
       "category": null,
       "label": null,
