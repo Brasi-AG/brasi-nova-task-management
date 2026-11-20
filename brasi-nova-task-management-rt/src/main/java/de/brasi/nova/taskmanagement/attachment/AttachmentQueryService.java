@@ -39,14 +39,15 @@ import org.springframework.stereotype.Service;
  * innerhalb seiner Aufgabe gefunden (Aufgaben- und Kommentar-Anhaenge, nur ACTIVE); sonst {@code
  * Anhang nicht gefunden.}.
  *
- * <p>Auslieferung: Beim Inhalt ergibt ein passender {@code If-None-Match} 304, ohne die Datei zu
- * oeffnen; das Vorschaubild wird vor dem Vergleich gelesen bzw. erzeugt, weil sein ETag die Breite
- * des ausgelieferten Bilds traegt. Sonst wird der Strom hier geoeffnet, damit eine fehlende Datei
- * synchron als neutrale 404 entsteht (mit
- * Fehler-Log, Anhang-UUID ohne Pfad) und nicht erst beim Schreiben der Antwort. Fehlt das
- * Vorschaubild eines vorschaufaehigen Typs, wird es aus dem Inhalt erzeugt und abgelegt
- * (Selbstheilung). Ein gespeichertes Vorschaubild wird vollstaendig gelesen und mit bekannter
- * Laenge ausgeliefert. Dieser Service schreibt nie in die Datenbank.
+ * <p>Auslieferung: Erst wird geprueft, dass die Datei da ist, dann der ETag verglichen; ein
+ * passender {@code If-None-Match} ergibt 304 nur fuer eine vorhandene Datei. Der Strom des Inhalts
+ * wird hier geoeffnet, damit eine fehlende Datei synchron als neutrale 404 entsteht (mit
+ * Fehler-Log, Anhang-UUID ohne Pfad) und nicht erst beim Schreiben der Antwort; bei 304 wird er
+ * sofort wieder geschlossen. Das Vorschaubild wird vor dem Vergleich gelesen bzw. erzeugt, auch
+ * weil sein ETag die Breite des ausgelieferten Bilds traegt. Fehlt das Vorschaubild eines
+ * vorschaufaehigen Typs, wird es aus dem Inhalt erzeugt und abgelegt (Selbstheilung). Ein
+ * gespeichertes Vorschaubild wird vollstaendig gelesen und mit bekannter Laenge ausgeliefert.
+ * Dieser Service schreibt nie in die Datenbank.
  */
 @Service
 public class AttachmentQueryService {
@@ -142,20 +143,27 @@ public class AttachmentQueryService {
    *
    * @param taskExternalId externe UUID der Aufgabe
    * @param attachmentId externe UUID des Anhangs
+   * <p>Die Datei wird vor dem ETag-Vergleich geoeffnet: ein passender {@code If-None-Match}
+   * bestaetigt nur eine vorhandene Datei als unveraendert (304, der Strom wird sofort geschlossen);
+   * fehlt sie, bleibt es bei der neutralen 404.
+   *
+   * @param taskExternalId externe UUID der Aufgabe
+   * @param attachmentId externe UUID des Anhangs
    * @param ifNoneMatch Wert des Headers {@code If-None-Match} oder {@code null}
    * @return 304-Ergebnis ohne Strom oder der geoeffnete Inhalt mit Art, Name und Groesse
    * @throws EntityNotFoundException wenn Aufgabe oder Anhang nicht sichtbar sind oder die Datei
-   *     fehlt (HTTP 404)
+   *     fehlt, auch bei passendem {@code If-None-Match} (HTTP 404)
    */
   public AttachmentDelivery serveContent(
       final UUID taskExternalId, final UUID attachmentId, final String ifNoneMatch) {
     final TaskAttachment attachment = requireAttachment(taskExternalId, attachmentId);
     final String etag = AttachmentEtags.contentEtag(attachment.getSha256());
     final Duration maxAge = properties.cache().contentMaxAge();
+    final InputStream stream = openContent(attachment);
     if (AttachmentEtags.matches(ifNoneMatch, etag)) {
+      closeQuietly(stream, attachment);
       return AttachmentDelivery.unchanged(etag, maxAge);
     }
-    final InputStream stream = openContent(attachment);
     return new AttachmentDelivery(
         false,
         etag,
@@ -286,6 +294,21 @@ public class AttachmentQueryService {
       throw new EntityNotFoundException(ATTACHMENT_NOT_FOUND);
     }
     return stream.get();
+  }
+
+  /**
+   * Schliesst den bei 304 nicht benoetigten Strom; ein Fehler beim Schliessen aendert die Antwort
+   * nicht (Warnung ohne Pfad).
+   */
+  private static void closeQuietly(final InputStream stream, final TaskAttachment attachment) {
+    try {
+      stream.close();
+    } catch (IOException e) {
+      log.warn(
+          "Strom des Anhangs {} liess sich nach 304 nicht schliessen ({}).",
+          attachment.getUuid(),
+          e.getClass().getSimpleName());
+    }
   }
 
   /** Speicherschluessel des Anhangs; fehlt er, neutrale 404 mit Fehler-Log. */

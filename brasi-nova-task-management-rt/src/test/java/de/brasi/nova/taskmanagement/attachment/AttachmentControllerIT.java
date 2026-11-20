@@ -960,6 +960,41 @@ class AttachmentControllerIT {
 
   @Test
   @DisplayName(
+      "i152_missing_file_with_matching_etag_is_404: Datei geloescht, If-None-Match mit dem"
+          + " richtigen ETag -> 404 NOVA_NOT_FOUND statt 304 (Inhalt und Vorschau)")
+  void i152_missing_file_with_matching_etag_is_404() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Datei fehlt ETag");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    final AttachmentRow row = row(attId);
+    final String etag = "W/\"" + row.sha256() + "\"";
+    final String thumbnailEtag = "W/\"" + row.sha256() + "-t600\"";
+    // Gegenprobe: mit Datei bestaetigt derselbe ETag den Stand (304)
+    expect(
+        fetch(
+            mvc, get(contentUrl(taskId, attId, "content")).header("If-None-Match", etag), creator),
+        status().isNotModified());
+    Files.delete(baseDir.resolve(row.storageKey()));
+    Files.delete(baseDir.resolve(AttachmentStorageKeys.thumbnailKey(row.storageKey())));
+
+    for (final String kind : List.of("content", "download")) {
+      expect(
+          fetch(mvc, get(contentUrl(taskId, attId, kind)).header("If-None-Match", etag), creator),
+          status().isNotFound(),
+          jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    }
+    expect(
+        fetch(
+            mvc,
+            get(contentUrl(taskId, attId, "thumbnail")).header("If-None-Match", thumbnailEtag),
+            creator),
+        status().isNotFound(),
+        jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+  }
+
+  @Test
+  @DisplayName(
       "i152_foreign_or_deactivated_attachment_404: Anhang einer anderen Aufgabe, DEACTIVE-Zeile"
           + " oder unbekannte UUID -> 404; keine UUID -> 400")
   void i152_foreign_or_deactivated_attachment_404() throws Exception {

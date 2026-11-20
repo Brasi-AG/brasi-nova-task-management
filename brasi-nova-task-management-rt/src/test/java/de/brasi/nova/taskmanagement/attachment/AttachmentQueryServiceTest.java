@@ -30,6 +30,7 @@ import io.keel.framework.api.security.user.UserAccessor;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -39,6 +40,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,7 +58,8 @@ import org.springframework.util.unit.DataSize;
  * AttachmentModelMapper}.
  *
  * <p>Vertrag: jeder Abruf prueft zuerst die READ-Mitgliedschaft; ein passender {@code
- * If-None-Match} liefert 304, ohne den Inhalt zu oeffnen; ein fehlendes Vorschaubild eines
+ * If-None-Match} liefert 304 erst nach der Existenzpruefung der Datei (geoeffneter Strom wird
+ * geschlossen), eine fehlende Datei bleibt auch dann 404; ein fehlendes Vorschaubild eines
  * vorschaufaehigen Typs wird erzeugt und abgelegt, ohne in die Datenbank zu schreiben; nicht
  * vorschaufaehige Typen und fehlende Dateien ergeben die neutrale 404 {@code Anhang nicht
  * gefunden.}.
@@ -241,14 +244,55 @@ class AttachmentQueryServiceTest {
   }
 
   @Test
-  void i152_not_modified_does_not_open_stream() {
+  void i152_not_modified_closes_stream_after_existence_check() {
+    // Codex-Review b43db8d: 304 erst nach der Existenzpruefung; der geoeffnete Strom wird sofort
+    // geschlossen (frueher: 304 ohne die Datei zu oeffnen)
+    final AtomicBoolean closed = new AtomicBoolean();
+    when(provider.openContent(KEY))
+        .thenReturn(
+            Optional.of(
+                new FilterInputStream(pdfStream()) {
+                  @Override
+                  public void close() throws IOException {
+                    closed.set(true);
+                    super.close();
+                  }
+                }));
+
     final AttachmentDelivery d = service.serveContent(TASK_UUID, ATT_UUID, "W/\"" + SHA + "\"");
 
     assertThat(d.notModified()).isTrue();
     assertThat(d.etag()).isEqualTo("W/\"" + SHA + "\"");
     assertThat(d.maxAge()).isEqualTo(Duration.ofDays(1));
     assertThat(d.stream()).isNull();
-    verify(provider, never()).openContent(any());
+    verify(provider).openContent(KEY);
+    assertThat(closed).isTrue();
+  }
+
+  @Test
+  void i152_missing_content_file_with_matching_etag_is_404() {
+    when(provider.openContent(KEY)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.serveContent(TASK_UUID, ATT_UUID, "W/\"" + SHA + "\""))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+    assertThatThrownBy(() -> service.serveContent(TASK_UUID, ATT_UUID, "*"))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+  }
+
+  @Test
+  void i152_missing_thumbnail_and_content_with_matching_etag_is_404() {
+    when(provider.openThumbnail(KEY)).thenReturn(Optional.empty());
+    when(provider.openContent(KEY)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                service.serveThumbnail(
+                    TASK_UUID, ATT_UUID, AttachmentEtags.thumbnailEtag(SHA, 600)))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Anhang nicht gefunden.");
+    verifyNoInteractions(generator);
   }
 
   @Test
