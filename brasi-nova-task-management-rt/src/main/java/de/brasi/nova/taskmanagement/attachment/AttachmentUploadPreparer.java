@@ -70,6 +70,17 @@ public class AttachmentUploadPreparer {
   }
 
   /**
+   * Meldungstext, wenn ein Ziel mehr aktive Anhaenge als erlaubt bekaeme. Gemeinsamer Text aller
+   * Pruefungen der Hoechstzahl (Upload, Speichern an der Aufgabe, Speichern am Kommentar).
+   *
+   * @param maxPerTarget hoechste Zahl aktiver Anhaenge je Aufgabe bzw. je Kommentar
+   * @return Meldungstext fuer die {@link EntityValidationException} (HTTP 400)
+   */
+  public static String tooManyAttachmentsMessage(final int maxPerTarget) {
+    return "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.";
+  }
+
+  /**
    * Prueft alle Dateien eines Uploads und bereitet sie zum Speichern vor.
    *
    * @param tenantId Mandanten-ID des Kontexts (fuer die Tarif-Grenze)
@@ -88,8 +99,7 @@ public class AttachmentUploadPreparer {
     }
     final int maxPerTarget = properties.maxPerTarget();
     if ((long) activeCount + files.size() > maxPerTarget) {
-      throw new EntityValidationException(
-          "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.");
+      throw new EntityValidationException(tooManyAttachmentsMessage(maxPerTarget));
     }
     final AttachmentFileLimit limit = limitPolicy.limitFor(tenantId);
 

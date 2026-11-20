@@ -320,7 +320,7 @@ public class AttachmentCommandService {
     final int maxPerTarget = properties.maxPerTarget();
     if (activeCount + newFiles > maxPerTarget) {
       throw new EntityValidationException(
-          "Höchstens " + maxPerTarget + " aktive Anhänge je Aufgabe bzw. je Kommentar.");
+          AttachmentUploadPreparer.tooManyAttachmentsMessage(maxPerTarget));
     }
   }
 
