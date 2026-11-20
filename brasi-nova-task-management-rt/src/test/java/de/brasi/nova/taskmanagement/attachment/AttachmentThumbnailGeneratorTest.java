@@ -16,6 +16,13 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -23,6 +30,7 @@ import javax.imageio.ImageIO;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamSource;
@@ -36,14 +44,139 @@ import org.springframework.util.unit.DataSize;
  * Typen, bei jedem Fehler und bei Bildern ueber der Pixel-Obergrenze der Quelle (ohne Dekodieren).
  * Testdaten werden im Test erzeugt (PDF per PDFBox {@link PDDocument}, Bilder per {@link ImageIO});
  * PDFBox kommt erst mit A5 ins POM.
+ *
+ * <p>Pool mit Zeitlimit (Codex-Review b43db8d): eine langsame Erzeugung (Test-Naht mit eigener
+ * Erzeugungsfunktion) ergibt nach dem Zeitlimit leer und wird unterbrochen, ein voller Pool ergibt
+ * sofort leer; die normale Erzeugung laeuft unveraendert ueber den Pool.
  */
 class AttachmentThumbnailGeneratorTest {
 
   /** Pixelbudget des Generators bei Breite 600: 4 * 600 * 600. */
   private static final long BUDGET = 4L * 600 * 600;
 
+  /** Ergebnis der Test-Erzeugungsfunktionen (kein echtes JPEG noetig). */
+  private static final byte[] MARKER = {1, 2, 3};
+
   private final AttachmentThumbnailGenerator generator =
-      new AttachmentThumbnailGenerator(properties());
+      new AttachmentThumbnailGenerator(properties(), pool(2, 8, Duration.ofSeconds(10)));
+
+  @AfterEach
+  void stopPool() {
+    generator.destroy();
+  }
+
+  @Test
+  void i152_slow_generation_returns_empty_after_timeout_and_is_cancelled() throws Exception {
+    final CountDownLatch release = new CountDownLatch(1);
+    final CountDownLatch interrupted = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator slow =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofMillis(200)),
+            (type, content) -> {
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    try {
+      final long start = System.nanoTime();
+
+      assertThat(slow.generate(PDF, source(pdfWithPages(1)))).isEmpty();
+
+      final Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+      assertThat(elapsed).isGreaterThanOrEqualTo(Duration.ofMillis(200));
+      assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
+      // Future#cancel(true) unterbricht die Erzeugung auf dem Pool
+      assertThat(interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      release.countDown();
+      slow.destroy();
+    }
+  }
+
+  @Test
+  void i152_full_pool_returns_empty_without_waiting_for_timeout() throws Exception {
+    final CountDownLatch started = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator busy =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(30)),
+            (type, content) -> {
+              started.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    final ExecutorService caller = Executors.newSingleThreadExecutor();
+    try {
+      final Future<Optional<byte[]>> first =
+          caller.submit(() -> busy.generate(PNG, source(png(10, 10))));
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+      final long start = System.nanoTime();
+
+      // Einziger Thread belegt, keine Warteschlange: abgelehnt, ohne das Zeitlimit abzuwarten
+      assertThat(busy.generate(PNG, source(png(10, 10)))).isEmpty();
+
+      assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(5));
+      release.countDown();
+      assertThat(first.get(5, TimeUnit.SECONDS)).containsSame(MARKER);
+    } finally {
+      release.countDown();
+      caller.shutdownNow();
+      busy.destroy();
+    }
+  }
+
+  @Test
+  void i152_failing_generation_on_pool_returns_empty() {
+    final AttachmentThumbnailGenerator failing =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(5)),
+            (type, content) -> {
+              throw new IllegalStateException("Testfehler");
+            });
+    try {
+      assertThat(failing.generate(PNG, source(utf8("x")))).isEmpty();
+    } finally {
+      failing.destroy();
+    }
+  }
+
+  @Test
+  void i152_renderer_gets_content_read_before_submission() throws Exception {
+    final byte[] png = png(10, 10);
+    final AtomicReference<byte[]> seen = new AtomicReference<>();
+    final AttachmentThumbnailGenerator recording =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 0, Duration.ofSeconds(5)),
+            (type, content) -> {
+              seen.set(content);
+              return Optional.of(MARKER);
+            });
+    try {
+      assertThat(recording.generate(PNG, source(png))).containsSame(MARKER);
+      assertThat(seen.get()).isEqualTo(png);
+    } finally {
+      recording.destroy();
+    }
+  }
+
+  @Test
+  void i152_stopped_pool_returns_empty() throws IOException {
+    generator.destroy();
+
+    assertThat(generator.generate(PNG, source(png(10, 10)))).isEmpty();
+  }
 
   @Test
   void i152_pdf_first_page_has_configured_width() throws IOException {
@@ -260,6 +393,13 @@ class AttachmentThumbnailGeneratorTest {
     out.writeBytes(typeBytes);
     out.writeBytes(data);
     out.writeBytes(ByteBuffer.allocate(4).putInt((int) crc.getValue()).array());
+  }
+
+  /** Pool-Konfiguration fuer den Test. */
+  private static AttachmentThumbnailPoolProperties pool(
+      final int poolSize, final int queueCapacity, final Duration timeout) {
+    return new AttachmentThumbnailPoolProperties(
+        poolSize, queueCapacity, timeout, "test-attachment-thumbnail-");
   }
 
   /** Properties mit den Vorgaben aus application.properties (Breite 600, Qualitaet 0,85). */

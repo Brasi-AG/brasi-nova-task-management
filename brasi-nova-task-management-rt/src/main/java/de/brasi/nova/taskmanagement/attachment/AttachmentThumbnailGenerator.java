@@ -4,11 +4,17 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.Iterator;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
@@ -29,7 +35,11 @@ import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamSource;
+import org.springframework.core.task.TaskRejectedException;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -46,9 +56,29 @@ import org.springframework.stereotype.Component;
  * der Erzeugung ist das Ergebnis leer, Fehler werden mit Typ und Ursache (ohne Dateiinhalt) als
  * Warnung geloggt. Alle Werte (Breite, JPEG-Qualitaet, Pixel-Obergrenze) kommen aus {@link
  * AttachmentProperties#thumbnail()}.
+ *
+ * <p>Die Erzeugung laeuft auf einem eigenen, begrenzten Pool mit Zeitlimit ({@link
+ * AttachmentThumbnailPoolProperties}); der Aufrufer (Upload bzw. Selbstheilung beim Abruf) wartet
+ * synchron. Der Pool ist bewusst <b>keine Bean</b> und kein {@code Executor}-Bean: ein solches
+ * wuerde wegen {@code @EnableAsync} den {@code applicationTaskExecutor} verdraengen (Muster {@link
+ * AttachmentStreamingConfiguration}). Er gehoert diesem Generator und wird mit ihm beendet.
  */
 @Component
-public class AttachmentThumbnailGenerator {
+public class AttachmentThumbnailGenerator implements DisposableBean {
+
+  /** Erzeugungsfunktion auf dem Pool: Dateityp und vollstaendig gelesener Inhalt zu JPEG-Bytes. */
+  @FunctionalInterface
+  interface Renderer {
+
+    /**
+     * Erzeugt das Vorschaubild.
+     *
+     * @param type vorschaufaehiger Dateityp
+     * @param content vollstaendiger Inhalt des Anhangs
+     * @return JPEG-Bytes oder leer
+     */
+    Optional<byte[]> render(AttachmentFileType type, byte[] content);
+  }
 
   private static final Logger log = LoggerFactory.getLogger(AttachmentThumbnailGenerator.class);
 
@@ -70,33 +100,144 @@ public class AttachmentThumbnailGenerator {
   private static final int OVERSAMPLING = 2;
 
   private final AttachmentProperties.Thumbnail settings;
+  private final Duration timeout;
+  private final Renderer renderer;
+  private final ThreadPoolTaskExecutor executor;
 
   /**
-   * Erzeugt den Generator.
+   * Erzeugt den Generator und startet seinen Pool. {@code @Autowired} waehlt diesen Konstruktor fuer
+   * Spring, weil es daneben die Test-Naht gibt.
    *
    * @param properties Anhang-Konfiguration; verwendet wird {@link AttachmentProperties#thumbnail()}
+   * @param pool Groesse, Warteschlange, Zeitlimit und Thread-Namen des Erzeugungs-Pools
    */
-  public AttachmentThumbnailGenerator(final AttachmentProperties properties) {
+  @Autowired
+  public AttachmentThumbnailGenerator(
+      final AttachmentProperties properties, final AttachmentThumbnailPoolProperties pool) {
     this.settings = properties.thumbnail();
+    this.timeout = pool.timeout();
+    this.renderer = this::render;
+    this.executor = createExecutor(pool);
   }
 
   /**
-   * Erzeugt das Vorschaubild eines Anhangs.
+   * Test-Naht: Generator mit eigener Erzeugungsfunktion (z. B. absichtlich langsam), um Zeitlimit
+   * und vollen Pool ohne echte PDF-Last zu pruefen.
+   *
+   * @param properties Anhang-Konfiguration
+   * @param pool Konfiguration des Erzeugungs-Pools
+   * @param renderer Erzeugungsfunktion, die auf dem Pool laeuft
+   */
+  AttachmentThumbnailGenerator(
+      final AttachmentProperties properties,
+      final AttachmentThumbnailPoolProperties pool,
+      final Renderer renderer) {
+    this.settings = properties.thumbnail();
+    this.timeout = pool.timeout();
+    this.renderer = renderer;
+    this.executor = createExecutor(pool);
+  }
+
+  /** Baut den begrenzten Pool (feste Groesse, Warteschlange aus der Konfiguration). */
+  private static ThreadPoolTaskExecutor createExecutor(
+      final AttachmentThumbnailPoolProperties pool) {
+    final ThreadPoolTaskExecutor created = new ThreadPoolTaskExecutor();
+    created.setCorePoolSize(pool.poolSize());
+    created.setMaxPoolSize(pool.poolSize());
+    created.setQueueCapacity(pool.queueCapacity());
+    created.setThreadNamePrefix(pool.threadNamePrefix());
+    created.initialize();
+    return created;
+  }
+
+  /**
+   * Beendet den Pool mit dem Kontext; laufende Erzeugungen werden unterbrochen (PDFBox reagiert
+   * darauf nicht zuverlaessig, die Threads enden dann mit ihrer Erzeugung).
+   */
+  @Override
+  public void destroy() {
+    executor.shutdown();
+  }
+
+  /**
+   * Erzeugt das Vorschaubild eines Anhangs auf dem begrenzten Pool und wartet hoechstens das
+   * konfigurierte Zeitlimit darauf.
+   *
+   * <p>Der Inhalt wird vorher im aufrufenden Thread vollstaendig gelesen; die Quelle (z. B. eine
+   * {@code MultipartFile}) wird also nur innerhalb des Requests benutzt. Ist der Pool voll (alle
+   * Threads belegt, Warteschlange voll) oder laeuft das Zeitlimit ab, entsteht kein Vorschaubild
+   * (Warnung ohne Inhalt); beim Zeitlimit wird die Erzeugung mit {@link Future#cancel(boolean)}
+   * unterbrochen. PDFBox reagiert nicht zuverlaessig auf die Unterbrechung, eine abgebrochene
+   * Erzeugung kann also weiterrechnen; deshalb begrenzt die Poolgroesse die Zahl gleichzeitig
+   * laufender Erzeugungen und damit Rechenzeit und Speicher.
    *
    * @param type gepruefter Dateityp des Anhangs
    * @param source Inhalt des Anhangs
    * @return JPEG-Bytes des Vorschaubilds; leer fuer nicht vorschaufaehige Typen, fuer Bilder ueber
-   *     der Pixel-Obergrenze und bei jedem Fehler der Erzeugung
+   *     der Pixel-Obergrenze, bei vollem Pool, nach Ablauf des Zeitlimits und bei jedem Fehler der
+   *     Erzeugung
    */
   public Optional<byte[]> generate(final AttachmentFileType type, final InputStreamSource source) {
     if (type == null || !type.previewable()) {
       return Optional.empty();
     }
+    final byte[] content;
+    try (InputStream in = source.getInputStream()) {
+      content = in.readAllBytes();
+    } catch (IOException | RuntimeException e) {
+      log.warn(
+          "Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Inhalt nicht lesbar ({}).",
+          type,
+          e.getClass().getSimpleName());
+      return Optional.empty();
+    }
+    final Future<Optional<byte[]>> future;
+    try {
+      future = executor.submit(() -> renderer.render(type, content));
+    } catch (TaskRejectedException e) {
+      log.warn(
+          "Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Erzeugungs-Pool ausgelastet.", type);
+      return Optional.empty();
+    }
+    try {
+      final Optional<byte[]> result = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      return result == null ? Optional.empty() : result;
+    } catch (TimeoutException e) {
+      future.cancel(true);
+      log.warn(
+          "Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Zeitlimit von {} ueberschritten.",
+          type,
+          timeout);
+      return Optional.empty();
+    } catch (InterruptedException e) {
+      future.cancel(true);
+      Thread.currentThread().interrupt();
+      log.warn("Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Warten unterbrochen.", type);
+      return Optional.empty();
+    } catch (ExecutionException e) {
+      final Throwable cause = e.getCause() == null ? e : e.getCause();
+      log.warn(
+          "Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: {}",
+          type,
+          cause.getClass().getSimpleName());
+      log.debug("Ursache der fehlgeschlagenen Vorschaubild-Erzeugung (Typ {})", type, cause);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Erzeugt das Vorschaubild aus dem gelesenen Inhalt (laeuft auf dem Pool).
+   *
+   * @param type vorschaufaehiger Dateityp
+   * @param content vollstaendiger Inhalt des Anhangs
+   * @return JPEG-Bytes; leer fuer Bilder ueber der Pixel-Obergrenze und bei jedem Fehler
+   */
+  private Optional<byte[]> render(final AttachmentFileType type, final byte[] content) {
     try {
       final Optional<BufferedImage> preview =
           switch (type) {
-            case PDF -> renderFirstPdfPage(source);
-            case PNG, JPEG -> readScaledImage(type, source);
+            case PDF -> renderFirstPdfPage(content);
+            case PNG, JPEG -> readScaledImage(type, content);
             default -> Optional.empty();
           };
       return preview.map(this::toJpeg);
@@ -116,10 +257,8 @@ public class AttachmentThumbnailGenerator {
   }
 
   /** Rendert die erste PDF-Seite in der konfigurierten Breite (RGB). */
-  private Optional<BufferedImage> renderFirstPdfPage(final InputStreamSource source)
-      throws IOException {
-    try (InputStream in = source.getInputStream();
-        RandomAccessReadBuffer buffer = new RandomAccessReadBuffer(in);
+  private Optional<BufferedImage> renderFirstPdfPage(final byte[] content) throws IOException {
+    try (RandomAccessReadBuffer buffer = new RandomAccessReadBuffer(content);
         PDDocument document = Loader.loadPDF(buffer, IOUtils.createTempFileOnlyStreamCache())) {
       if (document.getNumberOfPages() == 0) {
         log.warn("Vorschaubild fuer PDF nicht erzeugt: Das Dokument hat keine Seiten.");
@@ -165,9 +304,9 @@ public class AttachmentThumbnailGenerator {
    * dekodiert.
    */
   private Optional<BufferedImage> readScaledImage(
-      final AttachmentFileType type, final InputStreamSource source) throws IOException {
-    try (InputStream in = source.getInputStream();
-        ImageInputStream imageInput = new MemoryCacheImageInputStream(in)) {
+      final AttachmentFileType type, final byte[] content) throws IOException {
+    try (ImageInputStream imageInput =
+        new MemoryCacheImageInputStream(new ByteArrayInputStream(content))) {
       final Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
       if (!readers.hasNext()) {
         log.warn("Vorschaubild fuer {} nicht erzeugt: Kein passender Bildleser gefunden.", type);

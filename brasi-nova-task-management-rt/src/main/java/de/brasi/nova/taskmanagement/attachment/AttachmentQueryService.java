@@ -325,7 +325,8 @@ public class AttachmentQueryService {
 
   /**
    * Erzeugt das fehlende Vorschaubild aus dem Inhalt und legt es ab. Scheitert das Ablegen, wird
-   * das erzeugte Bild trotzdem ausgeliefert (Warnung); scheitert die Erzeugung, neutrale 404.
+   * das erzeugte Bild trotzdem ausgeliefert (Warnung); scheitert die Erzeugung (auch nach Ablauf
+   * des Zeitlimits oder bei vollem Pool des Generators), neutrale 404.
    */
   private byte[] regenerateThumbnail(
       final TaskAttachment attachment, final AttachmentFileType type, final String storageKey) {
