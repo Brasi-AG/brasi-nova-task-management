@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -174,8 +175,8 @@ public class AttachmentThumbnailGenerator implements DisposableBean {
    * @param type gepruefter Dateityp des Anhangs
    * @param source Inhalt des Anhangs
    * @return JPEG-Bytes des Vorschaubilds; leer fuer nicht vorschaufaehige Typen, fuer Bilder ueber
-   *     der Pixel-Obergrenze, bei vollem Pool, nach Ablauf des Zeitlimits und bei jedem Fehler der
-   *     Erzeugung
+   *     der Pixel-Obergrenze, bei vollem Pool, nach Ablauf des Zeitlimits, bei Abbruch durch das
+   *     Herunterfahren des Pools und bei jedem Fehler der Erzeugung
    */
   public Optional<byte[]> generate(final AttachmentFileType type, final InputStreamSource source) {
     if (type == null || !type.previewable()) {
@@ -213,6 +214,10 @@ public class AttachmentThumbnailGenerator implements DisposableBean {
       future.cancel(true);
       Thread.currentThread().interrupt();
       log.warn("Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Warten unterbrochen.", type);
+      return Optional.empty();
+    } catch (CancellationException e) {
+      // Beim Herunterfahren bricht der Pool wartende Erzeugungen ab; kein Vorschaubild statt 500
+      log.warn("Vorschaubild fuer Anhang vom Typ {} nicht erzeugt: Erzeugung abgebrochen.", type);
       return Optional.empty();
     } catch (ExecutionException e) {
       final Throwable cause = e.getCause() == null ? e : e.getCause();

@@ -172,6 +172,61 @@ class AttachmentThumbnailGeneratorTest {
   }
 
   @Test
+  void i152_waiting_generation_cancelled_by_shutdown_returns_empty() throws Exception {
+    final CountDownLatch started = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AttachmentThumbnailGenerator stopping =
+        new AttachmentThumbnailGenerator(
+            properties(),
+            pool(1, 1, Duration.ofSeconds(30)),
+            (type, content) -> {
+              started.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return Optional.of(MARKER);
+            });
+    final byte[] png = png(10, 10);
+    final AtomicReference<Optional<byte[]>> waitingResult = new AtomicReference<>();
+    final AtomicReference<Throwable> waitingError = new AtomicReference<>();
+    final Thread first = new Thread(() -> stopping.generate(PNG, source(png)));
+    final Thread waiting =
+        new Thread(
+            () -> {
+              try {
+                waitingResult.set(stopping.generate(PNG, source(png)));
+              } catch (Throwable t) {
+                waitingError.set(t);
+              }
+            });
+    try {
+      first.start();
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+      // Der zweite Aufruf liegt in der Warteschlange und wartet mit Zeitlimit auf sein Future
+      waiting.start();
+      final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (waiting.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) {
+        Thread.onSpinWait();
+      }
+      assertThat(waiting.getState()).isEqualTo(Thread.State.TIMED_WAITING);
+
+      // Herunterfahren bricht das wartende Future ab (CancellationException im Aufrufer)
+      stopping.destroy();
+      waiting.join(TimeUnit.SECONDS.toMillis(5));
+
+      assertThat(waiting.isAlive()).isFalse();
+      assertThat(waitingError.get()).isNull();
+      assertThat(waitingResult.get()).isEmpty();
+    } finally {
+      release.countDown();
+      stopping.destroy();
+      first.join(TimeUnit.SECONDS.toMillis(5));
+    }
+  }
+
+  @Test
   void i152_stopped_pool_returns_empty() throws IOException {
     generator.destroy();
 

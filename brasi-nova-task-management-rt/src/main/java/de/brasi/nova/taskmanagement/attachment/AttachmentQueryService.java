@@ -141,11 +141,10 @@ public class AttachmentQueryService {
   /**
    * Liefert den Inhalt eines Anhangs der Aufgabe (auch eines Kommentar-Anhangs).
    *
-   * @param taskExternalId externe UUID der Aufgabe
-   * @param attachmentId externe UUID des Anhangs
-   *     <p>Die Datei wird vor dem ETag-Vergleich geoeffnet: ein passender {@code If-None-Match}
-   *     bestaetigt nur eine vorhandene Datei als unveraendert (304, der Strom wird sofort
-   *     geschlossen); fehlt sie, bleibt es bei der neutralen 404.
+   * <p>Die Datei wird vor dem ETag-Vergleich geoeffnet: ein passender {@code If-None-Match}
+   * bestaetigt nur eine vorhandene Datei als unveraendert (304, der Strom wird sofort geschlossen);
+   * fehlt sie, bleibt es bei der neutralen 404.
+   *
    * @param taskExternalId externe UUID der Aufgabe
    * @param attachmentId externe UUID des Anhangs
    * @param ifNoneMatch Wert des Headers {@code If-None-Match} oder {@code null}
