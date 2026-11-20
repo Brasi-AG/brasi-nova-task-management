@@ -200,4 +200,194 @@ final class CommentApiExamples {
           + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
           + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
           + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
+
+  // ---- Kommentar mit Anhaengen (Intake #152 Teil B) ----------------------------------------
+
+  /** Pfad von {@code POST /api/v1/tasks/{id}/comments/with-attachments} in den Fehlerbeispielen. */
+  private static final String PATH_WITH_ATTACHMENTS = PATH_COMMENTS + "/with-attachments";
+
+  /** Trace-ID der Fehlerbeispiele. */
+  private static final String TRACE = "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",";
+
+  /** Beispiel-UUID der kommentierenden Person (Autorin und hochladende Person). */
+  private static final String AUTHOR_REF = "880e8400-e29b-41d4-a716-446655440003";
+
+  /** Beispiel-UUID des neuen Kommentars mit Anhaengen. */
+  private static final String COMMENT_WITH_ATTACHMENTS_REF = "770e8400-e29b-41d4-a716-446655440005";
+
+  /** Beispiel-UUID des PDF-Anhangs am neuen Kommentar. */
+  private static final String PDF_REF = "a1520000-0000-4000-8000-000000000004";
+
+  /** Beispiel-UUID des Text-Anhangs am neuen Kommentar. */
+  private static final String TXT_REF = "a1520000-0000-4000-8000-000000000005";
+
+  /** Gateway-relative Basis der Abruf-Links der Anhaenge (Aufgaben-Pfad). */
+  private static final String TASK_ATTACHMENT_LINK_BASE =
+      "/task-management/api/v1/tasks/" + TASK_REF + "/attachments/";
+
+  /**
+   * Anfrage: Struktur des Multipart-Formulars. Der Teil comment ist JSON (Content-Type
+   * application/json), jeder Teil files traegt den Binaerinhalt einer Datei; das Beispiel zeigt nur
+   * die Struktur.
+   */
+  static final String REQUEST_WITH_ATTACHMENTS =
+      "{\"comment\":{\"text\":\"Siehe Anhang.\",\"mentions\":[\""
+          + USER_REF_A
+          + "\"]},\"files\":[\"(Binärinhalt)\",\"(Binärinhalt)\"]}";
+
+  /**
+   * 201: der neue Kommentar ohne Eltern-Kommentar mit zwei Anhaengen in Upload-Reihenfolge, ein PDF
+   * mit Vorschaubild und eine Textdatei ohne ({@code links.thumbnail} ist {@code null}). Die
+   * Anhaenge sind nicht entfernbar, ihre Links zeigen auf den Aufgaben-Pfad.
+   */
+  static final String CREATED_WITH_ATTACHMENTS =
+      "{\"id\":\""
+          + COMMENT_WITH_ATTACHMENTS_REF
+          + "\",\"taskId\":\""
+          + TASK_REF
+          + "\",\"authorRef\":\""
+          + AUTHOR_REF
+          + "\",\"parentCommentId\":null,\"text\":\"Siehe Anhang.\",\"edited\":false,"
+          + "\"createdAt\":\"2026-11-19T09:15:00Z\",\"isNew\":false,\"attachments\":["
+          + "{\"id\":\""
+          + PDF_REF
+          + "\",\"fileName\":\"Bericht.pdf\",\"mimeType\":\"application/pdf\","
+          + "\"sizeBytes\":184320,\"hasThumbnail\":true,\"uploadedById\":\""
+          + AUTHOR_REF
+          + "\",\"createdAt\":\"2026-11-19T09:15:00Z\",\"removable\":false,"
+          + "\"links\":{\"content\":\""
+          + TASK_ATTACHMENT_LINK_BASE
+          + PDF_REF
+          + "/content\",\"download\":\""
+          + TASK_ATTACHMENT_LINK_BASE
+          + PDF_REF
+          + "/download\",\"thumbnail\":\""
+          + TASK_ATTACHMENT_LINK_BASE
+          + PDF_REF
+          + "/thumbnail\"}},"
+          + "{\"id\":\""
+          + TXT_REF
+          + "\",\"fileName\":\"Notiz.txt\",\"mimeType\":\"text/plain\","
+          + "\"sizeBytes\":2048,\"hasThumbnail\":false,\"uploadedById\":\""
+          + AUTHOR_REF
+          + "\",\"createdAt\":\"2026-11-19T09:15:00Z\",\"removable\":false,"
+          + "\"links\":{\"content\":\""
+          + TASK_ATTACHMENT_LINK_BASE
+          + TXT_REF
+          + "/content\",\"download\":\""
+          + TASK_ATTACHMENT_LINK_BASE
+          + TXT_REF
+          + "/download\",\"thumbnail\":null}}]}";
+
+  /** Anfang eines Fehlerbeispiels einer {@code EntityValidationException} (400) bis zum Text. */
+  private static final String VALIDATION_HEAD =
+      ERROR_HEAD + "\"status\":400,\"error\":\"Bad Request\",\"message\":\"";
+
+  /** Mitte des Validierungsbeispiels: Pfad, Schluessel, Trace-ID und Beginn von details. */
+  private static final String VALIDATION_MIDDLE =
+      "\",\"path\":\""
+          + PATH_WITH_ATTACHMENTS
+          + "\",\"errorKey\":\"NOVA_VALIDATION_FAILED\","
+          + TRACE
+          + "\"details\":[\"io.keel.framework.api.validation.EntityValidationException: ";
+
+  /** Schluss des Validierungsbeispiels. */
+  private static final String VALIDATION_TAIL = "\"]}";
+
+  // Texte wortgleich mit CommentService, AttachmentUploadPreparer und MultipartErrorAdvice; die
+  // Zahlen sind die Vorgaben aus application.properties.
+  private static final String TEXT_PARENT = "Der angegebene Eltern-Kommentar ist ungueltig.";
+  private static final String TEXT_TYPE =
+      "Der Dateityp „.exe“ ist nicht erlaubt. Erlaubt sind: pdf, xls, xlsx, doc, docx, ppt, pptx,"
+          + " txt, png, jpg, jpeg.";
+  private static final String TEXT_TARIFF_LIMIT =
+      "Die Datei „Bericht.pdf“ ist größer als die Grenze von 5 MB des Tarifs STANDARD.";
+  private static final String TEXT_COUNT =
+      "Höchstens 20 aktive Anhänge je Aufgabe bzw. je Kommentar.";
+  private static final String TEXT_MISSING_COMMENT = "Der Teil „comment“ fehlt in der Anfrage.";
+  private static final String TEXT_MISSING_FILES = "Der Teil „files“ fehlt in der Anfrage.";
+
+  /**
+   * 400: der Text im Teil comment fehlt oder ist leer (ebenso kein gueltiges JSON, ein null-Element
+   * oder mehr als 100 Eintraege in mentions). Die Pruefung greift beim Lesen des Teils, vor jeder
+   * Dateipruefung; die KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den
+   * Validierungstext nach details.
+   */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_TEXT =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der Request-Body ist fehlerhaft formatiert oder konnte nicht gelesen"
+          + " werden.\",\"path\":\""
+          + PATH_WITH_ATTACHMENTS
+          + "\",\"errorKey\":\"NOVA_MESSAGE_NOT_READABLE\","
+          + TRACE
+          + "\"details\":[\"Das Feld 'text' darf nicht null oder leer sein.\"]}";
+
+  /** 400: der Eltern-Kommentar ist unbekannt, gehoert zu einer anderen Aufgabe oder ist inaktiv. */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_PARENT =
+      VALIDATION_HEAD + TEXT_PARENT + VALIDATION_MIDDLE + TEXT_PARENT + VALIDATION_TAIL;
+
+  /** 400: Endung einer Datei nicht in der Erlaubtliste. */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_TYPE =
+      VALIDATION_HEAD + TEXT_TYPE + VALIDATION_MIDDLE + TEXT_TYPE + VALIDATION_TAIL;
+
+  /** 400: Datei groesser als die Grenze des Tarifs (hier STANDARD mit der Vorgabe 5 MB). */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_TARIFF_LIMIT =
+      VALIDATION_HEAD + TEXT_TARIFF_LIMIT + VALIDATION_MIDDLE + TEXT_TARIFF_LIMIT + VALIDATION_TAIL;
+
+  /** 400: mehr als 20 Dateien fuer den Kommentar. */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_COUNT =
+      VALIDATION_HEAD + TEXT_COUNT + VALIDATION_MIDDLE + TEXT_COUNT + VALIDATION_TAIL;
+
+  /** 400: kein Teil comment im Formular. */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_MISSING_COMMENT =
+      VALIDATION_HEAD
+          + TEXT_MISSING_COMMENT
+          + VALIDATION_MIDDLE
+          + TEXT_MISSING_COMMENT
+          + VALIDATION_TAIL;
+
+  /** 400: kein Teil files im Formular (ein Kommentar ohne Datei geht ueber die JSON-Variante). */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_MISSING_FILES =
+      VALIDATION_HEAD
+          + TEXT_MISSING_FILES
+          + VALIDATION_MIDDLE
+          + TEXT_MISSING_FILES
+          + VALIDATION_TAIL;
+
+  /** 400: keine gueltige UUID im Pfad. */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_PATH =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\"Der URL-Parameter 'id' hat einen ungültigen Wert. Ein Wert vom Typ"
+          + " 'UUID' wird erwartet.\","
+          + "\"path\":\"/api/v1/tasks/keine-uuid/comments/with-attachments\","
+          + "\"errorKey\":\"NOVA_TYPE_MISMATCH\","
+          + TRACE
+          + "\"details\":[\"Wert: 'keine-uuid'\"]}";
+
+  /**
+   * 404: Aufgabe unbekannt, fremder Mandant, inaktiv oder Aufrufer kein aktives Mitglied (auch bei
+   * ungueltigen Dateien).
+   */
+  static final String NOT_FOUND_WITH_ATTACHMENTS =
+      ERROR_HEAD
+          + "\"status\":404,\"error\":\"Not Found\",\"message\":\"Aufgabe nicht gefunden.\","
+          + "\"path\":\""
+          + PATH_WITH_ATTACHMENTS
+          + "\",\"errorKey\":\"NOVA_NOT_FOUND\","
+          + TRACE
+          + "\"details\":[\"io.keel.framework.api.exception.EntityNotFoundException:"
+          + " Aufgabe nicht gefunden.\"]}";
+
+  /** 409: nebenlaeufiger Versionskonflikt beim Speichern der Aufgabe, wie bei der JSON-Variante. */
+  static final String CONFLICT_WITH_ATTACHMENTS =
+      ERROR_HEAD
+          + "\"status\":409,\"error\":\"Conflict\","
+          + "\"message\":\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\","
+          + "\"path\":\""
+          + PATH_WITH_ATTACHMENTS
+          + "\",\"errorKey\":\"NOVA_BUSINESS_RULE_VIOLATION\","
+          + TRACE
+          + "\"details\":[\"Datensatz wurde zwischenzeitlich geändert (Versionskonflikt).\"]}";
 }

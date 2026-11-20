@@ -25,6 +25,10 @@ import java.util.UUID;
  *     Mandanten-Nutzer, die noch kein Mitglied der Aufgabe sind, werden als Beteiligte aufgenommen,
  *     wenn der Kommentierende dazu berechtigt ist (Intake #156), sonst still verworfen
  */
+@Schema(
+    description =
+        "Eingabe eines Kommentars: Text (Pflicht), optional Eltern-Kommentar und erwaehnte"
+            + " Benutzer. Beim Kommentar mit Anhaengen steht sie als JSON im Teil comment.")
 public record CommentCreateInput(
     @Schema(
             description =
