@@ -223,6 +223,16 @@ class AttachmentControllerIT {
   private static final byte[] PNG_BYTES = png();
   private static final byte[] MZ_BYTES = {'M', 'Z', (byte) 0x90, 0, 3, 0, 0, 0};
 
+  /** Minimale MP4-ftyp-Box: Groesse 24, {@code ftyp}, Major Brand {@code isom}, Marken (#184). */
+  private static final byte[] MP4_BYTES = {
+    0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 2, 0, 'i', 's', 'o', 'm', 'm', 'p',
+    '4', '1'
+  };
+
+  /** CSV mit Umlauten und Semikolon als Trenner (#184). */
+  private static final byte[] CSV_BYTES =
+      "Name;Straße;Betrag\r\nMüller;Hauptstraße 1;12,50\r\n".getBytes(StandardCharsets.UTF_8);
+
   /** IDs der per JDBC gesaeten Anhang-Zeilen, weit weg von der KSF-Sequenz. */
   private static final AtomicLong JDBC_ATTACHMENT_IDS = new AtomicLong(8_000_000_000L);
 
@@ -1316,6 +1326,100 @@ class AttachmentControllerIT {
     assertThat(historyDetails(taskId, "Datei entfernt")).hasSize(1);
   }
 
+  // ---- Intake #184: MP4 und CSV --------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i184_upload_mp4_and_csv_content_download: MP4 und CSV in einem Upload -> 201, mimeType"
+          + " video/mp4 bzw. text/csv, hasThumbnail false ohne Vorschau-Link; Inhalt inline und"
+          + " Download attachment mit nosniff; Vorschau 404; Verlauf nennt beide Dateien")
+  void i184_upload_mp4_and_csv_content_download() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT MP4 und CSV");
+
+    final ResultActions res =
+        upload(mvc, creator, taskId, file("Video.mp4", MP4_BYTES), file("Daten.csv", CSV_BYTES));
+
+    res.andExpect(status().isCreated())
+        .andExpect(jsonPath("$.length()").value(2))
+        .andExpect(jsonPath("$[0].fileName").value("Video.mp4"))
+        .andExpect(jsonPath("$[0].mimeType").value("video/mp4"))
+        .andExpect(jsonPath("$[0].sizeBytes").value(MP4_BYTES.length))
+        .andExpect(jsonPath("$[0].hasThumbnail").value(false))
+        .andExpect(jsonPath("$[1].fileName").value("Daten.csv"))
+        .andExpect(jsonPath("$[1].mimeType").value("text/csv"))
+        .andExpect(jsonPath("$[1].sizeBytes").value(CSV_BYTES.length))
+        .andExpect(jsonPath("$[1].hasThumbnail").value(false));
+    final JsonNode body = json(res);
+    final UUID mp4Id = UUID.fromString(body.get(0).get("id").asText());
+    final UUID csvId = UUID.fromString(body.get(1).get("id").asText());
+    for (final int index : new int[] {0, 1}) {
+      final JsonNode thumbnailLink = body.get(index).path("links").path("thumbnail");
+      assertThat(thumbnailLink.isNull() || thumbnailLink.isMissingNode())
+          .as("Kein Vorschau-Link: %s", body.get(index))
+          .isTrue();
+    }
+
+    final List<AttachmentRow> rows = activeTaskRows(taskId);
+    assertThat(rows).hasSize(2);
+    final AttachmentRow mp4Row = rowByUuid(rows, mp4Id);
+    final AttachmentRow csvRow = rowByUuid(rows, csvId);
+    assertThat(mp4Row.storageKey()).matches("560/\\d+/\\d+\\.mp4");
+    assertThat(csvRow.storageKey()).matches("560/\\d+/\\d+\\.csv");
+    assertThat(baseDir.resolve(mp4Row.storageKey())).hasBinaryContent(MP4_BYTES);
+    assertThat(baseDir.resolve(csvRow.storageKey())).hasBinaryContent(CSV_BYTES);
+    assertThat(sha256(baseDir.resolve(mp4Row.storageKey()))).isEqualTo(mp4Row.sha256());
+    assertThat(sha256(baseDir.resolve(csvRow.storageKey()))).isEqualTo(csvRow.sha256());
+    assertThat(mp4Row.thumbnailPresent()).isFalse();
+    assertThat(csvRow.thumbnailPresent()).isFalse();
+    assertThat(baseDir.resolve(AttachmentStorageKeys.thumbnailKey(mp4Row.storageKey())))
+        .doesNotExist();
+    assertThat(baseDir.resolve(AttachmentStorageKeys.thumbnailKey(csvRow.storageKey())))
+        .doesNotExist();
+    assertThat(historyDetails(taskId, "Datei angehaengt"))
+        .containsExactlyInAnyOrder("Video.mp4", "Daten.csv");
+
+    assertServed(mvc, creator, taskId, mp4Id, "video/mp4", "Video.mp4", MP4_BYTES);
+    assertServed(mvc, creator, taskId, csvId, "text/csv", "Daten.csv", CSV_BYTES);
+
+    for (final UUID attachmentId : List.of(mp4Id, csvId)) {
+      expect(
+          fetch(mvc, get(contentUrl(taskId, attachmentId, "thumbnail")), creator),
+          status().isNotFound(),
+          jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "i184_renamed_files_400: PDF-Inhalt als video.mp4 und MP4-Inhalt als daten.csv -> 400"
+          + " NOVA_VALIDATION_FAILED mit dem Dateityp MP4 bzw. CSV; nichts gespeichert")
+  void i184_renamed_files_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT MP4 und CSV umbenannt");
+    final Set<Path> filesBefore = filesUnder(baseDir.resolve("560"));
+    final int versionBefore = taskVersion(taskId);
+
+    upload(mvc, creator, taskId, file("video.mp4", PDF_BYTES))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+        .andExpect(
+            jsonPath("$.message")
+                .value("Der Inhalt der Datei „video.mp4“ passt nicht zum Dateityp MP4."));
+    upload(mvc, creator, taskId, file("daten.csv", MP4_BYTES))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+        .andExpect(
+            jsonPath("$.message")
+                .value("Der Inhalt der Datei „daten.csv“ passt nicht zum Dateityp CSV."));
+
+    assertThat(attachmentRowCount(taskId)).isZero();
+    assertThat(filesUnder(baseDir.resolve("560"))).isEqualTo(filesBefore);
+    assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
+  }
+
   // ---- Hilfen: Requests ----------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -1444,6 +1548,48 @@ class AttachmentControllerIT {
     for (final ResultMatcher matcher : matchers) {
       matcher.match(result);
     }
+  }
+
+  /**
+   * Prueft Inhalt ({@code content}, inline) und Download ({@code download}, attachment) eines
+   * Anhangs: Status, Content-Type (enthaelt den MIME-Typ), Content-Disposition mit Dateinamen,
+   * nosniff und unveraenderten Body.
+   */
+  private static void assertServed(
+      final MockMvc mvc,
+      final String token,
+      final UUID taskId,
+      final UUID attachmentId,
+      final String mimeType,
+      final String fileName,
+      final byte[] expected)
+      throws Exception {
+    final MvcResult content = fetch(mvc, get(contentUrl(taskId, attachmentId, "content")), token);
+    expect(
+        content,
+        status().isOk(),
+        header().string("Content-Type", containsString(mimeType)),
+        header()
+            .string("Content-Disposition", allOf(startsWith("inline"), containsString(fileName))),
+        header().string("X-Content-Type-Options", "nosniff"),
+        header().longValue("Content-Length", expected.length));
+    assertThat(content.getResponse().getContentAsByteArray())
+        .as("Inhalt von %s", fileName)
+        .isEqualTo(expected);
+
+    final MvcResult download = fetch(mvc, get(contentUrl(taskId, attachmentId, "download")), token);
+    expect(
+        download,
+        status().isOk(),
+        header().string("Content-Type", containsString(mimeType)),
+        header()
+            .string(
+                "Content-Disposition", allOf(startsWith("attachment"), containsString(fileName))),
+        header().string("X-Content-Type-Options", "nosniff"),
+        header().longValue("Content-Length", expected.length));
+    assertThat(download.getResponse().getContentAsByteArray())
+        .as("Download von %s", fileName)
+        .isEqualTo(expected);
   }
 
   private static JsonNode json(final ResultActions res) throws Exception {

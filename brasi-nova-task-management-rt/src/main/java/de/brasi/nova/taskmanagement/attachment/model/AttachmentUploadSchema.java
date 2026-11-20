@@ -23,7 +23,7 @@ public record AttachmentUploadSchema(
                     description =
                         "Hochzuladende Dateien, je Datei ein Teil mit dem Namen files (mindestens"
                             + " eine). Erlaubt sind pdf, xls, xlsx, doc, docx, ppt, pptx, txt,"
-                            + " png, jpg und jpeg."),
+                            + " csv, png, jpg, jpeg und mp4."),
             schema =
                 @Schema(
                     type = "string",

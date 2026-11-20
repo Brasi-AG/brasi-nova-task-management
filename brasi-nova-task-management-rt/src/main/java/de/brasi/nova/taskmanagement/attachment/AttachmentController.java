@@ -175,8 +175,9 @@ public class AttachmentController {
       description =
           "Haengt eine oder mehrere Dateien als multipart/form-data (je Datei ein Teil files) an"
               + " die Aufgabe. Erlaubt sind PDF, Excel (xls, xlsx), Word (doc, docx), PowerPoint"
-              + " (ppt, pptx), Text (txt) und Bilder (png, jpg, jpeg); geprueft werden Endung und"
-              + " Inhalt. Die Grenze je Datei haengt vom Tarif des Mandanten ab (Vorgaben:"
+              + " (ppt, pptx), Text (txt, csv), Bilder (png, jpg, jpeg) und Video (mp4); geprueft"
+              + " werden Endung und Inhalt."
+              + " Die Grenze je Datei haengt vom Tarif des Mandanten ab (Vorgaben:"
               + " STANDARD 5 MB, EXPERT bis 10 MB, ENTERPRISE bis 15 MB; harte Obergrenze fuer"
               + " alle 15 MB). Leere Dateien werden abgelehnt. Eine Aufgabe hat hoechstens 20"
               + " aktive Anhaenge (Kommentar-Anhaenge zaehlen nicht mit). Alles oder nichts: ist"

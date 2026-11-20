@@ -10,6 +10,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.slf4j.Logger;
@@ -18,7 +19,7 @@ import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Component;
 
 /**
- * Prueft, ob der Inhalt einer Datei zu ihrem Dateityp passt (Intake #152, Magic Bytes).
+ * Prueft, ob der Inhalt einer Datei zu ihrem Dateityp passt (Intake #152, #184, Magic Bytes).
  *
  * <p>Regeln je Typ:
  *
@@ -30,16 +31,21 @@ import org.springframework.stereotype.Component;
  *   <li>DOCX, XLSX, PPTX: beginnt mit {@code 50 4B 03 04} (ZIP) und enthaelt die Eintraege {@code
  *       [Content_Types].xml} sowie einen Eintrag unter {@code word/}, {@code xl/} bzw. {@code ppt/}
  *       (in beliebiger Reihenfolge, hoechstens 10 000 Eintraege)
- *   <li>TXT: in den ersten 8 KiB kein NUL-Byte, Beginn ohne eine der genannten Signaturen und ohne
- *       {@code MZ} (ausfuehrbare Windows-Dateien)
+ *   <li>TXT, CSV: in den ersten 8 KiB kein NUL-Byte, Beginn ohne eine der genannten Signaturen und
+ *       ohne {@code MZ} (ausfuehrbare Windows-Dateien)
+ *   <li>MP4: die Bytes 4 bis 7 sind {@code ftyp} und die Bytes 8 bis 11 (Major Brand) sind eine der
+ *       Marken {@code isom}, {@code iso2} bis {@code iso6}, {@code mp41}, {@code mp42}, {@code
+ *       avc1}, {@code M4V} mit einem Leerzeichen dahinter oder {@code MSNV}; die Boxgroesse (Bytes
+ *       0 bis 3) wird nicht geprueft
  * </ul>
  *
- * <p>Bei allen Typen ausser Office Open XML wird nie mehr als der Kopf (8 KiB) gelesen. Bei
- * Office-Open-XML-Dateien werden die Eintragsnamen aus dem Central Directory des ZIP gelesen
- * ({@link ZipFile}); die Eintragsdaten werden dabei weder gelesen noch entpackt (kein Inflate, also
- * keine CPU-Last durch ZIP-Bomben). Das Central Directory liegt am Dateiende und braucht einen
- * wahlfreien Zugriff: Die Kosten sind eine temporaere Datei je Pruefung (in {@code java.io.tmpdir},
- * wird danach immer geloescht). Ein Lesefehler oder ein beschaedigtes ZIP ergibt {@code false}.
+ * <p>Bei allen Typen ausser Office Open XML wird nie mehr als der Kopf (8 KiB) gelesen, bei MP4 nur
+ * die ersten 12 Bytes. Bei Office-Open-XML-Dateien werden die Eintragsnamen aus dem Central
+ * Directory des ZIP gelesen ({@link ZipFile}); die Eintragsdaten werden dabei weder gelesen noch
+ * entpackt (kein Inflate, also keine CPU-Last durch ZIP-Bomben). Das Central Directory liegt am
+ * Dateiende und braucht einen wahlfreien Zugriff: Die Kosten sind eine temporaere Datei je Pruefung
+ * (in {@code java.io.tmpdir}, wird danach immer geloescht). Ein Lesefehler oder ein beschaedigtes
+ * ZIP ergibt {@code false}.
  */
 @Component
 public class AttachmentFileInspector {
@@ -69,7 +75,21 @@ public class AttachmentFileInspector {
   /** Beginn einer ausfuehrbaren Windows-Datei ({@code MZ}). */
   private static final byte[] EXECUTABLE_SIGNATURE = {0x4D, 0x5A};
 
-  /** Signaturen, mit denen eine Textdatei nicht beginnen darf. */
+  /** Laenge des gelesenen Kopfes einer MP4-Datei: Boxgroesse, {@code ftyp} und Major Brand. */
+  private static final int MP4_HEAD_BYTES = 12;
+
+  /** Boxart {@code ftyp} an den Bytes 4 bis 7 einer MP4-Datei. */
+  private static final byte[] MP4_BOX_TYPE = "ftyp".getBytes(StandardCharsets.US_ASCII);
+
+  /** Erlaubte Major Brands einer MP4-Datei; die Marke {@code M4V} hat ein Leerzeichen am Ende. */
+  private static final Set<String> MP4_MAJOR_BRANDS =
+      Set.of(
+          "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V ", "MSNV");
+
+  /**
+   * Signaturen, mit denen eine Textdatei nicht beginnen darf. MP4 steht hier nicht: Die kleine
+   * ftyp-Box beginnt mit einer Boxgroesse voller NUL-Bytes, die schon die NUL-Pruefung abweist.
+   */
   private static final List<byte[]> FORBIDDEN_TEXT_PREFIXES =
       List.of(
           PDF_SIGNATURE,
@@ -99,7 +119,8 @@ public class AttachmentFileInspector {
         case DOCX -> isOpenXml(in, "word/");
         case XLSX -> isOpenXml(in, "xl/");
         case PPTX -> isOpenXml(in, "ppt/");
-        case TXT -> isPlainText(in);
+        case TXT, CSV -> isPlainText(in);
+        case MP4 -> isMp4(in);
       };
     } catch (IOException | IllegalArgumentException e) {
       // Lesefehler oder beschaedigtes ZIP (z. B. ungueltiger Eintragsname): Inhalt ungueltig
@@ -181,6 +202,21 @@ public class AttachmentFileInspector {
     } catch (IOException e) {
       log.warn("Temporaere Datei {} konnte nicht geloescht werden: {}", file, e.toString());
     }
+  }
+
+  /**
+   * MP4: Bytes 4 bis 7 sind {@code ftyp} und die Major Brand (Bytes 8 bis 11) steht in der festen
+   * Menge {@link #MP4_MAJOR_BRANDS}. Die Boxgroesse (Bytes 0 bis 3) und die kompatiblen Marken
+   * zaehlen nicht; gelesen werden hoechstens 12 Bytes.
+   */
+  private static boolean isMp4(final InputStream in) throws IOException {
+    final byte[] head = in.readNBytes(MP4_HEAD_BYTES);
+    if (head.length < MP4_HEAD_BYTES
+        || !Arrays.equals(head, 4, 8, MP4_BOX_TYPE, 0, MP4_BOX_TYPE.length)) {
+      return false;
+    }
+    // ISO-8859-1 bildet jedes Byte auf genau ein Zeichen ab: nur die genannten Marken passen
+    return MP4_MAJOR_BRANDS.contains(new String(head, 8, 4, StandardCharsets.ISO_8859_1));
   }
 
   /** Text: kein NUL-Byte im Kopf und kein Beginn mit der Signatur eines anderen Dateityps. */

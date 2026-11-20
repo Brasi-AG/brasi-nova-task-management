@@ -232,6 +232,16 @@ class CommentAttachmentIT {
       "Notiz zum Kommentar\r\nZeile 2".getBytes(StandardCharsets.UTF_8);
   private static final byte[] MZ_BYTES = {'M', 'Z', (byte) 0x90, 0, 3, 0, 0, 0};
 
+  /** Minimale MP4-ftyp-Box: Groesse 24, {@code ftyp}, Major Brand {@code isom}, Marken (#184). */
+  private static final byte[] MP4_BYTES = {
+    0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 2, 0, 'i', 's', 'o', 'm', 'm', 'p',
+    '4', '1'
+  };
+
+  /** CSV mit Umlauten und Semikolon als Trenner (#184). */
+  private static final byte[] CSV_BYTES =
+      "Name;Straße;Betrag\r\nMüller;Hauptstraße 1;12,50\r\n".getBytes(StandardCharsets.UTF_8);
+
   /** IDs der per JDBC gesaeten Anhang-Zeilen, weit weg von der KSF-Sequenz. */
   private static final AtomicLong JDBC_ATTACHMENT_IDS = new AtomicLong(8_300_000_000L);
 
@@ -386,6 +396,97 @@ class CommentAttachmentIT {
     mvc.perform(get("/api/v1/tasks/{id}", taskId).header("Authorization", bearer(creator)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.attachments.length()").value(0));
+  }
+
+  /**
+   * Intake #184: Ein Kommentar mit MP4 und CSV wird angenommen. Die Anhaenge tragen {@code
+   * video/mp4} bzw. {@code text/csv}, haben kein Vorschaubild und werden ueber den Aufgaben-Pfad
+   * mit ihrem Typ ausgeliefert.
+   */
+  @Test
+  @DisplayName(
+      "i184_comment_with_mp4_and_csv: Kommentar mit MP4 und CSV -> 201, mimeType video/mp4 bzw."
+          + " text/csv, hasThumbnail false; Zeilen tragen die Kommentar-ID; Inhalt wird mit dem Typ"
+          + " ausgeliefert; Kommentarliste zeigt beide Anhaenge")
+  void i184_comment_with_mp4_and_csv() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT MP4 und CSV");
+    final int commentRowsBefore = commentRowCount(taskId);
+
+    final ResultActions res =
+        postWithAttachments(
+            mvc,
+            creator,
+            taskId,
+            commentJson("Video und Tabelle"),
+            file("Video.mp4", MP4_BYTES),
+            file("Daten.csv", CSV_BYTES));
+
+    res.andExpect(status().isCreated())
+        .andExpect(jsonPath("$.text").value("Video und Tabelle"))
+        .andExpect(jsonPath("$.attachments.length()").value(2))
+        .andExpect(jsonPath("$.attachments[0].fileName").value("Video.mp4"))
+        .andExpect(jsonPath("$.attachments[0].mimeType").value("video/mp4"))
+        .andExpect(jsonPath("$.attachments[0].hasThumbnail").value(false))
+        .andExpect(jsonPath("$.attachments[0].removable").value(false))
+        .andExpect(jsonPath("$.attachments[1].fileName").value("Daten.csv"))
+        .andExpect(jsonPath("$.attachments[1].mimeType").value("text/csv"))
+        .andExpect(jsonPath("$.attachments[1].hasThumbnail").value(false))
+        .andExpect(jsonPath("$.attachments[1].removable").value(false));
+    final JsonNode body = json(res);
+    final UUID commentId = UUID.fromString(body.get("id").asText());
+    final UUID mp4Id = UUID.fromString(body.get("attachments").get(0).get("id").asText());
+    final UUID csvId = UUID.fromString(body.get("attachments").get(1).get("id").asText());
+    for (final int index : new int[] {0, 1}) {
+      final JsonNode thumbnailLink =
+          body.get("attachments").get(index).path("links").path("thumbnail");
+      assertThat(thumbnailLink.isNull() || thumbnailLink.isMissingNode())
+          .as("Kein Vorschau-Link: %s", body.get("attachments").get(index))
+          .isTrue();
+    }
+
+    final List<AttachmentRow> rows = attachmentRows(taskId);
+    assertThat(rows).hasSize(2);
+    final long commentDbId = commentDbId(commentId);
+    assertThat(rows)
+        .allSatisfy(
+            r -> {
+              assertThat(r.commentId()).isEqualTo(commentDbId);
+              assertThat(r.entityStatus()).isEqualTo("ACTIVE");
+              assertThat(sha256(baseDir.resolve(r.storageKey()))).isEqualTo(r.sha256());
+            });
+    final AttachmentRow mp4Row = rowByUuid(rows, mp4Id);
+    final AttachmentRow csvRow = rowByUuid(rows, csvId);
+    assertThat(mp4Row.storageKey()).matches("560/\\d+/\\d+\\.mp4");
+    assertThat(csvRow.storageKey()).matches("560/\\d+/\\d+\\.csv");
+    assertThat(baseDir.resolve(mp4Row.storageKey())).hasBinaryContent(MP4_BYTES);
+    assertThat(baseDir.resolve(csvRow.storageKey())).hasBinaryContent(CSV_BYTES);
+    assertThat(commentRowCount(taskId) - commentRowsBefore).isEqualTo(1);
+
+    // Auslieferung ueber den Aufgaben-Pfad mit dem Typ des Anhangs
+    final MvcResult mp4Content =
+        fetch(
+            mvc,
+            get("/api/v1/tasks/{id}/attachments/{attachmentId}/content", taskId, mp4Id),
+            creator);
+    assertThat(mp4Content.getResponse().getStatus()).isEqualTo(200);
+    assertThat(mp4Content.getResponse().getContentType()).contains("video/mp4");
+    assertThat(mp4Content.getResponse().getContentAsByteArray()).isEqualTo(MP4_BYTES);
+    final MvcResult csvContent =
+        fetch(
+            mvc,
+            get("/api/v1/tasks/{id}/attachments/{attachmentId}/content", taskId, csvId),
+            creator);
+    assertThat(csvContent.getResponse().getStatus()).isEqualTo(200);
+    assertThat(csvContent.getResponse().getContentType()).contains("text/csv");
+    assertThat(csvContent.getResponse().getContentAsByteArray()).isEqualTo(CSV_BYTES);
+
+    mvc.perform(get("/api/v1/tasks/{id}/comments", taskId).header("Authorization", bearer(creator)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].attachments.length()").value(2))
+        .andExpect(jsonPath("$[0].attachments[0].mimeType").value("video/mp4"))
+        .andExpect(jsonPath("$[0].attachments[1].mimeType").value("text/csv"));
   }
 
   // ---- Alles oder nichts: Validierung ----------------------------------------------------------
