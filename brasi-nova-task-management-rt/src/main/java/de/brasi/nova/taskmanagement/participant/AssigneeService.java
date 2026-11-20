@@ -1043,8 +1043,8 @@ public class AssigneeService {
    * @param tenantId interner Mandanten-Schluessel
    * @param refs aufzunehmende Benutzer-UUIDs (beliebige Reihenfolge, Duplikate erlaubt)
    * @return die tatsaechlich neu angelegten oder reaktivierten Refs in aufsteigender UUID-
-   *     Reihenfolge (aktive Mitglieder und Race-Verlierer, den meldet der Gewinner, fehlen) und
-   *     der vorab gelesene Namen-Snapshot der Kandidaten
+   *     Reihenfolge (aktive Mitglieder und Race-Verlierer, den meldet der Gewinner, fehlen) und der
+   *     vorab gelesene Namen-Snapshot der Kandidaten
    */
   private Admission admitParticipants(
       final Long taskId, final long tenantId, final Collection<UUID> refs) {
@@ -1923,9 +1923,9 @@ public class AssigneeService {
   }
 
   /**
-   * Test-Seam (Default No-Op, Codex-Review #167): Haken im Aufnahme-Kern {@link
-   * #admitParticipants} NACH der Aufnahme einer Person und VOR den Reads der naechsten (auch nach
-   * der letzten). Die Transaktion haelt hier die X-Sperren der bisher aufgenommenen Personen. Der
+   * Test-Seam (Default No-Op, Codex-Review #167): Haken im Aufnahme-Kern {@link #admitParticipants}
+   * NACH der Aufnahme einer Person und VOR den Reads der naechsten (auch nach der letzten). Die
+   * Transaktion haelt hier die X-Sperren der bisher aufgenommenen Personen. Der
    * Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}) verzahnt daran zwei Aufnahmen mit je
    * zwei Personen: beide haben ihre erste Person geschrieben, bevor eine die Zeilen ihrer zweiten
    * liest. Gilt auch fuer die Aufnahme per Erwaehnung ({@link #addAsParticipants}, {@code
