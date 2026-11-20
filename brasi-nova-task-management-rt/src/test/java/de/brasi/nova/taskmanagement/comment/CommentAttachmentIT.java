@@ -551,8 +551,7 @@ class CommentAttachmentIT {
 
     assertThat(countNotifications(taskId, MEMBER_REF, "COMMENT") - memberCommentBefore)
         .isEqualTo(1);
-    assertThat(countNotifications(taskId, OTHER_REF, "MENTION") - otherMentionBefore)
-        .isEqualTo(1);
+    assertThat(countNotifications(taskId, OTHER_REF, "MENTION") - otherMentionBefore).isEqualTo(1);
     assertThat(countNotifications(taskId, OTHER_REF, "COMMENT") - otherCommentBefore).isZero();
     assertThat(notificationCountOfRecipient(taskId, CREATOR_REF) - creatorBefore).isZero();
   }
