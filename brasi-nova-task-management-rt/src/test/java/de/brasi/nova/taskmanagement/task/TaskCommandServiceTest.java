@@ -2242,8 +2242,7 @@ class TaskCommandServiceTest {
     when(resolver.resolveTaskPriority(TaskPriorityCodes.LOW)).thenReturn(PRIORITY_ID_LOW);
     when(resolver.resolveTaskPriority(TaskPriorityCodes.HIGH)).thenReturn(PRIORITY_ID_HIGH);
     when(resolver.resolveTaskPriorityCode(PRIORITY_ID_LOW)).thenReturn(TaskPriorityCodes.LOW);
-    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_NORMAL))
-        .thenReturn(TaskPriorityCodes.NORMAL);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_NORMAL)).thenReturn(TaskPriorityCodes.NORMAL);
     when(resolver.resolveTaskPriorityCode(PRIORITY_ID_HIGH)).thenReturn(TaskPriorityCodes.HIGH);
   }
 

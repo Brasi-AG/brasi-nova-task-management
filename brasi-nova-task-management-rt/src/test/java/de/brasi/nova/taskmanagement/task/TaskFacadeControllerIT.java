@@ -2911,8 +2911,7 @@ class TaskFacadeControllerIT {
 
     // 2. Leerer Code
     assertBadRequestWithMessage(
-        patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"\"}"),
-        "Ungueltiger priorityCode: ''.");
+        patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"\"}"), "Ungueltiger priorityCode: ''.");
 
     // 3. Kombination mit einem gueltigen title: nichts wird angewendet (All-or-Nothing)
     assertBadRequestWithMessage(
