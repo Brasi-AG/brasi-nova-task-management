@@ -2,13 +2,17 @@ package de.brasi.nova.taskmanagement.comment;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
+import jakarta.servlet.http.Part;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.stereotype.Component;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 /**
  * Liest den Teil {@code comment} von {@code POST /api/v1/tasks/{id}/comments/with-attachments} als
@@ -36,6 +40,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class CommentPartReader {
 
+  private static final Logger log = LoggerFactory.getLogger(CommentPartReader.class);
+
+  /** Neutrale Meldung fuer einen Lesefehler am Teil; ohne Exception-Text und ohne Pfade. */
+  private static final String READ_FAILURE_MESSAGE = "Teil 'comment' konnte nicht gelesen werden.";
+
   private final ObjectMapper objectMapper;
 
   /**
@@ -49,10 +58,56 @@ public class CommentPartReader {
   }
 
   /**
+   * Liest den Teil {@code comment} aus der Multipart-Anfrage als {@link CommentCreateInput}.
+   *
+   * <p>Warum {@link Part} und nicht {@code byte[]} oder {@code String} (Intake #152 Teil B): Ein
+   * als {@code byte[]} oder {@code String} gebundener Teil laeuft ueber einen MessageConverter und
+   * danach durch jede {@code RequestBodyAdvice}. Die KSF-Advice {@code
+   * NovaTenantBindingRequestBodyAdvice} (ksf-web) behandelt jedes Array als {@code Object[]} und
+   * bricht bei Primitiv-Arrays wie {@code byte[]} mit {@code ClassCastException} ab (500 {@code
+   * NOVA_INTERNAL_ERROR}). Ein {@link Part} loest Spring ohne MessageConverter und ohne Advice auf;
+   * die Bytes liest dieser Leser selbst aus {@link Part#getInputStream()}.
+   *
+   * <p>Verhalten wie bisher: Ein leerer Teil gilt als fehlend ({@link
+   * MissingServletRequestPartException}, 400 {@code NOVA_VALIDATION_FAILED}), wie es Spring beim
+   * Lesen ueber einen MessageConverter hielt. Ein Lesefehler wird wie dort zu einer {@link
+   * HttpMessageNotReadableException} (400 {@code NOVA_MESSAGE_NOT_READABLE}); der Inhalt geht an
+   * {@link #read(byte[])}.
+   *
+   * <p>Lesefehler ohne interne Details: Die {@link IOException} haengt nicht als Ursache an der
+   * Ausnahme, und ihr Text steht nicht in der Meldung. Die KSF-Fehlerbehandlung schreibt die
+   * tiefste Ursache nach {@code details}, und der Text einer {@link IOException} kann einen
+   * Temp-Pfad des Servers enthalten. Die Antwort traegt deshalb nur den neutralen Text {@code Teil
+   * 'comment' konnte nicht gelesen werden.}; die Ursache samt Stacktrace steht nur im Log.
+   *
+   * @param part der Teil {@code comment}; von Spring nie {@code null} (ein fehlender Teil endet
+   *     vorher mit {@link MissingServletRequestPartException})
+   * @return die geprueften Eingabedaten (Text nicht leer, Erwaehnungen normalisiert)
+   * @throws MissingServletRequestPartException wenn der Teil leer ist (HTTP 400)
+   * @throws HttpMessageNotReadableException wenn der Teil nicht gelesen werden kann oder der Inhalt
+   *     nicht zu {@link CommentCreateInput} passt (HTTP 400)
+   */
+  public CommentCreateInput read(final Part part) throws MissingServletRequestPartException {
+    final byte[] content;
+    try (InputStream body = part.getInputStream()) {
+      content = body.readAllBytes();
+    } catch (IOException e) {
+      // Die Ursache nur ins Log: KSF schreibt die tiefste Ursache nach details, und der Text einer
+      // IOException kann einen Temp-Pfad des Servers enthalten.
+      log.warn("Teil 'comment' konnte nicht gelesen werden.", e);
+      throw new HttpMessageNotReadableException(READ_FAILURE_MESSAGE, new PartMessage(new byte[0]));
+    }
+    if (content.length == 0) {
+      throw new MissingServletRequestPartException(part.getName());
+    }
+    return read(content);
+  }
+
+  /**
    * Liest den Rohinhalt des Teils {@code comment} als {@link CommentCreateInput}.
    *
-   * @param part Rohinhalt des Teils (JSON, UTF-8); von Spring nie {@code null} und nie leer (ein
-   *     leerer Teil gilt dort als fehlend)
+   * @param part Rohinhalt des Teils (JSON, UTF-8); nie {@code null} und nie leer (ein leerer Teil
+   *     gilt als fehlend, siehe {@link #read(Part)})
    * @return die geprueften Eingabedaten (Text nicht leer, Erwaehnungen normalisiert)
    * @throws HttpMessageNotReadableException wenn der Inhalt kein JSON-Objekt ist, nicht zu {@link
    *     CommentCreateInput} passt oder eine Regel verletzt (HTTP 400); die urspruengliche Ursache
