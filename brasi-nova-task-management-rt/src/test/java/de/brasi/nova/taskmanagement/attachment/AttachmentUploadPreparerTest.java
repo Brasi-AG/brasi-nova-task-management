@@ -57,6 +57,15 @@ class AttachmentUploadPreparerTest {
   private static final byte[] TXT = "Notiz\r\nZeile 2".getBytes(StandardCharsets.UTF_8);
   private static final byte[] THUMBNAIL = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 1};
 
+  /** Minimale MP4-ftyp-Box: Groesse 24, {@code ftyp}, Major Brand {@code isom}, Version, Marken. */
+  private static final byte[] MP4 = {
+    0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 2, 0, 'i', 's', 'o', 'm', 'm', 'p',
+    '4', '1'
+  };
+
+  private static final byte[] CSV =
+      "Name;Straße\r\nMüller;Hauptstraße 1\r\n".getBytes(StandardCharsets.UTF_8);
+
   @Mock private AttachmentLimitPolicy limitPolicy;
   @Mock private AttachmentThumbnailGenerator thumbnailGenerator;
 
@@ -102,7 +111,44 @@ class AttachmentUploadPreparerTest {
         .hasMessageContaining("„.exe“")
         .hasMessage(
             "Der Dateityp „.exe“ ist nicht erlaubt. Erlaubt sind: "
-                + "pdf, xls, xlsx, doc, docx, ppt, pptx, txt, png, jpg, jpeg.");
+                + "pdf, xls, xlsx, doc, docx, ppt, pptx, txt, csv, png, jpg, jpeg, mp4.");
+    verifyNoInteractions(thumbnailGenerator);
+  }
+
+  /**
+   * Intake #184: MP4 und CSV werden angenommen (die Schreibweise der Endung ist egal), ohne
+   * Vorschaubild; der Vorschaubild-Generator wird nicht gefragt.
+   */
+  @Test
+  void i184_mp4_and_csv_prepared_without_thumbnail() {
+    final List<PreparedAttachment> prepared =
+        preparer.prepare(TENANT, 0, List.of(file("Clip.MP4", MP4), file("Daten.csv", CSV)));
+
+    assertThat(prepared).hasSize(2);
+    assertThat(prepared.get(0).fileName()).isEqualTo("Clip.MP4");
+    assertThat(prepared.get(0).extension()).isEqualTo("mp4");
+    assertThat(prepared.get(0).type().name()).isEqualTo("MP4");
+    assertThat(prepared.get(0).type().mimeType()).isEqualTo("video/mp4");
+    assertThat(prepared.get(0).sizeBytes()).isEqualTo(MP4.length);
+    assertThat(prepared.get(1).fileName()).isEqualTo("Daten.csv");
+    assertThat(prepared.get(1).extension()).isEqualTo("csv");
+    assertThat(prepared.get(1).type().name()).isEqualTo("CSV");
+    assertThat(prepared.get(1).type().mimeType()).isEqualTo("text/csv");
+    assertThat(prepared.get(1).sizeBytes()).isEqualTo(CSV.length);
+    assertThat(prepared).allSatisfy(p -> assertThat(p.hasThumbnail()).isFalse());
+    assertThat(prepared).allSatisfy(p -> assertThat(p.thumbnailJpeg()).isNull());
+    verifyNoInteractions(thumbnailGenerator);
+  }
+
+  /** Intake #184: Falscher Inhalt unter der Endung mp4 bzw. csv ergibt die 400 mit dem Dateityp. */
+  @Test
+  void i184_mp4_and_csv_content_mismatch_rejected() {
+    assertThatThrownBy(preparing("video.mp4", PDF_BYTES))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Der Inhalt der Datei „video.mp4“ passt nicht zum Dateityp MP4.");
+    assertThatThrownBy(preparing("daten.csv", MP4))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Der Inhalt der Datei „daten.csv“ passt nicht zum Dateityp CSV.");
     verifyNoInteractions(thumbnailGenerator);
   }
 

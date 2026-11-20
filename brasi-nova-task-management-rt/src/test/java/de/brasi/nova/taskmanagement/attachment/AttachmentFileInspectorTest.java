@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import javax.imageio.ImageIO;
@@ -37,8 +39,24 @@ import org.springframework.core.io.InputStreamSource;
  * kein NUL-Byte in den ersten 8 KiB, keine der Signaturen, kein {@code MZ}. IOException ergibt
  * {@code false}. Testdaten werden im Test erzeugt (ZIP per {@link ZipOutputStream}, PNG per {@link
  * ImageIO}).
+ *
+ * <p>Intake #184: MP4 gilt, wenn die Bytes 4 bis 7 {@code ftyp} sind und die Bytes 8 bis 11 (Major
+ * Brand) eine der Marken {@code isom}, {@code iso2} bis {@code iso6}, {@code mp41}, {@code mp42},
+ * {@code avc1}, {@code "M4V "} oder {@code MSNV} tragen; die Box-Groesse (Bytes 0 bis 3) wird nicht
+ * geprueft. CSV wird wie TXT geprueft. Die Typen MP4 und CSV werden ueber {@link
+ * AttachmentFileType#fromExtension(String)} gesucht (nur in den Testmethoden, nie in statischen
+ * Feldern), damit die Klasse auch ohne die Konstanten kompiliert und die i152-Tests unberuehrt
+ * bleiben.
  */
 class AttachmentFileInspectorTest {
+
+  /** Laenge des gelesenen Kopfes fuer die Textpruefung (8 KiB). */
+  private static final int HEAD_BYTES = 8 * 1024;
+
+  /** Genannte Major Brands, die als MP4 gelten (Intake #184). */
+  private static final List<String> MP4_BRANDS =
+      List.of(
+          "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V ", "MSNV");
 
   private static final InputStreamSource PNG_HEADER_PLUS_IHDR = new ByteArrayResource(png(4, 3));
 
@@ -120,6 +138,132 @@ class AttachmentFileInspectorTest {
   void i152_open_xml_entry_limit_is_ten_thousand() {
     assertThat(inspector.contentMatches(DOCX, zipWithEntryCount(10_000))).isTrue();
     assertThat(inspector.contentMatches(DOCX, zipWithEntryCount(10_001))).isFalse();
+  }
+
+  /**
+   * Intake #184: Jede genannte Major Brand ergibt mit einer minimalen ftyp-Box ({@code 00 00 00 18
+   * ftyp <Marke> 00 00 02 00 isom mp41}) {@code true}. Die Box-Groesse (Bytes 0 bis 3) zaehlt
+   * nicht, und 12 Bytes (bis einschliesslich der Major Brand) genuegen.
+   */
+  @Test
+  void i184_mp4_ftyp_accepted() {
+    final AttachmentFileType mp4 = mp4Type();
+
+    for (final String brand : MP4_BRANDS) {
+      assertThat(inspector.contentMatches(mp4, ftypBox("00000018", brand)))
+          .as("Major Brand \"%s\"", brand)
+          .isTrue();
+    }
+    for (final String size : List.of("00000000", "00000001", "00000020", "FFFFFFFF")) {
+      assertThat(inspector.contentMatches(mp4, ftypBox(size, "isom")))
+          .as("Box-Groesse %s", size)
+          .isTrue();
+    }
+    final InputStreamSource twelveBytes =
+        new ByteArrayResource(Arrays.copyOf(ftypBytes("00000018", "mp42"), 12));
+    assertThat(inspector.contentMatches(mp4, twelveBytes)).isTrue();
+  }
+
+  /**
+   * Intake #184: Kein MP4 sind fremder Inhalt, andere Major Brands (QuickTime {@code "qt  "}, 3GPP
+   * {@code 3gp4}, nicht genannte Marken; die kompatiblen Marken {@code isom} und {@code mp41} der
+   * Box zaehlen nicht), Dateien unter 12 Bytes und eine ftyp-Box an Byte 0 statt an Byte 4.
+   */
+  @Test
+  void i184_mp4_rejected() {
+    final AttachmentFileType mp4 = mp4Type();
+
+    assertThat(inspector.contentMatches(mp4, bytes("%PDF-1.7\n%âãÏÓ\n1 0 obj"))).isFalse();
+    assertThat(inspector.contentMatches(mp4, utf8("Das ist kein Video, sondern Text."))).isFalse();
+    assertThat(inspector.contentMatches(mp4, PNG_HEADER_PLUS_IHDR)).isFalse();
+
+    for (final String brand : List.of("qt  ", "3gp4", "iso7", "mp43")) {
+      assertThat(inspector.contentMatches(mp4, ftypBox("00000018", brand)))
+          .as("Major Brand \"%s\"", brand)
+          .isFalse();
+    }
+
+    final byte[] box = ftypBytes("00000018", "isom");
+    for (final int length : new int[] {0, 4, 8, 11}) {
+      assertThat(inspector.contentMatches(mp4, new ByteArrayResource(Arrays.copyOf(box, length))))
+          .as("Laenge %d", length)
+          .isFalse();
+    }
+
+    final InputStreamSource shifted = bytes("ftypisommp41\u0000\u0000\u0002\u0000isom");
+    assertThat(inspector.contentMatches(mp4, shifted)).isFalse();
+
+    // IOException beim Lesen ergibt false
+    assertThat(inspector.contentMatches(mp4, failingSource())).isFalse();
+  }
+
+  /**
+   * Intake #184: CSV wird wie TXT geprueft: kein NUL-Byte in den ersten 8 KiB und kein Beginn mit
+   * einer Signatur (PDF, PNG, JPEG, OLE2, ZIP, {@code MZ}). Die Pruefungen ohne NUL-Byte
+   * (Signaturen ohne NUL) zeigen, dass die Signaturregel gilt und nicht nur die NUL-Regel.
+   */
+  @Test
+  void i184_csv_like_txt() {
+    final AttachmentFileType csv = csvType();
+
+    // Akzeptiert: UTF-8 mit Umlauten, Semikolon und Komma, auch mit BOM (Excel-Export)
+    final InputStreamSource semicolons =
+        utf8("Name;Straße;Ort\r\nMüller;Hauptstraße 1;Köln\r\nÖzdemir;Weg 2;Ülm\r\n");
+    assertThat(inspector.contentMatches(csv, semicolons)).isTrue();
+    assertThat(inspector.contentMatches(csv, utf8("Name,Betrag\n\"Müller, Hans\",12.50\n")))
+        .isTrue();
+    final InputStreamSource withBom = utf8((char) 0xFEFF + "Name;Wert\r\nÄ;1\r\n");
+    assertThat(inspector.contentMatches(csv, withBom)).isTrue();
+
+    // Das NUL-Byte zaehlt nur innerhalb der ersten 8 KiB (Indizes 0 bis 8191)
+    assertThat(inspector.contentMatches(csv, textWithNulAt(HEAD_BYTES - 1))).isFalse();
+    assertThat(inspector.contentMatches(csv, textWithNulAt(HEAD_BYTES))).isTrue();
+
+    // Abgelehnt
+    assertThat(inspector.contentMatches(csv, bytes("a;b\u0000c"))).isFalse();
+    assertThat(inspector.contentMatches(csv, bytes("%PDF-1.4"))).isFalse();
+    assertThat(inspector.contentMatches(csv, bytes("MZ,1,2"))).isFalse();
+    assertThat(inspector.contentMatches(csv, bytes("PK\u0003\u0004;1;2"))).isFalse();
+    assertThat(inspector.contentMatches(csv, hex("89504E470D0A1A0A"))).isFalse();
+    assertThat(inspector.contentMatches(csv, hex("FFD8FFE0"))).isFalse();
+    assertThat(inspector.contentMatches(csv, hex("D0CF11E0A1B11AE1"))).isFalse();
+    assertThat(inspector.contentMatches(csv, zip("daten.csv"))).isFalse();
+    assertThat(inspector.contentMatches(csv, ftypBox("00000018", "isom"))).isFalse();
+    // UTF-16 enthaelt NUL-Bytes und gilt (wie bei TXT) nicht
+    final byte[] utf16 = "Name;Wert\r\n1;2\r\n".getBytes(StandardCharsets.UTF_16LE);
+    assertThat(inspector.contentMatches(csv, new ByteArrayResource(utf16))).isFalse();
+  }
+
+  private static AttachmentFileType mp4Type() {
+    return AttachmentFileType.fromExtension("mp4").orElseThrow();
+  }
+
+  private static AttachmentFileType csvType() {
+    return AttachmentFileType.fromExtension("csv").orElseThrow();
+  }
+
+  /** ftyp-Box: Groesse, {@code ftyp}, Major Brand, Version 512, kompatible Marken isom und mp41. */
+  private static byte[] ftypBytes(final String sizeHex, final String majorBrand) {
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.writeBytes(HexFormat.of().parseHex(sizeHex));
+    out.writeBytes("ftyp".getBytes(StandardCharsets.US_ASCII));
+    out.writeBytes(majorBrand.getBytes(StandardCharsets.US_ASCII));
+    out.writeBytes(HexFormat.of().parseHex("00000200"));
+    out.writeBytes("isom".getBytes(StandardCharsets.US_ASCII));
+    out.writeBytes("mp41".getBytes(StandardCharsets.US_ASCII));
+    return out.toByteArray();
+  }
+
+  private static InputStreamSource ftypBox(final String sizeHex, final String majorBrand) {
+    return new ByteArrayResource(ftypBytes(sizeHex, majorBrand));
+  }
+
+  /** Text aus {@code a} mit einem NUL-Byte an der Stelle {@code index}, 8 KiB plus 1 Byte lang. */
+  private static InputStreamSource textWithNulAt(final int index) {
+    final byte[] content = new byte[HEAD_BYTES + 1];
+    Arrays.fill(content, (byte) 'a');
+    content[index] = 0;
+    return new ByteArrayResource(content);
   }
 
   /** Bytes eines Textes in ISO-8859-1 (jedes Zeichen bis U+00FF wird genau ein Byte). */

@@ -34,8 +34,9 @@ class AttachmentFileTypeTest {
     assertThat(DOCX.mimeType())
         .isEqualTo("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
-    // Vollstaendige Endungs- und MIME-Tabelle aus dem Interfaces-Block
-    assertThat(values()).hasSize(10);
+    // Vollstaendige Endungs- und MIME-Tabelle aus dem Interfaces-Block (seit Intake #184 mit MP4
+    // und CSV: 12 Typen; deren Einzelheiten pruefen die Tests i184_*)
+    assertThat(values()).hasSize(12);
     assertThat(PDF.extensions()).containsExactly("pdf");
     assertThat(PNG.extensions()).containsExactly("png");
     assertThat(JPEG.extensions()).containsExactlyInAnyOrder("jpg", "jpeg");
@@ -58,6 +59,41 @@ class AttachmentFileTypeTest {
     assertThat(PPTX.mimeType())
         .isEqualTo("application/vnd.openxmlformats-officedocument.presentationml.presentation");
     assertThat(AttachmentFileType.allowedExtensionsText())
-        .isEqualTo("pdf, xls, xlsx, doc, docx, ppt, pptx, txt, png, jpg, jpeg");
+        .isEqualTo("pdf, xls, xlsx, doc, docx, ppt, pptx, txt, csv, png, jpg, jpeg, mp4");
+  }
+
+  /**
+   * Intake #184: MP4 ({@code video/mp4}) und CSV ({@code text/csv}, ohne Zeichensatz wie {@code
+   * text/plain} bei TXT) sind erlaubt, aber nicht vorschaufaehig. Die Konstanten werden bewusst
+   * ueber die Endung gesucht, damit der Test auch ohne sie kompiliert.
+   */
+  @Test
+  void i184_mp4_and_csv_types() {
+    final AttachmentFileType mp4 = AttachmentFileType.fromExtension("mp4").orElseThrow();
+    final AttachmentFileType csv = AttachmentFileType.fromExtension("csv").orElseThrow();
+
+    assertThat(mp4.name()).isEqualTo("MP4");
+    assertThat(mp4.extensions()).containsExactly("mp4");
+    assertThat(mp4.mimeType()).isEqualTo("video/mp4");
+    assertThat(mp4.previewable()).isFalse();
+    assertThat(csv.name()).isEqualTo("CSV");
+    assertThat(csv.extensions()).containsExactly("csv");
+    assertThat(csv.mimeType()).isEqualTo("text/csv");
+    assertThat(csv.previewable()).isFalse();
+
+    // Gross-/Kleinschreibung der Endung ist egal
+    assertThat(AttachmentFileType.fromExtension("MP4")).contains(mp4);
+    assertThat(AttachmentFileType.fromExtension("Mp4")).contains(mp4);
+    assertThat(AttachmentFileType.fromExtension("CSV")).contains(csv);
+    assertThat(AttachmentFileType.fromExtension("Csv")).contains(csv);
+
+    // Verwandte Endungen bleiben unerlaubt
+    assertThat(AttachmentFileType.fromExtension("mov")).isEmpty();
+    assertThat(AttachmentFileType.fromExtension("m4v")).isEmpty();
+    assertThat(AttachmentFileType.fromExtension("tsv")).isEmpty();
+
+    // Vorschaufaehig bleiben nur PDF, PNG und JPEG
+    assertThat(Arrays.stream(values()).filter(AttachmentFileType::previewable))
+        .containsExactlyInAnyOrder(PDF, PNG, JPEG);
   }
 }
