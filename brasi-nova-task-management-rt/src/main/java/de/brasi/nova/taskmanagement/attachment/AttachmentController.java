@@ -59,6 +59,10 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
  * {@code Cache-Control: private}; ein passender {@code If-None-Match} ergibt 304 ohne Inhalt. Lehnt
  * der Pool der Auslieferung die Anfrage ab, antwortet {@code StreamingRejectionAdvice} mit 503 und
  * {@code Retry-After}.
+ *
+ * <p>Inhalt, Download und Vorschaubild ignorieren den {@code Accept}-Header bewusst ({@link
+ * IgnoresAcceptHeader}): der Erfolg traegt die gespeicherte Inhaltsart, jeder Fehler JSON im
+ * KSF-Format, auch wenn der Client nur einen anderen Typ annimmt.
  */
 @RestController
 @TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
@@ -87,6 +91,14 @@ public class AttachmentController {
           + " Mitglieder der Aufgabe, auch ausgetretene. Auch Anhaenge der Kommentare werden"
           + " ueber die Aufgabe ausgeliefert. Fuer alle anderen, fuer unbekannte, deaktivierte"
           + " oder fremde Anhaenge und fuer eine fehlende Datei antwortet der Endpunkt mit 404.";
+
+  private static final String ACCEPT_NOTE =
+      " Accept wird ignoriert; der Content-Type ist die gespeicherte Art. Fehlerantworten kommen"
+          + " immer als JSON im Fehlerformat, auch wenn der Client nur einen anderen Typ annimmt.";
+
+  private static final String THUMBNAIL_ACCEPT_NOTE =
+      " Accept wird ignoriert; der Content-Type ist image/jpeg. Fehlerantworten kommen immer als"
+          + " JSON im Fehlerformat, auch wenn der Client nur einen anderen Typ annimmt.";
 
   private static final String CONTENT_OK_DESCRIPTION =
       "Der Inhalt des Anhangs. Der echte Content-Type ist die gespeicherte Art des Anhangs (hier"
@@ -390,6 +402,7 @@ public class AttachmentController {
               + " (Content-Disposition inline mit dem Originalnamen nach RFC 5987). Der echte"
               + " Content-Type ist die beim Hochladen gepruefte Art des Anhangs (etwa"
               + " application/pdf oder image/png), dazu X-Content-Type-Options nosniff."
+              + ACCEPT_NOTE
               + DELIVERY_DESCRIPTION)
   @ApiResponses({
     @ApiResponse(
@@ -469,6 +482,7 @@ public class AttachmentController {
                 examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_CONTENT)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/content")
+  @IgnoresAcceptHeader
   public ResponseEntity<StreamingResponseBody> content(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
@@ -499,6 +513,7 @@ public class AttachmentController {
               + " attachment mit dem Originalnamen nach RFC 5987). Der echte Content-Type ist die"
               + " beim Hochladen gepruefte Art des Anhangs (etwa application/pdf oder"
               + " text/plain), dazu X-Content-Type-Options nosniff."
+              + ACCEPT_NOTE
               + DELIVERY_DESCRIPTION)
   @ApiResponses({
     @ApiResponse(
@@ -579,6 +594,7 @@ public class AttachmentController {
                 examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_DOWNLOAD)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/download")
+  @IgnoresAcceptHeader
   public ResponseEntity<StreamingResponseBody> download(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
@@ -612,6 +628,7 @@ public class AttachmentController {
               + " beim Abruf aus dem Inhalt erzeugt und abgelegt (ohne Aenderung der Daten des"
               + " Anhangs); scheitert die Erzeugung, ebenfalls 404. Der ETag enthaelt die Breite"
               + " des Vorschaubilds."
+              + THUMBNAIL_ACCEPT_NOTE
               + DELIVERY_DESCRIPTION)
   @ApiResponses({
     @ApiResponse(
@@ -695,6 +712,7 @@ public class AttachmentController {
                 examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_THUMBNAIL)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/thumbnail")
+  @IgnoresAcceptHeader
   public ResponseEntity<StreamingResponseBody> thumbnail(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
