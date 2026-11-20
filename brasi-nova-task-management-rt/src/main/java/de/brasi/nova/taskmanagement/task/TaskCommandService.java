@@ -378,7 +378,8 @@ public class TaskCommandService {
   }
 
   /**
-   * Patcht eine bestehende Aufgabe (title, dueDate, startDate, description, statusCode, tagIds).
+   * Patcht eine bestehende Aufgabe (title, dueDate, startDate, description, statusCode, tagIds,
+   * priorityCode).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion. Nach
    * Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
@@ -405,6 +406,16 @@ public class TaskCommandService {
    * {@code CANCELLED -> CANCELLED} ist kein Uebergang; ein Reopen ({@code CANCELLED -> OPEN}) loest
    * nichts aus.
    *
+   * <p><b>priorityCode (Intake #183):</b> Absent = Prioritaet unveraendert; ein Code aus {@code
+   * DIC_TASK_PRIORITY} (derzeit LOW, NORMAL, HIGH, URGENT) setzt die Prioritaet; {@code null} setzt
+   * sie auf {@code NORMAL} zurueck. Unbekannter, leerer oder inaktiver Code fuehrt zu HTTP 400
+   * (Meldung {@code Ungueltiger priorityCode: 'code'.}) und wird VOR jeder Mutation geprueft (alles
+   * oder nichts, auch zusammen mit anderen Feldern). Verglichen wird ueber die Dictionary-IDs: Eine
+   * Aenderung schreibt genau einen Verlaufseintrag "Prioritaet geaendert" mit den kanonischen Codes
+   * (z. B. {@code NORMAL -> HIGH}); ein unveraenderter Wert (gleiche ID, auch {@code null} bei
+   * bereits NORMAL) schreibt keinen Verlauf und loest allein weder Save noch Bump/Invalidate aus.
+   * Eine Prioritaetsaenderung loest keine Benachrichtigung aus.
+   *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
    * JEDES aktiven Teilnehmers der Aufgabe gebumpt - exakt die Menge, fuer die auch {@link
@@ -430,7 +441,8 @@ public class TaskCommandService {
    * @param input Patch-Eingabe
    * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant
    *     gehoert
-   * @throws EntityValidationException bei unbekanntem statusCode
+   * @throws EntityValidationException bei unbekanntem statusCode oder unbekanntem, leerem bzw.
+   *     inaktivem priorityCode
    */
   @Transactional
   public void patch(final UUID taskExternalId, final TaskPatchInput input) {
@@ -445,6 +457,14 @@ public class TaskCommandService {
     // Mutation. Nur aktive, nicht ausgetretene PERSON-Mitglieder duerfen patchen; Non-/Ex-Member ->
     // neutrale 404 (keine History, kein Save, kein Bump/Invalidate).
     membershipGuard.requireWriteMember(taskId, actorRef, tenantId);
+
+    // priorityCode (Intake #183): den Ziel-Code VOR jeder Mutation gegen das Dictionary aufloesen,
+    // damit ein ungueltiger Code die Aufgabe unveraendert laesst (kein Verlauf, auch nicht fuer
+    // zugleich gesendete Felder). Absent -> null (nichts zu tun).
+    final Long newPriorityId =
+        input.priorityCode().isPresent()
+            ? resolvePatchPriorityId(input.priorityCode().get())
+            : null;
 
     boolean changed = false;
     // Intake #151/#157: Typ-CODE der Statusbenachrichtigung (DONE oder CANCELLED), wenn dieser
@@ -538,6 +558,28 @@ public class TaskCommandService {
       }
       task.setTaskStatusId(newStatusId);
       changed = true;
+    }
+
+    // priorityCode (Intake #183): nur bei geaenderter Dictionary-ID. Verglichen wird ueber die IDs
+    // (unabhaengig von der Schreibweise des Client-Codes), der Verlauf nennt die kanonischen Codes
+    // des Dictionaries. Gleiche ID (auch null bei bereits NORMAL): kein Verlauf, kein changed.
+    // Bewusst keine Benachrichtigung (nur DONE/CANCELLED benachrichtigen).
+    if (newPriorityId != null && !newPriorityId.equals(task.getPriorityId())) {
+      final String oldPriorityCode = resolver.resolveTaskPriorityCode(task.getPriorityId());
+      final String newPriorityCode = resolver.resolveTaskPriorityCode(newPriorityId);
+      historyService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          "Prioritaet geaendert",
+          oldPriorityCode + " -> " + newPriorityCode);
+      task.setPriorityId(newPriorityId);
+      changed = true;
+      log.info(
+          "TaskCommandService.patch: Prioritaet der Aufgabe {} von {} auf {} geaendert.",
+          taskExternalId,
+          oldPriorityCode,
+          newPriorityCode);
     }
 
     // tagIds: PUT-Set-Semantik (R-PATCH)
@@ -750,6 +792,31 @@ public class TaskCommandService {
         inboxGenerationService.bumpSorted(tenantId, readerRefs);
         inboxSignalService.invalidate(tenantId, readerRefs);
       }
+    }
+  }
+
+  /**
+   * Loest den Ziel-Prioritaetscode eines PATCH auf die Dictionary-ID auf (Intake #183).
+   *
+   * <p>{@code null} bedeutet "auf NORMAL zuruecksetzen" und geht nie an den Resolver. Leer, blank,
+   * unbekannt oder inaktiv (der Resolver-Finder liefert nur aktive, gueltige Eintraege) ist ein
+   * Eingabefehler; die Meldung nennt den Originalwert und entspricht der von Create.
+   *
+   * @param priorityCode Client-Code oder {@code null}
+   * @return interne ID der Ziel-Prioritaet (nie null)
+   * @throws EntityValidationException bei leerem, unbekanntem oder inaktivem Code (HTTP 400)
+   */
+  private Long resolvePatchPriorityId(final String priorityCode) {
+    if (priorityCode == null) {
+      return resolver.resolveTaskPriority(TaskPriorityCodes.NORMAL);
+    }
+    if (priorityCode.isBlank()) {
+      throw new EntityValidationException("Ungueltiger priorityCode: '" + priorityCode + "'.");
+    }
+    try {
+      return resolver.resolveTaskPriority(priorityCode);
+    } catch (DictionaryResolverException e) {
+      throw new EntityValidationException("Ungueltiger priorityCode: '" + priorityCode + "'.");
     }
   }
 

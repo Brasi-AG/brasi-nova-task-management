@@ -11,7 +11,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate, description).
+ * Patch-DTO fuer Aufgaben (title, dueDate, statusCode, tagIds, startDate, description,
+ * priorityCode).
  *
  * <p>{@link PatchValue#absent()} bedeutet: Feld nicht aendern. {@link PatchValue#of(Object)}
  * bedeutet: Feld auf den angegebenen Wert setzen. {@link PatchValue#ofNull()} bedeutet: Feld
@@ -28,12 +29,18 @@ import java.util.UUID;
  * <p>{@code description} (#143): absent = unveraendert; present(text) = setzen (wie bei Create
  * unveraendert uebernommen); present(null) = Beschreibung loeschen (Spalte nullable).
  *
+ * <p>{@code priorityCode} (#183): absent = unveraendert; present(code) = Prioritaet setzen (Code
+ * aus dem Dictionary taskPriority, derzeit LOW, NORMAL, HIGH, URGENT); present(null) = auf NORMAL
+ * zuruecksetzen. Unbekannter, leerer oder inaktiver Code fuehrt zu HTTP 400.
+ *
  * @param title neuer Titel (oder absent)
  * @param dueDate neues Faelligkeitsdatum (oder absent/null)
  * @param statusCode neuer STATUS-CODE (z.B. "DONE"; oder absent)
  * @param tagIds neue Tag-UUID-Menge (PUT-Set; oder absent = unberuehrt)
  * @param startDate neues Startdatum (oder absent/null)
  * @param description neue Beschreibung (oder absent/null)
+ * @param priorityCode neuer Prioritaets-CODE (LOW, NORMAL, HIGH, URGENT; oder absent =
+ *     unveraendert, null = auf NORMAL zuruecksetzen)
  */
 public record TaskPatchInput(
     // Hinweis springdoc 2.8.12: PatchValue<T> wird als Wrapper kollabiert/missinterpretiert.
@@ -76,7 +83,15 @@ public record TaskPatchInput(
                 "Neue Beschreibung der Aufgabe (absent = unveraendert, null = Beschreibung"
                     + " loeschen).",
             example = "Belege bis Monatsende einsammeln")
-        PatchValue<String> description) {
+        PatchValue<String> description,
+    @Schema(
+            type = "string",
+            nullable = true,
+            description =
+                "Neuer Prioritaets-CODE aus dem Dictionary taskPriority (derzeit LOW, NORMAL,"
+                    + " HIGH, URGENT; absent = unveraendert, null = auf NORMAL zuruecksetzen).",
+            example = "HIGH")
+        PatchValue<String> priorityCode) {
 
   @JsonAnySetter
   public void rejectSourceMutation(final String name, final Object value) {
@@ -89,6 +104,7 @@ public record TaskPatchInput(
   /** Erzeugt eine leere Patch-Eingabe (alle Felder absent). */
   public static TaskPatchInput empty() {
     return new TaskPatchInput(
+        PatchValue.absent(),
         PatchValue.absent(),
         PatchValue.absent(),
         PatchValue.absent(),

@@ -8,11 +8,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskPriorityCodes;
 import de.brasi.nova.taskmanagement.entity.dictionary.code.TaskStatusCodes;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.repository.TaskKeysetQueryRepository;
@@ -90,6 +92,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -2814,6 +2817,381 @@ class TaskFacadeControllerIT {
         .isEqualTo(assigneeGenBefore + 1);
   }
 
+  // ---- Intake #183: PATCH priorityCode ----------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_setzen_und_zuruecksetzen (Intake #183): PATCH priorityCode=HIGH -> 204,"
+          + " Detail, Inbox-Snapshot und DB (PRIORITY_ID=203) zeigen HIGH, genau ein"
+          + " Verlaufseintrag 'Prioritaet geaendert' mit 'NORMAL -> HIGH', Creator-Generation +1;"
+          + " danach priorityCode=null -> NORMAL (PRIORITY_ID=202) mit 'HIGH -> NORMAL'")
+  void patch_prioritaet_setzen_und_zuruecksetzen() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue183-Prioritaet");
+
+    // Ausgangslage: Create setzt die Prioritaet NORMAL (Default).
+    assertThat(getDetail(mvc, om, tokenA, taskId).get("priorityCode").asText())
+        .as("frisch angelegte Aufgabe steht auf NORMAL")
+        .isEqualTo(TaskPriorityCodes.NORMAL);
+
+    // 1. NORMAL -> HIGH (echter Wire-Pfad: JSON -> PatchValue<String>)
+    final long generationBefore = readGeneration(USER_A_REF);
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"HIGH\"}").andExpect(status().isNoContent());
+    assertThat(readGeneration(USER_A_REF))
+        .as("Creator-Generation exakt +1 durch den priorityCode-PATCH (changed-Pfad)")
+        .isEqualTo(generationBefore + 1);
+
+    final JsonNode afterHigh = getDetail(mvc, om, tokenA, taskId);
+    assertThat(afterHigh.get("priorityCode").asText())
+        .as("Detail liefert die neue Prioritaet")
+        .isEqualTo(TaskPriorityCodes.HIGH);
+    assertThat(priorityHistoryDetails(afterHigh))
+        .as("genau ein Verlaufseintrag 'Prioritaet geaendert'")
+        .containsExactly("NORMAL -> HIGH");
+    assertThat(priorityIdOf(taskId))
+        .as("FK PRIORITY_ID muss nach PATCH HIGH persistiert sein (Seed-ID 203)")
+        .isEqualTo(203L);
+    assertThat(snapshotPriorityCode(mvc, om, tokenA, taskId))
+        .as("Inbox-Snapshot liefert die neue Prioritaet")
+        .isEqualTo(TaskPriorityCodes.HIGH);
+
+    // 2. null -> auf NORMAL zuruecksetzen (rohes JSON, Map.of akzeptiert keinen null-Wert)
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":null}").andExpect(status().isNoContent());
+
+    final JsonNode afterReset = getDetail(mvc, om, tokenA, taskId);
+    assertThat(afterReset.get("priorityCode").asText())
+        .as("Detail liefert NORMAL nach null-Reset")
+        .isEqualTo(TaskPriorityCodes.NORMAL);
+    assertThat(priorityHistoryDetails(afterReset))
+        .as("zweiter Verlaufseintrag fuer den Reset")
+        .containsExactlyInAnyOrder("NORMAL -> HIGH", "HIGH -> NORMAL");
+    assertThat(priorityIdOf(taskId))
+        .as("FK PRIORITY_ID muss nach Reset wieder NORMAL sein (Seed-ID 202)")
+        .isEqualTo(202L);
+    assertThat(snapshotPriorityCode(mvc, om, tokenA, taskId))
+        .as("Inbox-Snapshot liefert NORMAL nach Reset")
+        .isEqualTo(TaskPriorityCodes.NORMAL);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_unbekannter_und_leerer_code_liefert_400_und_aendert_nichts (Intake #183):"
+          + " unbekannter oder leerer priorityCode -> 400 mit Meldung 'Ungueltiger priorityCode:"
+          + " '<code>'.'; Detail, DB und Verlauf unveraendert, auch in Kombination mit title")
+  void patch_prioritaet_unbekannter_und_leerer_code_liefert_400_und_aendert_nichts()
+      throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue183-Ungueltig");
+    final int historyBefore = historyCountOf(taskId);
+    final String activityBefore = lastActivityOf(taskId);
+    final long generationBefore = readGeneration(USER_A_REF);
+
+    // 1. Unbekannter Code
+    assertBadRequestWithMessage(
+        patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"GIBTS_NICHT\"}"),
+        "Ungueltiger priorityCode: 'GIBTS_NICHT'.");
+
+    // 2. Leerer Code
+    assertBadRequestWithMessage(
+        patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"\"}"), "Ungueltiger priorityCode: ''.");
+
+    // 3. Kombination mit einem gueltigen title: nichts wird angewendet (All-or-Nothing)
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            "{\"title\":\"Issue183-Umbenannt\",\"priorityCode\":\"GIBTS_NICHT\"}"),
+        "Ungueltiger priorityCode: 'GIBTS_NICHT'.");
+
+    final JsonNode detail = getDetail(mvc, om, tokenA, taskId);
+    assertThat(detail.get("priorityCode").asText())
+        .as("Prioritaet nach abgelehnten PATCHes unveraendert")
+        .isEqualTo(TaskPriorityCodes.NORMAL);
+    assertThat(detail.get("title").asText())
+        .as("title nach abgelehntem Kombi-PATCH unveraendert")
+        .isEqualTo("Issue183-Ungueltig");
+    assertThat(priorityHistoryDetails(detail)).as("kein Prioritaetsverlauf").isEmpty();
+    assertThat(priorityIdOf(taskId)).as("DB PRIORITY_ID unveraendert (NORMAL)").isEqualTo(202L);
+    assertThat(historyCountOf(taskId)).as("kein neuer Verlaufseintrag").isEqualTo(historyBefore);
+    assertThat(lastActivityOf(taskId)).as("keine Aktivitaet").isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF)).as("kein Bump").isEqualTo(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_inaktiver_code_liefert_400 (Intake #183): ein vorhandener, aber inaktiver"
+          + " Eintrag in DIC_TASK_PRIORITY (ENTITY_STATUS 'DEACTIVE') ist nicht zuweisbar -> 400"
+          + " mit Meldung, Aufgabe und Verlauf unveraendert")
+  void patch_prioritaet_inaktiver_code_liefert_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final long inactiveId = 18301L;
+    final String inactiveCode = "T183_INAKTIV";
+    // Globaler Dictionary-Eintrag (TENANT_ID=0) mit ENTITY_STATUS 'DEACTIVE' (Spalten wie
+    // DictionaryCatalogIT); der Resolver-Finder filtert auf ENTITY_STATUS = 'ACTIVE'.
+    jdbcTemplate.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[DIC_TASK_PRIORITY] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[DIC_TASK_PRIORITY] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, ENTRY_TYPE, CODE, BEZEICHNUNG,"
+            + " ANGELEGT_VON, ANGELEGT_AM, GUELTIG_VON, GUELTIG_BIS, SORT_ORDER) "
+            + "VALUES (?, 'DEACTIVE', ?, 1, 0, 'SYSTEM_PUBLIC', ?, 'IT inaktive Prioritaet',"
+            + " 'it-test', GETDATE(), CAST(GETDATE() AS DATE), NULL, 99)",
+        inactiveId,
+        inactiveId,
+        UUID.randomUUID(),
+        inactiveCode);
+    try {
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT COUNT(*) FROM [dbo].[DIC_TASK_PRIORITY]"
+                      + " WHERE CODE = ? AND ENTITY_STATUS = 'DEACTIVE'",
+                  Integer.class,
+                  inactiveCode))
+          .as("der inaktive Eintrag existiert (Vorbedingung)")
+          .isEqualTo(1);
+
+      final UUID taskId = createTask(mvc, om, tokenA, "Issue183-Inaktiv");
+      final int historyBefore = historyCountOf(taskId);
+
+      assertBadRequestWithMessage(
+          patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"" + inactiveCode + "\"}"),
+          "Ungueltiger priorityCode: '" + inactiveCode + "'.");
+
+      final JsonNode detail = getDetail(mvc, om, tokenA, taskId);
+      assertThat(detail.get("priorityCode").asText())
+          .as("Prioritaet nach abgelehntem PATCH unveraendert")
+          .isEqualTo(TaskPriorityCodes.NORMAL);
+      assertThat(priorityHistoryDetails(detail)).as("kein Prioritaetsverlauf").isEmpty();
+      assertThat(priorityIdOf(taskId)).as("DB PRIORITY_ID unveraendert").isEqualTo(202L);
+      assertThat(historyCountOf(taskId)).isEqualTo(historyBefore);
+    } finally {
+      jdbcTemplate.update("DELETE FROM [dbo].[DIC_TASK_PRIORITY] WHERE ID = ?", inactiveId);
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_unveraenderter_code_erzeugt_keinen_verlauf (Intake #183): gleicher Code"
+          + " oder null bei NORMAL -> 204 ohne Verlaufseintrag, ohne Aktivitaets-Update und ohne"
+          + " Generation-Bump")
+  void patch_prioritaet_unveraenderter_code_erzeugt_keinen_verlauf() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue183-Unveraendert");
+
+    // a) NORMAL bei bereits NORMAL und b) null bei bereits NORMAL: No-Op
+    int historyBefore = historyCountOf(taskId);
+    String activityBefore = lastActivityOf(taskId);
+    long generationBefore = readGeneration(USER_A_REF);
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"NORMAL\"}")
+        .andExpect(status().isNoContent());
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":null}").andExpect(status().isNoContent());
+    assertThat(historyCountOf(taskId)).as("NORMAL->NORMAL: kein Verlauf").isEqualTo(historyBefore);
+    assertThat(lastActivityOf(taskId))
+        .as("NORMAL->NORMAL: keine Aktivitaet")
+        .isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF))
+        .as("NORMAL->NORMAL: kein Bump")
+        .isEqualTo(generationBefore);
+    assertThat(priorityIdOf(taskId)).isEqualTo(202L);
+
+    // c) HIGH setzen: genau ein Verlaufseintrag
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"HIGH\"}").andExpect(status().isNoContent());
+    assertThat(priorityHistoryDetails(getDetail(mvc, om, tokenA, taskId)))
+        .containsExactly("NORMAL -> HIGH");
+
+    // d) HIGH erneut: No-Op (weiterhin genau ein Eintrag, keine Aktivitaet, kein Bump)
+    historyBefore = historyCountOf(taskId);
+    activityBefore = lastActivityOf(taskId);
+    generationBefore = readGeneration(USER_A_REF);
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"HIGH\"}").andExpect(status().isNoContent());
+    assertThat(historyCountOf(taskId)).as("HIGH->HIGH: kein Verlauf").isEqualTo(historyBefore);
+    assertThat(lastActivityOf(taskId)).as("HIGH->HIGH: keine Aktivitaet").isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF)).as("HIGH->HIGH: kein Bump").isEqualTo(generationBefore);
+    assertThat(priorityHistoryDetails(getDetail(mvc, om, tokenA, taskId)))
+        .as("weiterhin genau ein Prioritaetseintrag")
+        .containsExactly("NORMAL -> HIGH");
+    assertThat(priorityIdOf(taskId)).isEqualTo(203L);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_loest_keine_benachrichtigung_aus (Intake #183): PATCH priorityCode auf"
+          + " einer Aufgabe mit Zugewiesenem erzeugt keine neue TASK_NOTIFICATION")
+  void patch_prioritaet_loest_keine_benachrichtigung_aus() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    final String postResp =
+        mvc.perform(
+                post("/api/v1/tasks")
+                    .header("Authorization", "Bearer " + tokenA)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(
+                            Map.of(
+                                "title",
+                                "Issue183-Benachrichtigung",
+                                "assignees",
+                                List.of(USER_A2_REF)))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    final UUID taskId = UUID.fromString(om.readTree(postResp).get("id").asText());
+
+    final String countSql =
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID WHERE t.EXTERNALID = ?";
+    final Integer notificationsBefore =
+        jdbcTemplate.queryForObject(countSql, Integer.class, taskId);
+
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"HIGH\"}").andExpect(status().isNoContent());
+
+    assertThat(priorityIdOf(taskId)).as("Prioritaet wurde geaendert (HIGH)").isEqualTo(203L);
+    assertThat(jdbcTemplate.queryForObject(countSql, Integer.class, taskId))
+        .as("Prioritaetsaenderung erzeugt keine Benachrichtigung")
+        .isEqualTo(notificationsBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_erledigte_aufgabe_archivsuche_liefert_neue_prioritaet (Intake #183):"
+          + " erledigte Aufgabe (DONE) bleibt patchbar; PATCH priorityCode=LOW -> Detail und"
+          + " Archivsuche liefern LOW, der Status bleibt DONE")
+  void patch_prioritaet_erledigte_aufgabe_archivsuche_liefert_neue_prioritaet() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+
+    // Eindeutiger Suchbegriff (nur Buchstaben/Ziffern, damit kein LIKE-Sonderzeichen stoert)
+    final String term = "T183Archiv" + UUID.randomUUID().toString().replace("-", "");
+    final UUID taskId = createTask(mvc, om, tokenA, term);
+
+    patchRaw(mvc, tokenA, taskId, "{\"statusCode\":\"DONE\"}").andExpect(status().isNoContent());
+    // Ein erledigter Task ist wie bisher patchbar (kein neuer Guard).
+    patchRaw(mvc, tokenA, taskId, "{\"priorityCode\":\"LOW\"}").andExpect(status().isNoContent());
+
+    final JsonNode detail = getDetail(mvc, om, tokenA, taskId);
+    assertThat(detail.get("priorityCode").asText()).isEqualTo(TaskPriorityCodes.LOW);
+    assertThat(detail.get("statusCode").asText()).isEqualTo(TaskStatusCodes.DONE);
+    assertThat(priorityHistoryDetails(detail)).containsExactly("NORMAL -> LOW");
+    assertThat(priorityIdOf(taskId))
+        .as("FK PRIORITY_ID muss nach PATCH LOW persistiert sein (Seed-ID 201)")
+        .isEqualTo(201L);
+
+    final JsonNode archived = archiveSearchItem(mvc, om, tokenA, term, taskId);
+    assertThat(archived != null)
+        .as("erledigte Aufgabe ist ueber die Archivsuche auffindbar")
+        .isTrue();
+    assertThat(archived.path("priorityCode").asText())
+        .as("Archivsuche liefert die neue Prioritaet")
+        .isEqualTo(TaskPriorityCodes.LOW);
+    assertThat(archived.path("statusCode").asText()).isEqualTo(TaskStatusCodes.DONE);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_nicht_und_ex_mitglied_liefert_404_ohne_aenderung (Intake #183): aktiver"
+          + " grantfreier Member darf die Prioritaet patchen; nach Austritt (Ex-Mitglied) und fuer"
+          + " Nicht-Mitglieder -> neutrale 404, Prioritaet, Verlauf und Aktivitaet unveraendert")
+  void patch_prioritaet_nicht_und_ex_mitglied_liefert_404_ohne_aenderung() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String creator =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, USER_A_REF, USER_A_LOGIN, "task-management:TASK_WRITE");
+    final String member = buildJwtWithAuthority(TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN);
+    final String nonMember =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_READ_ONLY_REF, USER_READ_ONLY_LOGIN);
+    final UUID taskId = createTask(mvc, om, creator, "Issue183-Membership");
+
+    // Nicht-Mitglied: 404, nichts geaendert
+    final int historyBeforeNonMember = historyCountOf(taskId);
+    final String activityBeforeNonMember = lastActivityOf(taskId);
+    patchRaw(mvc, nonMember, taskId, "{\"priorityCode\":\"HIGH\"}")
+        .andExpect(status().isNotFound());
+    assertThat(priorityIdOf(taskId)).as("Nicht-Mitglied: Prioritaet unveraendert").isEqualTo(202L);
+    assertThat(historyCountOf(taskId)).isEqualTo(historyBeforeNonMember);
+    assertThat(lastActivityOf(taskId)).isEqualTo(activityBeforeNonMember);
+
+    // Aktives Mitglied (zugewiesen, ohne Task-Grant): erlaubt
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + creator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_A2_REF)))))
+        .andExpect(status().isNoContent());
+    patchRaw(mvc, member, taskId, "{\"priorityCode\":\"LOW\"}").andExpect(status().isNoContent());
+    assertThat(priorityIdOf(taskId)).as("aktives Mitglied: Prioritaet LOW").isEqualTo(201L);
+
+    // Austritt (Abmeldung): danach Ex-Mitglied -> 404
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + creator)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assignees\":[]}"))
+        .andExpect(status().isNoContent());
+    final int historyAfterExit = historyCountOf(taskId);
+    final String activityAfterExit = lastActivityOf(taskId);
+    patchRaw(mvc, member, taskId, "{\"priorityCode\":\"HIGH\"}").andExpect(status().isNotFound());
+    assertThat(priorityIdOf(taskId))
+        .as("Ex-Mitglied: Prioritaet bleibt LOW (Seed-ID 201)")
+        .isEqualTo(201L);
+    assertThat(historyCountOf(taskId)).as("Ex-Mitglied: kein Verlauf").isEqualTo(historyAfterExit);
+    assertThat(lastActivityOf(taskId))
+        .as("Ex-Mitglied: keine Aktivitaet")
+        .isEqualTo(activityAfterExit);
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
@@ -2851,6 +3229,135 @@ class TaskFacadeControllerIT {
             .getResponse()
             .getContentAsString();
     return om.readTree(body);
+  }
+
+  /** PATCH /api/v1/tasks/{id} mit rohem JSON-Body (null ist mit Map.of nicht darstellbar). */
+  private ResultActions patchRaw(
+      final MockMvc mvc, final String token, final UUID taskId, final String json)
+      throws Exception {
+    return mvc.perform(
+        patch("/api/v1/tasks/" + taskId)
+            .header("Authorization", "Bearer " + token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json));
+  }
+
+  /** Erwartet 400 und die Meldung im Fehlerkoerper (ohne den JSON-Pfad der Meldung festzulegen). */
+  private static void assertBadRequestWithMessage(final ResultActions result, final String message)
+      throws Exception {
+    final String body =
+        result.andExpect(status().isBadRequest()).andReturn().getResponse().getContentAsString();
+    assertThat(body).as("Fehlerkoerper nennt die Meldung").contains(message);
+  }
+
+  /** changeDetail-Werte aller Verlaufseintraege 'Prioritaet geaendert' eines Detail-JSON. */
+  private static List<String> priorityHistoryDetails(final JsonNode detail) {
+    final List<String> out = new java.util.ArrayList<>();
+    for (final JsonNode h : detail.path("history")) {
+      if ("Prioritaet geaendert".equals(h.path("text").asText())) {
+        out.add(h.path("changeDetail").asText());
+      }
+    }
+    return out;
+  }
+
+  /** Persistierte PRIORITY_ID der Aufgabe (DB-Beweis, unabhaengig von der Read-Schicht). */
+  private long priorityIdOf(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT PRIORITY_ID FROM [dbo].[TASK] WHERE EXTERNALID = ?", Long.class, taskId);
+  }
+
+  /** Anzahl aller Verlaufseintraege der Aufgabe. */
+  private int historyCountOf(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t ON h.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskId);
+  }
+
+  /** LAST_ACTIVITY_AT der Aufgabe als ISO-String (verlustfrei vergleichbar). */
+  private String lastActivityOf(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT CONVERT(varchar(33), LAST_ACTIVITY_AT, 126) FROM [dbo].[TASK]"
+            + " WHERE EXTERNALID = ?",
+        String.class,
+        taskId);
+  }
+
+  /**
+   * priorityCode des Items einer Aufgabe im Inbox-Snapshot ({@code GET /api/v1/tasks/snapshot},
+   * {@code tasks.items}); null, wenn die Aufgabe dort nicht enthalten ist.
+   */
+  private String snapshotPriorityCode(
+      final MockMvc mvc, final ObjectMapper om, final String token, final UUID taskId)
+      throws Exception {
+    final JsonNode snapshot =
+        om.readTree(
+            mvc.perform(get("/api/v1/tasks/snapshot").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    for (final JsonNode item : snapshot.path("tasks").path("items")) {
+      if (taskId.toString().equals(item.path("id").asText())) {
+        return item.path("priorityCode").asText();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Item einer Aufgabe in der Archivsuche ({@code GET /api/v1/tasks/archive/search}, Filter {@code
+   * all}); null, wenn die Aufgabe nicht gefunden wird.
+   */
+  private JsonNode archiveSearchItem(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final String term,
+      final UUID taskId)
+      throws Exception {
+    final JsonNode page =
+        om.readTree(
+            mvc.perform(
+                    get("/api/v1/tasks/archive/search")
+                        .queryParam("query", term)
+                        .queryParam("filter", "all")
+                        .queryParam("limit", "50")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    for (final JsonNode item : taskItemsOf(page)) {
+      if (taskId.toString().equals(item.path("id").asText())) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Items einer Task-Collection-Seite. Je nach HAL-Autoconfig liegen sie unter {@code
+   * _embedded.tasks}, {@code content} oder {@code items}; dieser IT prueft den Inhalt, nicht die
+   * Wire-Form (wie {@code InboxSnapshotControllerIT}).
+   */
+  private static JsonNode taskItemsOf(final JsonNode page) {
+    final JsonNode embedded = page.path("_embedded").path("tasks");
+    if (embedded.isArray()) {
+      return embedded;
+    }
+    final JsonNode content = page.path("content");
+    if (content.isArray()) {
+      return content;
+    }
+    final JsonNode items = page.path("items");
+    if (items.isArray()) {
+      return items;
+    }
+    // Leere Seite (nur Cursor-Felder): keine Items.
+    return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
   }
 
   private static List<String> readStringArray(final com.fasterxml.jackson.databind.JsonNode node) {

@@ -329,7 +329,13 @@ public class TaskFacadeController {
   }
 
   /**
-   * Patcht eine bestehende Aufgabe (title, dueDate, statusCode, tagIds, startDate).
+   * Patcht eine bestehende Aufgabe (title, dueDate, statusCode, tagIds, startDate, description,
+   * priorityCode).
+   *
+   * <p>{@code priorityCode} (Intake #183): Code aus dem Dictionary taskPriority (derzeit LOW,
+   * NORMAL, HIGH, URGENT); absent = unveraendert, null = auf NORMAL zuruecksetzen. Unbekannter,
+   * leerer oder inaktiver Code ist 400. Eine Aenderung schreibt einen Verlaufseintrag, eine
+   * Benachrichtigung gibt es nicht.
    *
    * @param id externe UUID der Aufgabe
    * @param input Patch-Eingabe
@@ -339,13 +345,19 @@ public class TaskFacadeController {
       summary = "Aufgabe patchen",
       description =
           "Aktualisiert einzelne Felder einer Aufgabe (title, dueDate, statusCode, tagIds,"
-              + " startDate, description). Nur gesendete Felder werden geaendert (PatchValue-"
-              + "Semantik: absent = unveraendert, null = Datumsfeld bzw. Beschreibung loeschen).")
+              + " startDate, description, priorityCode). Nur gesendete Felder werden geaendert"
+              + " (PatchValue-Semantik: absent = unveraendert, null = Datumsfeld bzw. Beschreibung"
+              + " loeschen bzw. priorityCode auf NORMAL zuruecksetzen). priorityCode ist ein Code"
+              + " aus dem Dictionary taskPriority (derzeit LOW, NORMAL, HIGH, URGENT); eine"
+              + " Aenderung schreibt den Verlaufseintrag 'Prioritaet geaendert' (z. B. 'NORMAL ->"
+              + " HIGH') und loest keine Benachrichtigung aus.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
     @ApiResponse(
         responseCode = "400",
-        description = "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID)."),
+        description =
+            "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID, unbekannter,"
+                + " leerer oder inaktiver priorityCode)."),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
     @ApiResponse(
         responseCode = "404",
@@ -353,7 +365,8 @@ public class TaskFacadeController {
             "Aufgabe nicht gefunden, fremder Mandant oder kein Mitglied (neutral maskiert)."),
     @ApiResponse(
         responseCode = "409",
-        description = LockConflictApiExamples.DESCRIPTION,
+        description =
+            LockConflictApiExamples.DESCRIPTION + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT,
         content =
             @Content(
                 mediaType = "application/json",

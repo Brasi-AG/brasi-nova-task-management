@@ -89,7 +89,10 @@ class TaskCommandServiceTest {
   private static final long STATUS_ID_OPEN = 101L;
   private static final long STATUS_ID_DONE = 102L;
   private static final long STATUS_ID_CANCELLED = 103L;
+  private static final long PRIORITY_ID_LOW = 201L;
   private static final long PRIORITY_ID_NORMAL = 202L;
+  private static final long PRIORITY_ID_HIGH = 203L;
+  private static final long PRIORITY_ID_URGENT = 204L;
 
   @Mock private BaseTaskRepository taskRepository;
   @Mock private BaseTaskParticipantRepository participantRepository;
@@ -530,6 +533,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
+                        PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
@@ -550,6 +554,7 @@ class TaskCommandServiceTest {
                 service.patch(
                     foreignTask.getUuid(),
                     new TaskPatchInput(
+                        PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
@@ -581,6 +586,7 @@ class TaskCommandServiceTest {
                     task.getUuid(),
                     new TaskPatchInput(
                         PatchValue.of("Neuer Titel"),
+                        PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
@@ -641,6 +647,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     @SuppressWarnings("unchecked")
@@ -697,6 +704,7 @@ class TaskCommandServiceTest {
                         PatchValue.of("UNGUELTIG_STATUS"),
                         PatchValue.absent(),
                         PatchValue.absent(),
+                        PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNGUELTIG_STATUS");
@@ -717,6 +725,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.of(""),
+                        PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent())))
@@ -746,6 +755,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.of(java.util.Set.of(inactiveTagUuid)),
+                        PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
@@ -784,6 +794,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent()));
 
@@ -825,6 +836,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.of(Set.of(newInactiveTag)),
                         PatchValue.absent(),
+                        PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining(newInactiveTag.toString());
@@ -853,6 +865,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.of(tagIdsWithNull),
+                        PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
@@ -886,6 +899,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent()));
 
@@ -929,6 +943,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuid)),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     verify(historyService)
@@ -966,6 +981,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of(Set.of()),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent()));
 
@@ -1007,6 +1023,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuid2)),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     verify(historyService)
@@ -1040,6 +1057,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuid)),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent()));
 
@@ -1080,6 +1098,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.of(Set.of(tagUuidA, tagUuidB)),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     verify(historyService)
@@ -1113,6 +1132,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.of(Set.of()),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     verify(historyService)
@@ -1140,6 +1160,7 @@ class TaskCommandServiceTest {
         task.getUuid(),
         new TaskPatchInput(
             PatchValue.of(newLongTitle),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
@@ -1183,6 +1204,7 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
+                        PatchValue.absent(),
                         PatchValue.absent())))
         .isInstanceOf(EntityValidationException.class);
   }
@@ -1209,6 +1231,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of(neu),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     assertThat(task.getStartDate()).as("startDate gesetzt").isEqualTo(neu);
@@ -1235,6 +1258,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.ofNull(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     assertThat(task.getStartDate()).as("startDate geloescht (null)").isNull();
@@ -1263,7 +1287,8 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.of("Neuer Text")));
+            PatchValue.of("Neuer Text"),
+            PatchValue.absent()));
 
     assertThat(task.getDescription()).as("Beschreibung gesetzt").isEqualTo("Neuer Text");
     verify(historyService)
@@ -1295,7 +1320,8 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.ofNull()));
+            PatchValue.ofNull(),
+            PatchValue.absent()));
 
     assertThat(task.getDescription()).as("Beschreibung geloescht (null)").isNull();
     verify(historyService)
@@ -1325,6 +1351,274 @@ class TaskCommandServiceTest {
     verify(historyService, never()).record(any(), any(), any(), eq("Startdatum geaendert"), any());
     verify(taskRepository, never()).save(any(Task.class));
     verify(inboxSignalService, never()).invalidate(anyLong(), any());
+  }
+
+  // ---- Intake #183: PATCH priorityCode (PatchValue<String>) -------------------------------------
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_high_setzen: present(HIGH) -> priorityId gesetzt, genau ein Verlaufseintrag"
+          + " 'Prioritaet geaendert' mit 'NORMAL -> HIGH', save + Bump/Invalidate, keine"
+          + " Benachrichtigung (#183)")
+  void patch_prioritaet_high_setzen() {
+    final Long taskId = 183L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubCreatorAndActor();
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of(TaskPriorityCodes.HIGH)));
+
+    assertThat(task.getPriorityId()).as("Prioritaet auf HIGH gesetzt").isEqualTo(PRIORITY_ID_HIGH);
+    verifyPriorityHistory(taskId, "NORMAL -> HIGH");
+    verify(historyService, times(1)).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository).save(task);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), any());
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_urgent_setzen: present(URGENT) -> priorityId 204, genau ein Verlaufseintrag"
+          + " 'Prioritaet geaendert' mit 'NORMAL -> URGENT', save, keine Benachrichtigung (#183)")
+  void patch_prioritaet_urgent_setzen() {
+    final Long taskId = 194L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubCreatorAndActor();
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of(TaskPriorityCodes.URGENT)));
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet auf URGENT gesetzt")
+        .isEqualTo(PRIORITY_ID_URGENT);
+    verifyPriorityHistory(taskId, "NORMAL -> URGENT");
+    verify(historyService, times(1)).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository).save(task);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_null_bei_high_setzt_auf_normal_zurueck: present(null) -> NORMAL, Verlauf"
+          + " 'HIGH -> NORMAL' + save (#183)")
+  void patch_prioritaet_null_bei_high_setzt_auf_normal_zurueck() {
+    final Long taskId = 184L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_HIGH);
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.ofNull()));
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet auf NORMAL zurueckgesetzt")
+        .isEqualTo(PRIORITY_ID_NORMAL);
+    verifyPriorityHistory(taskId, "HIGH -> NORMAL");
+    verify(historyService, times(1)).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository).save(task);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_null_bei_normal_ist_noop: present(null) bei bereits NORMAL -> keine"
+          + " History, KEIN save, KEIN Bump/Invalidate (#183)")
+  void patch_prioritaet_null_bei_normal_ist_noop() {
+    final Long taskId = 185L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.ofNull()));
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet unveraendert NORMAL")
+        .isEqualTo(PRIORITY_ID_NORMAL);
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_gleicher_code_ist_noop: present(HIGH) bei bereits HIGH -> keine History,"
+          + " KEIN save, KEIN Bump/Invalidate (#183)")
+  void patch_prioritaet_gleicher_code_ist_noop() {
+    final Long taskId = 186L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_HIGH);
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of(TaskPriorityCodes.HIGH)));
+
+    assertThat(task.getPriorityId()).as("Prioritaet unveraendert HIGH").isEqualTo(PRIORITY_ID_HIGH);
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_verlauf_nutzt_kanonischen_code: abweichende Schreibweise des Clients"
+          + " ('high') -> Verlauf mit dem Dictionary-Code 'NORMAL -> HIGH' (#183)")
+  void patch_prioritaet_verlauf_nutzt_kanonischen_code() {
+    final Long taskId = 187L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    // Die Aufloesung ist (je nach DB-Collation) nicht case-sensitiv: gleiche ID wie HIGH.
+    when(resolver.resolveTaskPriority("high")).thenReturn(PRIORITY_ID_HIGH);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of("high")));
+
+    assertThat(task.getPriorityId()).isEqualTo(PRIORITY_ID_HIGH);
+    verifyPriorityHistory(taskId, "NORMAL -> HIGH");
+  }
+
+  @Test
+  @DisplayName(
+      "patch_ungueltiger_priority_code_liefert_400: unbekannter oder inaktiver Code -> Resolver"
+          + " wirft -> EntityValidationException mit exakter Meldung, keine Mutation (#183)")
+  void patch_ungueltiger_priority_code_liefert_400() {
+    final Long taskId = 188L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    when(resolver.resolveTaskPriority("GIBTS_NICHT"))
+        .thenThrow(new DictionaryResolverException("CODE 'GIBTS_NICHT' nicht gefunden."));
+
+    assertThatThrownBy(
+            () -> service.patch(task.getUuid(), priorityPatch(PatchValue.of("GIBTS_NICHT"))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Ungueltiger priorityCode: 'GIBTS_NICHT'.");
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet nach abgelehntem PATCH unveraendert")
+        .isEqualTo(PRIORITY_ID_NORMAL);
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "patch_leerer_priority_code_liefert_400: leerer oder blanker Code ->"
+          + " EntityValidationException mit exakter Meldung, keine Mutation (#183)")
+  void patch_leerer_priority_code_liefert_400() {
+    final Long taskId = 189L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    for (final String blank : List.of("", "   ")) {
+      // Der echte Resolver findet fuer einen leeren Code keinen Eintrag und wirft.
+      when(resolver.resolveTaskPriority(blank))
+          .thenThrow(new DictionaryResolverException("CODE '" + blank + "' nicht gefunden."));
+
+      assertThatThrownBy(() -> service.patch(task.getUuid(), priorityPatch(PatchValue.of(blank))))
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage("Ungueltiger priorityCode: '" + blank + "'.");
+    }
+
+    assertThat(task.getPriorityId())
+        .as("Prioritaet nach abgelehntem PATCH unveraendert")
+        .isEqualTo(PRIORITY_ID_NORMAL);
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "patch_ungueltiger_priority_code_mit_titel_mutiert_nichts: ungueltiger Code wird VOR jeder"
+          + " Mutation geprueft -> Titel bleibt, kein Verlaufseintrag, kein save (#183)")
+  void patch_ungueltiger_priority_code_mit_titel_mutiert_nichts() {
+    final Long taskId = 190L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    when(resolver.resolveTaskPriority("GIBTS_NICHT"))
+        .thenThrow(new DictionaryResolverException("CODE 'GIBTS_NICHT' nicht gefunden."));
+
+    assertThatThrownBy(
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.of("Neuer Titel"),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of("GIBTS_NICHT"))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Ungueltiger priorityCode: 'GIBTS_NICHT'.");
+
+    assertThat(task.getTitle()).as("Titel unveraendert").isEqualTo("Jahresabschluss");
+    assertThat(task.getPriorityId()).isEqualTo(PRIORITY_ID_NORMAL);
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_und_titel_kombiniert: beide Felder -> beide Verlaufseintraege, genau ein"
+          + " save (#183)")
+  void patch_prioritaet_und_titel_kombiniert() {
+    final Long taskId = 191L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(TaskPriorityCodes.LOW)));
+
+    assertThat(task.getTitle()).isEqualTo("Neuer Titel");
+    assertThat(task.getPriorityId()).isEqualTo(PRIORITY_ID_LOW);
+    verify(historyService, times(1))
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Titel geaendert"), any());
+    verifyPriorityHistory(taskId, "NORMAL -> LOW");
+    verify(historyService, times(2)).record(anyLong(), anyLong(), any(), any(), any());
+    verify(taskRepository, times(1)).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_bei_erledigter_aufgabe_bleibt_moeglich: DONE-Aufgabe ist weiter patchbar,"
+          + " Status unveraendert, keine Benachrichtigung (#183)")
+  void patch_prioritaet_bei_erledigter_aufgabe_bleibt_moeglich() {
+    final Long taskId = 192L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_DONE, PRIORITY_ID_NORMAL);
+    stubCreatorAndActor();
+    stubPriorities();
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), priorityPatch(PatchValue.of(TaskPriorityCodes.LOW)));
+
+    assertThat(task.getPriorityId()).as("Prioritaet auf LOW gesetzt").isEqualTo(PRIORITY_ID_LOW);
+    assertThat(task.getTaskStatusId()).as("Status bleibt DONE").isEqualTo(STATUS_ID_DONE);
+    verifyPriorityHistory(taskId, "NORMAL -> LOW");
+    verify(taskRepository).save(task);
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "patch_prioritaet_non_member_404_keine_mutation: Guard wirft 404 VOR der Mutation -> keine"
+          + " History, kein Save, kein Bump/Invalidate, Prioritaet unveraendert (#183)")
+  void patch_prioritaet_non_member_404_keine_mutation() {
+    final Long taskId = 193L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    org.mockito.Mockito.doThrow(new EntityNotFoundException("Aufgabe nicht gefunden."))
+        .when(membershipGuard)
+        .requireWriteMember(taskId, USER_REF, TENANT_ID);
+
+    final TaskPatchInput highPatch = priorityPatch(PatchValue.of(TaskPriorityCodes.HIGH));
+
+    assertThatThrownBy(() -> service.patch(task.getUuid(), highPatch))
+        .isInstanceOf(EntityNotFoundException.class)
+        .hasMessage("Aufgabe nicht gefunden.");
+
+    assertThat(task.getPriorityId()).isEqualTo(PRIORITY_ID_NORMAL);
+    verifyNoPriorityMutation();
   }
 
   // ---- Intake #151: DONE-Benachrichtigung beim Schliessen einer Aufgabe -------------------------
@@ -1510,6 +1804,7 @@ class TaskCommandServiceTest {
         task.getUuid(),
         new TaskPatchInput(
             PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
@@ -1838,6 +2133,7 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
+            PatchValue.absent(),
             PatchValue.absent()));
 
     verify(userStateQueryRepository, never()).findMutedByTaskId(any());
@@ -1941,7 +2237,70 @@ class TaskCommandServiceTest {
         PatchValue.of(statusCode),
         PatchValue.absent(),
         PatchValue.absent(),
+        PatchValue.absent(),
         PatchValue.absent());
+  }
+
+  /** Baut ein Patch-Input, das ausschliesslich den priorityCode setzt (Intake #183). */
+  private static TaskPatchInput priorityPatch(final PatchValue<String> priorityCode) {
+    return new TaskPatchInput(
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        priorityCode);
+  }
+
+  /** Baut eine Aufgabe mit Status und Prioritaet (siehe {@link #taskWithStatus}). */
+  private Task taskWithPriority(final Long taskId, final long statusId, final long priorityId) {
+    final Task task = taskWithStatus(taskId, statusId);
+    task.setPriorityId(priorityId);
+    return task;
+  }
+
+  /** Stellt die Dictionary-Aufloesung der Prioritaeten (Code und ID) wie im Seed bereit. */
+  private void stubPriorities() {
+    when(resolver.resolveTaskPriority(TaskPriorityCodes.LOW)).thenReturn(PRIORITY_ID_LOW);
+    when(resolver.resolveTaskPriority(TaskPriorityCodes.HIGH)).thenReturn(PRIORITY_ID_HIGH);
+    when(resolver.resolveTaskPriority(TaskPriorityCodes.URGENT)).thenReturn(PRIORITY_ID_URGENT);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_LOW)).thenReturn(TaskPriorityCodes.LOW);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_NORMAL)).thenReturn(TaskPriorityCodes.NORMAL);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_HIGH)).thenReturn(TaskPriorityCodes.HIGH);
+    when(resolver.resolveTaskPriorityCode(PRIORITY_ID_URGENT)).thenReturn(TaskPriorityCodes.URGENT);
+  }
+
+  /**
+   * Stellt den Akteur als aktiven Leser der Aufgabe bereit - so wird ein faelschlicher oder
+   * erwarteter Bump/Invalidate beobachtbar.
+   */
+  private void stubActiveReader(final Long taskId) {
+    final TaskUserState state = new TaskUserState();
+    state.setUserRef(USER_REF);
+    state.setTaskId(taskId);
+    state.setTenantId(TENANT_ID);
+    when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of(state));
+  }
+
+  /** Prueft genau einen Verlaufseintrag 'Prioritaet geaendert' mit dem erwarteten Detail. */
+  private void verifyPriorityHistory(final Long taskId, final String changeDetail) {
+    verify(historyService, times(1))
+        .record(
+            eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Prioritaet geaendert"), eq(changeDetail));
+  }
+
+  /**
+   * Prueft, dass der Patch nichts geschrieben hat: keine History, kein save, kein Bump/Invalidate,
+   * keine Benachrichtigung.
+   */
+  private void verifyNoPriorityMutation() {
+    verify(historyService, never()).record(any(), any(), any(), any(), any());
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
+    verify(inboxGenerationService, never()).bump(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
   }
 
   /**
