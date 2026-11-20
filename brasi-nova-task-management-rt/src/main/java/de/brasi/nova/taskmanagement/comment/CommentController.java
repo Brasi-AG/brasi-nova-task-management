@@ -18,6 +18,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import jakarta.servlet.http.Part;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 /**
  * Handgeschriebener Facade-Controller fuer Kommentar-Operationen (arch-v2 §7).
@@ -323,10 +325,22 @@ public class CommentController {
    * oder mit {@code text/plain} (so sendet ihn ein Browser mit {@code FormData.append}) wird mit
    * demselben JSON angenommen. Das Lesen steht vor der Pruefung der Mitgliedschaft.
    *
+   * <p>Der Teil {@code comment} wird als {@link Part} angenommen, nicht als {@code byte[]}, {@code
+   * String} oder {@link MultipartFile} (Intake #152 Teil B): Ein {@code byte[]} oder {@code String}
+   * liest Spring ueber einen MessageConverter, und danach laeuft jede {@code RequestBodyAdvice}.
+   * Die KSF-Advice {@code NovaTenantBindingRequestBodyAdvice} (ksf-web) behandelt dabei jedes Array
+   * als {@code Object[]} und scheitert an Primitiv-Arrays wie {@code byte[]} mit {@code
+   * ClassCastException} (500). Ein {@link Part} loest Spring direkt aus der Anfrage auf, ohne
+   * MessageConverter und ohne Advice. {@link MultipartFile} passt nicht, weil ein Teil ohne
+   * Dateinamen (so sendet ihn {@code FormData.append('comment', string)}) in der Multipart-Anfrage
+   * nicht als Datei gefuehrt wird.
+   *
    * @param id externe UUID der Aufgabe
-   * @param comment Rohinhalt des Teils {@code comment} (JSON, UTF-8)
+   * @param comment Teil {@code comment} (JSON, UTF-8); den Inhalt liest {@link CommentPartReader}
    * @param files hochgeladene Dateien (Teile {@code files}, mindestens einer)
    * @return 201 Created mit {@link CommentModel} des neuen Kommentars samt Anhaengen
+   * @throws MissingServletRequestPartException wenn der Teil {@code comment} leer ist; er gilt wie
+   *     ein fehlender Teil (HTTP 400, wie bisher)
    */
   @Operation(
       summary = "Kommentar mit Anhängen erstellen",
@@ -505,8 +519,9 @@ public class CommentController {
   public ResponseEntity<CommentModel> createCommentWithAttachments(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
-      @Parameter(hidden = true) @RequestPart("comment") final byte[] comment,
-      @Parameter(hidden = true) @RequestPart("files") final List<MultipartFile> files) {
+      @Parameter(hidden = true) @RequestPart("comment") final Part comment,
+      @Parameter(hidden = true) @RequestPart("files") final List<MultipartFile> files)
+      throws MissingServletRequestPartException {
     final CommentCreateInput input = commentPartReader.read(comment);
     final CommentModel model =
         commentAttachmentService.createCommentWithAttachments(id, input, files);

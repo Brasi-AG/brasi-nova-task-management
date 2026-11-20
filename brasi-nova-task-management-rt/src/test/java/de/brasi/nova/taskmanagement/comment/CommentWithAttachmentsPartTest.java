@@ -30,6 +30,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.mock.web.MockMultipartHttpServletRequest;
 import org.springframework.mock.web.MockPart;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -161,6 +162,39 @@ class CommentWithAttachmentsPartTest {
               jsonPath("$.details[0]").value("Das Feld 'text' darf nicht null oder leer sein."));
     }
 
+    verify(attachmentService, never()).createCommentWithAttachments(any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "#152 FIX2 Lesefehler am Teil comment -> 400 NOVA_MESSAGE_NOT_READABLE mit neutralem Text,"
+          + " weder Pfad noch Exception-Text in der Antwort, kein Service-Aufruf")
+  void i152_unreadable_part_is_400_without_internal_details() throws Exception {
+    final MockMultipartHttpServletRequestBuilder request = multipart(URL, TASK_ID);
+    // Der Teil kommt direkt in die Anfrage: der Request-Builder liest Teile beim Aufbau selbst.
+    request.with(
+        servletRequest -> {
+          ((MockMultipartHttpServletRequest) servletRequest).addPart(new UnreadablePart());
+          return servletRequest;
+        });
+    request.file(new MockMultipartFile("files", "Bericht.pdf", "application/pdf", PDF_BYTES));
+
+    final String body =
+        mvc.perform(request)
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.errorKey").value("NOVA_MESSAGE_NOT_READABLE"))
+            .andExpect(
+                jsonPath("$.details[0]").value("Teil 'comment' konnte nicht gelesen werden."))
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+
+    assertThat(body)
+        .doesNotContain("upload_123")
+        .doesNotContain("C:")
+        .doesNotContain("IOException")
+        .doesNotContain("Das System kann die Datei nicht finden");
     verify(attachmentService, never()).createCommentWithAttachments(any(), any(), any());
   }
 
