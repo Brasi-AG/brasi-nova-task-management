@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.attachment;
 
+import de.brasi.nova.taskmanagement.web.StreamingRejectionAdvice;
 import de.brasi.nova.taskmanagement.web.TranslatesLockConflicts;
 
 /**
@@ -326,6 +327,38 @@ public final class AttachmentApiExamples {
           + "/thumbnail"
           + NOT_FOUND_MIDDLE
           + ATTACHMENT_NOT_FOUND_TAIL;
+
+  /**
+   * Kopf eines 503-Beispiels der Auslieferung bis zum Pfad. {@code message} ist der neutrale Text,
+   * den KSF fuer jeden Status 5xx setzt; die Begruendung der Advice steht in {@code details}.
+   */
+  private static final String SERVICE_BUSY_HEAD =
+      ERROR_HEAD
+          + "\"status\":503,\"error\":\"Service Unavailable\","
+          + "\"message\":\"Ein interner Serverfehler ist aufgetreten. Bitte kontaktieren Sie den"
+          + " Support.\",\"path\":\""
+          + PATH_ATTACHMENT
+          + "/";
+
+  /** Ende eines 503-Beispiels der Auslieferung: Schluessel, Trace-ID und Begruendung. */
+  private static final String SERVICE_BUSY_TAIL =
+      "\",\"errorKey\":\"NOVA_INTERNAL_ERROR\","
+          + TRACE
+          + "\"details\":[\""
+          + StreamingRejectionAdvice.BUSY_REASON
+          + "\"]}";
+
+  /** 503 des Inhalts: der Pool der Auslieferung ist ausgelastet. */
+  public static final String SERVICE_BUSY_CONTENT =
+      SERVICE_BUSY_HEAD + "content" + SERVICE_BUSY_TAIL;
+
+  /** 503 des Downloads: der Pool der Auslieferung ist ausgelastet. */
+  public static final String SERVICE_BUSY_DOWNLOAD =
+      SERVICE_BUSY_HEAD + "download" + SERVICE_BUSY_TAIL;
+
+  /** 503 des Vorschaubilds: der Pool der Auslieferung ist ausgelastet. */
+  public static final String SERVICE_BUSY_THUMBNAIL =
+      SERVICE_BUSY_HEAD + "thumbnail" + SERVICE_BUSY_TAIL;
 
   /** 409: nebenlaeufiger Versionskonflikt beim Fortschreiben der Aufgabe. */
   public static final String CONFLICT_VERSION =

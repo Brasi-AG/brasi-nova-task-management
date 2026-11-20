@@ -52,6 +52,7 @@ class AttachmentStreamingPropertiesTest {
     assertThat(bound.maxSize()).isEqualTo(32);
     assertThat(bound.queueCapacity()).isEqualTo(50);
     assertThat(bound.threadNamePrefix()).isEqualTo("attachment-stream-");
+    assertThat(bound.retryAfter()).isEqualTo(Duration.ofSeconds(5));
     assertThat(bound.maxSize()).isGreaterThanOrEqualTo(bound.coreSize());
   }
 
@@ -111,13 +112,20 @@ class AttachmentStreamingPropertiesTest {
 
   @Test
   void i152_invalid_values_are_rejected() {
-    assertThatThrownBy(() -> new AttachmentStreamingProperties(0, 4, 10, "x-"))
+    final Duration wait = Duration.ofSeconds(5);
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(0, 4, 10, "x-", wait))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new AttachmentStreamingProperties(8, 4, 10, "x-"))
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(8, 4, 10, "x-", wait))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, -1, "x-"))
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, -1, "x-", wait))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, 10, " "))
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, 10, " ", wait))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, 10, "x-", Duration.ZERO))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, 10, "x-", wait.negated()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AttachmentStreamingProperties(4, 8, 10, "x-", null))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

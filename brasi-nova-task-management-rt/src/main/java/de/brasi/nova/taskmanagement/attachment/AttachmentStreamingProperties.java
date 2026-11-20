@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.attachment;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -14,16 +15,21 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * ueberschreiben. Die Obergrenze der Laufzeit einer Anfrage steht in der Spring-Eigenschaft {@code
  * spring.mvc.async.request-timeout}.
  *
+ * <p>Lehnt der Pool eine Auslieferung ab (Warteschlange voll, alle Threads belegt), antwortet der
+ * Dienst mit 503 und {@code Retry-After} ({@code StreamingRejectionAdvice}).
+ *
  * @param coreSize Zahl der Kern-Threads (gleichzeitige Auslieferungen ohne Warten), mindestens 1
  * @param maxSize hoechste Zahl der Threads, mindestens {@code coreSize}; ueber die Kernzahl hinaus
  *     wachsen Threads erst, wenn die Warteschlange voll ist
  * @param queueCapacity Groesse der Warteschlange fuer wartende Auslieferungen, mindestens 0; ist
  *     sie voll und sind alle Threads belegt, scheitert die Anfrage
  * @param threadNamePrefix Namensanfang der Threads (fuer Logs und Thread-Dumps)
+ * @param retryAfter Wartezeit, die der Dienst bei einer abgelehnten Auslieferung im Header {@code
+ *     Retry-After} nennt; positiv, in ganzen Sekunden aufgerundet
  */
 @ConfigurationProperties("task-management.attachments.streaming")
 public record AttachmentStreamingProperties(
-    int coreSize, int maxSize, int queueCapacity, String threadNamePrefix) {
+    int coreSize, int maxSize, int queueCapacity, String threadNamePrefix, Duration retryAfter) {
 
   /** Prueft die Werte beim Binden, damit eine falsche Konfiguration den Start verhindert. */
   public AttachmentStreamingProperties {
@@ -39,6 +45,9 @@ public record AttachmentStreamingProperties(
     }
     if (threadNamePrefix == null || threadNamePrefix.isBlank()) {
       throw new IllegalArgumentException("Der Namensanfang der Threads darf nicht leer sein.");
+    }
+    if (retryAfter == null || retryAfter.isNegative() || retryAfter.isZero()) {
+      throw new IllegalArgumentException("Die Wartezeit fuer Retry-After muss positiv sein.");
     }
   }
 }

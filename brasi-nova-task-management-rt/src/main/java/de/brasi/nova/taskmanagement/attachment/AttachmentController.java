@@ -37,6 +37,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
@@ -54,7 +56,9 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
  *
  * <p>Auslieferung: Der Service oeffnet den Strom (Fehler entstehen synchron als 404), der Body
  * kopiert ihn nur ({@link StreamingResponseBody}). Jede Antwort traegt einen schwachen ETag und
- * {@code Cache-Control: private}; ein passender {@code If-None-Match} ergibt 304 ohne Inhalt.
+ * {@code Cache-Control: private}; ein passender {@code If-None-Match} ergibt 304 ohne Inhalt. Lehnt
+ * der Pool der Auslieferung die Anfrage ab, antwortet {@code StreamingRejectionAdvice} mit 503 und
+ * {@code Retry-After}.
  */
 @RestController
 @TranslatesLockConflicts(message = TranslatesLockConflicts.TASK)
@@ -65,6 +69,14 @@ public class AttachmentController {
   private static final String CONTENT_TYPE_OPTIONS = "X-Content-Type-Options";
 
   private static final String NOSNIFF = "nosniff";
+
+  /**
+   * Request-Attribut mit dem fuer die Auslieferung geoeffneten Strom, bis der Body ihn uebernimmt.
+   * Lehnt der Pool der Auslieferung die Anfrage ab, laeuft der Body nie; dann schliesst {@code
+   * StreamingRejectionAdvice} den Strom ueber dieses Attribut.
+   */
+  public static final String PENDING_STREAM_ATTRIBUTE =
+      AttachmentController.class.getName() + ".pendingStream";
 
   // ---- OpenAPI-Texte der Auslieferung --------------------------------------------------------
 
@@ -100,6 +112,17 @@ public class AttachmentController {
       "Keine gueltige UUID als Aufgabe oder Anhang im Pfad.";
 
   private static final String UNAUTHORIZED_DESCRIPTION = "Kein oder ungueltiges JWT.";
+
+  private static final String SERVICE_BUSY_DESCRIPTION =
+      "Der Dienst ist ausgelastet: alle Plaetze fuer gleichzeitige Auslieferungen sind belegt und"
+          + " die Warteschlange ist voll. Nichts wurde ausgeliefert. Die Anfrage nach der Wartezeit"
+          + " aus Retry-After wiederholen. Im Fehlerformat steht der errorKey"
+          + " NOVA_INTERNAL_ERROR, den KSF fuer jeden Status 5xx vergibt; massgeblich ist der"
+          + " Status 503.";
+
+  private static final String RETRY_AFTER_DESCRIPTION =
+      "Wartezeit in Sekunden, nach der der Client die Anfrage wiederholen soll (Vorgabe fuenf"
+          + " Sekunden, konfigurierbar).";
 
   private static final String NOT_FOUND_DESCRIPTION =
       "Aufgabe nicht sichtbar oder der Anfrager ist kein Mitglied, Anhang unbekannt, deaktiviert"
@@ -428,7 +451,20 @@ public class AttachmentController {
                       name = "anhang",
                       summary = "Anhang unbekannt oder Datei fehlt",
                       value = AttachmentApiExamples.NOT_FOUND_CONTENT_ATTACHMENT)
-                }))
+                })),
+    @ApiResponse(
+        responseCode = "503",
+        description = SERVICE_BUSY_DESCRIPTION,
+        headers =
+            @Header(
+                name = "Retry-After",
+                description = RETRY_AFTER_DESCRIPTION,
+                schema = @Schema(type = "integer")),
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_CONTENT)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/content")
   public ResponseEntity<StreamingResponseBody> content(
@@ -525,7 +561,20 @@ public class AttachmentController {
                       name = "anhang",
                       summary = "Anhang unbekannt oder Datei fehlt",
                       value = AttachmentApiExamples.NOT_FOUND_DOWNLOAD_ATTACHMENT)
-                }))
+                })),
+    @ApiResponse(
+        responseCode = "503",
+        description = SERVICE_BUSY_DESCRIPTION,
+        headers =
+            @Header(
+                name = "Retry-After",
+                description = RETRY_AFTER_DESCRIPTION,
+                schema = @Schema(type = "integer")),
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_DOWNLOAD)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/download")
   public ResponseEntity<StreamingResponseBody> download(
@@ -628,7 +677,20 @@ public class AttachmentController {
                       name = "anhang",
                       summary = "Anhang unbekannt oder ohne Vorschaubild",
                       value = AttachmentApiExamples.NOT_FOUND_THUMBNAIL_ATTACHMENT)
-                }))
+                })),
+    @ApiResponse(
+        responseCode = "503",
+        description = SERVICE_BUSY_DESCRIPTION,
+        headers =
+            @Header(
+                name = "Retry-After",
+                description = RETRY_AFTER_DESCRIPTION,
+                schema = @Schema(type = "integer")),
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = @ExampleObject(value = AttachmentApiExamples.SERVICE_BUSY_THUMBNAIL)))
   })
   @GetMapping("/{id}/attachments/{attachmentId}/thumbnail")
   public ResponseEntity<StreamingResponseBody> thumbnail(
@@ -782,6 +844,7 @@ public class AttachmentController {
       closeAfterFailure(stream, e);
       throw e;
     }
+    rememberPendingStream(stream);
     final StreamingResponseBody body =
         out -> {
           try (InputStream in = stream) {
@@ -789,6 +852,18 @@ public class AttachmentController {
           }
         };
     return new ResponseEntity<>(body, headers, HttpStatus.OK);
+  }
+
+  /**
+   * Merkt den geoeffneten Strom am Request, damit er bei einer Ablehnung durch den Pool der
+   * Auslieferung geschlossen werden kann ({@link #PENDING_STREAM_ATTRIBUTE}). Ohne Request (etwa in
+   * einem Test ohne Kontext) passiert nichts.
+   */
+  private static void rememberPendingStream(final InputStream stream) {
+    final RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+    if (attributes != null) {
+      attributes.setAttribute(PENDING_STREAM_ATTRIBUTE, stream, RequestAttributes.SCOPE_REQUEST);
+    }
   }
 
   /** Baut die Header der 200-Antwort einer Auslieferung. */

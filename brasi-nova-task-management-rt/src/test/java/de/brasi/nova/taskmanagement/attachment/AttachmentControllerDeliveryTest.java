@@ -15,6 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 /**
@@ -73,6 +76,23 @@ class AttachmentControllerDeliveryTest {
     response.getBody().writeTo(out);
     assertThat(out.toByteArray()).isEqualTo(PDF_BYTES);
     assertThat(stream.closed).isTrue();
+  }
+
+  @Test
+  void i152_delivery_registers_the_pending_stream_for_rejection_cleanup() {
+    final TrackingStream stream = new TrackingStream(PDF_BYTES, false);
+    when(queryService.serveContent(TASK_ID, ATTACHMENT_ID, null))
+        .thenReturn(delivery("application/pdf", stream));
+    final MockHttpServletRequest request = new MockHttpServletRequest();
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+    try {
+      controller.content(TASK_ID, ATTACHMENT_ID, null);
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
+
+    assertThat(request.getAttribute(AttachmentController.PENDING_STREAM_ATTRIBUTE))
+        .isSameAs(stream);
   }
 
   @Test
