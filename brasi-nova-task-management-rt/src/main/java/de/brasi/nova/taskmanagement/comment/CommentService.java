@@ -393,7 +393,9 @@ public class CommentService {
         false,
         createdAt,
         // Eigener Kommentar: fuer den Autor nie neu (Intake #150).
-        false);
+        false,
+        // Intake #152 B1: der JSON-Weg legt keine Anhaenge an; leere Liste, nie null.
+        List.of());
   }
 
   /**

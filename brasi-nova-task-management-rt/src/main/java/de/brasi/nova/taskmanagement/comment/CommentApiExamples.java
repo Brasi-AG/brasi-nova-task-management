@@ -45,16 +45,22 @@ final class CommentApiExamples {
   static final String REQUEST_REPLY =
       "{\"text\":\"Erledigt, danke.\",\"parentCommentId\":\"" + PARENT_COMMENT_REF + "\"}";
 
-  /** 201: der neue Kommentar als Antwort auf einen Kommentar. */
+  /**
+   * 201: der neue Kommentar als Antwort auf einen Kommentar. Der JSON-Weg legt keine Anhaenge an:
+   * {@code attachments} ist leer (Intake #152).
+   */
   static final String CREATED_REPLY =
       "{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"taskId\":\""
           + TASK_REF
           + "\",\"authorRef\":\"880e8400-e29b-41d4-a716-446655440003\",\"parentCommentId\":\""
           + PARENT_COMMENT_REF
           + "\",\"text\":\"Erledigt, danke.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":false}";
+          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":false,\"attachments\":[]}";
 
-  /** 201: der neue Kommentar ohne Eltern-Kommentar ({@code parentCommentId} ist {@code null}). */
+  /**
+   * 201: der neue Kommentar ohne Eltern-Kommentar ({@code parentCommentId} ist {@code null}), ohne
+   * Anhaenge.
+   */
   static final String CREATED_TOP_LEVEL =
       "{\"id\":\""
           + PARENT_COMMENT_REF
@@ -62,16 +68,47 @@ final class CommentApiExamples {
           + TASK_REF
           + "\",\"authorRef\":\"880e8400-e29b-41d4-a716-446655440003\",\"parentCommentId\":null,"
           + "\"text\":\"Bitte bis Ende der Woche erledigen.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false}";
+          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false,\"attachments\":[]}";
 
   /** Beispiel-UUID eines anderen Kommentar-Autors als des Anfragers (Liste). */
   private static final String OTHER_AUTHOR_REF = "990e8400-e29b-41d4-a716-446655440004";
+
+  /** Beispiel-UUID des Kommentar-Anhangs (Liste). */
+  private static final String COMMENT_ATTACHMENT_REF = "a1520000-0000-4000-8000-000000000003";
+
+  /**
+   * Gateway-relative Basis der Abruf-Links des Kommentar-Anhangs (Vorgabe von {@code
+   * brasi.openapi.public-base}); die Links zeigen auf den Aufgaben-Pfad, wie in {@code
+   * AttachmentApiExamples}.
+   */
+  private static final String ATTACHMENT_LINK_BASE =
+      "/task-management/api/v1/tasks/" + TASK_REF + "/attachments/" + COMMENT_ATTACHMENT_REF;
+
+  /**
+   * Ein Anhang des ersten Kommentars der Liste: PDF mit Vorschaubild, hochgeladen von dessen Autor
+   * mit dem Kommentar, nicht entfernbar (Kommentar-Anhaenge sind unveraenderlich).
+   */
+  private static final String COMMENT_ATTACHMENT =
+      "{\"id\":\""
+          + COMMENT_ATTACHMENT_REF
+          + "\",\"fileName\":\"Angebot.pdf\",\"mimeType\":\"application/pdf\","
+          + "\"sizeBytes\":184320,\"hasThumbnail\":true,\"uploadedById\":\""
+          + OTHER_AUTHOR_REF
+          + "\",\"createdAt\":\"2026-11-17T09:00:00Z\",\"removable\":false,"
+          + "\"links\":{\"content\":\""
+          + ATTACHMENT_LINK_BASE
+          + "/content\",\"download\":\""
+          + ATTACHMENT_LINK_BASE
+          + "/download\",\"thumbnail\":\""
+          + ATTACHMENT_LINK_BASE
+          + "/thumbnail\"}}";
 
   /**
    * 200 von {@code getComments}: chronologisch aufsteigend, ein Kommentar ohne und eine Antwort
    * darauf, beide von einer anderen Person als dem Anfrager. Der Anfrager hat die Aufgabe zwischen
    * beiden Kommentaren als gesehen markiert: der erste ist nicht mehr neu, die Antwort danach ist
-   * neu ({@code isNew}, Intake #150).
+   * neu ({@code isNew}, Intake #150). Der erste Kommentar traegt einen Anhang, die Antwort keinen
+   * ({@code attachments}, Intake #152).
    */
   static final String LIST_COMMENTS =
       "[{\"id\":\""
@@ -82,7 +119,9 @@ final class CommentApiExamples {
           + OTHER_AUTHOR_REF
           + "\",\"parentCommentId\":null,"
           + "\"text\":\"Bitte bis Ende der Woche erledigen.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false},"
+          + "\"createdAt\":\"2026-11-17T09:00:00Z\",\"isNew\":false,\"attachments\":["
+          + COMMENT_ATTACHMENT
+          + "]},"
           + "{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"taskId\":\""
           + TASK_REF
           + "\",\"authorRef\":\""
@@ -90,7 +129,7 @@ final class CommentApiExamples {
           + "\",\"parentCommentId\":\""
           + PARENT_COMMENT_REF
           + "\",\"text\":\"Erledigt, danke.\",\"edited\":false,"
-          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":true}]";
+          + "\"createdAt\":\"2026-11-17T10:00:00Z\",\"isNew\":true,\"attachments\":[]}]";
 
   /** Pfad von {@code GET /api/v1/tasks/{id}/comments} bei einer ungueltigen UUID im Pfad. */
   private static final String PATH_INVALID_ID = "/api/v1/tasks/keine-uuid/comments";

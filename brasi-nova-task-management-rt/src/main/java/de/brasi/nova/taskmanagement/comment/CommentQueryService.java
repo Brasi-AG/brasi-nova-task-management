@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.comment;
 
+import de.brasi.nova.taskmanagement.attachment.AttachmentQueryService;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
@@ -37,6 +39,11 @@ import org.springframework.stereotype.Service;
  * <p>Neu-Kennzeichen (Intake #150): je Kommentar {@code isNew} fuer den Anfrager, abgeleitet aus
  * seinem Gesehen-Zeitpunkt {@code TASK_USER_STATE.SEEN_AT}. Der Lesepfad liest diesen Wert nur und
  * veraendert ihn nie; gesetzt wird er ausschliesslich ueber {@code PUT /api/v1/tasks/{id}/seen}.
+ *
+ * <p>Anhaenge (Intake #152 B1): je Kommentar seine aktiven Anhaenge, gelesen nach dem READ-Guard in
+ * genau einer Abfrage fuer die ganze Liste ({@link
+ * AttachmentQueryService#commentAttachmentsByCommentId}) und hier den aktiven Kommentaren
+ * zugeordnet; ohne Anhang eine leere Liste.
  */
 @Service
 public class CommentQueryService {
@@ -47,6 +54,7 @@ public class CommentQueryService {
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
   private final TaskUserStateQueryRepository userStateQueryRepository;
+  private final AttachmentQueryService attachmentQueryService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentQueryService(
@@ -55,13 +63,15 @@ public class CommentQueryService {
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter,
       final TaskMembershipGuard membershipGuard,
-      final TaskUserStateQueryRepository userStateQueryRepository) {
+      final TaskUserStateQueryRepository userStateQueryRepository,
+      final AttachmentQueryService attachmentQueryService) {
     this.taskRepository = taskRepository;
     this.commentQueryRepository = commentQueryRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
     this.userStateQueryRepository = userStateQueryRepository;
+    this.attachmentQueryService = attachmentQueryService;
   }
 
   /**
@@ -74,6 +84,8 @@ public class CommentQueryService {
    *     eigene Kommentare sind nie neu. Verglichen wird die Audit-Zeit {@code ANGELEGT_AM} des
    *     Kommentars mit {@code SEEN_AT}; beide sind lokale Wanduhr derselben Persistenz-Zone. Dieser
    *     Lesepfad schreibt nichts, auch nicht den Gesehen-Zeitpunkt.
+   *     <p>{@code attachments} je Kommentar: seine aktiven Anhaenge in Hochlade-Reihenfolge, nicht
+   *     entfernbar; gelesen in einer Abfrage nach dem READ-Guard (ohne Kommentare keine).
    * @return Kommentare (chronologisch aufsteigend); {@code parentCommentId} als externe UUID des
    *     Eltern-Kommentars oder {@code null} (Top-Level ODER Eltern nicht mehr aktiv)
    * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden, fremdem Mandanten zugehoerig
@@ -110,8 +122,20 @@ public class CommentQueryService {
             .findFirst()
             .orElse(null);
 
+    // Intake #152 B1: Anhaenge aller Kommentare in EINER Abfrage (kein N+1), erst nach dem Guard.
+    // Anhaenge nicht (mehr) aktiver Kommentare finden hier keinen Kommentar und fallen weg.
+    final Map<Long, List<AttachmentModel>> attachmentsByComment =
+        comments.isEmpty() ? Map.of() : attachmentQueryService.commentAttachmentsByCommentId(task);
+
     return comments.stream()
-        .map(c -> toModel(c, taskExternalId, idToUuid, isNewFor(c, actorRef, seenAt)))
+        .map(
+            c ->
+                toModel(
+                    c,
+                    taskExternalId,
+                    idToUuid,
+                    isNewFor(c, actorRef, seenAt),
+                    attachmentsByComment.getOrDefault(c.getId(), List.of())))
         .toList();
   }
 
@@ -136,13 +160,15 @@ public class CommentQueryService {
   }
 
   /**
-   * Mappt eine {@link TaskComment}-Entity auf das {@link CommentModel} (parentId intern -> UUID).
+   * Mappt eine {@link TaskComment}-Entity auf das {@link CommentModel} (parentId intern -> UUID)
+   * mit den bereits gelesenen Anhaengen des Kommentars.
    */
   private CommentModel toModel(
       final TaskComment comment,
       final UUID taskExternalId,
       final Map<Long, UUID> idToUuid,
-      final boolean isNew) {
+      final boolean isNew,
+      final List<AttachmentModel> attachments) {
     final UUID parentUuid =
         comment.getParentCommentId() == null ? null : idToUuid.get(comment.getParentCommentId());
     return new CommentModel(
@@ -153,7 +179,8 @@ public class CommentQueryService {
         comment.getText(),
         comment.isEdited(),
         auditTimeConverter.toInstant(comment.getCreatedAt()),
-        isNew);
+        isNew,
+        attachments);
   }
 
   /**

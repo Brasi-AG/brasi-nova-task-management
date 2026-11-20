@@ -66,6 +66,34 @@ public interface TaskAttachmentQueryRepository extends BaseTaskAttachmentReposit
   List<TaskAttachment> findActiveTaskAttachments(@Param("taskId") Long taskId);
 
   /**
+   * Liefert die aktiven Anhaenge aller Kommentare der Aufgabe in Hochlade-Reihenfolge, in einer
+   * Abfrage fuer die ganze Kommentarliste (Intake #152 B1, kein N+1, keine {@code IN}-Liste).
+   *
+   * <p>Ob der Kommentar selbst noch aktiv ist, prueft die Abfrage nicht: der Aufrufer ordnet die
+   * Anhaenge den aktiven Kommentaren zu, Anhaenge anderer Kommentare fallen dabei weg. Ordnung
+   * {@code ANGELEGT_AM ASC, EXTERNALID ASC} (deterministischer Tiebreak bei gleichem Zeitstempel).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @return aktive Kommentar-Anhaenge der Aufgabe, chronologisch aufsteigend
+   */
+  @NovaQuery(
+      value =
+          "SELECT * FROM TASK_ANHANG "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND KOMMENTAR_ID IS NOT NULL "
+              + "AND ENTITY_STATUS = 'ACTIVE' "
+              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC",
+      mssql =
+          "SELECT * FROM [dbo].[TASK_ANHANG] "
+              + "WHERE TENANT_ID = :tenantId "
+              + "AND TASK_ID = :taskId "
+              + "AND KOMMENTAR_ID IS NOT NULL "
+              + "AND ENTITY_STATUS = 'ACTIVE' "
+              + "ORDER BY ANGELEGT_AM ASC, EXTERNALID ASC")
+  List<TaskAttachment> findActiveCommentAttachmentsByTaskId(@Param("taskId") Long taskId);
+
+  /**
    * Sucht einen aktiven Anhang der Aufgabe anhand seiner externen UUID, gleich ob er direkt an der
    * Aufgabe oder an einem ihrer Kommentare haengt. Der Aufrufer unterscheidet ueber {@code
    * commentId}.

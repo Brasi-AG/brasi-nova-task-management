@@ -1,8 +1,11 @@
 package de.brasi.nova.taskmanagement.comment.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -20,6 +23,9 @@ import java.util.UUID;
  *     seinem Gesehen-Zeitpunkt ({@code PUT /api/v1/tasks/{id}/seen}) erstellt wurde und nicht von
  *     ihm selbst stammt; ohne Gesehen-Zeitpunkt (erster Besuch) sind alle Kommentare anderer neu.
  *     In der Antwort auf das Anlegen stets {@code false} (eigener Kommentar).
+ * @param attachments aktive Anhaenge des Kommentars (Intake #152), chronologisch nach Hochladen;
+ *     nie {@code null} (ohne Anhang leer) und unveraenderlich. Kommentar-Anhaenge sind nie
+ *     entfernbar ({@code removable = false}); ihre Links zeigen auf den Aufgaben-Pfad.
  */
 public record CommentModel(
     @Schema(
@@ -56,4 +62,14 @@ public record CommentModel(
                     + " selbst. Ohne Gesehen-Zeitpunkt (erster Besuch) gelten alle Kommentare"
                     + " anderer als neu, eigene nie. In der Antwort auf das Anlegen stets false.",
             example = "true")
-        boolean isNew) {}
+        boolean isNew,
+    @ArraySchema(
+            arraySchema =
+                @Schema(description = "Anhänge des Kommentars, chronologisch; unveränderlich"))
+        List<AttachmentModel> attachments) {
+
+  /** Normalisiert {@code attachments}: nie {@code null}, als unveraenderliche Kopie. */
+  public CommentModel {
+    attachments = attachments == null ? List.of() : List.copyOf(attachments);
+  }
+}
