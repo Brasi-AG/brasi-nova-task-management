@@ -1805,26 +1805,37 @@ class AssigneeServiceTest {
 
   @Test
   @DisplayName(
-      "addParticipants_nutzt_gemeinsamen_kern: addParticipants ruft addAsParticipants und"
-          + " benachrichtigt genau die zurueckgemeldeten Personen (PARTICIPANT, Akteur = Ausloeser)")
+      "addParticipants_nutzt_gemeinsamen_kern: addParticipants legt die Person ueber den"
+          + " gemeinsamen Aufnahme-Kern an (Teilnehmerzeile, State), schreibt den Verlauf mit dem"
+          + " Text des POST und benachrichtigt genau die aufgenommene Person (PARTICIPANT, Akteur ="
+          + " Ausloeser), nicht die schon aktive")
   void addParticipants_nutzt_gemeinsamen_kern() {
     final Long taskId = 214L;
     final UUID taskUuid = UUID.randomUUID();
-    final UUID ref = UUID.randomUUID();
+    final UUID ref = UUID.fromString("00000000-0000-0000-0000-0000000000b1");
+    final UUID activeRef = UUID.fromString("00000000-0000-0000-0000-0000000000b2");
     when(taskRepository.findByUuid(taskUuid.toString()))
         .thenReturn(Optional.of(taskWithId(taskId, taskUuid)));
-    final AssigneeService spied = org.mockito.Mockito.spy(service);
-    // Intake #180: addParticipants nutzt die Kern-Variante mit dem Verlaufstext des POST.
-    org.mockito.Mockito.doReturn(List.of(ref))
-        .when(spied)
-        .addAsParticipants(
-            eq(taskId), eq(TENANT_ID), any(), eq(AssigneeService.HISTORY_PARTICIPANT_ADDED));
+    when(participantQueryRepository.findRowByUniqueKey(taskId, activeRef))
+        .thenReturn(List.of(personRow(taskId, activeRef, EntityState.ACTIVE)));
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
 
-    spied.addParticipants(taskUuid, new ParticipantAddInput(List.of(ref)));
+    service.addParticipants(taskUuid, new ParticipantAddInput(List.of(activeRef, ref)));
 
-    verify(spied)
-        .addAsParticipants(
-            eq(taskId), eq(TENANT_ID), any(), eq(AssigneeService.HISTORY_PARTICIPANT_ADDED));
+    // Der Kern legt nur die neue Person an; die schon aktive bleibt unberuehrt.
+    assertThat(savedParticipantRefsInOrder()).containsExactly(ref);
+    verify(userStateService).ensure(eq(taskId), eq(ref), eq(TENANT_ID), any());
+    verify(userStateService, never()).ensure(eq(taskId), eq(activeRef), eq(TENANT_ID), any());
+    // Intake #180: der Verlauf kommt aus addParticipants mit dem Text des POST, je Aufgenommener.
+    verify(taskHistoryService)
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(ACTOR_REF),
+            eq(AssigneeService.HISTORY_PARTICIPANT_ADDED),
+            any());
+    verify(taskHistoryService, times(1)).record(any(), any(), any(), any(), any());
     verify(notificationService, times(1))
         .emit(
             eq(ref),
@@ -1834,7 +1845,9 @@ class AssigneeServiceTest {
             any(),
             any(),
             eq(ACTOR_REF));
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
     verify(inboxGenerationService).bump(TENANT_ID, ref);
+    verify(inboxGenerationService, never()).bump(TENANT_ID, activeRef);
   }
 
   @Test
@@ -3364,6 +3377,15 @@ class AssigneeServiceTest {
 
   /** Service, der am Sync-1-Seam die bis dahin gelaufenen Aufrufe festhaelt. */
   private AssigneeService serviceRecordingAtSeam(final List<String> atSeam) {
+    return serviceRecordingAtSeams(atSeam, new ArrayList<>());
+  }
+
+  /**
+   * Service, der am Sync-1-Seam ({@code onBeforeMembershipWritesForTest}) und am Sync-2-Seam
+   * ({@code onAfterMembershipWritesForTest}) je die bis dahin gelaufenen Aufrufe festhaelt.
+   */
+  private AssigneeService serviceRecordingAtSeams(
+      final List<String> atSeam, final List<String> atAfterSeam) {
     final Object[] observed = orderObserved();
     return new AssigneeService(
         taskRepository,
@@ -3384,6 +3406,12 @@ class AssigneeServiceTest {
       protected void onBeforeMembershipWritesForTest(final Long id) {
         atSeam.clear();
         atSeam.addAll(orderedCalls(observed));
+      }
+
+      @Override
+      protected void onAfterMembershipWritesForTest(final Long id) {
+        atAfterSeam.clear();
+        atAfterSeam.addAll(orderedCalls(observed));
       }
     };
   }
@@ -4194,8 +4222,9 @@ class AssigneeServiceTest {
       "i180_hinzufuegen_je_person_ein_eintrag: POST /participants mit neuer, ausgetretener und"
           + " aktiver Person schreibt genau zwei Eintraege 'hat einen Beteiligten hinzugefuegt'"
           + " (neu und reaktiviert, je mit Namen), keinen fuer die aktive Person und keinen mit dem"
-          + " Erwaehnungs-Text; Namen vor der ersten Schreibung, Eintraege danach und vor dem"
-          + " TASK-save")
+          + " Erwaehnungs-Text; Namen vor der ersten Schreibung, Eintraege danach, NACH dem Sync-2-"
+          + "Seam (onAfterMembershipWritesForTest: dort steht noch kein Verlaufseintrag, weil jede"
+          + " Verlaufszeile eine KSF-Sequenz vergibt) und vor dem TASK-save")
   void i180_add_records_post_text_per_added_or_reactivated_person() {
     final Long taskId = 18005L;
     final UUID taskUuid = UUID.randomUUID();
@@ -4212,7 +4241,8 @@ class AssigneeServiceTest {
         .thenAnswer(inv -> inv.getArgument(0));
     stubUserNames(Map.of(newRef, "Nils Neu", exitedRef, "Ella Exit", activeRef, "Arno Aktiv"));
     final List<String> atSeam = new ArrayList<>();
-    final AssigneeService seamed = serviceRecordingAtSeam(atSeam);
+    final List<String> atAfterSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeams(atSeam, atAfterSeam);
     final Object[] observed = orderObserved();
     org.mockito.Mockito.clearInvocations(observed);
 
@@ -4229,6 +4259,18 @@ class AssigneeServiceTest {
     assertReadsBeforeFirstWrite(calls, atSeam);
     assertThat(requestedNameRefs()).contains(newRef, exitedRef);
     assertI180HistoryOrder(calls, 2);
+    // Sync 2 (onAfterMembershipWritesForTest) liegt nach den Mitgliedschafts-Schreibungen und VOR
+    // dem ersten Verlaufseintrag: Verlauf vergibt eine KSF-Sequenz (optimistische Sperre), vor
+    // Sync 2 kollidierte sie bei zwei verzahnten Aufnahmen (MembershipConcurrencyIT ADD_PAIRS).
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam sind Teilnehmer und State geschrieben, Aufrufe: %s", atAfterSeam)
+        .contains("TaskParticipantQueryRepository#save", "UserStateService#ensure");
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam steht noch kein Verlaufseintrag, Aufrufe: %s", atAfterSeam)
+        .doesNotContain("TaskHistoryService#record");
+    assertThat(calls.subList(atAfterSeam.size(), calls.size()))
+        .as("nach dem Sync-2-Seam folgen beide Verlaufseintraege, Aufrufe: %s", calls)
+        .containsSubsequence("TaskHistoryService#record", "TaskHistoryService#record");
   }
 
   @Test

@@ -801,14 +801,18 @@ public class AssigneeService {
    *   <li>Eingabe deduplizieren; leere Menge -> No-Op (keine DB-Mutation, kein Signal).
    *   <li>All-or-Nothing: alle verbleibenden Refs muessen aktive Benutzer DES Mandanten sein
    *       ({@code findActiveByUuids}) - sonst 400 VOR jeder Mutation.
-   *   <li>Je Ref ({@link #addAsParticipants}, gemeinsamer Kern mit dem Kommentar, Intake #156):
+   *   <li>Je Ref ({@link #admitParticipants}, gemeinsamer Kern mit dem Kommentar, Intake #156):
    *       Unique-Key-exakter Lookup (findet auch DEACTIVE-Zeilen): aktive Zeile -> SKIP
    *       (idempotent); ausgetretene oder inaktive (DEACTIVE) PERSON-Zeile -> als REINER Teilnehmer
    *       reaktivieren (ASSIGNEE_FLAG=false, ENTITY_STATUS=ACTIVE); TEAM-Zeile oder fremdes
    *       Basis-TENANT_ID -> 409 ohne Mutation; keine Zeile -> neu anlegen (reiner Teilnehmer).
-   *   <li>Verlauf (Intake #180): der Kern schreibt je angelegter oder reaktivierter Person einen
-   *       Eintrag {@link #HISTORY_PARTICIPANT_ADDED} (Akteur = handelnde Person, Detail = Name der
-   *       Person); schon aktive Personen und Race-Verlierer bekommen keinen.
+   *   <li>Verlauf (Intake #180): je angelegter oder reaktivierter Person ein Eintrag {@link
+   *       #HISTORY_PARTICIPANT_ADDED} (Akteur = handelnde Person, Detail = Name der Person aus dem
+   *       Namen-Snapshot des Kerns); schon aktive Personen und Race-Verlierer bekommen keinen. Die
+   *       Eintraege folgen NACH dem Seam {@link #onAfterMembershipWritesForTest} (Sync 2), wie im
+   *       PUT: jede Verlaufszeile vergibt eine KSF-Sequenz mit optimistischer Sperre, schreiben
+   *       zwei verzahnte Aufnahmen schon vor Sync 2 Verlauf, kollidiert die Vergabe
+   *       (Sequenzkonflikt, {@code MembershipConcurrencyIT} ADD_PAIRS).
    *   <li>Vor der ersten Schreibung (Intake #167): die Leser fuer Bump und Signal lesen ({@link
    *       #collectTaskReaders}: aktive Leser und ausgetretene Archivleser).
    *   <li>Nebenlaeufigkeit (D8, Pfad A): gleich-Ref-Race wird in {@link
@@ -883,21 +887,36 @@ public class AssigneeService {
     final Set<UUID> readers = collectTaskReaders(taskId);
 
     // Gemeinsamer Aufnahme-Kern (auch von CommentService#createComment genutzt, Intake #156): legt
-    // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie, schreibt je aufgenommener Person
-    // den Verlaufseintrag (Intake #180, hier mit dem Text des POST) und liefert die tatsaechlich
-    // aufgenommenen Refs. Benachrichtigung, TASK-save, Bump und Signal bleiben hier beim Aufrufer.
-    // Test-Seams (Intake #167) davor und danach: vor der ersten Mitgliedschafts-Schreibung und
-    // nach dem Kern samt Verlauf (vor Benachrichtigung, TASK-save und Bump). Produktiv No-Op.
+    // die Teilnehmer- und State-Zeilen an bzw. reaktiviert sie und liefert die tatsaechlich
+    // aufgenommenen Refs samt Namen-Snapshot. Er schreibt keinen Verlauf; Verlauf,
+    // Benachrichtigung, TASK-save, Bump und Signal bleiben hier beim Aufrufer.
+    // Test-Seams (Intake #167) davor und danach: vor der ersten Mitgliedschafts-Schreibung und nach
+    // der letzten, vor Verlauf, Benachrichtigung, TASK-save und Bump. Produktiv No-Op.
     onBeforeMembershipWritesForTest(taskId);
-    final List<UUID> affectedRefs =
-        addAsParticipants(taskId, tenantId, refs, HISTORY_PARTICIPANT_ADDED);
+    final Admission admission = admitParticipants(taskId, tenantId, refs);
     onAfterMembershipWritesForTest(taskId);
+    final List<UUID> affectedRefs = admission.admittedRefs();
 
     // D7 changed-Guard: ein reiner No-Op (alle schon aktiv, auch als Verliererin eines
-    // gleich-Ref-Race) benachrichtigt nicht, speichert die Aufgabe nicht, bumpt nicht und sendet
-    // kein Signal (analog updateAssignees / TaskCommandService.patch).
+    // gleich-Ref-Race) schreibt keinen Verlauf, benachrichtigt nicht, speichert die Aufgabe nicht,
+    // bumpt nicht und sendet kein Signal (analog updateAssignees / TaskCommandService.patch).
     if (affectedRefs.isEmpty()) {
       return;
+    }
+
+    // Intake #180: je aufgenommener Person ein Verlaufseintrag (Akteur = handelnde Person, Detail =
+    // Name aus dem Snapshot des Kerns), in UUID-Reihenfolge NACH Sync 2 (wie im PUT) und vor
+    // Benachrichtigung und TASK-save. Jede Verlaufszeile vergibt eine KSF-Sequenz mit
+    // optimistischer Sperre: schrieben zwei verzahnte Aufnahmen schon vor Sync 2 Verlauf,
+    // scheiterte die Vergabe an einem Sequenzkonflikt (MembershipConcurrencyIT ADD_PAIRS). Keine
+    // Lesung mehr nach der ersten Schreibung.
+    for (final UUID ref : affectedRefs) {
+      taskHistoryService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          HISTORY_PARTICIPANT_ADDED,
+          historyDetail(ref, admission.names()));
     }
 
     // Intake #147: PARTICIPANT-Benachrichtigung nur an tatsaechlich neu hinzugefuegte oder aus dem
@@ -940,9 +959,17 @@ public class AssigneeService {
 
   /**
    * Aufnahme per Erwaehnung im Kommentar (Intake #156, {@code CommentService#createComment}):
-   * gemeinsamer Kern des Hinzufuegens als Beteiligter mit dem Verlaufstext {@link
-   * #HISTORY_PARTICIPANT_MENTIONED} (Intake #180). Einzelheiten bei der paketsichtbaren Variante
-   * mit frei waehlbarem Verlaufstext, die auch {@link #addParticipants} nutzt.
+   * Hinzufuegen als Beteiligter ueber den gemeinsamen Kern {@link #admitParticipants} (dieselbe
+   * Aufnahme wie {@link #addParticipants}) mit anschliessendem Verlauf.
+   *
+   * <p>Nach der Aufnahme schreibt die Methode je tatsaechlich angelegter oder reaktivierter Person
+   * einen Verlaufseintrag {@link #HISTORY_PARTICIPANT_MENTIONED} (Intake #180: Akteur = handelnde
+   * Person aus dem Security-Kontext, Detail = Name der Person, hoechstens 500 Zeichen, sonst ihre
+   * UUID), in UUID-Reihenfolge; schon aktive Mitglieder und Race-Verlierer bekommen keinen. Keine
+   * Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save: das meldet {@code
+   * CommentService#createComment} als MENTION in seiner Lock-Reihenfolge. Einen Test-Seam Sync 2
+   * gibt es auf diesem Pfad nicht; der Verlauf folgt unmittelbar auf die Schreibungen. Muss in der
+   * Transaktion des Aufrufers laufen.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
@@ -953,8 +980,32 @@ public class AssigneeService {
   @Transactional(propagation = Propagation.MANDATORY)
   public List<UUID> addAsParticipants(
       final Long taskId, final long tenantId, final Collection<UUID> refs) {
-    return addAsParticipants(taskId, tenantId, refs, HISTORY_PARTICIPANT_MENTIONED);
+    // Der Akteur kommt aus dem Security-Kontext (keine DB-Lesung); vorab gelesen, damit ein
+    // fehlender Akteur vor jeder Schreibung scheitert.
+    final UUID actorRef = CurrentActor.require(userAccessor).user().id();
+    final Admission admission = admitParticipants(taskId, tenantId, refs);
+    // Intake #180: je aufgenommener Person ein Verlaufseintrag, in UUID-Reihenfolge nach allen
+    // Personen-Schreibungen des Kerns. Keine Lesung mehr.
+    for (final UUID ref : admission.admittedRefs()) {
+      taskHistoryService.record(
+          taskId,
+          tenantId,
+          actorRef,
+          HISTORY_PARTICIPANT_MENTIONED,
+          historyDetail(ref, admission.names()));
+    }
+    return admission.admittedRefs();
   }
+
+  /**
+   * Ergebnis des Aufnahme-Kerns {@link #admitParticipants} (Intake #180).
+   *
+   * @param admittedRefs die tatsaechlich neu angelegten oder reaktivierten Refs in aufsteigender
+   *     UUID-Reihenfolge
+   * @param names Namen-Snapshot der Kandidaten (keine oder keine aktive Zeile), vor der ersten
+   *     Schreibung gelesen; leer, wenn es keine Kandidaten gab
+   */
+  private record Admission(List<UUID> admittedRefs, Map<UUID, String> names) {}
 
   /**
    * Gemeinsamer Kern des Hinzufuegens als Beteiligter (Intake #156): legt je Ref einen reinen
@@ -962,15 +1013,19 @@ public class AssigneeService {
    * Teilnehmer (nie Assignee, ein Mute bleibt, {@link UserStateService#reactivate}) und behandelt
    * den gleich-Ref-Race idempotent ({@link #saveParticipantHandlingRace}).
    *
-   * <p>Schreibt die Zeilen {@code TASK_PARTICIPANT} und {@code TASK_USER_STATE} und danach je
-   * tatsaechlich angelegter oder reaktivierter Person einen Verlaufseintrag mit {@code historyText}
-   * (Intake #180: Akteur = handelnde Person aus dem Security-Kontext, Detail = Name der Person,
-   * hoechstens 500 Zeichen, sonst ihre UUID); schon aktive Mitglieder und Race-Verlierer bekommen
-   * keinen. Keine Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save. Das ist
-   * Sache des Aufrufers, weil dessen Lock-Reihenfolge die Stelle vorgibt: zuerst alle
-   * Mitgliedschafts-Reads und -Writes, dann das Speichern der Aufgabe, dann der sortierte Bump
-   * (Karten {@code participants-actions} und {@code inbox-snapshot}). {@link #addParticipants}
-   * meldet danach PARTICIPANT, {@code CommentService#createComment} die MENTION.
+   * <p>Schreibt AUSSCHLIESSLICH die Zeilen {@code TASK_PARTICIPANT} und {@code TASK_USER_STATE}:
+   * kein Verlauf, keine Benachrichtigung, kein Generation-Bump, kein Signal, kein TASK-Save. Das
+   * ist Sache der Aufrufer, weil deren Lock-Reihenfolge die Stelle vorgibt: zuerst alle
+   * Mitgliedschafts-Reads und -Writes (danach liegt Sync 2, {@link
+   * #onAfterMembershipWritesForTest}), dann Verlauf, Benachrichtigung, das Speichern der Aufgabe
+   * und der sortierte Bump (Karten {@code participants-actions} und {@code inbox-snapshot}). Der
+   * Verlauf steht bewusst NACH den Mitgliedschafts-Schreibungen und nach Sync 2, wie im PUT: jede
+   * Verlaufszeile vergibt eine KSF-Sequenz mit optimistischer Sperre, schrieben zwei verzahnte
+   * Aufnahmen schon vorher Verlauf, scheiterte die Vergabe an einem Sequenzkonflikt (Intake #180,
+   * {@code MembershipConcurrencyIT} ADD_PAIRS). Deshalb liefert der Kern den Namen-Snapshot mit;
+   * die Aufrufer schreiben den Verlauf ({@link #addParticipants}: {@link
+   * #HISTORY_PARTICIPANT_ADDED} und danach PARTICIPANT, {@link #addAsParticipants}: {@link
+   * #HISTORY_PARTICIPANT_MENTIONED}; {@code CommentService#createComment} meldet die MENTION).
    *
    * <p>Die Refs muessen vom Aufrufer als aktive Benutzer DES Mandanten geprueft sein. Sie werden
    * dedupliziert und nach UUID sortiert verarbeitet, damit parallele Aufrufe mit mehreren Refs
@@ -982,23 +1037,17 @@ public class AssigneeService {
    * UserStateService#ensure(Long, UUID, Long, List)}). Zwischen zwei Schreibungen liest der Kern
    * nichts mehr; nur der Fehlerzweig eines gleich-Ref-Race liest die Zeile erneut. Die Namen der
    * Kandidaten fuer den Verlauf (Intake #180) liest der Kern ebenfalls vorab, in einer Abfrage und
-   * nur, wenn es Kandidaten gibt; die Verlaufseintraege folgen nach allen Schreibungen in
-   * UUID-Reihenfolge.
+   * nur, wenn es Kandidaten gibt.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
    * @param refs aufzunehmende Benutzer-UUIDs (beliebige Reihenfolge, Duplikate erlaubt)
-   * @param historyText Verlaufstext je aufgenommener Person ({@link #HISTORY_PARTICIPANT_ADDED}
-   *     oder {@link #HISTORY_PARTICIPANT_MENTIONED})
    * @return die tatsaechlich neu angelegten oder reaktivierten Refs in aufsteigender UUID-
-   *     Reihenfolge; aktive Mitglieder und Race-Verlierer (den meldet der Gewinner) fehlen
+   *     Reihenfolge (aktive Mitglieder und Race-Verlierer, den meldet der Gewinner, fehlen) und
+   *     der vorab gelesene Namen-Snapshot der Kandidaten
    */
-  List<UUID> addAsParticipants(
-      final Long taskId,
-      final long tenantId,
-      final Collection<UUID> refs,
-      final String historyText) {
-    final UUID actorRef = CurrentActor.require(userAccessor).user().id();
+  private Admission admitParticipants(
+      final Long taskId, final long tenantId, final Collection<UUID> refs) {
     final List<UUID> sortedRefs = new ArrayList<>(new LinkedHashSet<>(refs));
     sortedRefs.sort(UUID::compareTo);
     // Intake #167, Fix-Runde 2: alle Reads VOR der ersten Schreibung. Frueher las der Kern je
@@ -1024,8 +1073,9 @@ public class AssigneeService {
         candidates.add(ref);
       }
     }
-    // Intake #180: Namen-Snapshot fuer den Verlauf, nur fuer die Kandidaten (keine oder keine
-    // aktive Zeile) und nur, wenn es welche gibt; vor der ersten Schreibung (Sperrfolge).
+    // Intake #180: Namen-Snapshot fuer den Verlauf der Aufrufer, nur fuer die Kandidaten (keine
+    // oder keine aktive Zeile) und nur, wenn es welche gibt; vor der ersten Schreibung
+    // (Sperrfolge).
     final Map<UUID, String> historyNames =
         candidates.isEmpty() ? Map.of() : resolveDisplayNames(candidates);
     final List<UUID> affectedRefs = new ArrayList<>();
@@ -1037,13 +1087,7 @@ public class AssigneeService {
       // No-Op.
       onAfterParticipantAddForTest(taskId, ref);
     }
-    // Intake #180: je tatsaechlich aufgenommener Person ein Verlaufseintrag, in UUID-Reihenfolge
-    // nach allen Personen-Schreibungen. Keine Lesung mehr.
-    for (final UUID ref : affectedRefs) {
-      taskHistoryService.record(
-          taskId, tenantId, actorRef, historyText, historyDetail(ref, historyNames));
-    }
-    return affectedRefs;
+    return new Admission(affectedRefs, historyNames);
   }
 
   /**
@@ -1862,13 +1906,15 @@ public class AssigneeService {
   /**
    * Test-Seam (Default No-Op, Intake #167): Haken in {@link #updateAssignees}, {@link
    * #addParticipants} und {@link #exit} NACH den eigenen Teilnehmer- und State-Schreibungen und VOR
-   * Historie, Benachrichtigung, TASK-save und Generation-Bump; in {@link #addParticipants} liegt er
-   * hinter dem Aufnahme-Kern und damit hinter dessen Verlaufseintraegen (Intake #180, reine
-   * Einfuegungen ohne Lesung). Die Transaktion haelt hier ihre X-Sperren auf den eigenen
-   * Mitgliedschafts-Zeilen. Der Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}) laesst an
-   * diesem Punkt (Sync 2) beide Transaktionen ihre Sperren gleichzeitig halten; danach darf keine
-   * Lesung mehr auf die Zeilen der anderen warten, sonst verklemmen beide (Deadlock 1205). Im
-   * Produktivbetrieb ein No-Op.
+   * Historie, Benachrichtigung, TASK-save und Generation-Bump. Das gilt auch in {@link
+   * #addParticipants}: der Aufnahme-Kern {@link #admitParticipants} schreibt keinen Verlauf, die
+   * Verlaufseintraege folgen erst nach diesem Seam (Intake #180, wie im PUT), weil jede
+   * Verlaufszeile eine KSF-Sequenz mit optimistischer Sperre vergibt; schrieben zwei verzahnte
+   * Aufnahmen schon vor Sync 2 Verlauf, scheiterte die Vergabe an einem Sequenzkonflikt. Die
+   * Transaktion haelt hier ihre X-Sperren auf den eigenen Mitgliedschafts-Zeilen. Der
+   * Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}) laesst an diesem Punkt (Sync 2) beide
+   * Transaktionen ihre Sperren gleichzeitig halten; danach darf keine Lesung mehr auf die Zeilen
+   * der anderen warten, sonst verklemmen beide (Deadlock 1205). Im Produktivbetrieb ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
    */
@@ -1877,12 +1923,13 @@ public class AssigneeService {
   }
 
   /**
-   * Test-Seam (Default No-Op, Codex-Review #167): Haken in {@link #addAsParticipants} NACH der
-   * Aufnahme einer Person und VOR den Reads der naechsten (auch nach der letzten). Die Transaktion
-   * haelt hier die X-Sperren der bisher aufgenommenen Personen. Der Nebenlaeufigkeits-IT ({@code
-   * MembershipConcurrencyIT}) verzahnt daran zwei Aufnahmen mit je zwei Personen: beide haben ihre
-   * erste Person geschrieben, bevor eine die Zeilen ihrer zweiten liest. Gilt auch fuer die
-   * Aufnahme per Erwaehnung ({@code CommentService#createComment}). Im Produktivbetrieb ein No-Op.
+   * Test-Seam (Default No-Op, Codex-Review #167): Haken im Aufnahme-Kern {@link
+   * #admitParticipants} NACH der Aufnahme einer Person und VOR den Reads der naechsten (auch nach
+   * der letzten). Die Transaktion haelt hier die X-Sperren der bisher aufgenommenen Personen. Der
+   * Nebenlaeufigkeits-IT ({@code MembershipConcurrencyIT}) verzahnt daran zwei Aufnahmen mit je
+   * zwei Personen: beide haben ihre erste Person geschrieben, bevor eine die Zeilen ihrer zweiten
+   * liest. Gilt auch fuer die Aufnahme per Erwaehnung ({@link #addAsParticipants}, {@code
+   * CommentService#createComment}). Im Produktivbetrieb ein No-Op.
    *
    * @param taskId interne Aufgaben-ID
    * @param ref UUID der gerade verarbeiteten Person
