@@ -10,6 +10,7 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import java.sql.Types;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -100,6 +101,15 @@ class FlywayMigrationIT {
 
   /** Naechste freie ID fuer TASK_ANHANG_GRENZE-Inserts (Instanz je Testmethode, daher static). */
   private static long nextLimitId = 8501L;
+
+  /** Tabellen der Abteilungs-Projektion aus V15 (Intake #190). */
+  private static final List<String> V15_TABLES =
+      List.of("TASK_ABTEILUNG", "TASK_ABTEILUNG_MITGLIED", "TASK_EREIGNIS_QUITTUNG");
+
+  /**
+   * Naechste freie ID fuer TASK_EREIGNIS_QUITTUNG-Inserts (Instanz je Testmethode, daher static).
+   */
+  private static long nextReceiptId = 8801L;
 
   private static HikariDataSource master;
   private static String dbName;
@@ -709,6 +719,111 @@ class FlywayMigrationIT {
         .hasMessageContaining("CHK_TASK_ANHANG_GROESSE");
   }
 
+  // ---- 11. V15: Abteilungs-Projektion TASK_ABTEILUNG, TASK_ABTEILUNG_MITGLIED und
+  // TASK_EREIGNIS_QUITTUNG (Intake #190) ---
+
+  @Test
+  @DisplayName(
+      "i190_v15_columns: V15 in der History, Fachspalten mit Typ, Laenge und Nullbarkeit,"
+          + " Nova-Basisspalten wie V6")
+  void i190_v15_columns() {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT version FROM flyway_schema_history ORDER BY installed_rank");
+    assertThat(rows.stream().anyMatch(r -> "15".equals(String.valueOf(r.get("version")))))
+        .as("V15 in flyway_schema_history")
+        .isTrue();
+
+    // TASK_ABTEILUNG: Kopf der Projektion je Mandant und Abteilung
+    assertThat(column("TASK_ABTEILUNG", "ABTEILUNG_REF"))
+        .isEqualTo(col("uniqueidentifier", null, false));
+    assertThat(column("TASK_ABTEILUNG", "NAME")).isEqualTo(col("nvarchar", 255, true));
+    assertThat(column("TASK_ABTEILUNG", "REVISION")).isEqualTo(col("char", 64, true));
+    assertThat(column("TASK_ABTEILUNG", "ABGERUFEN_AM")).isEqualTo(col("datetime2", null, false));
+    assertThat(datetimePrecision("TASK_ABTEILUNG", "ABGERUFEN_AM")).isEqualTo(7);
+
+    // TASK_ABTEILUNG_MITGLIED: Mitglieder einer Abteilung
+    assertThat(column("TASK_ABTEILUNG_MITGLIED", "ABTEILUNG_ID"))
+        .isEqualTo(col("bigint", null, false));
+    assertThat(column("TASK_ABTEILUNG_MITGLIED", "MITARBEITER_REF"))
+        .isEqualTo(col("uniqueidentifier", null, false));
+    assertThat(column("TASK_ABTEILUNG_MITGLIED", "KERNMITGLIED"))
+        .isEqualTo(col("bit", null, false));
+    for (final String name : List.of("ANZEIGENAME", "VORNAME", "NACHNAME", "LOGIN_NAME")) {
+      assertThat(column("TASK_ABTEILUNG_MITGLIED", name))
+          .as("TASK_ABTEILUNG_MITGLIED.%s", name)
+          .isEqualTo(col("nvarchar", 255, true));
+    }
+
+    // TASK_EREIGNIS_QUITTUNG: Inbox der verarbeiteten Ereignisse
+    assertThat(column("TASK_EREIGNIS_QUITTUNG", "MANDANT_UUID"))
+        .isEqualTo(col("uniqueidentifier", null, false));
+    assertThat(column("TASK_EREIGNIS_QUITTUNG", "EREIGNIS_ID"))
+        .isEqualTo(col("uniqueidentifier", null, false));
+    assertThat(column("TASK_EREIGNIS_QUITTUNG", "ABTEILUNG_REF"))
+        .isEqualTo(col("uniqueidentifier", null, true));
+    assertThat(column("TASK_EREIGNIS_QUITTUNG", "STATUS")).isEqualTo(col("nvarchar", 255, false));
+    assertThat(column("TASK_EREIGNIS_QUITTUNG", "FEHLER_MELDUNG"))
+        .isEqualTo(col("nvarchar", 900, true));
+
+    // Basisspalten exakt wie TASK_SOURCE_CREATE_RECEIPT (V6): Typ, Laenge, Nullbarkeit
+    for (final String table : V15_TABLES) {
+      assertThat(columnNames(table)).as("Basisspalten in %s", table).containsAll(NOVA_BASE_COLUMNS);
+      for (final String base : NOVA_BASE_COLUMNS) {
+        assertThat(column(table, base))
+            .as("%s.%s wie V6", table, base)
+            .isEqualTo(column("TASK_SOURCE_CREATE_RECEIPT", base));
+      }
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "i190_v15_keys_and_indexes: FKs auf PROD_FIRMA und TASK_ABTEILUNG, Unique-Schluessel und"
+          + " Indizes mit Spaltenreihenfolge")
+  void i190_v15_keys_and_indexes() {
+    assertThat(foreignKeys("TASK_ABTEILUNG")).containsExactly(fk("TENANT_ID", "PROD_FIRMA", "ID"));
+    assertThat(foreignKeys("TASK_ABTEILUNG_MITGLIED"))
+        .containsExactlyInAnyOrder(
+            fk("TENANT_ID", "PROD_FIRMA", "ID"), fk("ABTEILUNG_ID", "TASK_ABTEILUNG", "ID"));
+    assertThat(foreignKeys("TASK_EREIGNIS_QUITTUNG"))
+        .containsExactly(fk("TENANT_ID", "PROD_FIRMA", "ID"));
+
+    assertThat(uniqueColumns("TASK_ABTEILUNG", "UQ_TASK_ABTEILUNG_REF"))
+        .containsExactly("TENANT_ID", "ABTEILUNG_REF");
+    assertThat(uniqueColumns("TASK_ABTEILUNG_MITGLIED", "UQ_TASK_ABTEILUNG_MITGLIED"))
+        .containsExactly("ABTEILUNG_ID", "MITARBEITER_REF");
+    assertThat(uniqueColumns("TASK_EREIGNIS_QUITTUNG", "UQ_TASK_EREIGNIS_QUITTUNG_EREIGNIS"))
+        .containsExactly("MANDANT_UUID", "EREIGNIS_ID");
+    for (final String table : V15_TABLES) {
+      assertThat(uniqueColumns(table, "UQ_" + table + "_EXTERNALID"))
+          .as("UQ_%s_EXTERNALID wie V14", table)
+          .containsExactly("EXTERNALID");
+    }
+
+    assertThat(indexColumns("TASK_ABTEILUNG", "IX_TASK_ABTEILUNG_STATUS"))
+        .containsExactly("TENANT_ID", "ENTITY_STATUS");
+    assertThat(indexColumns("TASK_ABTEILUNG_MITGLIED", "IX_TASK_ABTEILUNG_MITGLIED_ABT"))
+        .containsExactly("TENANT_ID", "ABTEILUNG_ID");
+    assertThat(indexColumns("TASK_EREIGNIS_QUITTUNG", "IX_TASK_EREIGNIS_QUITTUNG_ANGELEGT"))
+        .containsExactly("ANGELEGT_AM");
+  }
+
+  @Test
+  @DisplayName(
+      "i190_v15_receipt_status_check: PROCESSED und DEAD gueltig, unbekannter Status scheitert"
+          + " am CHECK")
+  void i190_v15_receipt_status_check() {
+    // Mandant anlegen, damit kein Insert am Firmen-FK scheitert (Grund wird per Name gepinnt)
+    ensureFirm(560L);
+
+    insertReceipt(560L, "PROCESSED");
+    insertReceipt(560L, "DEAD");
+    assertThatThrownBy(() -> insertReceipt(560L, "OTHER"))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("CHK_TASK_EREIGNIS_QUITTUNG_STATUS");
+  }
+
   // ---- Hilfsmethoden ---
 
   /** Spaltendefinition aus INFORMATION_SCHEMA.COLUMNS (Typ, Zeichenlaenge, Nullbarkeit). */
@@ -779,6 +894,50 @@ class FlywayMigrationIT {
         String.class,
         table,
         index);
+  }
+
+  /**
+   * Schluesselspalten eines Unique-Schluessels in Reihenfolge; ein UNIQUE-Constraint legt einen
+   * gleichnamigen Unique-Index an, daher genuegt der Blick auf {@code sys.indexes}.
+   */
+  private List<String> uniqueColumns(final String table, final String uniqueKey) {
+    return jdbcTemplate.queryForList(
+        "SELECT c.name FROM sys.indexes i"
+            + " JOIN sys.tables t ON t.object_id = i.object_id"
+            + " JOIN sys.index_columns ic ON ic.object_id = i.object_id"
+            + "  AND ic.index_id = i.index_id"
+            + " JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id"
+            + " WHERE t.name = ? AND i.name = ? AND i.is_unique = 1"
+            + "  AND ic.is_included_column = 0"
+            + " ORDER BY ic.key_ordinal",
+        String.class,
+        table,
+        uniqueKey);
+  }
+
+  /** Nachkommastellen einer datetime2-Spalte aus INFORMATION_SCHEMA.COLUMNS. */
+  private Integer datetimePrecision(final String table, final String column) {
+    return jdbcTemplate.queryForObject(
+        "SELECT DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS"
+            + " WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+        Integer.class,
+        table,
+        column);
+  }
+
+  /**
+   * Legt eine Ereignis-Quittung mit zufaelliger Mandanten-UUID und Ereignis-ID an; Basisspalten
+   * kommen aus den Defaults.
+   */
+  private void insertReceipt(final long tenantId, final String status) {
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_EREIGNIS_QUITTUNG] (ID, TENANT_ID, MANDANT_UUID, EREIGNIS_ID,"
+            + " STATUS) VALUES (?, ?, ?, ?, ?)",
+        nextReceiptId++,
+        tenantId,
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        status);
   }
 
   private Boolean readBit(final String table, final String column, final long id) {

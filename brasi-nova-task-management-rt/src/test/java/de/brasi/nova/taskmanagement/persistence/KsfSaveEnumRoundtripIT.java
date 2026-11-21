@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskAttachmentLimit;
+import de.brasi.nova.taskmanagement.entity.TaskEventReceipt;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.enums.AttachmentTariff;
+import de.brasi.nova.taskmanagement.entity.enums.EventReceiptStatus;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.entity.enums.ParticipantKind;
 import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentLimitRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskAttachmentRepository;
+import de.brasi.nova.taskmanagement.repository.BaseTaskEventReceiptRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskParticipantRepository;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -58,6 +61,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
  *
  * <p>Intake #152: zusaetzlich {@link AttachmentTariff} ueber {@link TaskAttachmentLimit} und der
  * Ablauf Insert ohne Speicherschluessel, dann Update mit Schluessel fuer {@link TaskAttachment}.
+ *
+ * <p>Intake #190: {@link EventReceiptStatus} ueber {@link TaskEventReceipt}.
  *
  * <p>Infrastruktur: Wegwerf-MSSQL-DB (wie {@code EnumRoundtripIT}), Flyway-V1 fuer vollstaendiges
  * Schema inkl. PROD_FIRMA-Seed, KSF-Persistence-Context (SYS_SEQUENCE wird automatisch via {@code
@@ -131,6 +136,8 @@ class KsfSaveEnumRoundtripIT {
   @Autowired private BaseTaskAttachmentLimitRepository attachmentLimitRepository;
 
   @Autowired private BaseTaskAttachmentRepository attachmentRepository;
+
+  @Autowired private BaseTaskEventReceiptRepository eventReceiptRepository;
 
   @BeforeAll
   static void seedPrerequisites(@Autowired JdbcTemplate jt) {
@@ -349,6 +356,41 @@ class KsfSaveEnumRoundtripIT {
     assertThat(reloaded.getSizeBytes()).isEqualTo(2048L);
     assertThat(reloaded.isThumbnailPresent()).isFalse();
     assertThat(reloaded.getUploadedByRef()).isEqualTo(uploadedBy);
+  }
+
+  // ---- 7. Intake #190: EventReceiptStatus ueber TaskEventReceipt
+  // ----------------------------------
+
+  @Test
+  @DisplayName(
+      "i190_event_receipt_status_roundtrip: KSF-save mit DEAD, Neuladen liefert DEAD,"
+          + " Rohspalte STATUS haelt den name()-String")
+  void i190_event_receipt_status_roundtrip() {
+    final UUID tenantUuid = UUID.randomUUID();
+    final UUID eventId = UUID.randomUUID();
+    TaskEventReceipt receipt = new TaskEventReceipt();
+    // Mandantenbezug: TENANT_ID-Spalte wird aus dem Entity-Feld geschrieben
+    receipt.setTenantId(TENANT_ID);
+    receipt.setTenantUuid(tenantUuid);
+    receipt.setEventId(eventId);
+    receipt.setDivisionRef(null);
+    receipt.setStatus(EventReceiptStatus.DEAD);
+    receipt.setErrorMessage("Abteilung nicht abrufbar");
+
+    TaskEventReceipt saved = eventReceiptRepository.save(receipt);
+    assertThat(saved.getId())
+        .as("KSF save() muss eine echte ID vergeben (nicht null/0)")
+        .isNotNull()
+        .isGreaterThan(0L);
+    final long id = saved.getId();
+
+    TaskEventReceipt reloaded = eventReceiptRepository.findById(id).orElseThrow();
+    assertThat(reloaded.getStatus()).isEqualTo(EventReceiptStatus.DEAD);
+    assertThat(reloaded.getTenantUuid()).isEqualTo(tenantUuid);
+    assertThat(reloaded.getEventId()).isEqualTo(eventId);
+    assertThat(reloaded.getDivisionRef()).as("ABTEILUNG_REF bleibt NULL").isNull();
+    assertThat(reloaded.getErrorMessage()).isEqualTo("Abteilung nicht abrufbar");
+    assertThat(rawColumn("TASK_EREIGNIS_QUITTUNG", "STATUS", id)).isEqualTo("DEAD");
   }
 
   // ---- Hilfsmethoden
