@@ -106,7 +106,9 @@ class FlywayMigrationIT {
   private static final List<String> V15_TABLES =
       List.of("TASK_ABTEILUNG", "TASK_ABTEILUNG_MITGLIED", "TASK_EREIGNIS_QUITTUNG");
 
-  /** Naechste freie ID fuer TASK_EREIGNIS_QUITTUNG-Inserts (Instanz je Testmethode, daher static). */
+  /**
+   * Naechste freie ID fuer TASK_EREIGNIS_QUITTUNG-Inserts (Instanz je Testmethode, daher static).
+   */
   private static long nextReceiptId = 8801L;
 
   private static HikariDataSource master;
