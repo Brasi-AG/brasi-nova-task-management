@@ -35,9 +35,10 @@ import org.springframework.web.client.RestTemplate;
  * {@code divisionSyncRestTemplate} aus {@link DivisionHttpConfig}, Statusmatrix (200, 404, 410,
  * 400) und technische Fehler als {@link DivisionFetchException}.
  *
- * <p>Angenommene Signaturen: {@code DivisionHttpConfig#divisionSyncRestTemplate(RestTemplateBuilder,
- * DivisionSyncProperties, DivisionSyncTokenProvider)} und {@code new
- * DivisionMembersClient(RestTemplate, DivisionSyncProperties)}.
+ * <p>Angenommene Signaturen: {@code
+ * DivisionHttpConfig#divisionSyncRestTemplate(RestTemplateBuilder, DivisionSyncProperties,
+ * DivisionSyncTokenProvider)} und {@code new DivisionMembersClient(RestTemplate,
+ * DivisionSyncProperties)}.
  */
 class DivisionMembersClientTest {
 
@@ -150,8 +151,7 @@ class DivisionMembersClientTest {
         .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
         .andRespond(
             withSuccess(
-                membersJson(
-                    DIVISION, "\"divisionName\":\"Vertrieb\",\"futureField\":{\"x\":1},"),
+                membersJson(DIVISION, "\"divisionName\":\"Vertrieb\",\"futureField\":{\"x\":1},"),
                 MediaType.APPLICATION_JSON));
 
     final DivisionFetchResult result = client.fetchSnapshot(TENANT, DIVISION, REV);

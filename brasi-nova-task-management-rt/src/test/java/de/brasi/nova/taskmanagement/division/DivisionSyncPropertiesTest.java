@@ -17,8 +17,8 @@ import org.springframework.core.io.support.PropertiesLoaderUtils;
  * Pflichtpruefung bei {@code enabled=true} und die Vorgaben aus {@code application.properties} per
  * {@link Binder} (Muster {@code AttachmentPropertiesTest}).
  *
- * <p>Basis-URL, Token-URL, Client-ID und Secret stehen nur im Config Server; die Fehlermeldung nennt
- * fehlende Schluessel, nie Werte.
+ * <p>Basis-URL, Token-URL, Client-ID und Secret stehen nur im Config Server; die Fehlermeldung
+ * nennt fehlende Schluessel, nie Werte.
  */
 class DivisionSyncPropertiesTest {
 
@@ -36,7 +36,8 @@ class DivisionSyncPropertiesTest {
 
   @Test
   void i190_enabled_without_values_fails_fast() {
-    assertThatThrownBy(() -> props(true, null, null, null, null).requireCompleteWhenEnabled("dev-ui"))
+    assertThatThrownBy(
+            () -> props(true, null, null, null, null).requireCompleteWhenEnabled("dev-ui"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("application-base-url")
         .hasMessageContaining("oauth2.token-url")

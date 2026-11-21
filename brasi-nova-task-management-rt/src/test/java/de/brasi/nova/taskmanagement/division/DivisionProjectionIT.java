@@ -58,8 +58,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Reaktivieren, Mandantentrennung und Erhalt des Namens, wenn application keinen liefert.
  *
  * <p>{@code apply} verlangt eine laufende Transaktion ({@code MANDATORY}); jeder Aufruf laeuft in
- * einem eigenen {@link TransactionTemplate} unter dem Mandantenkontext. Abrufstart-Zeiten sind feste
- * {@link LocalDateTime}-Werte (t1 &lt; t2 &lt; t3), keine Systemzeit. Jeder Test nutzt eigene
+ * einem eigenen {@link TransactionTemplate} unter dem Mandantenkontext. Abrufstart-Zeiten sind
+ * feste {@link LocalDateTime}-Werte (t1 &lt; t2 &lt; t3), keine Systemzeit. Jeder Test nutzt eigene
  * Abteilungs-UUIDs, weil die Methoden der Klasse eine Wegwerf-DB teilen.
  *
  * <p>Kontext wie {@code TaskRowLockIT} (Paket {@code repository} plus der gezielt importierte
@@ -87,11 +87,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 class DivisionProjectionIT {
 
   private static final long TENANT_A_ID = 561L;
-  private static final UUID TENANT_A_UUID =
-      UUID.fromString("00000056-0000-0056-0000-000000000561");
+  private static final UUID TENANT_A_UUID = UUID.fromString("00000056-0000-0056-0000-000000000561");
   private static final long TENANT_B_ID = 562L;
-  private static final UUID TENANT_B_UUID =
-      UUID.fromString("00000056-0000-0056-0000-000000000562");
+  private static final UUID TENANT_B_UUID = UUID.fromString("00000056-0000-0056-0000-000000000562");
 
   private static final LocalDateTime T1 = LocalDateTime.of(2026, 11, 20, 10, 0, 0);
   private static final LocalDateTime T2 = T1.plusMinutes(5);
@@ -260,8 +258,7 @@ class DivisionProjectionIT {
         members(ref, null, REV1, member(UUID.randomUUID()), member(UUID.randomUUID())),
         T1);
 
-    final DivisionApplyOutcome outcome =
-        apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T2);
+    final DivisionApplyOutcome outcome = apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T2);
 
     assertThat(outcome).isEqualTo(DivisionApplyOutcome.DEACTIVATED);
     final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
@@ -277,8 +274,7 @@ class DivisionProjectionIT {
   void i190_not_found_for_unknown_division_creates_nothing() {
     final UUID ref = UUID.randomUUID();
 
-    final DivisionApplyOutcome outcome =
-        apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T1);
+    final DivisionApplyOutcome outcome = apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T1);
 
     assertThat(outcome).isEqualTo(DivisionApplyOutcome.IGNORED);
     assertThat(heads(TENANT_A_ID, ref)).isEmpty();
