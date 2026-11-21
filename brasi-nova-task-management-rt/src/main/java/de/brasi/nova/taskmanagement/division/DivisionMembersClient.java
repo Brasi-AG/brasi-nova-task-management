@@ -91,15 +91,12 @@ public class DivisionMembersClient {
     final String baseUrl = properties.applicationBaseUrl();
     if (baseUrl == null || baseUrl.isBlank()) {
       throw new DivisionFetchException(
-          "Abruf nicht möglich: "
-              + DivisionSyncProperties.PREFIX
-              + ".application-base-url fehlt.");
+          "Abruf nicht möglich: " + DivisionSyncProperties.PREFIX + ".application-base-url fehlt.");
     }
     return UriComponentsBuilder.fromUriString(baseUrl);
   }
 
-  private DivisionFetchResult fetch(
-      final URI uri, final UUID divisionRef, final boolean snapshot) {
+  private DivisionFetchResult fetch(final URI uri, final UUID divisionRef, final boolean snapshot) {
     final DivisionMembersPayload payload;
     try {
       payload =

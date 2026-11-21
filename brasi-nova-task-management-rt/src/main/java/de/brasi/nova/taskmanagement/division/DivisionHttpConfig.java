@@ -30,8 +30,7 @@ public class DivisionHttpConfig {
    * @return konfiguriertes {@link RestTemplate}
    */
   @Bean(defaultCandidate = false)
-  @Qualifier("divisionSyncRestTemplate")
-  public RestTemplate divisionSyncRestTemplate(
+  @Qualifier("divisionSyncRestTemplate") public RestTemplate divisionSyncRestTemplate(
       final RestTemplateBuilder restTemplateBuilder,
       final DivisionSyncProperties properties,
       final DivisionSyncTokenProvider tokenProvider) {

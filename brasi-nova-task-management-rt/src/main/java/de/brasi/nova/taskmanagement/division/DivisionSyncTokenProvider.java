@@ -65,9 +65,7 @@ public class DivisionSyncTokenProvider {
    * @param clock Uhr fuer Abrufzeit und Ablauf
    */
   DivisionSyncTokenProvider(
-      final DivisionSyncProperties properties,
-      final RestTemplate restTemplate,
-      final Clock clock) {
+      final DivisionSyncProperties properties, final RestTemplate restTemplate, final Clock clock) {
     this.properties = properties;
     this.restTemplate = restTemplate;
     this.clock = clock;

@@ -3,8 +3,8 @@ package de.brasi.nova.taskmanagement.division;
 import de.brasi.nova.taskmanagement.division.model.DivisionMembersPayload;
 
 /**
- * Fachliches Ergebnis eines Abrufs der Abteilungsmitglieder bei application. Technische Fehler
- * sind kein Ergebnis, sondern eine {@link DivisionFetchException}.
+ * Fachliches Ergebnis eines Abrufs der Abteilungsmitglieder bei application. Technische Fehler sind
+ * kein Ergebnis, sondern eine {@link DivisionFetchException}.
  */
 public sealed interface DivisionFetchResult {
 

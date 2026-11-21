@@ -71,7 +71,9 @@ public class DivisionProjectionService {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public DivisionApplyOutcome apply(
-      final UUID divisionRef, final DivisionFetchResult result, final LocalDateTime fetchStartedAt) {
+      final UUID divisionRef,
+      final DivisionFetchResult result,
+      final LocalDateTime fetchStartedAt) {
     Objects.requireNonNull(divisionRef, "divisionRef");
     Objects.requireNonNull(result, "result");
     Objects.requireNonNull(fetchStartedAt, "fetchStartedAt");
@@ -79,8 +81,7 @@ public class DivisionProjectionService {
       throw new IllegalArgumentException(
           "Ergebnis " + result + " kann nicht in die Projektion übernommen werden.");
     }
-    if (result instanceof Members fetched
-        && !divisionRef.equals(fetched.payload().divisionId())) {
+    if (result instanceof Members fetched && !divisionRef.equals(fetched.payload().divisionId())) {
       throw new IllegalArgumentException(
           "Antwort für Abteilung "
               + fetched.payload().divisionId()

@@ -7,8 +7,8 @@ import java.util.UUID;
 import org.springframework.data.repository.query.Param;
 
 /**
- * KSF-Repository der Abteilungs-Projektion ({@code TASK_ABTEILUNG}, Intake #190). Alle Queries
- * sind ueber {@code :tenantId} an den Kontext-Mandanten gebunden.
+ * KSF-Repository der Abteilungs-Projektion ({@code TASK_ABTEILUNG}, Intake #190). Alle Queries sind
+ * ueber {@code :tenantId} an den Kontext-Mandanten gebunden.
  */
 public interface TaskDivisionQueryRepository extends BaseTaskDivisionRepository {
 
