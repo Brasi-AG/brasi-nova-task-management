@@ -146,6 +146,76 @@ class DivisionMembersClientTest {
   }
 
   @Test
+  void i190_missing_members_is_failure() {
+    final String withoutField = "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\"}";
+    final String nullField =
+        "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\",\"members\":null}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(nullField, MediaType.APPLICATION_JSON));
+    server
+        .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
+        .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
+
+    assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+        .isInstanceOf(DivisionFetchException.class)
+        .hasMessageContaining("ohne members")
+        .hasMessageNotContaining(ACCESS_TOKEN);
+    assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+        .isInstanceOf(DivisionFetchException.class)
+        .hasMessageContaining("ohne members")
+        .hasMessageNotContaining(ACCESS_TOKEN);
+    assertThatThrownBy(() -> client.fetchSnapshot(TENANT, DIVISION, REV))
+        .isInstanceOf(DivisionFetchException.class)
+        .hasMessageContaining("ohne members")
+        .hasMessageNotContaining(ACCESS_TOKEN);
+    server.verify();
+  }
+
+  @Test
+  void i190_null_member_entry_is_failure() {
+    final String json =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[null]}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+
+    assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+        .isInstanceOf(DivisionFetchException.class)
+        .hasMessageContaining("leerem Eintrag")
+        .hasMessageNotContaining(ACCESS_TOKEN);
+    server.verify();
+  }
+
+  @Test
+  void i190_empty_members_is_valid() {
+    final String json =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[]}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+
+    final DivisionFetchResult result = client.fetchCurrent(TENANT, DIVISION);
+
+    assertThat(result).isInstanceOf(Members.class);
+    final DivisionMembersPayload payload = ((Members) result).payload();
+    assertThat(payload.members()).isNotNull().isEmpty();
+    assertThat(payload.revision()).isEqualTo(REV);
+    server.verify();
+  }
+
+  @Test
   void i190_unknown_fields_ignored_and_division_name_read() {
     server
         .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))

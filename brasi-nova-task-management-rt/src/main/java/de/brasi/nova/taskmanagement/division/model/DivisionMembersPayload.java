@@ -8,17 +8,17 @@ import java.util.UUID;
  * Antwort von application auf den Abruf der Abteilungsmitglieder (aktueller Stand oder Snapshot).
  * Unbekannte Felder werden ignoriert, damit Erweiterungen in application tm nicht brechen.
  *
+ * <p>Der Record normalisiert nichts: Ein fehlendes oder {@code null} gelesenes {@code members}
+ * bleibt {@code null} und eine leere Abteilung ist eine leere Liste. Der {@code
+ * DivisionMembersClient} weist eine Antwort ohne {@code members} oder mit {@code null}-Eintrag als
+ * technischen Fehler ab; nur geprueft gelieferte Payloads erreichen die Projektion.
+ *
  * @param divisionId UUID der Abteilung; muss der angefragten entsprechen
  * @param divisionName Anzeigename der Abteilung; fehlt, solange application ihn nicht liefert
  * @param revision Revision des gelieferten Stands
- * @param members alle Mitglieder des Teilbaums; ohne Feld leer
+ * @param members alle Mitglieder des Teilbaums; leere Liste bei leerer Abteilung, {@code null} nur
+ *     bei fehlendem Feld in der Antwort
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record DivisionMembersPayload(
-    UUID divisionId, String divisionName, String revision, List<DivisionMemberPayload> members) {
-
-  /** Normalisiert die Mitgliederliste: ohne Feld eine leere, unveraenderliche Liste. */
-  public DivisionMembersPayload {
-    members = members == null ? List.of() : List.copyOf(members);
-  }
-}
+    UUID divisionId, String divisionName, String revision, List<DivisionMemberPayload> members) {}

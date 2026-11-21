@@ -2,6 +2,7 @@ package de.brasi.nova.taskmanagement.division;
 
 import de.brasi.nova.taskmanagement.division.model.DivisionMembersPayload;
 import java.net.URI;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
@@ -22,8 +23,10 @@ import org.springframework.web.util.UriComponentsBuilder;
  * Abteilungs-UUIDs, nie aus Links eines Ereignisses. Statusmatrix: 200 {@link
  * DivisionFetchResult.Members}, 404 {@link DivisionFetchResult.NotFound}, beim Snapshot 410 {@link
  * DivisionFetchResult.Gone} und 400 {@link DivisionFetchResult.BadRevision}; alles andere (401,
- * 403, 5xx, Zeitueberschreitung, I/O) und eine Antwort fuer eine andere Abteilung sind eine {@link
- * DivisionFetchException}.
+ * 403, 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort
+ * ohne {@code revision}, ohne {@code members} oder mit {@code null}-Eintrag in {@code members} sind
+ * eine {@link DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und bedeutet
+ * eine leere Abteilung.
  */
 @Component
 public class DivisionMembersClient {
@@ -53,7 +56,8 @@ public class DivisionMembersClient {
    * @param tenantUuid Mandanten-UUID aus dem geprueften Ereignis
    * @param divisionRef Abteilungs-UUID aus dem geprueften Ereignis
    * @return {@link DivisionFetchResult.Members} oder {@link DivisionFetchResult.NotFound}
-   * @throws DivisionFetchException bei technischem Fehler oder fremder Abteilung in der Antwort
+   * @throws DivisionFetchException bei technischem Fehler oder unbrauchbarer Antwort (fremde
+   *     Abteilung, ohne revision, ohne members)
    */
   public DivisionFetchResult fetchCurrent(final UUID tenantUuid, final UUID divisionRef) {
     final URI uri =
@@ -74,7 +78,8 @@ public class DivisionMembersClient {
    * @param revision Revision aus dem geprueften Ereignis
    * @return {@link DivisionFetchResult.Members}, {@link DivisionFetchResult.NotFound}, {@link
    *     DivisionFetchResult.Gone} oder {@link DivisionFetchResult.BadRevision}
-   * @throws DivisionFetchException bei technischem Fehler oder fremder Abteilung in der Antwort
+   * @throws DivisionFetchException bei technischem Fehler oder unbrauchbarer Antwort (fremde
+   *     Abteilung, ohne revision, ohne members)
    */
   public DivisionFetchResult fetchSnapshot(
       final UUID tenantUuid, final UUID divisionRef, final String revision) {
@@ -129,6 +134,17 @@ public class DivisionMembersClient {
     if (payload.revision() == null || payload.revision().isBlank()) {
       throw new DivisionFetchException(
           "Abruf der Mitglieder von Abteilung " + divisionRef + ": Antwort ohne revision.");
+    }
+    // Ein fehlendes Feld ist keine leere Abteilung: sonst loescht die Projektion alle Mitglieder.
+    if (payload.members() == null) {
+      throw new DivisionFetchException(
+          "Abruf der Mitglieder von Abteilung " + divisionRef + ": Antwort ohne members.");
+    }
+    if (payload.members().stream().anyMatch(Objects::isNull)) {
+      throw new DivisionFetchException(
+          "Abruf der Mitglieder von Abteilung "
+              + divisionRef
+              + ": Antwort mit leerem Eintrag in members.");
     }
     return new DivisionFetchResult.Members(payload);
   }
