@@ -147,7 +147,8 @@ class DivisionMembersClientTest {
 
   @Test
   void i190_missing_members_is_failure() {
-    final String withoutField = "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\"}";
+    final String withoutField =
+        "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\"}";
     final String nullField =
         "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\",\"members\":null}";
     server
@@ -178,11 +179,7 @@ class DivisionMembersClientTest {
   @Test
   void i190_null_member_entry_is_failure() {
     final String json =
-        "{\"divisionId\":\""
-            + DIVISION
-            + "\",\"revision\":\""
-            + REV
-            + "\",\"members\":[null]}";
+        "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\",\"members\":[null]}";
     server
         .expect(once(), requestTo(currentUrl(DIVISION)))
         .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
@@ -197,11 +194,7 @@ class DivisionMembersClientTest {
   @Test
   void i190_empty_members_is_valid() {
     final String json =
-        "{\"divisionId\":\""
-            + DIVISION
-            + "\",\"revision\":\""
-            + REV
-            + "\",\"members\":[]}";
+        "{\"divisionId\":\"" + DIVISION + "\",\"revision\":\"" + REV + "\",\"members\":[]}";
     server
         .expect(once(), requestTo(currentUrl(DIVISION)))
         .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
