@@ -54,8 +54,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * der lokalen Abteilungs-Projektion ({@code TASK_ABTEILUNG}, {@code TASK_ABTEILUNG_MITGLIED}).
  *
  * <p>Belegt: Anlegen beim ersten Stand, physisches Ersetzen der Mitglieder, „spaeterer Abruf
- * gewinnt“ ueber {@code ABGERUFEN_AM}, Deaktivieren bei 404 (nur fuer bekannte Abteilungen),
- * Reaktivieren, Mandantentrennung und Erhalt des Namens, wenn application keinen liefert.
+ * gewinnt“ ueber {@code ABGERUFEN_AM}, Deaktivieren bei 404 (fuer eine unbekannte Abteilung als
+ * Grabstein, der spaetere Staende mit frueherem Abrufstart abwehrt), Reaktivieren, Mandantentrennung
+ * und Erhalt des Namens, wenn application keinen liefert.
  *
  * <p>{@code apply} verlangt eine laufende Transaktion ({@code MANDATORY}); jeder Aufruf laeuft in
  * einem eigenen {@link TransactionTemplate} unter dem Mandantenkontext. Abrufstart-Zeiten sind
@@ -270,14 +271,65 @@ class DivisionProjectionIT {
   }
 
   @Test
-  @DisplayName("404 fuer eine nie gesehene Abteilung legt nichts an (IGNORED)")
-  void i190_not_found_for_unknown_division_creates_nothing() {
+  @DisplayName(
+      "404 fuer eine nie gesehene Abteilung legt einen Grabstein an: DEACTIVE-Kopf, ohne Mitglieder")
+  void i190_not_found_for_unknown_division_creates_tombstone() {
     final UUID ref = UUID.randomUUID();
 
     final DivisionApplyOutcome outcome = apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T1);
 
-    assertThat(outcome).isEqualTo(DivisionApplyOutcome.IGNORED);
-    assertThat(heads(TENANT_A_ID, ref)).isEmpty();
+    assertThat(outcome).isEqualTo(DivisionApplyOutcome.DEACTIVATED);
+    final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
+    assertThat(head.get("ENTITY_STATUS")).isEqualTo("DEACTIVE");
+    assertThat(head.get("REVISION")).isNull();
+    assertThat(head.get("NAME")).isNull();
+    assertThat(fetchedAt(head)).isEqualTo(T1);
+    assertThat(memberRowCount(head.get("ID"))).isZero();
+    assertThat(currentRevision(TENANT_A_ID, TENANT_A_UUID, ref)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("ein frueher gestarteter Stand nach dem Grabstein ist STALE, der Kopf bleibt leer")
+  void i190_older_members_after_tombstone_is_stale() {
+    final UUID ref = UUID.randomUUID();
+    assertThat(apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T2))
+        .isEqualTo(DivisionApplyOutcome.DEACTIVATED);
+
+    final DivisionApplyOutcome outcome =
+        apply(TENANT_A_ID, TENANT_A_UUID, ref, members(ref, "Alt", REV1, member(UUID.randomUUID())), T1);
+
+    assertThat(outcome).isEqualTo(DivisionApplyOutcome.STALE);
+    final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
+    assertThat(head.get("ENTITY_STATUS")).isEqualTo("DEACTIVE");
+    assertThat(head.get("REVISION")).isNull();
+    assertThat(head.get("NAME")).isNull();
+    assertThat(fetchedAt(head)).isEqualTo(T2);
+    assertThat(memberRowCount(head.get("ID"))).isZero();
+    assertThat(currentRevision(TENANT_A_ID, TENANT_A_UUID, ref)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("ein spaeter gestarteter Stand nach dem Grabstein reaktiviert denselben Kopf")
+  void i190_newer_members_after_tombstone_reactivates() {
+    final UUID ref = UUID.randomUUID();
+    final UUID a = UUID.randomUUID();
+    final UUID b = UUID.randomUUID();
+    assertThat(apply(TENANT_A_ID, TENANT_A_UUID, ref, new NotFound(), T1))
+        .isEqualTo(DivisionApplyOutcome.DEACTIVATED);
+    final Object headId = singleHead(TENANT_A_ID, ref).get("ID");
+
+    final DivisionApplyOutcome outcome =
+        apply(TENANT_A_ID, TENANT_A_UUID, ref, members(ref, "Neu", REV2, member(a), member(b)), T2);
+
+    assertThat(outcome).isEqualTo(DivisionApplyOutcome.UPDATED);
+    final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
+    assertThat(head.get("ID")).as("derselbe Kopf, keine zweite Zeile").isEqualTo(headId);
+    assertThat(head.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+    assertThat(trimmed(head.get("REVISION"))).isEqualTo(REV2);
+    assertThat(head.get("NAME")).isEqualTo("Neu");
+    assertThat(fetchedAt(head)).isEqualTo(T2);
+    assertThat(memberRefs(TENANT_A_ID, ref)).containsExactlyInAnyOrder(a, b);
+    assertThat(currentRevision(TENANT_A_ID, TENANT_A_UUID, ref)).contains(REV2);
   }
 
   @Test

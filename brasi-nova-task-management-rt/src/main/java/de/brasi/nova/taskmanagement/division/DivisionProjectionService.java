@@ -58,8 +58,11 @@ public class DivisionProjectionService {
    *
    * <p>{@link Members}: Kopf anlegen oder aktivieren, {@code REVISION}, {@code NAME} (nur wenn
    * geliefert) und {@code ABGERUFEN_AM} setzen, Mitglieder ersetzen. {@link NotFound}: einen
-   * vorhandenen Kopf deaktivieren, {@code REVISION} leeren, Mitglieder loeschen; eine nie gesehene
-   * Abteilung bleibt ohne Zeile.
+   * vorhandenen Kopf deaktivieren, {@code REVISION} leeren, Mitglieder loeschen; fuer eine nie
+   * gesehene Abteilung einen Grabstein anlegen (Kopf {@code DEACTIVE} ohne Mitglieder, {@code
+   * REVISION} und {@code NAME} leer, {@code ABGERUFEN_AM} = Abrufstart). So behaelt auch ein 404
+   * sein Abruf-Wasserzeichen: ein frueher gestarteter Abruf mit Stand wird danach als {@link
+   * DivisionApplyOutcome#STALE} verworfen, ein spaeter gestarteter reaktiviert den Kopf.
    *
    * @param divisionRef UUID der Abteilung in application
    * @param result Ergebnis des Abrufs; {@link Gone} und {@link BadRevision} muss der Aufrufer
@@ -156,8 +159,19 @@ public class DivisionProjectionService {
       final Optional<TaskDivision> locked,
       final LocalDateTime fetchStartedAt) {
     if (locked.isEmpty()) {
-      log.debug("Abteilung {}: bei application nicht gefunden und lokal unbekannt.", divisionRef);
-      return DivisionApplyOutcome.IGNORED;
+      // Grabstein: Der 404 hinterlaesst das Abruf-Wasserzeichen auch fuer eine nie gesehene
+      // Abteilung, damit ein frueher gestarteter 200-Abruf danach als veraltet verworfen wird.
+      final TaskDivision tombstone = new TaskDivision();
+      tombstone.setTenantId(contextTenant().id());
+      tombstone.setDivisionRef(divisionRef);
+      tombstone.setEntityState(EntityState.DEACTIVE);
+      tombstone.setRevision(null);
+      tombstone.setFetchedAt(fetchStartedAt);
+      divisionRepository.save(tombstone);
+      log.info(
+          "Abteilung {}: bei application nicht gefunden und lokal unbekannt, Grabstein angelegt.",
+          divisionRef);
+      return DivisionApplyOutcome.DEACTIVATED;
     }
     final TaskDivision division = locked.get();
     memberRepository.deleteByDivisionId(division.getId());

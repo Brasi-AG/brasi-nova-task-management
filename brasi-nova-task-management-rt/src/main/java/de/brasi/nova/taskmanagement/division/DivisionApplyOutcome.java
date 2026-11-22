@@ -8,8 +8,9 @@ public enum DivisionApplyOutcome {
    * Der gespeicherte Stand stammt aus einem gleich alten oder spaeteren Abruf; nichts geaendert.
    */
   STALE,
-  /** Abteilung bei application nicht gefunden: Kopf deaktiviert, Mitglieder geloescht. */
-  DEACTIVATED,
-  /** Abteilung bei application nicht gefunden und lokal nie gesehen: nichts angelegt. */
-  IGNORED
+  /**
+   * Abteilung bei application nicht gefunden: Kopf deaktiviert und Mitglieder geloescht; war die
+   * Abteilung lokal unbekannt, als Grabstein (deaktivierter Kopf ohne Mitglieder) neu angelegt.
+   */
+  DEACTIVATED
 }
