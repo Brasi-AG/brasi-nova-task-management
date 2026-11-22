@@ -1,8 +1,11 @@
 package de.brasi.nova.taskmanagement.division;
 
+import de.brasi.nova.taskmanagement.division.model.DivisionMemberPayload;
 import de.brasi.nova.taskmanagement.division.model.DivisionMembersPayload;
 import java.net.URI;
-import java.util.Objects;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
@@ -16,17 +19,17 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
- * Ruft die Mitglieder einer Abteilung (Teilbaum) bei application ab, als aktuellen Stand ({@code
- * self}) oder als Stand einer Revision ({@code snapshot}).
+ * Ruft die Mitglieder einer Abteilung (Teilbaum) bei application als aktuellen Stand ({@code self})
+ * ab. Ein Snapshot ist ein historischer Stand und wird bewusst nicht abgerufen.
  *
  * <p>Die URL entsteht aus der Basis-URL der Konfiguration und den geprueften Mandanten- und
  * Abteilungs-UUIDs, nie aus Links eines Ereignisses. Statusmatrix: 200 {@link
- * DivisionFetchResult.Members}, 404 {@link DivisionFetchResult.NotFound}, beim Snapshot 410 {@link
- * DivisionFetchResult.Gone} und 400 {@link DivisionFetchResult.BadRevision}; alles andere (401,
- * 403, 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort
- * ohne {@code revision}, ohne {@code members} oder mit {@code null}-Eintrag in {@code members} sind
- * eine {@link DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und bedeutet
- * eine leere Abteilung.
+ * DivisionFetchResult.Members}, 404 {@link DivisionFetchResult.NotFound}; alles andere (401, 403,
+ * 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort
+ * ohne {@code revision}, ohne {@code members}, mit {@code null}-Eintrag in {@code members}, mit
+ * Mitglied ohne {@code employeeId} oder mit doppelter {@code employeeId} sind eine {@link
+ * DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und bedeutet eine leere
+ * Abteilung.
  */
 @Component
 public class DivisionMembersClient {
@@ -57,7 +60,7 @@ public class DivisionMembersClient {
    * @param divisionRef Abteilungs-UUID aus dem geprueften Ereignis
    * @return {@link DivisionFetchResult.Members} oder {@link DivisionFetchResult.NotFound}
    * @throws DivisionFetchException bei technischem Fehler oder unbrauchbarer Antwort (fremde
-   *     Abteilung, ohne revision, ohne members)
+   *     Abteilung, ohne revision, ohne members, Mitglied ohne oder mit doppelter employeeId)
    */
   public DivisionFetchResult fetchCurrent(final UUID tenantUuid, final UUID divisionRef) {
     final URI uri =
@@ -67,29 +70,7 @@ public class DivisionMembersClient {
             .buildAndExpand(tenantUuid, divisionRef)
             .encode()
             .toUri();
-    return fetch(uri, divisionRef, false);
-  }
-
-  /**
-   * Laedt den Stand der Abteilung zu einer Revision.
-   *
-   * @param tenantUuid Mandanten-UUID aus dem geprueften Ereignis
-   * @param divisionRef Abteilungs-UUID aus dem geprueften Ereignis
-   * @param revision Revision aus dem geprueften Ereignis
-   * @return {@link DivisionFetchResult.Members}, {@link DivisionFetchResult.NotFound}, {@link
-   *     DivisionFetchResult.Gone} oder {@link DivisionFetchResult.BadRevision}
-   * @throws DivisionFetchException bei technischem Fehler oder unbrauchbarer Antwort (fremde
-   *     Abteilung, ohne revision, ohne members)
-   */
-  public DivisionFetchResult fetchSnapshot(
-      final UUID tenantUuid, final UUID divisionRef, final String revision) {
-    final URI uri =
-        baseUri()
-            .path(EMPLOYEES_PATH + "/snapshots/{revision}")
-            .buildAndExpand(tenantUuid, divisionRef, revision)
-            .encode()
-            .toUri();
-    return fetch(uri, divisionRef, true);
+    return fetch(uri, divisionRef);
   }
 
   private UriComponentsBuilder baseUri() {
@@ -101,7 +82,7 @@ public class DivisionMembersClient {
     return UriComponentsBuilder.fromUriString(baseUrl);
   }
 
-  private DivisionFetchResult fetch(final URI uri, final UUID divisionRef, final boolean snapshot) {
+  private DivisionFetchResult fetch(final URI uri, final UUID divisionRef) {
     final DivisionMembersPayload payload;
     try {
       payload =
@@ -111,7 +92,7 @@ public class DivisionMembersClient {
                   DivisionMembersPayload.class)
               .getBody();
     } catch (final RestClientResponseException e) {
-      return mapStatus(e.getStatusCode(), snapshot, divisionRef, e);
+      return mapStatus(e.getStatusCode(), divisionRef, e);
     } catch (final RestClientException e) {
       throw new DivisionFetchException(
           "Abruf der Mitglieder von Abteilung "
@@ -140,28 +121,45 @@ public class DivisionMembersClient {
       throw new DivisionFetchException(
           "Abruf der Mitglieder von Abteilung " + divisionRef + ": Antwort ohne members.");
     }
-    if (payload.members().stream().anyMatch(Objects::isNull)) {
-      throw new DivisionFetchException(
-          "Abruf der Mitglieder von Abteilung "
-              + divisionRef
-              + ": Antwort mit leerem Eintrag in members.");
-    }
+    requireUsableMembers(divisionRef, payload.members());
     return new DivisionFetchResult.Members(payload);
+  }
+
+  /**
+   * Weist Mitglieder ab, die die Projektion nicht verarbeiten kann: leere Eintraege, Mitglieder ohne
+   * employeeId und doppelte employeeId. Die Meldung nennt nur die Abteilungs-UUID, keine Werte.
+   */
+  private static void requireUsableMembers(
+      final UUID divisionRef, final List<DivisionMemberPayload> members) {
+    final Set<UUID> employeeIds = new HashSet<>();
+    for (final DivisionMemberPayload member : members) {
+      if (member == null) {
+        throw new DivisionFetchException(
+            "Abruf der Mitglieder von Abteilung "
+                + divisionRef
+                + ": Antwort mit leerem Eintrag in members.");
+      }
+      if (member.employeeId() == null) {
+        throw new DivisionFetchException(
+            "Abruf der Mitglieder von Abteilung "
+                + divisionRef
+                + ": Antwort mit Mitglied ohne employeeId.");
+      }
+      if (!employeeIds.add(member.employeeId())) {
+        throw new DivisionFetchException(
+            "Abruf der Mitglieder von Abteilung "
+                + divisionRef
+                + ": Antwort mit doppelter employeeId in members.");
+      }
+    }
   }
 
   private static DivisionFetchResult mapStatus(
       final HttpStatusCode status,
-      final boolean snapshot,
       final UUID divisionRef,
       final RestClientResponseException cause) {
     if (status.isSameCodeAs(HttpStatus.NOT_FOUND)) {
       return new DivisionFetchResult.NotFound();
-    }
-    if (snapshot && status.isSameCodeAs(HttpStatus.GONE)) {
-      return new DivisionFetchResult.Gone();
-    }
-    if (snapshot && status.isSameCodeAs(HttpStatus.BAD_REQUEST)) {
-      return new DivisionFetchResult.BadRevision();
     }
     throw new DivisionFetchException(
         "Abruf der Mitglieder von Abteilung "

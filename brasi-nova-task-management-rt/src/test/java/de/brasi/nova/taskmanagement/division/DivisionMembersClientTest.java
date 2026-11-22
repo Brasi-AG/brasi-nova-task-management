@@ -11,8 +11,6 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import de.brasi.nova.taskmanagement.division.DivisionFetchResult.BadRevision;
-import de.brasi.nova.taskmanagement.division.DivisionFetchResult.Gone;
 import de.brasi.nova.taskmanagement.division.DivisionFetchResult.Members;
 import de.brasi.nova.taskmanagement.division.DivisionFetchResult.NotFound;
 import de.brasi.nova.taskmanagement.division.model.DivisionMemberPayload;
@@ -32,8 +30,8 @@ import org.springframework.web.client.RestTemplate;
 /**
  * Prueft {@link DivisionMembersClient} (Intake #190, Task 2) gegen einen {@link
  * MockRestServiceServer}: URL-Aufbau aus der Basis-URL, Bearer-Header ueber den Interceptor des
- * {@code divisionSyncRestTemplate} aus {@link DivisionHttpConfig}, Statusmatrix (200, 404, 410,
- * 400) und technische Fehler als {@link DivisionFetchException}.
+ * {@code divisionSyncRestTemplate} aus {@link DivisionHttpConfig}, Statusmatrix (200, 404) und
+ * technische Fehler als {@link DivisionFetchException}.
  *
  * <p>Angenommene Signaturen: {@code
  * DivisionHttpConfig#divisionSyncRestTemplate(RestTemplateBuilder, DivisionSyncProperties,
@@ -99,28 +97,6 @@ class DivisionMembersClientTest {
   }
 
   @Test
-  void i190_snapshot_410_is_gone() {
-    server
-        .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
-        .andExpect(method(HttpMethod.GET))
-        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + ACCESS_TOKEN))
-        .andRespond(withStatus(HttpStatus.GONE));
-
-    assertThat(client.fetchSnapshot(TENANT, DIVISION, REV)).isInstanceOf(Gone.class);
-    server.verify();
-  }
-
-  @Test
-  void i190_snapshot_400_is_bad_revision() {
-    server
-        .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
-        .andRespond(withStatus(HttpStatus.BAD_REQUEST));
-
-    assertThat(client.fetchSnapshot(TENANT, DIVISION, REV)).isInstanceOf(BadRevision.class);
-    server.verify();
-  }
-
-  @Test
   void i190_403_is_technical_failure() {
     server
         .expect(once(), requestTo(currentUrl(DIVISION)))
@@ -157,19 +133,12 @@ class DivisionMembersClientTest {
     server
         .expect(once(), requestTo(currentUrl(DIVISION)))
         .andRespond(withSuccess(nullField, MediaType.APPLICATION_JSON));
-    server
-        .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
-        .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
 
     assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
         .isInstanceOf(DivisionFetchException.class)
         .hasMessageContaining("ohne members")
         .hasMessageNotContaining(ACCESS_TOKEN);
     assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
-        .isInstanceOf(DivisionFetchException.class)
-        .hasMessageContaining("ohne members")
-        .hasMessageNotContaining(ACCESS_TOKEN);
-    assertThatThrownBy(() -> client.fetchSnapshot(TENANT, DIVISION, REV))
         .isInstanceOf(DivisionFetchException.class)
         .hasMessageContaining("ohne members")
         .hasMessageNotContaining(ACCESS_TOKEN);
@@ -187,6 +156,68 @@ class DivisionMembersClientTest {
     assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
         .isInstanceOf(DivisionFetchException.class)
         .hasMessageContaining("leerem Eintrag")
+        .hasMessageNotContaining(ACCESS_TOKEN);
+    server.verify();
+  }
+
+  @Test
+  void i190_member_without_employee_id_is_failure() {
+    final String withoutField =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[{\"displayName\":\"Anna Alpha\",\"loginName\":\"aalpha\"}]}";
+    final String nullField =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[{\"employeeId\":null,\"displayName\":\"Anna Alpha\"}]}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(nullField, MediaType.APPLICATION_JSON));
+
+    for (int i = 0; i < 2; i++) {
+      assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+          .isInstanceOf(DivisionFetchException.class)
+          .hasMessageContaining(DIVISION.toString())
+          .hasMessageContaining("ohne employeeId")
+          .hasMessageNotContaining("Anna Alpha")
+          .hasMessageNotContaining(ACCESS_TOKEN);
+    }
+    server.verify();
+  }
+
+  @Test
+  void i190_duplicate_employee_id_is_failure() {
+    final String json =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":["
+            + "{\"employeeId\":\""
+            + EMPLOYEE_A
+            + "\",\"displayName\":\"Anna Alpha\",\"coreMembership\":true},"
+            + "{\"employeeId\":\""
+            + EMPLOYEE_B
+            + "\",\"displayName\":\"Bernd Beta\",\"coreMembership\":false},"
+            + "{\"employeeId\":\""
+            + EMPLOYEE_A
+            + "\",\"displayName\":\"Anna Alpha\",\"coreMembership\":false}]}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+
+    assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+        .isInstanceOf(DivisionFetchException.class)
+        .hasMessageContaining(DIVISION.toString())
+        .hasMessageContaining("doppelter employeeId")
+        .hasMessageNotContaining(EMPLOYEE_A.toString())
         .hasMessageNotContaining(ACCESS_TOKEN);
     server.verify();
   }
@@ -211,13 +242,13 @@ class DivisionMembersClientTest {
   @Test
   void i190_unknown_fields_ignored_and_division_name_read() {
     server
-        .expect(once(), requestTo(snapshotUrl(DIVISION, REV)))
+        .expect(once(), requestTo(currentUrl(DIVISION)))
         .andRespond(
             withSuccess(
                 membersJson(DIVISION, "\"divisionName\":\"Vertrieb\",\"futureField\":{\"x\":1},"),
                 MediaType.APPLICATION_JSON));
 
-    final DivisionFetchResult result = client.fetchSnapshot(TENANT, DIVISION, REV);
+    final DivisionFetchResult result = client.fetchCurrent(TENANT, DIVISION);
 
     assertThat(result).isInstanceOf(Members.class);
     final DivisionMembersPayload payload = ((Members) result).payload();
@@ -235,16 +266,6 @@ class DivisionMembersClientTest {
         + "/masterdata/divisions/"
         + division
         + "/employees?includeSubDivisions=true";
-  }
-
-  private static String snapshotUrl(final UUID division, final String revision) {
-    return BASE_URL
-        + "/api/v1/application/"
-        + TENANT
-        + "/masterdata/divisions/"
-        + division
-        + "/employees/snapshots/"
-        + revision;
   }
 
   /**

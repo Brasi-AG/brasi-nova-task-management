@@ -1,7 +1,5 @@
 package de.brasi.nova.taskmanagement.division;
 
-import de.brasi.nova.taskmanagement.division.DivisionFetchResult.BadRevision;
-import de.brasi.nova.taskmanagement.division.DivisionFetchResult.Gone;
 import de.brasi.nova.taskmanagement.division.DivisionFetchResult.Members;
 import de.brasi.nova.taskmanagement.division.DivisionFetchResult.NotFound;
 import de.brasi.nova.taskmanagement.division.model.DivisionMemberPayload;
@@ -64,13 +62,14 @@ public class DivisionProjectionService {
    * sein Abruf-Wasserzeichen: ein frueher gestarteter Abruf mit Stand wird danach als {@link
    * DivisionApplyOutcome#STALE} verworfen, ein spaeter gestarteter reaktiviert den Kopf.
    *
+   * <p>Nimmt nur aktuelle Staende ({@code self}) an: Ein Snapshot ist ein historischer Stand und
+   * duerfte unter „spaeterer Abruf gewinnt“ einen neueren Stand ueberschreiben.
+   *
    * @param divisionRef UUID der Abteilung in application
-   * @param result Ergebnis des Abrufs; {@link Gone} und {@link BadRevision} muss der Aufrufer
-   *     vorher durch einen Abruf des aktuellen Stands ersetzen
+   * @param result Ergebnis des Abrufs des aktuellen Stands
    * @param fetchStartedAt Zeitpunkt vor dem HTTP-Aufruf
    * @return Ergebnis der Anwendung
-   * @throws IllegalArgumentException bei {@link Gone}, {@link BadRevision} oder einer Antwort fuer
-   *     eine andere Abteilung
+   * @throws IllegalArgumentException bei einer Antwort fuer eine andere Abteilung
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public DivisionApplyOutcome apply(
@@ -80,10 +79,6 @@ public class DivisionProjectionService {
     Objects.requireNonNull(divisionRef, "divisionRef");
     Objects.requireNonNull(result, "result");
     Objects.requireNonNull(fetchStartedAt, "fetchStartedAt");
-    if (result instanceof Gone || result instanceof BadRevision) {
-      throw new IllegalArgumentException(
-          "Ergebnis " + result + " kann nicht in die Projektion übernommen werden.");
-    }
     if (result instanceof Members fetched && !divisionRef.equals(fetched.payload().divisionId())) {
       throw new IllegalArgumentException(
           "Antwort für Abteilung "
