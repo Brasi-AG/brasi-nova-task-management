@@ -428,10 +428,10 @@ class DivisionProjectionIT {
    * Zwei Threads wenden gleichzeitig den ersten Stand derselben noch unbekannten Abteilung an, je
    * in eigener Transaktion unter demselben Mandanten: der Abruf mit Start t1 liefert zwei, der mit
    * Start t2 drei andere Mitglieder. Eine {@link CyclicBarrier} haelt beide Threads nach
-   * Transaktionsbeginn und vor dem ersten Lesen an, danach laufen sie ohne weitere
-   * Synchronisation. Wer zuerst sperrt, bleibt dem Zufall ueberlassen; die Zuordnung der Abrufe zu
-   * den Threads und die Startreihenfolge wechseln je Runde, mehrere Runden mit je eigener
-   * Abteilung decken beide Reihenfolgen ab.
+   * Transaktionsbeginn und vor dem ersten Lesen an, danach laufen sie ohne weitere Synchronisation.
+   * Wer zuerst sperrt, bleibt dem Zufall ueberlassen; die Zuordnung der Abrufe zu den Threads und
+   * die Startreihenfolge wechseln je Runde, mehrere Runden mit je eigener Abteilung decken beide
+   * Reihenfolgen ab.
    *
    * <p>Erwartet wird fuer jede Reihenfolge dasselbe: {@code UPDLOCK, HOLDLOCK} im Lesen des Kopfs
    * laesst den zweiten Aufruf warten, bis der erste committet hat, und er sieht dann dessen Kopf.

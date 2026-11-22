@@ -128,9 +128,9 @@ public class DivisionMembersClient {
 
   /**
    * Weist Mitglieder ab, die die Projektion nicht verarbeiten kann: leere Eintraege, Mitglieder
-   * ohne employeeId oder ohne coreMembership und doppelte employeeId. Ein fehlendes
-   * coreMembership ist kein {@code false}: sonst ueberschriebe die Projektion eine bestehende
-   * Kernmitgliedschaft. Die Meldung nennt nur die Abteilungs-UUID, keine Werte.
+   * ohne employeeId oder ohne coreMembership und doppelte employeeId. Ein fehlendes coreMembership
+   * ist kein {@code false}: sonst ueberschriebe die Projektion eine bestehende Kernmitgliedschaft.
+   * Die Meldung nennt nur die Abteilungs-UUID, keine Werte.
    */
   private static void requireUsableMembers(
       final UUID divisionRef, final List<DivisionMemberPayload> members) {

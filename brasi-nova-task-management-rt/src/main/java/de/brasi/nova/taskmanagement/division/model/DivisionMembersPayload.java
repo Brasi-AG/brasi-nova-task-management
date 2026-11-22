@@ -12,8 +12,7 @@ import java.util.UUID;
  * bleibt {@code null} und eine leere Abteilung ist eine leere Liste. Der {@code
  * DivisionMembersClient} weist eine Antwort ohne {@code members}, mit {@code null}-Eintrag, mit
  * Mitglied ohne {@code employeeId} oder ohne {@code coreMembership} oder mit doppelter {@code
- * employeeId} als technischen Fehler ab; nur geprueft gelieferte Payloads erreichen die
- * Projektion.
+ * employeeId} als technischen Fehler ab; nur geprueft gelieferte Payloads erreichen die Projektion.
  *
  * @param divisionId UUID der Abteilung; muss der angefragten entsprechen
  * @param divisionName Anzeigename der Abteilung; fehlt, solange application ihn nicht liefert
