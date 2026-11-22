@@ -25,9 +25,9 @@ import org.springframework.web.util.UriComponentsBuilder;
  * <p>Die URL entsteht aus der Basis-URL der Konfiguration und den geprueften Mandanten- und
  * Abteilungs-UUIDs, nie aus Links eines Ereignisses. Statusmatrix: 200 {@link
  * DivisionFetchResult.Members}, 404 {@link DivisionFetchResult.NotFound}; alles andere (401, 403,
- * 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort
- * ohne {@code revision}, ohne {@code members}, mit {@code null}-Eintrag in {@code members}, mit
- * Mitglied ohne {@code employeeId} oder mit doppelter {@code employeeId} sind eine {@link
+ * 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort ohne
+ * {@code revision}, ohne {@code members}, mit {@code null}-Eintrag in {@code members}, mit Mitglied
+ * ohne {@code employeeId} oder mit doppelter {@code employeeId} sind eine {@link
  * DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und bedeutet eine leere
  * Abteilung.
  */
@@ -126,8 +126,9 @@ public class DivisionMembersClient {
   }
 
   /**
-   * Weist Mitglieder ab, die die Projektion nicht verarbeiten kann: leere Eintraege, Mitglieder ohne
-   * employeeId und doppelte employeeId. Die Meldung nennt nur die Abteilungs-UUID, keine Werte.
+   * Weist Mitglieder ab, die die Projektion nicht verarbeiten kann: leere Eintraege, Mitglieder
+   * ohne employeeId und doppelte employeeId. Die Meldung nennt nur die Abteilungs-UUID, keine
+   * Werte.
    */
   private static void requireUsableMembers(
       final UUID divisionRef, final List<DivisionMemberPayload> members) {

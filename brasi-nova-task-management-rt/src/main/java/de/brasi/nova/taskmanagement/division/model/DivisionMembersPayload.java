@@ -11,8 +11,8 @@ import java.util.UUID;
  * <p>Der Record normalisiert nichts: Ein fehlendes oder {@code null} gelesenes {@code members}
  * bleibt {@code null} und eine leere Abteilung ist eine leere Liste. Der {@code
  * DivisionMembersClient} weist eine Antwort ohne {@code members}, mit {@code null}-Eintrag, mit
- * Mitglied ohne {@code employeeId} oder mit doppelter {@code employeeId} als technischen Fehler
- * ab; nur geprueft gelieferte Payloads erreichen die Projektion.
+ * Mitglied ohne {@code employeeId} oder mit doppelter {@code employeeId} als technischen Fehler ab;
+ * nur geprueft gelieferte Payloads erreichen die Projektion.
  *
  * @param divisionId UUID der Abteilung; muss der angefragten entsprechen
  * @param divisionName Anzeigename der Abteilung; fehlt, solange application ihn nicht liefert
