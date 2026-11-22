@@ -55,8 +55,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Belegt: Anlegen beim ersten Stand, physisches Ersetzen der Mitglieder, „spaeterer Abruf
  * gewinnt“ ueber {@code ABGERUFEN_AM}, Deaktivieren bei 404 (fuer eine unbekannte Abteilung als
- * Grabstein, der spaetere Staende mit frueherem Abrufstart abwehrt), Reaktivieren, Mandantentrennung
- * und Erhalt des Namens, wenn application keinen liefert.
+ * Grabstein, der spaetere Staende mit frueherem Abrufstart abwehrt), Reaktivieren,
+ * Mandantentrennung und Erhalt des Namens, wenn application keinen liefert.
  *
  * <p>{@code apply} verlangt eine laufende Transaktion ({@code MANDATORY}); jeder Aufruf laeuft in
  * einem eigenen {@link TransactionTemplate} unter dem Mandantenkontext. Abrufstart-Zeiten sind
@@ -296,7 +296,12 @@ class DivisionProjectionIT {
         .isEqualTo(DivisionApplyOutcome.DEACTIVATED);
 
     final DivisionApplyOutcome outcome =
-        apply(TENANT_A_ID, TENANT_A_UUID, ref, members(ref, "Alt", REV1, member(UUID.randomUUID())), T1);
+        apply(
+            TENANT_A_ID,
+            TENANT_A_UUID,
+            ref,
+            members(ref, "Alt", REV1, member(UUID.randomUUID())),
+            T1);
 
     assertThat(outcome).isEqualTo(DivisionApplyOutcome.STALE);
     final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
