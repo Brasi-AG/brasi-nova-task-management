@@ -27,9 +27,9 @@ import org.springframework.web.util.UriComponentsBuilder;
  * DivisionFetchResult.Members}, 404 {@link DivisionFetchResult.NotFound}; alles andere (401, 403,
  * 5xx, Zeitueberschreitung, I/O), eine Antwort fuer eine andere Abteilung und eine 200-Antwort ohne
  * {@code revision}, ohne {@code members}, mit {@code null}-Eintrag in {@code members}, mit Mitglied
- * ohne {@code employeeId} oder mit doppelter {@code employeeId} sind eine {@link
- * DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und bedeutet eine leere
- * Abteilung.
+ * ohne {@code employeeId} oder ohne {@code coreMembership} oder mit doppelter {@code employeeId}
+ * sind eine {@link DivisionFetchException}. Ein leeres Array {@code members} ist gueltig und
+ * bedeutet eine leere Abteilung.
  */
 @Component
 public class DivisionMembersClient {
@@ -60,7 +60,8 @@ public class DivisionMembersClient {
    * @param divisionRef Abteilungs-UUID aus dem geprueften Ereignis
    * @return {@link DivisionFetchResult.Members} oder {@link DivisionFetchResult.NotFound}
    * @throws DivisionFetchException bei technischem Fehler oder unbrauchbarer Antwort (fremde
-   *     Abteilung, ohne revision, ohne members, Mitglied ohne oder mit doppelter employeeId)
+   *     Abteilung, ohne revision, ohne members, Mitglied ohne employeeId oder ohne coreMembership,
+   *     doppelte employeeId)
    */
   public DivisionFetchResult fetchCurrent(final UUID tenantUuid, final UUID divisionRef) {
     final URI uri =
@@ -127,8 +128,9 @@ public class DivisionMembersClient {
 
   /**
    * Weist Mitglieder ab, die die Projektion nicht verarbeiten kann: leere Eintraege, Mitglieder
-   * ohne employeeId und doppelte employeeId. Die Meldung nennt nur die Abteilungs-UUID, keine
-   * Werte.
+   * ohne employeeId oder ohne coreMembership und doppelte employeeId. Ein fehlendes
+   * coreMembership ist kein {@code false}: sonst ueberschriebe die Projektion eine bestehende
+   * Kernmitgliedschaft. Die Meldung nennt nur die Abteilungs-UUID, keine Werte.
    */
   private static void requireUsableMembers(
       final UUID divisionRef, final List<DivisionMemberPayload> members) {
@@ -145,6 +147,12 @@ public class DivisionMembersClient {
             "Abruf der Mitglieder von Abteilung "
                 + divisionRef
                 + ": Antwort mit Mitglied ohne employeeId.");
+      }
+      if (member.coreMembership() == null) {
+        throw new DivisionFetchException(
+            "Abruf der Mitglieder von Abteilung "
+                + divisionRef
+                + ": Antwort mit Mitglied ohne coreMembership.");
       }
       if (!employeeIds.add(member.employeeId())) {
         throw new DivisionFetchException(

@@ -200,7 +200,9 @@ public class DivisionProjectionService {
     member.setFirstName(payload.firstName());
     member.setLastName(payload.lastName());
     member.setLoginName(payload.loginName());
-    member.setCoreMember(payload.coreMembership());
+    // Der DivisionMembersClient weist ein Mitglied ohne coreMembership ab; hier gilt der geprueft
+    // gelieferte Wert.
+    member.setCoreMember(Objects.requireNonNull(payload.coreMembership(), "coreMembership"));
     return member;
   }
 

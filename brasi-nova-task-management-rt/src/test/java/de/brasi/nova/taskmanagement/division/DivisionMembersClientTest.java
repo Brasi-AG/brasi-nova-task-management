@@ -167,13 +167,15 @@ class DivisionMembersClientTest {
             + DIVISION
             + "\",\"revision\":\""
             + REV
-            + "\",\"members\":[{\"displayName\":\"Anna Alpha\",\"loginName\":\"aalpha\"}]}";
+            + "\",\"members\":[{\"displayName\":\"Anna Alpha\",\"loginName\":\"aalpha\","
+            + "\"coreMembership\":true}]}";
     final String nullField =
         "{\"divisionId\":\""
             + DIVISION
             + "\",\"revision\":\""
             + REV
-            + "\",\"members\":[{\"employeeId\":null,\"displayName\":\"Anna Alpha\"}]}";
+            + "\",\"members\":[{\"employeeId\":null,\"displayName\":\"Anna Alpha\","
+            + "\"coreMembership\":true}]}";
     server
         .expect(once(), requestTo(currentUrl(DIVISION)))
         .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
@@ -187,6 +189,43 @@ class DivisionMembersClientTest {
           .hasMessageContaining(DIVISION.toString())
           .hasMessageContaining("ohne employeeId")
           .hasMessageNotContaining("Anna Alpha")
+          .hasMessageNotContaining(ACCESS_TOKEN);
+    }
+    server.verify();
+  }
+
+  @Test
+  void i190_member_without_core_membership_is_failure() {
+    final String withoutField =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[{\"employeeId\":\""
+            + EMPLOYEE_A
+            + "\",\"displayName\":\"Anna Alpha\",\"loginName\":\"aalpha\"}]}";
+    final String nullField =
+        "{\"divisionId\":\""
+            + DIVISION
+            + "\",\"revision\":\""
+            + REV
+            + "\",\"members\":[{\"employeeId\":\""
+            + EMPLOYEE_A
+            + "\",\"displayName\":\"Anna Alpha\",\"coreMembership\":null}]}";
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(withoutField, MediaType.APPLICATION_JSON));
+    server
+        .expect(once(), requestTo(currentUrl(DIVISION)))
+        .andRespond(withSuccess(nullField, MediaType.APPLICATION_JSON));
+
+    for (int i = 0; i < 2; i++) {
+      assertThatThrownBy(() -> client.fetchCurrent(TENANT, DIVISION))
+          .isInstanceOf(DivisionFetchException.class)
+          .hasMessageContaining(DIVISION.toString())
+          .hasMessageContaining("ohne coreMembership")
+          .hasMessageNotContaining("Anna Alpha")
+          .hasMessageNotContaining(EMPLOYEE_A.toString())
           .hasMessageNotContaining(ACCESS_TOKEN);
     }
     server.verify();

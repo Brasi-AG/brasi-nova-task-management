@@ -10,6 +10,7 @@ import de.brasi.nova.taskmanagement.division.model.DivisionMembersPayload;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
+import io.keel.framework.api.exception.BusinessRuleException;
 import io.keel.framework.api.security.AuditorProvider;
 import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
@@ -23,6 +24,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,6 +34,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
@@ -42,6 +48,7 @@ import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -56,7 +63,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Belegt: Anlegen beim ersten Stand, physisches Ersetzen der Mitglieder, „spaeterer Abruf
  * gewinnt“ ueber {@code ABGERUFEN_AM}, Deaktivieren bei 404 (fuer eine unbekannte Abteilung als
  * Grabstein, der spaetere Staende mit frueherem Abrufstart abwehrt), Reaktivieren,
- * Mandantentrennung und Erhalt des Namens, wenn application keinen liefert.
+ * Mandantentrennung und Erhalt des Namens, wenn application keinen liefert. Ein echter
+ * Zwei-Thread-Lauf ({@link #i190_concurrent_first_apply_keeps_one_head_and_later_wins}) belegt die
+ * Sperre des Kopfs bei gleichzeitigem Erstabruf derselben Abteilung.
  *
  * <p>{@code apply} verlangt eine laufende Transaktion ({@code MANDATORY}); jeder Aufruf laeuft in
  * einem eigenen {@link TransactionTemplate} unter dem Mandantenkontext. Abrufstart-Zeiten sind
@@ -99,6 +108,11 @@ class DivisionProjectionIT {
   private static final String REV1 = "1".repeat(64);
   private static final String REV2 = "2".repeat(64);
   private static final String REV3 = "3".repeat(64);
+
+  /** Runden des Zwei-Thread-Laufs, je Runde mit eigener Abteilung. */
+  private static final int RACE_ROUNDS = 10;
+
+  private static final Logger log = LoggerFactory.getLogger(DivisionProjectionIT.class);
 
   private static HikariDataSource master;
   private static String dbName;
@@ -410,7 +424,199 @@ class DivisionProjectionIT {
     assertThat(memberRefs(TENANT_A_ID, ref)).containsExactlyInAnyOrder(a, b);
   }
 
+  /**
+   * Zwei Threads wenden gleichzeitig den ersten Stand derselben noch unbekannten Abteilung an, je
+   * in eigener Transaktion unter demselben Mandanten: der Abruf mit Start t1 liefert zwei, der mit
+   * Start t2 drei andere Mitglieder. Eine {@link CyclicBarrier} haelt beide Threads nach
+   * Transaktionsbeginn und vor dem ersten Lesen an, danach laufen sie ohne weitere
+   * Synchronisation. Wer zuerst sperrt, bleibt dem Zufall ueberlassen; die Zuordnung der Abrufe zu
+   * den Threads und die Startreihenfolge wechseln je Runde, mehrere Runden mit je eigener
+   * Abteilung decken beide Reihenfolgen ab.
+   *
+   * <p>Erwartet wird fuer jede Reihenfolge dasselbe: {@code UPDLOCK, HOLDLOCK} im Lesen des Kopfs
+   * laesst den zweiten Aufruf warten, bis der erste committet hat, und er sieht dann dessen Kopf.
+   * Der Abruf mit t2 ist deshalb immer {@code UPDATED}; der mit t1 ist {@code UPDATED}, wenn er
+   * zuerst sperrte, sonst {@code STALE}. Endstand: genau ein Kopf; Revision, Name, {@code
+   * ABGERUFEN_AM} und Mitglieder stammen vom Abruf mit t2, keine Mitglieder vom Abruf mit t1.
+   *
+   * <p>Zulaessiger Sonderfall (Lesson {@code ksf-persistence-pitfalls}, Punkt 4): scheitert ein
+   * Aufruf an der Sequenzvergabe, einer {@link BusinessRuleException} ohne Datenbank-Ursache, darf
+   * hoechstens ein Thread scheitern, und der Endstand gehoert dem erfolgreichen Abruf. Eine {@link
+   * DataAccessException} als Ursache (Unique-Verstoss eines zweiten Erstinserts, Versionskonflikt)
+   * belegt dagegen eine Luecke in der Sperre und macht den Test rot, ebenso ein Deadlock-Opfer oder
+   * eine Zeitueberschreitung.
+   */
+  @Test
+  @DisplayName(
+      "gleichzeitiger Erstabruf derselben Abteilung: ein Kopf, der Abruf mit dem spaeteren Start"
+          + " gewinnt, keine Mitglieder des verdraengten Abrufs")
+  void i190_concurrent_first_apply_keeps_one_head_and_later_wins() throws Exception {
+    int staleRounds = 0;
+    int collisionRounds = 0;
+    for (int round = 0; round < RACE_ROUNDS; round++) {
+      final String ctx = "Runde " + round;
+      final UUID ref = UUID.randomUUID();
+      final RaceCall earlier =
+          new RaceCall(T1, REV1, "Alt", List.of(UUID.randomUUID(), UUID.randomUUID()));
+      final RaceCall later =
+          new RaceCall(
+              T2, REV2, "Neu", List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
+
+      final CyclicBarrier barrier = new CyclicBarrier(2);
+      final AtomicReference<DivisionApplyOutcome> earlierOutcome = new AtomicReference<>();
+      final AtomicReference<Throwable> earlierError = new AtomicReference<>();
+      final AtomicReference<DivisionApplyOutcome> laterOutcome = new AtomicReference<>();
+      final AtomicReference<Throwable> laterError = new AtomicReference<>();
+      final Thread earlierThread =
+          raceThread(ref, earlier, barrier, earlierOutcome, earlierError, "tm190-race-earlier");
+      final Thread laterThread =
+          raceThread(ref, later, barrier, laterOutcome, laterError, "tm190-race-later");
+      // Startreihenfolge wechselt je Runde; entscheidend ist die Barriere, nicht der Start.
+      if (round % 2 == 0) {
+        earlierThread.start();
+        laterThread.start();
+      } else {
+        laterThread.start();
+        earlierThread.start();
+      }
+      earlierThread.join(TimeUnit.SECONDS.toMillis(30));
+      laterThread.join(TimeUnit.SECONDS.toMillis(30));
+      assertThat(earlierThread.isAlive()).as(ctx + ": Thread des Abrufs t1 beendet").isFalse();
+      assertThat(laterThread.isAlive()).as(ctx + ": Thread des Abrufs t2 beendet").isFalse();
+
+      assertOnlySequenceCollision(ctx + ", Abruf t1", earlierError.get());
+      assertOnlySequenceCollision(ctx + ", Abruf t2", laterError.get());
+      assertThat(earlierError.get() == null || laterError.get() == null)
+          .as(ctx + ": hoechstens ein Aufruf scheitert")
+          .isTrue();
+      final boolean laterSucceeded = laterError.get() == null;
+      if (!laterSucceeded || earlierError.get() != null) {
+        collisionRounds++;
+      }
+
+      final RaceCall expected;
+      if (laterSucceeded) {
+        assertThat(laterOutcome.get())
+            .as(ctx + ": der Abruf mit dem spaeteren Start wird nie verworfen")
+            .isEqualTo(DivisionApplyOutcome.UPDATED);
+        if (earlierError.get() == null) {
+          assertThat(earlierOutcome.get())
+              .as(ctx + ": der Abruf mit dem frueheren Start ist UPDATED (zuerst) oder STALE")
+              .isIn(DivisionApplyOutcome.UPDATED, DivisionApplyOutcome.STALE);
+          if (earlierOutcome.get() == DivisionApplyOutcome.STALE) {
+            staleRounds++;
+          }
+        }
+        expected = later;
+      } else {
+        assertThat(earlierOutcome.get())
+            .as(ctx + ": der einzige erfolgreiche Abruf schreibt")
+            .isEqualTo(DivisionApplyOutcome.UPDATED);
+        expected = earlier;
+      }
+
+      final Map<String, Object> head = singleHead(TENANT_A_ID, ref);
+      assertThat(head.get("ENTITY_STATUS")).as(ctx).isEqualTo("ACTIVE");
+      assertThat(trimmed(head.get("REVISION"))).as(ctx).isEqualTo(expected.revision());
+      assertThat(head.get("NAME")).as(ctx).isEqualTo(expected.name());
+      assertThat(fetchedAt(head)).as(ctx).isEqualTo(expected.startedAt());
+      assertThat(memberRefs(TENANT_A_ID, ref))
+          .as(ctx + ": genau die Mitglieder des gewinnenden Abrufs")
+          .containsExactlyInAnyOrderElementsOf(expected.memberRefs());
+      assertThat(memberRowCount(head.get("ID")))
+          .as(ctx + ": keine Mitgliederzeilen des verdraengten Abrufs unter dem Kopf")
+          .isEqualTo(expected.memberRefs().size());
+    }
+    log.info(
+        "Erstabruf-Wettlauf: {} Runden, davon {} mit verworfenem frueherem Abruf (STALE) und {} mit"
+            + " Sequenz-Kollision",
+        RACE_ROUNDS,
+        staleRounds,
+        collisionRounds);
+  }
+
   // ---- Hilfsmethoden --------------------------------------------------------------------------
+
+  /**
+   * Thread eines Wettlaufs: eigener Mandantenkontext, eigene Transaktion; die Barriere haelt ihn
+   * nach Transaktionsbeginn und vor {@code apply} an, bis auch der andere Thread bereit ist.
+   */
+  private Thread raceThread(
+      final UUID ref,
+      final RaceCall call,
+      final CyclicBarrier barrier,
+      final AtomicReference<DivisionApplyOutcome> outcome,
+      final AtomicReference<Throwable> error,
+      final String name) {
+    final Thread thread =
+        new Thread(
+            () -> {
+              try {
+                TenantContextHolder.setTenant(new TenantInfo(TENANT_A_UUID, TENANT_A_ID));
+                outcome.set(
+                    new TransactionTemplate(transactionManager)
+                        .execute(
+                            status -> {
+                              rendezvous(barrier);
+                              return projectionService.apply(
+                                  ref, call.result(ref), call.startedAt());
+                            }));
+              } catch (final Throwable t) {
+                error.set(t);
+              } finally {
+                TenantContextHolder.clear();
+              }
+            },
+            name);
+    thread.setDaemon(true);
+    return thread;
+  }
+
+  private static void rendezvous(final CyclicBarrier barrier) {
+    try {
+      barrier.await(20, TimeUnit.SECONDS);
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Barriere unterbrochen", e);
+    } catch (final Exception e) {
+      throw new IllegalStateException("Barriere nicht erreicht", e);
+    }
+  }
+
+  /**
+   * Laesst keinen Fehler zu ausser einer {@link BusinessRuleException} ohne {@link
+   * DataAccessException} in der Ursachenkette (Sequenz-Kollision, siehe Wettlauf-Test).
+   */
+  private static void assertOnlySequenceCollision(final String who, final Throwable error) {
+    if (error == null) {
+      return;
+    }
+    boolean databaseCause = false;
+    for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+      if (cause instanceof DataAccessException) {
+        databaseCause = true;
+        break;
+      }
+    }
+    assertThat(error instanceof BusinessRuleException && !databaseCause)
+        .as("%s: nur eine Sequenz-Kollision ist zulaessig, war aber: %s", who, error)
+        .isTrue();
+  }
+
+  /** Ein Abruf des Wettlaufs: Startzeit, Revision, Name und Mitglieder des gelieferten Stands. */
+  private record RaceCall(
+      LocalDateTime startedAt, String revision, String name, List<UUID> memberRefs) {
+
+    DivisionFetchResult result(final UUID divisionRef) {
+      return members(
+          divisionRef,
+          name,
+          revision,
+          memberRefs.stream()
+              .map(DivisionProjectionIT::member)
+              .toArray(DivisionMemberPayload[]::new));
+    }
+  }
 
   /** Wendet {@code result} im Mandantenkontext in einer eigenen Transaktion an. */
   private DivisionApplyOutcome apply(

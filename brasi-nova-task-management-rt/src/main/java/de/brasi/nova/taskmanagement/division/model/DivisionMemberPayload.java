@@ -11,7 +11,9 @@ import java.util.UUID;
  * @param firstName Vorname
  * @param lastName Nachname
  * @param loginName Anmeldename
- * @param coreMembership Kennzeichen Kernmitglied
+ * @param coreMembership Kennzeichen Kernmitglied; bewusst {@link Boolean}: ein fehlendes Feld
+ *     bleibt {@code null} und wird nicht zu {@code false}. Der {@code DivisionMembersClient} weist
+ *     ein Mitglied ohne Wert als unbrauchbare Antwort ab
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record DivisionMemberPayload(
@@ -20,4 +22,4 @@ public record DivisionMemberPayload(
     String firstName,
     String lastName,
     String loginName,
-    boolean coreMembership) {}
+    Boolean coreMembership) {}
