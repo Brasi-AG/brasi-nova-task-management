@@ -12,6 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import de.brasi.nova.taskmanagement.division.model.DivisionCandidateModel;
@@ -121,6 +122,34 @@ class DivisionCandidateServiceTest {
     assertThat(refs.getValue()).containsExactlyInAnyOrder(a, b);
     verify(divisionRepo, never()).findCandidates(any(), anyInt());
     assertThat(page.items()).containsExactly(new DivisionCandidateModel(a, "Einkauf", 3));
+  }
+
+  @Test
+  @DisplayName(
+      "ids gewinnt vor q und limit: mit gesetztem q und limit 1 laeuft nur die Vorschau, beide"
+          + " Treffer kommen zurueck")
+  void i190_ids_win_over_q_and_limit() {
+    final UUID a = UUID.randomUUID();
+    final UUID b = UUID.randomUUID();
+    when(divisionRepo.findCandidatesByRefs(anyCollection()))
+        .thenReturn(
+            List.of(
+                new DivisionCandidateRow(a, "Einkauf", 3),
+                new DivisionCandidateRow(b, "Verkauf", 0)));
+
+    final DivisionCandidatePage page = service.find("passt-auf-keinen-namen", List.of(a, b), 1);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refs = ArgumentCaptor.forClass(Collection.class);
+    verify(divisionRepo).findCandidatesByRefs(refs.capture());
+    assertThat(refs.getValue()).containsExactlyInAnyOrder(a, b);
+    verify(divisionRepo, never()).findCandidates(any(), anyInt());
+    verifyNoMoreInteractions(divisionRepo);
+    assertThat(page.items())
+        .as("limit 1 kappt die Vorschau nicht")
+        .containsExactly(
+            new DivisionCandidateModel(a, "Einkauf", 3),
+            new DivisionCandidateModel(b, "Verkauf", 0));
   }
 
   @Test

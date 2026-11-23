@@ -85,9 +85,9 @@ import org.springframework.web.context.WebApplicationContext;
  * Mitglieder mit aktivem Benutzer im selben Mandanten; Sortierung nach Name (unbenannte zuletzt),
  * dann nach Abteilungs-UUID; {@code q} filtert woertlich ueber den Namen (Sonderzeichen {@code %},
  * {@code _}, {@code [} entschaerft, Lockvoegel samt Gegenprobe), unbenannte fallen dabei heraus;
- * {@code ids} liefert die Vorschau bekannter aktiver Abteilungen; {@code limit} 1 bis 100, Vorgabe
- * 20; 400 im KSF-Format, 401 anonym, 403 ohne TASK_READ; der Pfad wird nicht von {@code
- * /api/v1/tasks/{id}} verschluckt.
+ * {@code ids} liefert die Vorschau bekannter aktiver Abteilungen und gewinnt vor {@code q} und
+ * {@code limit}; {@code limit} 1 bis 100, Vorgabe 20; 400 im KSF-Format, 401 anonym, 403 ohne
+ * TASK_READ; der Pfad wird nicht von {@code /api/v1/tasks/{id}} verschluckt.
  *
  * <p>Die Projektion wird per JDBC gesaet wie in {@code DivisionProjectionIT}. Mandanten: 561 (A,
  * Haupt-Mandant), 562 (B, fremd), 563 (C, nur fuer die vollstaendige Liste ohne {@code q}), 564 (D,
@@ -357,6 +357,34 @@ class DivisionCandidateControllerIT {
                     foreign.toString()));
 
     assertThat(items).containsExactly(new Item(known, "Vorschau", 1));
+  }
+
+  @Test
+  @DisplayName(
+      "ids gewinnt vor q und limit: zwei bekannte ids, ein q ohne Treffer und limit=1 -> beide"
+          + " Abteilungen; ohne ids filtert q und kappt limit (Gegenproben)")
+  void i190_ids_win_over_q_and_limit() throws Exception {
+    final UUID alpha = UUID.randomUUID();
+    final UUID beta = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, alpha, "ACTIVE", "Vorrang Alpha", A_ACTIVE_REF);
+    insertDivision(TENANT_A_ID, beta, "ACTIVE", "Vorrang Beta");
+    final String token = readToken(TENANT_A_UUID, ACTOR_A_REF);
+
+    assertThat(
+            items(
+                token,
+                get(URL)
+                    .queryParam("ids", alpha.toString(), beta.toString())
+                    .queryParam("q", "zzz-trifft-keinen-namen")
+                    .queryParam("limit", "1")))
+        .as("q filtert die Vorschau nicht, limit kappt sie nicht")
+        .containsExactly(new Item(alpha, "Vorrang Alpha", 1), new Item(beta, "Vorrang Beta", 0));
+
+    // Gegenproben: ohne ids wirken q und limit auf dieselben Abteilungen.
+    assertThat(items(token, get(URL).queryParam("q", "zzz-trifft-keinen-namen"))).isEmpty();
+    assertThat(items(token, get(URL).queryParam("q", "vorrang").queryParam("limit", "1")))
+        .extracting(Item::divisionId)
+        .containsExactly(alpha);
   }
 
   @Test
