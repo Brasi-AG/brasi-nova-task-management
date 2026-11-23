@@ -7,10 +7,16 @@ import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -25,11 +31,13 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.util.FileCopyUtils;
 
 /**
  * Flyway-Migrations-IT: beweist gegen echte MSSQL-Wegwerf-DB (fresh + preseeded), dass V1 alle
@@ -110,6 +118,21 @@ class FlywayMigrationIT {
    * Naechste freie ID fuer TASK_EREIGNIS_QUITTUNG-Inserts (Instanz je Testmethode, daher static).
    */
   private static long nextReceiptId = 8801L;
+
+  /** Migration des Anhang-Zaehlers (Intake #194); V16 gehoert UNASSIGN aus Intake #188. */
+  private static final String V17_RESOURCE = "db/migration/V17__task_attachment_count.sql";
+
+  /** Mandant des Altbestands fuer die V17-Backfill-Faelle (je Fall eigene Wegwerf-DB). */
+  private static final long LEGACY_TENANT = 600L;
+
+  /** Altbestand-Aufgabe A mit Anhaengen an Aufgabe und Kommentaren. */
+  private static final long LEGACY_TASK_A = 9901L;
+
+  /** Altbestand-Aufgabe B ohne Anhaenge. */
+  private static final long LEGACY_TASK_B = 9902L;
+
+  /** Zurueckdatierter Zeitpunkt fuer Seeds des Altbestands (kein nacktes getdate()). */
+  private static final String LEGACY_CREATED_AT = "2025-05-01T09:00:00.0000000";
 
   private static HikariDataSource master;
   private static String dbName;
@@ -826,6 +849,104 @@ class FlywayMigrationIT {
         .hasMessageContaining("CHK_TASK_EREIGNIS_QUITTUNG_STATUS");
   }
 
+  // ---- 12. V17: Anhang-Zaehler ANHANG_ANZAHL an TASK mit Backfill (Intake #194) ---
+  // Die Backfill-Faelle laufen je auf einer eigenen Wegwerf-DB: erst bis V16 migrieren, dann den
+  // Altbestand anlegen, dann V17 anwenden.
+
+  @Test
+  @DisplayName(
+      "i194_v17_column: V17 in der History, ANHANG_ANZAHL int NOT NULL mit benanntem Default 0,"
+          + " Alt-Insert ohne die Spalte liest 0, CHECK verbietet negative Werte")
+  void i194_v17_column() {
+    assertThat(historyVersions(jdbcTemplate)).as("V17 in flyway_schema_history").contains("17");
+    assertThat(column("TASK", "ANHANG_ANZAHL")).isEqualTo(col("int", null, false));
+    assertThat(defaultConstraint("TASK", "ANHANG_ANZAHL"))
+        .containsEntry("NAME", "DF_TASK_ANHANG_ANZAHL")
+        .containsEntry("DEFINITION", "((0))");
+
+    // Insert ohne ANHANG_ANZAHL (wie jeder Alt-Schreiber, etwa TaskRowLockIT) bleibt gueltig
+    ensureTask(9801L);
+    assertThat(attachmentCountOf(jdbcTemplate, 9801L)).isZero();
+
+    // Positivkontrolle: ein nicht negativer Wert ist erlaubt
+    jdbcTemplate.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 3 WHERE [ID] = 9801");
+    assertThat(attachmentCountOf(jdbcTemplate, 9801L)).isEqualTo(3);
+
+    // CHK_TASK_ANHANG_ANZAHL: ein negativer Zaehler scheitert, der Wert bleibt stehen
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = -1 WHERE [ID] = 9801"))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("CHK_TASK_ANHANG_ANZAHL");
+    assertThat(attachmentCountOf(jdbcTemplate, 9801L)).isEqualTo(3);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_backfill_counts_active_only: Altbestand vor V17, der Backfill zaehlt nur aktive"
+          + " Anhaenge an der Aufgabe und an aktiven Kommentaren; VERSION, AKTUALISIERT_AM und"
+          + " LAST_ACTIVITY_AT bleiben unveraendert")
+  void i194_backfill_counts_active_only() {
+    withFreshDbMigratedTo(
+        "16",
+        jt -> {
+          assertThat(historyVersions(jt)).contains("16").doesNotContain("17");
+          seedLegacyAttachments(jt);
+          final Map<String, Object> taskABefore = auditColumns(jt, LEGACY_TASK_A);
+          final Map<String, Object> taskBBefore = auditColumns(jt, LEGACY_TASK_B);
+          // Seed wirksam: VERSION weicht von der Vorgabe 1 ab, sonst bewiese der Vergleich wenig
+          assertThat(((Number) taskABefore.get("VERSION")).intValue()).isEqualTo(3);
+          assertThat(((Number) taskBBefore.get("VERSION")).intValue()).isEqualTo(5);
+
+          migrateTo(jt, "17");
+          assertThat(historyVersions(jt)).as("V17 in flyway_schema_history").contains("17");
+
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_A))
+              .as("A: 2 aktive an der Aufgabe + 2 aktive am aktiven Kommentar")
+              .isEqualTo(4);
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).as("B ohne Anhaenge").isZero();
+          assertThat(auditColumns(jt, LEGACY_TASK_A)).isEqualTo(taskABefore);
+          assertThat(auditColumns(jt, LEGACY_TASK_B)).isEqualTo(taskBBefore);
+        });
+  }
+
+  @Test
+  @DisplayName(
+      "i194_v17_rerun_is_idempotent: das V17-Skript ein zweites Mal ausgefuehrt laeuft ohne"
+          + " Fehler, aendert keine Werte und setzt einen abweichenden Zaehler auf den Ist-Wert")
+  void i194_v17_rerun_is_idempotent() {
+    withFreshDbMigratedTo(
+        "16",
+        jt -> {
+          seedLegacyAttachments(jt);
+          migrateTo(jt, "17");
+          assertThat(historyVersions(jt)).as("V17 in flyway_schema_history").contains("17");
+          final Map<String, Object> taskABefore = auditColumns(jt, LEGACY_TASK_A);
+          final Map<String, Object> taskBBefore = auditColumns(jt, LEGACY_TASK_B);
+
+          // Zweiter Lauf des echten Skripts (nicht Flyway): ALTER uebersprungen, Backfill gleich
+          runV17Script(jt);
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_A)).isEqualTo(4);
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).isZero();
+          assertThat(
+                  jt.queryForObject(
+                      "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                          + " WHERE TABLE_NAME = 'TASK' AND COLUMN_NAME = 'ANHANG_ANZAHL'",
+                      Integer.class))
+              .as("Spalte genau einmal vorhanden")
+              .isEqualTo(1);
+
+          // Abweichender Zaehler an A (Drift) wird beim erneuten Lauf auf den Ist-Wert gesetzt
+          jt.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 9 WHERE [ID] = ?", LEGACY_TASK_A);
+          runV17Script(jt);
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_A)).isEqualTo(4);
+
+          assertThat(auditColumns(jt, LEGACY_TASK_A)).isEqualTo(taskABefore);
+          assertThat(auditColumns(jt, LEGACY_TASK_B)).isEqualTo(taskBBefore);
+        });
+  }
+
   // ---- Hilfsmethoden ---
 
   /** Spaltendefinition aus INFORMATION_SCHEMA.COLUMNS (Typ, Zeichenlaenge, Nullbarkeit). */
@@ -1081,6 +1202,199 @@ class FlywayMigrationIT {
         jdbcTemplate.queryForObject(
             "SELECT SORT_ORDER FROM [dbo].[DIC_TASK_PRIORITY] WHERE CODE = ?", Integer.class, code);
     assertThat(actual).as("SORT_ORDER fuer PRIORITY " + code).isEqualTo(expectedOrder);
+  }
+
+  // ---- Hilfsmethoden V17 (Intake #194) ---
+
+  /** Name und Definition des Default-Constraints einer Spalte; leer, wenn keiner existiert. */
+  private Map<String, Object> defaultConstraint(final String table, final String column) {
+    final List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            "SELECT dc.name AS NAME, dc.definition AS DEFINITION FROM sys.default_constraints dc"
+                + " JOIN sys.tables t ON t.object_id = dc.parent_object_id"
+                + " JOIN sys.columns c ON c.object_id = dc.parent_object_id"
+                + "  AND c.column_id = dc.parent_column_id"
+                + " WHERE t.name = ? AND c.name = ?",
+            table,
+            column);
+    return rows.isEmpty() ? Map.of() : rows.get(0);
+  }
+
+  /** Versionen aus {@code flyway_schema_history} in Installationsreihenfolge. */
+  private static List<String> historyVersions(final JdbcTemplate jt) {
+    return jt.queryForList(
+        "SELECT version FROM flyway_schema_history WHERE version IS NOT NULL"
+            + " ORDER BY installed_rank",
+        String.class);
+  }
+
+  private static Integer attachmentCountOf(final JdbcTemplate jt, final long taskId) {
+    return jt.queryForObject(
+        "SELECT [ANHANG_ANZAHL] FROM [dbo].[TASK] WHERE [ID] = ?", Integer.class, taskId);
+  }
+
+  /**
+   * VERSION, AKTUALISIERT_AM und LAST_ACTIVITY_AT einer Aufgabe; Zeitstempel als ISO-Text mit
+   * allen sieben Nachkommastellen, damit der Vergleich nicht an der Treiber-Abbildung haengt.
+   */
+  private static Map<String, Object> auditColumns(final JdbcTemplate jt, final long taskId) {
+    return jt.queryForMap(
+        "SELECT [VERSION], CONVERT(varchar(27), [AKTUALISIERT_AM], 121) AS AKTUALISIERT_AM,"
+            + " CONVERT(varchar(27), [LAST_ACTIVITY_AT], 121) AS LAST_ACTIVITY_AT"
+            + " FROM [dbo].[TASK] WHERE [ID] = ?",
+        taskId);
+  }
+
+  /**
+   * Altbestand vor V17 mit festen, zurueckdatierten Zeitstempeln: Aufgabe A mit zwei aktiven und
+   * einem entfernten Anhang an der Aufgabe, einem aktiven Kommentar mit zwei aktiven Anhaengen und
+   * einem deaktivierten Kommentar mit einem aktiven Anhang (erwartet 4); Aufgabe B ohne Anhaenge
+   * (erwartet 0).
+   */
+  private static void seedLegacyAttachments(final JdbcTemplate jt) {
+    jt.update(
+        "INSERT INTO [dbo].[PROD_FIRMA] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, NAME, GUELTIG_VON) "
+            + "VALUES (?, 'ACTIVE', NEWID(), 1, ?, 'IT-FIRMA-194', '2025-01-01')",
+        LEGACY_TENANT,
+        LEGACY_TENANT);
+    insertLegacyTask(
+        jt, LEGACY_TASK_A, 3, "2025-06-02T11:00:00.7654321", "2025-06-01T10:00:00.1234567");
+    insertLegacyTask(
+        jt, LEGACY_TASK_B, 5, "2025-07-02T11:00:00.2222222", "2025-07-01T10:00:00.1111111");
+
+    insertLegacyComment(jt, 9911L, LEGACY_TASK_A, "ACTIVE");
+    insertLegacyComment(jt, 9912L, LEGACY_TASK_A, "DEACTIVE");
+
+    // An der Aufgabe: zwei aktiv, einer entfernt (zaehlt nicht)
+    insertLegacyAttachment(jt, 9921L, LEGACY_TASK_A, null, "ACTIVE");
+    insertLegacyAttachment(jt, 9922L, LEGACY_TASK_A, null, "ACTIVE");
+    insertLegacyAttachment(jt, 9923L, LEGACY_TASK_A, null, "DEACTIVE");
+    // Am aktiven Kommentar: zwei aktiv
+    insertLegacyAttachment(jt, 9924L, LEGACY_TASK_A, 9911L, "ACTIVE");
+    insertLegacyAttachment(jt, 9925L, LEGACY_TASK_A, 9911L, "ACTIVE");
+    // Am deaktivierten Kommentar: ein aktiver Anhang (zaehlt nicht)
+    insertLegacyAttachment(jt, 9926L, LEGACY_TASK_A, 9912L, "ACTIVE");
+  }
+
+  private static void insertLegacyTask(
+      final JdbcTemplate jt,
+      final long id,
+      final int version,
+      final String updatedAt,
+      final String lastActivityAt) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK] (ID, TENANT_ID, TITLE, TASK_STATUS_ID, PRIORITY_ID,"
+            + " DIRECTION_ID, ORIGIN_TENANT_ID, VERSION, ANGELEGT_AM, AKTUALISIERT_AM,"
+            + " LAST_ACTIVITY_AT)"
+            + " VALUES (?, ?, 'IT-Altbestand-194', 101, 201, 301, ?, ?, CAST(? AS datetime2(7)),"
+            + " CAST(? AS datetime2(7)), CAST(? AS datetime2(7)))",
+        id,
+        LEGACY_TENANT,
+        LEGACY_TENANT,
+        version,
+        LEGACY_CREATED_AT,
+        updatedAt,
+        lastActivityAt);
+  }
+
+  private static void insertLegacyComment(
+      final JdbcTemplate jt, final long id, final long taskId, final String entityStatus) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_COMMENT] (ID, TENANT_ID, ENTITY_STATUS, ANGELEGT_AM, TASK_ID,"
+            + " AUTHOR_REF, TEXT, IS_EDITED)"
+            + " VALUES (?, ?, ?, CAST(? AS datetime2(7)), ?,"
+            + " '77777777-0000-0000-0000-0000000001a1', N'Altkommentar', 0)",
+        id,
+        LEGACY_TENANT,
+        entityStatus,
+        LEGACY_CREATED_AT,
+        taskId);
+  }
+
+  private static void insertLegacyAttachment(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final Long commentId,
+      final String entityStatus) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_ANHANG] (ID, TENANT_ID, ENTITY_STATUS, ANGELEGT_AM, TASK_ID,"
+            + " KOMMENTAR_ID, DATEINAME, MIME_TYP, DATEIENDUNG, GROESSE_BYTES, SHA256,"
+            + " HOCHGELADEN_VON_REF)"
+            + " VALUES (?, ?, ?, CAST(? AS datetime2(7)), ?, ?, N'alt.pdf', 'application/pdf',"
+            + " 'pdf', 1024, ?, '77777777-0000-0000-0000-0000000001b1')",
+        id,
+        LEGACY_TENANT,
+        entityStatus,
+        LEGACY_CREATED_AT,
+        taskId,
+        new SqlParameterValue(Types.BIGINT, commentId),
+        SHA256_SAMPLE);
+  }
+
+  /**
+   * Fuehrt das TATSAECHLICHE V17-Skript erneut aus (nicht Flyway): Kommentarzeilen entfernen, an
+   * alleinstehenden {@code GO}-Zeilen in Batches zerlegen, jeden Batch ausfuehren.
+   */
+  private static void runV17Script(final JdbcTemplate jt) {
+    final String raw;
+    try {
+      raw =
+          new String(
+              FileCopyUtils.copyToByteArray(new ClassPathResource(V17_RESOURCE).getInputStream()),
+              StandardCharsets.UTF_8);
+    } catch (final IOException e) {
+      throw new UncheckedIOException("Ressource nicht lesbar: " + V17_RESOURCE, e);
+    }
+    final StringBuilder codeOnly = new StringBuilder();
+    for (final String line : raw.split("\\R")) {
+      if (!line.trim().startsWith("--")) {
+        codeOnly.append(line).append('\n');
+      }
+    }
+    final List<String> batches = new ArrayList<>();
+    for (final String part : codeOnly.toString().split("(?im)^\\s*GO\\s*$")) {
+      final String batch = part.trim();
+      if (!batch.isEmpty()) {
+        batches.add(batch);
+      }
+    }
+    // Sentinel: das Skript traegt den bedingten ALTER und den Backfill-UPDATE
+    assertThat(batches).anyMatch(b -> b.toUpperCase().contains("ALTER TABLE"));
+    assertThat(batches).anyMatch(b -> b.toUpperCase().startsWith("UPDATE"));
+    for (final String batch : batches) {
+      jt.execute(batch);
+    }
+  }
+
+  /** Legt eine frische Wegwerf-DB an, migriert bis {@code target} und fuehrt den Body aus. */
+  private static void withFreshDbMigratedTo(
+      final String target, final Consumer<JdbcTemplate> body) {
+    final HikariDataSource localMaster = RefSchemaItDb.masterDataSource();
+    final String localDb = RefSchemaItDb.createThrowawayDb(localMaster);
+    try (HikariDataSource ds = RefSchemaItDb.throwawayDataSource(localDb, 2)) {
+      final JdbcTemplate jt = new JdbcTemplate(ds);
+      migrateTo(jt, target);
+      body.accept(jt);
+    } finally {
+      try {
+        RefSchemaItDb.dropThrowawayDb(localMaster, localDb);
+      } finally {
+        localMaster.close();
+      }
+    }
+  }
+
+  private static void migrateTo(final JdbcTemplate jt, final String target) {
+    Flyway.configure()
+        .dataSource(jt.getDataSource())
+        .locations("classpath:db/migration")
+        .baselineOnMigrate(true)
+        .baselineVersion("0")
+        .target(target)
+        .load()
+        .migrate();
   }
 
   // ---- IT-Konfiguration (minimaler Spring-Context; kein KSF, kein Web) ---
