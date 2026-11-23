@@ -23,7 +23,8 @@ import org.springframework.stereotype.Service;
  * entsteht. Die Personen aller erwaehnten Abteilungen werden vereinigt und dedupliziert; ihre Zahl
  * ist durch {@link DivisionMentionProperties#maxPersons()} begrenzt. Gezaehlt werden die
  * verschiedenen {@code MITARBEITER_REF} vor dem Filter auf aktive Benutzer, den der Aufrufer danach
- * anwendet.
+ * anwendet. Die Mitglieder-Query liest hoechstens {@code maxPersons + 1} verschiedene Personen;
+ * mehr als {@code maxPersons} ergibt den Fehler, ohne dass alle Mitglieder geladen werden.
  *
  * <p>Laeuft in der Transaktion des Aufrufers und dort vor jeder Schreibung (Lock-Reihenfolge von
  * {@code CommentService#createComment}): beide Queries sind reine Reads.
@@ -79,14 +80,16 @@ public class DivisionMentionResolver {
           requested.size());
       throw new EntityValidationException(UNKNOWN_DIVISION_MESSAGE);
     }
-    final Set<UUID> persons =
-        new LinkedHashSet<>(memberRepository.findDistinctEmployeeRefsByDivisionIds(divisionIds));
     final int max = properties.maxPersons();
+    // Hoechstens max + 1 Personen lesen: eine mehr als die Grenze genuegt, um sie zu erkennen,
+    // und sehr grosse Abteilungen werden nicht vollstaendig geladen.
+    final Set<UUID> persons =
+        new LinkedHashSet<>(
+            memberRepository.findDistinctEmployeeRefsByDivisionIds(divisionIds, max + 1));
     if (persons.size() > max) {
       log.info(
-          "DivisionMentionResolver: {} erwaehnte Abteilungen umfassen {} Personen, Grenze {}.",
+          "DivisionMentionResolver: {} erwaehnte Abteilungen umfassen mehr als {} Personen.",
           requested.size(),
-          persons.size(),
           max);
       throw new EntityValidationException(
           "Die erwaehnten Abteilungen umfassen mehr als " + max + " Personen.");

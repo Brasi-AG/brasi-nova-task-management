@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,7 +39,8 @@ import org.mockito.ArgumentCaptor;
  * TaskDivisionMemberQueryRepository, DivisionMentionProperties)}; {@code Set<UUID>
  * resolve(Collection<UUID>)}; {@code record DivisionMentionProperties(int maxPersons)}; {@code
  * TaskDivisionQueryRepository#findActiveByRefs(Collection<UUID>)}; {@code
- * TaskDivisionMemberQueryRepository#findDistinctEmployeeRefsByDivisionIds(Collection<Long>)}.
+ * TaskDivisionMemberQueryRepository#findDistinctEmployeeRefsByDivisionIds(Collection<Long>,
+ * int)}.
  */
 class DivisionMentionResolverTest {
 
@@ -59,7 +62,7 @@ class DivisionMentionResolverTest {
     assertThatThrownBy(() -> resolver(200).resolve(List.of(known, unknown)))
         .isInstanceOf(EntityValidationException.class)
         .hasMessage(UNKNOWN_MESSAGE);
-    verify(memberRepo, never()).findDistinctEmployeeRefsByDivisionIds(any());
+    verify(memberRepo, never()).findDistinctEmployeeRefsByDivisionIds(any(), anyInt());
   }
 
   @Test
@@ -70,7 +73,7 @@ class DivisionMentionResolverTest {
     assertThatThrownBy(() -> resolver(200).resolve(List.of(UUID.randomUUID())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessage(UNKNOWN_MESSAGE);
-    verify(memberRepo, never()).findDistinctEmployeeRefsByDivisionIds(any());
+    verify(memberRepo, never()).findDistinctEmployeeRefsByDivisionIds(any(), anyInt());
   }
 
   @Test
@@ -85,14 +88,15 @@ class DivisionMentionResolverTest {
     final List<UUID> shared = uuids(120);
     final List<UUID> onlyA = uuids(30);
     final List<UUID> onlyB = uuids(30);
-    // Die Query liefert hier absichtlich die Personen beider Abteilungen mit Ueberschneidung (300
-    // Zeilen, 180 verschiedene): die Grenze muss die verschiedenen Personen zaehlen.
+    // Die Mitglieder beider Abteilungen ueberschneiden sich (300 Zeilen, 180 verschiedene): die
+    // Grenze muss die verschiedenen Personen zaehlen. Der Mock bildet SELECT DISTINCT TOP (:limit)
+    // nach.
     final List<UUID> rows = new ArrayList<>();
     rows.addAll(shared);
     rows.addAll(onlyA);
     rows.addAll(shared);
     rows.addAll(onlyB);
-    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection())).thenReturn(rows);
+    stubMembers(rows);
 
     final Set<UUID> resolved = resolver(200).resolve(List.of(refA, refB));
     assertThat(resolved).hasSize(180).containsAll(shared).containsAll(onlyA).containsAll(onlyB);
@@ -102,6 +106,35 @@ class DivisionMentionResolverTest {
     assertThatThrownBy(() -> resolver(179).resolve(List.of(refA, refB)))
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("Die erwaehnten Abteilungen umfassen mehr als 179 Personen.");
+  }
+
+  @Test
+  @DisplayName(
+      "Mitglieder-Query liest hoechstens max + 1 Personen: bei max 5 und 1.000 Mitgliedern geht"
+          + " die Grenze 6 an die Query, das Ergebnis von 6 Personen ergibt 400")
+  void i190_member_query_is_capped_at_max_plus_one() {
+    final UUID ref = UUID.randomUUID();
+    when(divisionRepo.findActiveByRefs(anyCollection())).thenReturn(List.of(division(51L, ref)));
+    stubMembers(uuids(1000));
+
+    assertThatThrownBy(() -> resolver(5).resolve(List.of(ref)))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Die erwaehnten Abteilungen umfassen mehr als 5 Personen.");
+    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(anyCollection(), eq(6));
+  }
+
+  @Test
+  @DisplayName(
+      "genau max Personen sind erlaubt: bei max 5 und 5 Mitgliedern liefert die Query 5 (unter der"
+          + " Grenze 6), kein Fehler")
+  void i190_exactly_max_persons_is_allowed() {
+    final UUID ref = UUID.randomUUID();
+    when(divisionRepo.findActiveByRefs(anyCollection())).thenReturn(List.of(division(52L, ref)));
+    final List<UUID> five = uuids(5);
+    stubMembers(five);
+
+    assertThat(resolver(5).resolve(List.of(ref))).containsExactlyInAnyOrderElementsOf(five);
+    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(anyCollection(), eq(6));
   }
 
   @Test
@@ -119,7 +152,7 @@ class DivisionMentionResolverTest {
     final UUID ref = UUID.randomUUID();
     final UUID person = UUID.randomUUID();
     when(divisionRepo.findActiveByRefs(anyCollection())).thenReturn(List.of(division(21L, ref)));
-    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection()))
+    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection(), anyInt()))
         .thenReturn(List.of(person));
 
     final Set<UUID> resolved = resolver(200).resolve(List.of(ref, ref));
@@ -127,7 +160,7 @@ class DivisionMentionResolverTest {
     assertThat(resolved).containsExactly(person);
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
-    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(ids.capture());
+    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(ids.capture(), eq(201));
     assertThat(ids.getValue()).containsExactly(21L);
   }
 
@@ -136,7 +169,8 @@ class DivisionMentionResolverTest {
   void i190_empty_division_resolves_to_nobody() {
     final UUID ref = UUID.randomUUID();
     when(divisionRepo.findActiveByRefs(anyCollection())).thenReturn(List.of(division(31L, ref)));
-    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection())).thenReturn(List.of());
+    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection(), anyInt()))
+        .thenReturn(List.of());
 
     assertThat(resolver(200).resolve(List.of(ref))).isEmpty();
   }
@@ -151,7 +185,7 @@ class DivisionMentionResolverTest {
     final UUID p3 = UUID.randomUUID();
     when(divisionRepo.findActiveByRefs(anyCollection()))
         .thenReturn(List.of(division(41L, refA), division(42L, refB)));
-    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection()))
+    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection(), anyInt()))
         .thenReturn(List.of(p1, p2, p3));
 
     assertThat(resolver(200).resolve(List.of(refA, refB))).containsExactlyInAnyOrder(p1, p2, p3);
@@ -162,8 +196,14 @@ class DivisionMentionResolverTest {
     assertThat(refs.getValue()).containsExactlyInAnyOrder(refA, refB);
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
-    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(ids.capture());
+    verify(memberRepo).findDistinctEmployeeRefsByDivisionIds(ids.capture(), eq(201));
     assertThat(ids.getValue()).containsExactlyInAnyOrder(41L, 42L);
+  }
+
+  /** Bildet {@code SELECT DISTINCT TOP (:limit)} nach: hoechstens {@code limit} Personen. */
+  private void stubMembers(final List<UUID> members) {
+    when(memberRepo.findDistinctEmployeeRefsByDivisionIds(anyCollection(), anyInt()))
+        .thenAnswer(inv -> members.stream().distinct().limit(inv.<Integer>getArgument(1)).toList());
   }
 
   private DivisionMentionResolver resolver(final int maxPersons) {

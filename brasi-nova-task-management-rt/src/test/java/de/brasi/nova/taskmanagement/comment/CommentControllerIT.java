@@ -2653,6 +2653,32 @@ class CommentControllerIT {
 
   @Test
   @DisplayName(
+      "i190_cap_applies_to_oversized_division: eine Abteilung mit 12 Mitgliedern (Grenze 5, die"
+          + " Query liest hoechstens 6 verschiedene) -> 400 NOVA_VALIDATION_FAILED mit der Grenze"
+          + " im Text; nichts geschrieben")
+  void i190_cap_applies_to_oversized_division() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Grenze-gross");
+    final UUID division = UUID.randomUUID();
+    final UUID[] members = new UUID[12];
+    for (int i = 0; i < members.length; i++) {
+      members[i] = UUID.randomUUID();
+    }
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Grenze Gross", members);
+
+    expectDivisionRejected(
+        mvc,
+        om,
+        tokenA,
+        taskUuid,
+        Map.of("text", "Viel zu gross.", "divisionMentions", List.of(division)),
+        DIVISION_CAP_MESSAGE);
+  }
+
+  @Test
+  @DisplayName(
       "i190_cap_counts_after_dedup: zwei Abteilungen mit Ueberschneidung (4 und 3 Mitglieder, P3"
           + " und D in beiden) umfassen genau 5 verschiedene Personen bei Grenze 5 -> 201; die"
           + " Grenze zaehlt nach der Deduplizierung und gilt inklusive, alle 5 werden aufgenommen"
