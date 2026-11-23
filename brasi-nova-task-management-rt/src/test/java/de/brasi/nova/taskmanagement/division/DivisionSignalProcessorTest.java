@@ -257,7 +257,8 @@ class DivisionSignalProcessorTest {
             "Vertrieb",
             REV,
             List.of(
-                new DivisionMemberPayload(EMPLOYEE, "Anna Alpha", "Anna", "Alpha", "aalpha", true))));
+                new DivisionMemberPayload(
+                    EMPLOYEE, "Anna Alpha", "Anna", "Alpha", "aalpha", true))));
   }
 
   private static DivisionSyncProperties properties() {
@@ -305,7 +306,8 @@ class DivisionSignalProcessorTest {
   }
 
   /** Fake-Transaktionsmanager: echte Transaktionsgrenzen, zaehlt Commits und Rollbacks. */
-  private static final class RecordingTransactionManager extends AbstractPlatformTransactionManager {
+  private static final class RecordingTransactionManager
+      extends AbstractPlatformTransactionManager {
 
     private static final long serialVersionUID = 1L;
 

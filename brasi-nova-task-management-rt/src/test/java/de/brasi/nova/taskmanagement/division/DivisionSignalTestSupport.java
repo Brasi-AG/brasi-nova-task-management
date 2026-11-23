@@ -32,15 +32,15 @@ import org.springframework.jms.listener.DefaultMessageListenerContainer;
 import org.springframework.jms.listener.MessageListenerContainer;
 
 /**
- * Gemeinsame Test-Hilfen fuer den Abteilungs-Consumer (Intake #190, Tasks 4 und 6): Header und
- * Body eines {@code DivisionMembershipChanged}-Ereignisses im KSF-Format, ein eingebetteter
+ * Gemeinsame Test-Hilfen fuer den Abteilungs-Consumer (Intake #190, Tasks 4 und 6): Header und Body
+ * eines {@code DivisionMembershipChanged}-Ereignisses im KSF-Format, ein eingebetteter
  * Artemis-Broker (in-VM, ohne Persistenz, ohne Sicherheit) und die Beans des kleinen
  * Listener-Kontexts.
  *
  * <p>Header nach {@code NovaEventStandardHeaders} (camelCase, als String-Properties): {@code
- * eventName}, {@code novaEventId}, {@code novaTenantId}, {@code aggregateId}, {@code
- * brasiProfile}. Der Body ist das Envelope als JSON; die revision steht als letztes Pfadsegment im
- * Link {@code links.snapshot}.
+ * eventName}, {@code novaEventId}, {@code novaTenantId}, {@code aggregateId}, {@code brasiProfile}.
+ * Der Body ist das Envelope als JSON; die revision steht als letztes Pfadsegment im Link {@code
+ * links.snapshot}.
  */
 final class DivisionSignalTestSupport {
 
@@ -113,7 +113,10 @@ final class DivisionSignalTestSupport {
    * @return JSON-Text
    */
   static String body(
-      final UUID eventId, final UUID tenantUuid, final UUID divisionRef, final String snapshotLink) {
+      final UUID eventId,
+      final UUID tenantUuid,
+      final UUID divisionRef,
+      final String snapshotLink) {
     final ObjectNode root = JSON.createObjectNode();
     root.put("schemaVersion", 1);
     root.put("eventName", EVENT_NAME);
@@ -262,8 +265,7 @@ final class DivisionSignalTestSupport {
    * @param context laufender Kontext
    */
   static void awaitSubscribed(final ApplicationContext context) {
-    final JmsListenerEndpointRegistry registry =
-        context.getBean(JmsListenerEndpointRegistry.class);
+    final JmsListenerEndpointRegistry registry = context.getBean(JmsListenerEndpointRegistry.class);
     final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
     while (true) {
       final Collection<MessageListenerContainer> containers = registry.getListenerContainers();

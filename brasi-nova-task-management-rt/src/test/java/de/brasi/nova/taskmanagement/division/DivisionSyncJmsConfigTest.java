@@ -22,9 +22,10 @@ import org.springframework.jms.listener.MessageListenerContainer;
 
 /**
  * Prueft {@link DivisionSyncJmsConfig} und {@link DivisionMembershipListener} (Intake #190, Task 6)
- * mit dem {@link ApplicationContextRunner}: Gate ueber {@code task-management.division-sync.enabled},
- * Startabbruch bei unvollstaendiger Konfiguration und die Eigenschaften des Containers der
- * Division-Factory (geteilte, dauerhafte Topic-Subscription, transaktionale Session, ein Consumer).
+ * mit dem {@link ApplicationContextRunner}: Gate ueber {@code
+ * task-management.division-sync.enabled}, Startabbruch bei unvollstaendiger Konfiguration und die
+ * Eigenschaften des Containers der Division-Factory (geteilte, dauerhafte Topic-Subscription,
+ * transaktionale Session, ein Consumer).
  *
  * <p>Ruling 2026-11-22: Die Factory liest das globale {@code spring.jms.listener.auto-startup}
  * nicht; auf dev-ui steht es auf {@code false}, der Abteilungs-Listener startet trotzdem. Deshalb
@@ -87,7 +88,8 @@ class DivisionSyncJmsConfigTest {
   }
 
   @Test
-  @DisplayName("enabled=true ohne Basis-URL und OAuth-Werte: Start bricht ab, Meldung nennt Schluessel")
+  @DisplayName(
+      "enabled=true ohne Basis-URL und OAuth-Werte: Start bricht ab, Meldung nennt Schluessel")
   void i190_enabled_incomplete_config_fails_start() {
     runner
         .withPropertyValues(

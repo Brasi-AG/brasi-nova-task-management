@@ -305,8 +305,7 @@ class TaskEventReceiptStoreIT {
             row -> ((Number) row.get("TENANT_ID")).longValue(),
             row -> uuid(row.get("MANDANT_UUID")))
         .containsExactlyInAnyOrder(
-            tuple(TENANT_A_ID, TENANT_A_UUID),
-            tuple(TENANT_B_ID, TENANT_B_UUID));
+            tuple(TENANT_A_ID, TENANT_A_UUID), tuple(TENANT_B_ID, TENANT_B_UUID));
     assertThat(isProcessed(TENANT_A_ID, TENANT_A_UUID, signalA)).isTrue();
     assertThat(isProcessed(TENANT_B_ID, TENANT_B_UUID, signalB)).isTrue();
     // :tenantId bindet den Kontext-Mandanten: Mandant 564 sieht die Quittung von 563 nicht.
@@ -357,7 +356,9 @@ class TaskEventReceiptStoreIT {
     return new DivisionSignal(UUID.randomUUID(), tenantUuid, DIV, REV);
   }
 
-  /** {@code executeOnce} in eigener Transaktion; bei {@code false} rollback-only wie im Processor. */
+  /**
+   * {@code executeOnce} in eigener Transaktion; bei {@code false} rollback-only wie im Processor.
+   */
   private boolean claim(
       final long tenantId,
       final UUID tenantUuid,

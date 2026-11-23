@@ -33,8 +33,7 @@ class DivisionSignalGuardTest {
   private static final UUID EVT = UUID.fromString("00000056-0000-0056-eeee-000000000190");
   private static final UUID TEN = UUID.fromString("00000056-0000-0056-0000-000000000561");
   private static final UUID DIV = UUID.fromString("00000056-0000-0056-dddd-000000000001");
-  private static final UUID OTHER_TENANT =
-      UUID.fromString("00000056-0000-0056-0000-000000000562");
+  private static final UUID OTHER_TENANT = UUID.fromString("00000056-0000-0056-0000-000000000562");
   private static final String REV = "0123456789abcdef".repeat(4);
 
   private final DivisionSignalGuard guard = new DivisionSignalGuard(new ObjectMapper());

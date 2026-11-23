@@ -51,8 +51,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * die mandantenuebergreifende Liste aller bekannten Abteilungen fuer den Resync-Job, mit
  * Mandanten-ID und Mandanten-UUID aus {@code PROD_FIRMA}, auch deaktivierte Abteilungen.
  *
- * <p>Seed ueber {@link DivisionProjectionService}: Mandant 561 mit einer aktiven Abteilung,
- * Mandant 562 mit einem Grabstein (404, {@code DEACTIVE}). Gelesen wird unter {@code runAsSystem}
+ * <p>Seed ueber {@link DivisionProjectionService}: Mandant 561 mit einer aktiven Abteilung, Mandant
+ * 562 mit einem Grabstein (404, {@code DEACTIVE}). Gelesen wird unter {@code runAsSystem}
  * ({@code @GlobalQuery}).
  *
  * <p>Kontext wie {@code DivisionProjectionIT}. Uebersprungen ohne MSSQL-Zugang ({@link
