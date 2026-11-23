@@ -56,7 +56,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>Angenommene Signaturen: paketprivater Test-Konstruktor {@code
  * DivisionSignalProcessor(DivisionMembersClient, DivisionProjectionService, TaskEventReceiptStore,
  * FirmReadRepository, PlatformTransactionManager, DivisionSyncProperties, Clock)}; {@code void
- * process(DivisionSignal, int)}; {@code FirmReadRepository#findIdByUuid(UUID): Optional<Long>}.
+ * process(DivisionSignal, int)}; {@code FirmReadRepository#findTenantIdByUuid(UUID): Optional<Long>}.
  */
 class DivisionSignalProcessorTest {
 
@@ -83,7 +83,7 @@ class DivisionSignalProcessorTest {
 
   @BeforeEach
   void setUp() {
-    when(firmRepository.findIdByUuid(TEN)).thenReturn(Optional.of(TENANT_ID));
+    when(firmRepository.findTenantIdByUuid(TEN)).thenReturn(Optional.of(TENANT_ID));
     when(store.isProcessed(signal)).thenReturn(false);
     when(store.executeOnce(eq(signal), any()))
         .thenAnswer(
@@ -159,6 +159,19 @@ class DivisionSignalProcessorTest {
   }
 
   @Test
+  @DisplayName("Claim verloren (executeOnce false): Transaktion rollback-only, kein apply")
+  void i190_lost_claim_marks_transaction_rollback_only() {
+    when(store.executeOnce(eq(signal), any())).thenReturn(false);
+
+    processor.process(signal, 1);
+
+    verify(store).executeOnce(eq(signal), any());
+    verify(projection, never()).apply(any(), any(), any());
+    assertThat(transactionManager.rollbacks).as("rollback-only").hasValue(1);
+    assertThat(transactionManager.commits).hasValue(0);
+  }
+
+  @Test
   @DisplayName("404 von application wird als NotFound angewendet")
   void i190_not_found_is_applied() {
     when(client.fetchCurrent(TEN, DIV)).thenReturn(new NotFound());
@@ -172,7 +185,7 @@ class DivisionSignalProcessorTest {
   @Test
   @DisplayName("unbekannter Mandant: verworfen ohne HTTP, Quittung oder Projektion")
   void i190_unknown_tenant_is_dropped() {
-    when(firmRepository.findIdByUuid(TEN)).thenReturn(Optional.empty());
+    when(firmRepository.findTenantIdByUuid(TEN)).thenReturn(Optional.empty());
 
     processor.process(signal, 1);
 

@@ -284,6 +284,46 @@ class TaskEventReceiptStoreIT {
   }
 
   @Test
+  @DisplayName("markDead auf eine vorhandene PROCESSED-Quittung setzt sie auf DEAD, keine 2. Zeile")
+  void i190_mark_dead_turns_existing_receipt_dead() {
+    final DivisionSignal signal = signal(TENANT_A_UUID);
+    assertThat(claim(TENANT_A_ID, TENANT_A_UUID, signal, () -> {})).isTrue();
+    assertThat(singleReceipt(TENANT_A_UUID, signal.eventId()).get("STATUS"))
+        .isEqualTo("PROCESSED");
+
+    inTenantTx(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        status -> {
+          store.markDead(signal, "Abruf fehlgeschlagen: HTTP 503");
+          return null;
+        });
+
+    final Map<String, Object> row = singleReceipt(TENANT_A_UUID, signal.eventId());
+    assertThat(row.get("STATUS")).isEqualTo("DEAD");
+    assertThat(row.get("FEHLER_MELDUNG")).isEqualTo("Abruf fehlgeschlagen: HTTP 503");
+    assertThat(uuid(row.get("ABTEILUNG_REF"))).isEqualTo(DIV);
+  }
+
+  @Test
+  @DisplayName("SPI executeOnce(scope, eventId, handler): Quittung ohne ABTEILUNG_REF, einmalig")
+  void i190_spi_execute_once_without_division_ref() {
+    final UUID eventId = UUID.randomUUID();
+    final AtomicInteger runs = new AtomicInteger();
+
+    final boolean first = spiClaim(eventId, runs::incrementAndGet);
+    final boolean second = spiClaim(eventId, runs::incrementAndGet);
+
+    assertThat(first).isTrue();
+    assertThat(second).isFalse();
+    assertThat(runs).hasValue(1);
+    final Map<String, Object> row = singleReceipt(TENANT_A_UUID, eventId);
+    assertThat(row.get("STATUS")).isEqualTo("PROCESSED");
+    assertThat(row.get("ABTEILUNG_REF")).isNull();
+    assertThat(((Number) row.get("TENANT_ID")).longValue()).isEqualTo(TENANT_A_ID);
+  }
+
+  @Test
   @DisplayName("gleiche Ereignis-ID in Mandant 563 und 564 ergibt zwei getrennte Quittungen")
   void i190_receipts_are_tenant_scoped() {
     final UUID eventId = UUID.randomUUID();
@@ -369,6 +409,20 @@ class TaskEventReceiptStoreIT {
         tenantUuid,
         status -> {
           final boolean claimed = store.executeOnce(signal, handler);
+          if (!claimed) {
+            status.setRollbackOnly();
+          }
+          return claimed;
+        });
+  }
+
+  /** SPI-Pfad unter Mandant 563 in eigener Transaktion; bei {@code false} rollback-only. */
+  private boolean spiClaim(final UUID eventId, final Runnable handler) {
+    return inTenantTx(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        status -> {
+          final boolean claimed = store.executeOnce(TENANT_A_UUID, eventId, handler);
           if (!claimed) {
             status.setRollbackOnly();
           }
