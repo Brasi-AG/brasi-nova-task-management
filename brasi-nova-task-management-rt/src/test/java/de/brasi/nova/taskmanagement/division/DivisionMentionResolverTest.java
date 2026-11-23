@@ -39,8 +39,7 @@ import org.mockito.ArgumentCaptor;
  * TaskDivisionMemberQueryRepository, DivisionMentionProperties)}; {@code Set<UUID>
  * resolve(Collection<UUID>)}; {@code record DivisionMentionProperties(int maxPersons)}; {@code
  * TaskDivisionQueryRepository#findActiveByRefs(Collection<UUID>)}; {@code
- * TaskDivisionMemberQueryRepository#findDistinctEmployeeRefsByDivisionIds(Collection<Long>,
- * int)}.
+ * TaskDivisionMemberQueryRepository#findDistinctEmployeeRefsByDivisionIds(Collection<Long>, int)}.
  */
 class DivisionMentionResolverTest {
 

@@ -35,12 +35,12 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>Regeln: {@code limit} 1 bis 100 (sonst 400, keine Query); {@code ids} hoechstens 50 (sonst
  * 400), nicht leer und ohne leere Eintraege (sonst 400; fehlend = {@code null} = Suche); {@code q}
- * hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird
- * getrimmt, klein geschrieben und als woertlicher Teilstring in ein LIKE-Muster gefasst ({@code
- * %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem {@code !}
- * entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code ksf-novaquery-pitfalls} Punkt
- * 9); leeres oder fehlendes {@code q} heisst kein Namensfilter ({@code like = null}); mit {@code
- * ids} laeuft die Vorschau ueber {@code findCandidatesByRefs}.
+ * hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird getrimmt, klein
+ * geschrieben und als woertlicher Teilstring in ein LIKE-Muster gefasst ({@code %}, {@code _},
+ * {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem {@code !} entschaerft, Muster wie
+ * {@code ArchiveSearchTerm}, Lesson {@code ksf-novaquery-pitfalls} Punkt 9); leeres oder fehlendes
+ * {@code q} heisst kein Namensfilter ({@code like = null}); mit {@code ids} laeuft die Vorschau
+ * ueber {@code findCandidatesByRefs}.
  *
  * <p>Angenommene Signaturen: {@code DivisionCandidateService(TaskDivisionQueryRepository)}; {@code
  * DivisionCandidatePage find(String q, List<UUID> ids, int limit)} (Mandant aus dem Kontext, die

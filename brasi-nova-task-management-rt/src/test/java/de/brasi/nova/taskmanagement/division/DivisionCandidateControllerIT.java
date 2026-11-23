@@ -483,8 +483,7 @@ class DivisionCandidateControllerIT {
 
     // Spring bindet ein einzelnes ?ids= zur leeren Liste, einen leeren Eintrag in einer Liste zu
     // null: ?ids=, ergibt [null, null], ?ids=<uuid>&ids= ergibt [<uuid>, null].
-    for (final String[] ids :
-        new String[][] {{""}, {","}, {UUID.randomUUID().toString(), ""}}) {
+    for (final String[] ids : new String[][] {{""}, {","}, {UUID.randomUUID().toString(), ""}}) {
       mvc.perform(get(URL).queryParam("ids", ids).header("Authorization", bearer(token)))
           .andExpect(status().isBadRequest())
           .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))

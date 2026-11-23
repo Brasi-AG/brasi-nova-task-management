@@ -62,8 +62,8 @@ public class DivisionCandidateService {
    *     nach UUID in GUID-Sortierung (fachlich bedeutungslos, nicht alphabetisch)
    * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt, {@code q}
    *     nach dem Trimmen laenger als {@value #MAX_QUERY_LENGTH} Zeichen ist, mehr als {@value
-   *     #MAX_IDS} {@code ids} uebergeben wurden oder {@code ids} leer ist oder einen leeren
-   *     ({@code null}) Eintrag enthaelt (HTTP 400)
+   *     #MAX_IDS} {@code ids} uebergeben wurden oder {@code ids} leer ist oder einen leeren ({@code
+   *     null}) Eintrag enthaelt (HTTP 400)
    */
   public DivisionCandidatePage find(final String q, final List<UUID> ids, final int limit) {
     if (limit < MIN_LIMIT || limit > MAX_LIMIT) {
