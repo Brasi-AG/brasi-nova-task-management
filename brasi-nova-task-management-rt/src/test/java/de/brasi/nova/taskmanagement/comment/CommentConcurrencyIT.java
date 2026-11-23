@@ -12,6 +12,8 @@ import de.brasi.nova.taskmanagement.attachment.AttachmentTaskAccess;
 import de.brasi.nova.taskmanagement.attachment.AttachmentThumbnailGenerator;
 import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
+import de.brasi.nova.taskmanagement.division.DivisionMentionItWiring;
+import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
 import de.brasi.nova.taskmanagement.participant.AssigneeService;
@@ -354,7 +356,7 @@ class CommentConcurrencyIT {
     try {
       commentService.createComment(
           TASK_NODEADLOCK_UUID,
-          new CommentCreateInput("Parallel, mit Mention.", null, List.of(ASSIGNEE_REF)));
+          new CommentCreateInput("Parallel, mit Mention.", null, List.of(ASSIGNEE_REF), List.of()));
     } catch (final Throwable t) {
       commentErr.set(t);
     } finally {
@@ -427,7 +429,8 @@ class CommentConcurrencyIT {
               () ->
                   commentService.createComment(
                       TASK_VERSION_UUID,
-                      new CommentCreateInput("Verliert den Versions-Race.", null, List.of())))
+                      new CommentCreateInput(
+                          "Verliert den Versions-Race.", null, List.of(), List.of())))
           .as("Versions-Verlierer -> 409 (BusinessRuleException)")
           .isInstanceOf(BusinessRuleException.class);
     } finally {
@@ -495,7 +498,7 @@ class CommentConcurrencyIT {
                   commentService.createComment(
                       TASK_ADD_LOSER_UUID,
                       new CommentCreateInput(
-                          "Verliert den Versions-Race.", null, List.of(MENTIONED_REF))))
+                          "Verliert den Versions-Race.", null, List.of(MENTIONED_REF), List.of())))
           .as("Versions-Verlierer -> 409 (BusinessRuleException)")
           .isInstanceOf(BusinessRuleException.class);
     } finally {
@@ -556,7 +559,7 @@ class CommentConcurrencyIT {
       commentService.createComment(
           TASK_ADD_PARALLEL_UUID,
           new CommentCreateInput(
-              "Parallel, mit Aufnahme.", null, List.of(MENTIONED_REF, ASSIGNEE_REF)));
+              "Parallel, mit Aufnahme.", null, List.of(MENTIONED_REF, ASSIGNEE_REF), List.of()));
     } catch (final Throwable t) {
       commentErr.set(t);
     } finally {
@@ -635,7 +638,7 @@ class CommentConcurrencyIT {
       commentService.createComment(
           TASK_ORDER_UUID,
           new CommentCreateInput(
-              "Beide ausgetreten, beide erwaehnt.", null, List.of(EX_HIGH, EX_LOW)));
+              "Beide ausgetreten, beide erwaehnt.", null, List.of(EX_HIGH, EX_LOW), List.of()));
     } catch (final Throwable t) {
       commentErr.set(t);
     } finally {
@@ -721,7 +724,7 @@ class CommentConcurrencyIT {
               .createComment(
                   TASK_SEEN_UUID,
                   new CommentCreateInput(
-                      "Entsteht waehrend des Gesehen-Markierens.", null, List.of()))
+                      "Entsteht waehrend des Gesehen-Markierens.", null, List.of(), List.of()))
               .id();
     } finally {
       ACTOR_PER_THREAD.remove();
@@ -1100,7 +1103,8 @@ class CommentConcurrencyIT {
         final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
-        final AttachmentProperties attachmentProperties) {
+        final AttachmentProperties attachmentProperties,
+        final DivisionMentionResolver divisionMentionResolver) {
       super(
           taskRepository,
           commentRepository,
@@ -1118,7 +1122,8 @@ class CommentConcurrencyIT {
           assigneeService,
           attachmentWriter,
           attachmentModelMapper,
-          attachmentProperties);
+          attachmentProperties,
+          divisionMentionResolver);
     }
 
     void armTaskSaveInjector(final Runnable injector) {
@@ -1158,6 +1163,8 @@ class CommentConcurrencyIT {
     KsfIntegrationAutoConfiguration.class,
     AopAutoConfiguration.class,
   })
+  // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+  @org.springframework.context.annotation.Import(DivisionMentionItWiring.class)
   static class ItConfig {
 
     @Bean
@@ -1416,7 +1423,8 @@ class CommentConcurrencyIT {
         final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
-        final AttachmentProperties attachmentProperties) {
+        final AttachmentProperties attachmentProperties,
+        final DivisionMentionResolver divisionMentionResolver) {
       return new TestCommentService(
           taskRepository,
           commentRepository,
@@ -1432,7 +1440,8 @@ class CommentConcurrencyIT {
           assigneeService,
           attachmentWriter,
           attachmentModelMapper,
-          attachmentProperties);
+          attachmentProperties,
+          divisionMentionResolver);
     }
   }
 }

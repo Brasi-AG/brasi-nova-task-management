@@ -157,7 +157,10 @@ public class CommentController {
    * eigenen Mandanten, die noch kein Mitglied sind, werden zuvor als Beteiligte hinzugefuegt (nur
    * Teilnehmer, nie Assignee), wenn der Kommentierende dieselbe Berechtigung wie fuer {@code POST
    * /participants} hat (Intake #156); sonst werden sie still verworfen, ebenso unbekannte, inaktive
-   * oder mandantenfremde UUIDs.
+   * oder mandantenfremde UUIDs. Die in {@code divisionMentions} genannten Abteilungen stehen fuer
+   * ihre Personen laut lokaler Projektion; diese werden mit {@code mentions} vereinigt und genauso
+   * behandelt (Intake #190). Eine unbekannte oder inaktive Abteilung und zu viele Personen sind
+   * 400.
    *
    * @param id externe UUID der Aufgabe
    * @param input Kommentar-Eingabe
@@ -184,9 +187,18 @@ public class CommentController {
               + " Fehlt der aufrufenden Person die Berechtigung, werden erwaehnte Nicht-Mitglieder"
               + " still verworfen (kein Fehler, keine Aufnahme, keine Benachrichtigung), erwaehnte"
               + " Mitglieder werden weiter benachrichtigt. Unbekannte, inaktive und"
-              + " mandantenfremde UUIDs in mentions werden immer still verworfen (kein 400). Alles"
-              + " oder nichts: bei einem Fehler wird weder der Kommentar noch eine Aufnahme"
-              + " gespeichert.")
+              + " mandantenfremde UUIDs in mentions werden immer still verworfen (kein 400)."
+              + " Abteilungen werden mit divisionMentions erwaehnt (UUIDs aus GET"
+              + " /api/v1/tasks/divisions, hoechstens 10): jede steht fuer alle Personen ihres"
+              + " Teilbaums laut dem Stand, den task-management zum Zeitpunkt des Kommentars kennt"
+              + " (Momentaufnahme). Diese Personen werden mit mentions vereinigt, dedupliziert und"
+              + " danach genau wie mentions behandelt (Personen ohne aktiven Benutzer fallen still"
+              + " weg, Aufnahme nur mit TASK_WRITE, je Person hoechstens eine MENTION). Anders als"
+              + " bei Personen ist eine unbekannte, nicht aktive oder mandantenfremde Abteilung ein"
+              + " Fehler (400, ein Text fuer alle Faelle), ebenso mehr als 200 verschiedene Personen"
+              + " in den erwaehnten Abteilungen zusammen (Vorgabe); eine Abteilung ohne Mitglieder"
+              + " ist kein Fehler. Alles oder nichts: bei einem Fehler wird weder der Kommentar noch"
+              + " eine Aufnahme gespeichert.")
   @ApiResponses({
     @ApiResponse(
         responseCode = "201",
@@ -212,10 +224,12 @@ public class CommentController {
         responseCode = "400",
         description =
             "Ungueltige Eingabe: text fehlt oder ist leer, mehr als 100 oder ein null-Element in"
-                + " mentions, Eltern-Kommentar unbekannt, zu einer anderen Aufgabe gehoerig oder"
-                + " nicht aktiv, kein gueltiges JSON oder keine UUID im Pfad. Eine unbekannte,"
-                + " inaktive oder mandantenfremde UUID in mentions ist kein Fehler (still"
-                + " verworfen).",
+                + " mentions, mehr als 10 oder ein null-Element in divisionMentions, eine erwaehnte"
+                + " Abteilung unbekannt, nicht aktiv oder mandantenfremd, die erwaehnten Abteilungen"
+                + " umfassen zusammen mehr als 200 Personen (Vorgabe), Eltern-Kommentar unbekannt,"
+                + " zu einer anderen Aufgabe gehoerig oder nicht aktiv, kein gueltiges JSON oder"
+                + " keine UUID im Pfad. Eine unbekannte, inaktive oder mandantenfremde UUID in"
+                + " mentions ist kein Fehler (still verworfen).",
         content =
             @Content(
                 mediaType = "application/json",
@@ -228,7 +242,15 @@ public class CommentController {
                   @ExampleObject(
                       name = "text-fehlt",
                       summary = "Body ohne Text oder mit leerem Text",
-                      value = CommentApiExamples.BAD_REQUEST_BODY)
+                      value = CommentApiExamples.BAD_REQUEST_BODY),
+                  @ExampleObject(
+                      name = "abteilung-unbekannt",
+                      summary = "Erwaehnte Abteilung unbekannt, nicht aktiv oder mandantenfremd",
+                      value = CommentApiExamples.BAD_REQUEST_DIVISION),
+                  @ExampleObject(
+                      name = "abteilungen-zu-gross",
+                      summary = "Erwaehnte Abteilungen umfassen mehr als 200 Personen",
+                      value = CommentApiExamples.BAD_REQUEST_DIVISION_PERSON_LIMIT)
                 })),
     @ApiResponse(
         responseCode = "401",
@@ -279,8 +301,8 @@ public class CommentController {
           final UUID id,
       @io.swagger.v3.oas.annotations.parameters.RequestBody(
               description =
-                  "Kommentartext, optional Eltern-Kommentar und erwaehnte Benutzer (hoechstens"
-                      + " 100).",
+                  "Kommentartext, optional Eltern-Kommentar, erwaehnte Benutzer (hoechstens 100)"
+                      + " und erwaehnte Abteilungen (hoechstens 10).",
               required = true,
               content =
                   @Content(
@@ -300,6 +322,13 @@ public class CommentController {
                                     + " erhaelt nur die MENTION; ohne Berechtigung wird die"
                                     + " Erwaehnung still verworfen.",
                             value = CommentApiExamples.REQUEST_WITH_MENTION),
+                        @ExampleObject(
+                            name = "mit-abteilung",
+                            summary = "Kommentar mit Erwaehnung einer Abteilung und einer Person",
+                            description =
+                                "Die Personen der Abteilung werden mit mentions vereinigt; wer"
+                                    + " in beiden steht, erhaelt nur eine MENTION.",
+                            value = CommentApiExamples.REQUEST_WITH_DIVISION_MENTION),
                         @ExampleObject(
                             name = "antwort",
                             summary = "Antwort auf einen Kommentar",
@@ -355,7 +384,9 @@ public class CommentController {
               + " /api/v1/tasks/{id}/comments. Fuer den Kommentar gelten dieselben Regeln wie dort:"
               + " optional Antwort auf einen anderen Kommentar (parentCommentId), Erwaehnungen als"
               + " explizite UUIDs in mentions (erwaehnte Nicht-Mitglieder werden mit der"
-              + " Berechtigung TASK_WRITE als Beteiligte aufgenommen, sonst still verworfen). Fuer"
+              + " Berechtigung TASK_WRITE als Beteiligte aufgenommen, sonst still verworfen),"
+              + " Abteilungen in divisionMentions (ihre Personen werden mit mentions vereinigt;"
+              + " eine unbekannte oder nicht aktive Abteilung ist 400). Fuer"
               + " die Dateien gelten dieselben Regeln wie beim Hochladen an der Aufgabe: erlaubt"
               + " sind PDF, Excel (xls, xlsx), Word (doc, docx), PowerPoint (ppt, pptx), Text (txt,"
               + " csv), Bilder (png, jpg, jpeg) und Video (mp4); geprueft werden Endung und"
@@ -429,9 +460,12 @@ public class CommentController {
                 + " eine ungueltige UUID im Pfad. Erst danach, und nur fuer aktive Mitglieder"
                 + " (Nicht-Mitglieder erhalten die neutrale 404), werden die Dateien geprueft:"
                 + " Dateityp nicht erlaubt, leere Datei, Datei groesser als die Grenze des Tarifs,"
-                + " Inhalt passt nicht zur Endung, mehr als 20 Dateien. Zuletzt wird der"
+                + " Inhalt passt nicht zur Endung, mehr als 20 Dateien. Danach wird der"
                 + " Eltern-Kommentar geprueft: unbekannt, zu einer anderen Aufgabe gehoerig oder"
-                + " nicht aktiv. Eine unbekannte, inaktive oder mandantenfremde UUID in mentions"
+                + " nicht aktiv, dann die erwaehnten Abteilungen: eine unbekannt, nicht aktiv oder"
+                + " mandantenfremd, oder zusammen mehr als 200 Personen (Vorgabe); mehr als 10 oder"
+                + " ein null-Element in divisionMentions wird schon beim Lesen des Teils comment"
+                + " abgelehnt. Eine unbekannte, inaktive oder mandantenfremde UUID in mentions"
                 + " ist kein Fehler (still verworfen).",
         content =
             @Content(
@@ -446,6 +480,10 @@ public class CommentController {
                       name = "eltern-kommentar-ungueltig",
                       summary = "Eltern-Kommentar unbekannt, fremd oder inaktiv",
                       value = CommentApiExamples.BAD_REQUEST_WITH_ATTACHMENTS_PARENT),
+                  @ExampleObject(
+                      name = "abteilung-unbekannt",
+                      summary = "Erwaehnte Abteilung unbekannt, nicht aktiv oder mandantenfremd",
+                      value = CommentApiExamples.BAD_REQUEST_WITH_ATTACHMENTS_DIVISION),
                   @ExampleObject(
                       name = "typ-nicht-erlaubt",
                       summary = "Endung einer Datei nicht in der Erlaubtliste",

@@ -843,6 +843,8 @@ class TaskWebSocketHandlerIT {
     // Slice 4 (Standard-Selfservice): die member-scoped Services haengen jetzt am objekt-level
     // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
+    // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 

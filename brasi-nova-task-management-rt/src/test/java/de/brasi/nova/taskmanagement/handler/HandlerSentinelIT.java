@@ -64,7 +64,8 @@ class HandlerSentinelIT {
           "de.brasi.nova.taskmanagement.tag.TagController",
           "de.brasi.nova.taskmanagement.inbox.InboxSnapshotController",
           "de.brasi.nova.taskmanagement.push.WebSocketTicketController",
-          "de.brasi.nova.taskmanagement.attachment.AttachmentController");
+          "de.brasi.nova.taskmanagement.attachment.AttachmentController",
+          "de.brasi.nova.taskmanagement.division.DivisionCandidateController");
 
   /** Basis-Paket der gesamten Anwendung — wird vollständig gescannt. */
   private static final String APP_BASE_PACKAGE = "de.brasi.nova.taskmanagement";

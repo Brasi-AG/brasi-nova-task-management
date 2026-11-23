@@ -1,0 +1,268 @@
+package de.brasi.nova.taskmanagement.division;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
+
+import de.brasi.nova.taskmanagement.division.model.DivisionCandidateModel;
+import de.brasi.nova.taskmanagement.division.model.DivisionCandidatePage;
+import de.brasi.nova.taskmanagement.repository.DivisionCandidateRow;
+import de.brasi.nova.taskmanagement.repository.TaskDivisionQueryRepository;
+import io.keel.framework.api.validation.EntityValidationException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+/**
+ * Prueft {@link DivisionCandidateService} (Intake #190, Task 9) mit Mockito: Eingabepruefung der
+ * Vorschlags-API {@code GET /api/v1/tasks/divisions} und Abbildung der Zeilen.
+ *
+ * <p>Regeln: {@code limit} 1 bis 100 (sonst 400, keine Query); {@code ids} hoechstens 50 (sonst
+ * 400), nicht leer und ohne leere Eintraege (sonst 400; fehlend = {@code null} = Suche); {@code q}
+ * hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird getrimmt, klein
+ * geschrieben und als woertlicher Teilstring in ein LIKE-Muster gefasst ({@code %}, {@code _},
+ * {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem {@code !} entschaerft, Muster wie
+ * {@code ArchiveSearchTerm}, Lesson {@code ksf-novaquery-pitfalls} Punkt 9); leeres oder fehlendes
+ * {@code q} heisst kein Namensfilter ({@code like = null}); mit {@code ids} laeuft die Vorschau
+ * ueber {@code findCandidatesByRefs}.
+ *
+ * <p>Angenommene Signaturen: {@code DivisionCandidateService(TaskDivisionQueryRepository)}; {@code
+ * DivisionCandidatePage find(String q, List<UUID> ids, int limit)} (Mandant aus dem Kontext, die
+ * Queries binden {@code :tenantId}); {@code record
+ * DivisionCandidatePage(List<DivisionCandidateModel> items)}; {@code record
+ * DivisionCandidateModel(UUID divisionId, String name, int memberCount)}; {@code record
+ * DivisionCandidateRow(UUID divisionRef, String name, int memberCount)}; {@code
+ * TaskDivisionQueryRepository#findCandidates(String like, int limit)} und {@code
+ * #findCandidatesByRefs(Collection<UUID> refs)}.
+ */
+class DivisionCandidateServiceTest {
+
+  private final TaskDivisionQueryRepository divisionRepo = mock(TaskDivisionQueryRepository.class);
+  private final DivisionCandidateService service = new DivisionCandidateService(divisionRepo);
+
+  @Test
+  @DisplayName("limit ausserhalb 1..100 -> 400 ohne Query; 1 und 100 sind erlaubt")
+  void i190_limit_out_of_range_400() {
+    for (final int limit : new int[] {0, -1, 101}) {
+      assertThatThrownBy(() -> service.find(null, null, limit))
+          .as("limit %d", limit)
+          .isInstanceOf(EntityValidationException.class);
+    }
+    verifyNoInteractions(divisionRepo);
+
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+    service.find(null, null, 1);
+    service.find(null, null, 100);
+    verify(divisionRepo).findCandidates(null, 1);
+    verify(divisionRepo).findCandidates(null, 100);
+  }
+
+  @Test
+  @DisplayName("mehr als 50 ids -> 400 ohne Query; 50 sind erlaubt")
+  void i190_ids_over_50_400() {
+    assertThatThrownBy(() -> service.find(null, uuids(51), 20))
+        .isInstanceOf(EntityValidationException.class);
+    verifyNoInteractions(divisionRepo);
+
+    when(divisionRepo.findCandidatesByRefs(anyCollection())).thenReturn(List.of());
+    assertThat(service.find(null, uuids(50), 20).items()).isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "q wird getrimmt, klein geschrieben und woertlich gesucht: %, _, [ und ! werden mit !"
+          + " entschaerft")
+  void i190_q_is_trimmed_lowercased_and_escaped() {
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+
+    service.find("  Ver_Trieb 50%! [Neu]  ", null, 20);
+
+    verify(divisionRepo).findCandidates("%ver!_trieb 50!%!! ![neu]%", 20);
+  }
+
+  @Test
+  @DisplayName(
+      "q mit 200 Zeichen (nach dem Trimmen) ist erlaubt, mit 201 -> 400 mit eigenem Text und ohne"
+          + " Query, auch neben ids; Zeichen zaehlen als Codepunkte, die Leerzeichen aussen nicht")
+  void i190_q_length_limit() {
+    final String message = "Der Parameter 'q' darf hoechstens 200 Zeichen lang sein.";
+    // Ein Zeichen ausserhalb der BMP: zwei UTF-16-Einheiten, ein Codepunkt.
+    final String smiley = new String(Character.toChars(0x1F600));
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+
+    // 200 Zeichen sind erlaubt, auch mit Leerzeichen aussen (die zaehlen nicht mit).
+    service.find("a".repeat(200), null, 20);
+    service.find("  " + "a".repeat(200) + "  ", null, 20);
+    service.find(smiley.repeat(200), null, 20);
+    verify(divisionRepo, times(2)).findCandidates("%" + "a".repeat(200) + "%", 20);
+    verify(divisionRepo).findCandidates("%" + smiley.repeat(200) + "%", 20);
+    verifyNoMoreInteractions(divisionRepo);
+
+    for (final String q :
+        new String[] {
+          "a".repeat(201), "  " + "a".repeat(201) + "  ", smiley.repeat(201), "%".repeat(201)
+        }) {
+      assertThatThrownBy(() -> service.find(q, null, 20))
+          .as("q mit %d Zeichen", q.length())
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+      // q wird auch geprueft, wenn ids gesetzt sind (wie limit), obwohl es dann nicht wirkt.
+      assertThatThrownBy(() -> service.find(q, List.of(UUID.randomUUID()), 20))
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoMoreInteractions(divisionRepo);
+  }
+
+  @Test
+  @DisplayName("fehlendes, leeres oder nur aus Leerzeichen bestehendes q -> kein Namensfilter")
+  void i190_blank_q_means_no_filter() {
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+
+    service.find(null, null, 20);
+    service.find("", null, 20);
+    service.find("   ", null, 20);
+
+    verify(divisionRepo, times(3)).findCandidates(isNull(), eq(20));
+    verify(divisionRepo, never()).findCandidatesByRefs(anyCollection());
+  }
+
+  @Test
+  @DisplayName("ids gesetzt -> Vorschau ueber findCandidatesByRefs, keine Namenssuche")
+  void i190_ids_use_preview_query() {
+    final UUID a = UUID.randomUUID();
+    final UUID b = UUID.randomUUID();
+    when(divisionRepo.findCandidatesByRefs(anyCollection()))
+        .thenReturn(List.of(new DivisionCandidateRow(a, "Einkauf", 3)));
+
+    final DivisionCandidatePage page = service.find(null, List.of(a, b), 20);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refs = ArgumentCaptor.forClass(Collection.class);
+    verify(divisionRepo).findCandidatesByRefs(refs.capture());
+    assertThat(refs.getValue()).containsExactlyInAnyOrder(a, b);
+    verify(divisionRepo, never()).findCandidates(any(), anyInt());
+    assertThat(page.items()).containsExactly(new DivisionCandidateModel(a, "Einkauf", 3));
+  }
+
+  @Test
+  @DisplayName(
+      "ids gewinnt vor q und limit: mit gesetztem q und limit 1 laeuft nur die Vorschau, beide"
+          + " Treffer kommen zurueck")
+  void i190_ids_win_over_q_and_limit() {
+    final UUID a = UUID.randomUUID();
+    final UUID b = UUID.randomUUID();
+    when(divisionRepo.findCandidatesByRefs(anyCollection()))
+        .thenReturn(
+            List.of(
+                new DivisionCandidateRow(a, "Einkauf", 3),
+                new DivisionCandidateRow(b, "Verkauf", 0)));
+
+    final DivisionCandidatePage page = service.find("passt-auf-keinen-namen", List.of(a, b), 1);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> refs = ArgumentCaptor.forClass(Collection.class);
+    verify(divisionRepo).findCandidatesByRefs(refs.capture());
+    assertThat(refs.getValue()).containsExactlyInAnyOrder(a, b);
+    verify(divisionRepo, never()).findCandidates(any(), anyInt());
+    verifyNoMoreInteractions(divisionRepo);
+    assertThat(page.items())
+        .as("limit 1 kappt die Vorschau nicht")
+        .containsExactly(
+            new DivisionCandidateModel(a, "Einkauf", 3),
+            new DivisionCandidateModel(b, "Verkauf", 0));
+  }
+
+  @Test
+  @DisplayName(
+      "leere Eintraege in ids (null, etwa bei ?ids=,) -> 400 mit eigenem Text, ohne Query; auch"
+          + " neben gueltigen UUIDs")
+  void i190_null_elements_in_ids_400() {
+    final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
+    // Spring wandelt einen leeren Eintrag in null um: ?ids=, ergibt [null, null].
+    final List<UUID> onlyNulls = Arrays.asList(null, null);
+    final List<UUID> nullLast = Arrays.asList(UUID.randomUUID(), null);
+    final List<UUID> nullFirst = Arrays.asList(null, UUID.randomUUID());
+
+    for (final List<UUID> ids : List.of(onlyNulls, nullLast, nullFirst)) {
+      assertThatThrownBy(() -> service.find("q", ids, 20))
+          .as("ids %s", ids)
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoInteractions(divisionRepo);
+  }
+
+  @Test
+  @DisplayName(
+      "leere ids-Liste (einzelnes ?ids=, Spring bindet sie zur leeren Liste) -> 400 mit demselben"
+          + " Text wie bei leeren Eintraegen, ohne Query; fehlende ids (null) bleiben die Suche")
+  void i190_empty_ids_list_400() {
+    final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
+
+    // Mit und ohne q: die leere Liste darf nie als allgemeine Suche laufen.
+    for (final String q : new String[] {null, "", "vertrieb"}) {
+      assertThatThrownBy(() -> service.find(q, List.of(), 20))
+          .as("q %s", q)
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+      assertThatThrownBy(() -> service.find(q, new ArrayList<>(), 20))
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoInteractions(divisionRepo);
+
+    // Gegenprobe: ids == null (Parameter fehlt) ist die Suche.
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+    assertThat(service.find("vertrieb", null, 20).items()).isEmpty();
+    verify(divisionRepo).findCandidates("%vertrieb%", 20);
+    verify(divisionRepo, never()).findCandidatesByRefs(anyCollection());
+  }
+
+  @Test
+  @DisplayName(
+      "Zeilen werden in der Reihenfolge der Query abgebildet, ein fehlender Name bleibt null")
+  void i190_rows_are_mapped_in_order() {
+    final UUID first = UUID.randomUUID();
+    final UUID second = UUID.randomUUID();
+    final UUID unnamed = UUID.randomUUID();
+    when(divisionRepo.findCandidates(any(), anyInt()))
+        .thenReturn(
+            List.of(
+                new DivisionCandidateRow(first, "Alpha", 2),
+                new DivisionCandidateRow(second, "Beta", 0),
+                new DivisionCandidateRow(unnamed, null, 5)));
+
+    final DivisionCandidatePage page = service.find(null, null, 20);
+
+    assertThat(page.items())
+        .containsExactly(
+            new DivisionCandidateModel(first, "Alpha", 2),
+            new DivisionCandidateModel(second, "Beta", 0),
+            new DivisionCandidateModel(unnamed, null, 5));
+  }
+
+  private static List<UUID> uuids(final int count) {
+    final List<UUID> uuids = new ArrayList<>(count);
+    for (int i = 0; i < count; i++) {
+      uuids.add(UUID.randomUUID());
+    }
+    return uuids;
+  }
+}
