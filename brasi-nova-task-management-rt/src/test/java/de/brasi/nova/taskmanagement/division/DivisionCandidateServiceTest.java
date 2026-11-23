@@ -34,11 +34,12 @@ import org.mockito.ArgumentCaptor;
  * Vorschlags-API {@code GET /api/v1/tasks/divisions} und Abbildung der Zeilen.
  *
  * <p>Regeln: {@code limit} 1 bis 100 (sonst 400, keine Query); {@code ids} hoechstens 50 (sonst
- * 400); {@code q} wird getrimmt, klein geschrieben und als woertlicher Teilstring in ein
- * LIKE-Muster gefasst ({@code %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit
- * vorangestelltem {@code !} entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code
- * ksf-novaquery-pitfalls} Punkt 9); leeres oder fehlendes {@code q} heisst kein Namensfilter
- * ({@code like = null}); mit {@code ids} laeuft die Vorschau ueber {@code findCandidatesByRefs}.
+ * 400); {@code q} hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird
+ * getrimmt, klein geschrieben und als woertlicher Teilstring in ein LIKE-Muster gefasst ({@code
+ * %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem {@code !}
+ * entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code ksf-novaquery-pitfalls} Punkt
+ * 9); leeres oder fehlendes {@code q} heisst kein Namensfilter ({@code like = null}); mit {@code
+ * ids} laeuft die Vorschau ueber {@code findCandidatesByRefs}.
  *
  * <p>Angenommene Signaturen: {@code DivisionCandidateService(TaskDivisionQueryRepository)}; {@code
  * DivisionCandidatePage find(String q, List<UUID> ids, int limit)} (Mandant aus dem Kontext, die
@@ -92,6 +93,40 @@ class DivisionCandidateServiceTest {
     service.find("  Ver_Trieb 50%! [Neu]  ", null, 20);
 
     verify(divisionRepo).findCandidates("%ver!_trieb 50!%!! ![neu]%", 20);
+  }
+
+  @Test
+  @DisplayName(
+      "q mit 200 Zeichen (nach dem Trimmen) ist erlaubt, mit 201 -> 400 mit eigenem Text und ohne"
+          + " Query, auch neben ids; Zeichen zaehlen als Codepunkte, die Leerzeichen aussen nicht")
+  void i190_q_length_limit() {
+    final String message = "Der Parameter 'q' darf hoechstens 200 Zeichen lang sein.";
+    // Ein Zeichen ausserhalb der BMP: zwei UTF-16-Einheiten, ein Codepunkt.
+    final String smiley = new String(Character.toChars(0x1F600));
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+
+    // 200 Zeichen sind erlaubt, auch mit Leerzeichen aussen (die zaehlen nicht mit).
+    service.find("a".repeat(200), null, 20);
+    service.find("  " + "a".repeat(200) + "  ", null, 20);
+    service.find(smiley.repeat(200), null, 20);
+    verify(divisionRepo, times(2)).findCandidates("%" + "a".repeat(200) + "%", 20);
+    verify(divisionRepo).findCandidates("%" + smiley.repeat(200) + "%", 20);
+    verifyNoMoreInteractions(divisionRepo);
+
+    for (final String q :
+        new String[] {
+          "a".repeat(201), "  " + "a".repeat(201) + "  ", smiley.repeat(201), "%".repeat(201)
+        }) {
+      assertThatThrownBy(() -> service.find(q, null, 20))
+          .as("q mit %d Zeichen", q.length())
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+      // q wird auch geprueft, wenn ids gesetzt sind (wie limit), obwohl es dann nicht wirkt.
+      assertThatThrownBy(() -> service.find(q, List.of(UUID.randomUUID()), 20))
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoMoreInteractions(divisionRepo);
   }
 
   @Test

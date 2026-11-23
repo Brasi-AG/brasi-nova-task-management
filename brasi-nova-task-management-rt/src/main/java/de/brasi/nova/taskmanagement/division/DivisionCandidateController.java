@@ -44,7 +44,7 @@ public class DivisionCandidateController {
   /**
    * Liefert Vorschlaege fuer die Erwaehnung von Abteilungen im Kommentar.
    *
-   * @param q Suchbegriff ueber den Namen (optional)
+   * @param q Suchbegriff ueber den Namen (optional, nach dem Trimmen hoechstens 200 Zeichen)
    * @param ids UUIDs fuer die Vorschau (optional, hoechstens 50; gewinnt vor {@code q})
    * @param limit hoechste Zahl der Vorschlaege der Suche (1 bis 100, Vorgabe 20)
    * @return 200 OK mit {@link DivisionCandidatePage}
@@ -66,15 +66,17 @@ public class DivisionCandidateController {
           Benutzer. Ein Client darf memberCount daher nicht gegen diese Grenze vorpruefen.
 
           Suche: q filtert als Teiltreffer ueber den Namen, unabhaengig von Gross- und \
-          Kleinschreibung; Leerzeichen aussen werden entfernt, %, _ und [ werden woertlich \
-          gesucht. Abteilungen ohne Namen fallen bei gesetztem q heraus. Ohne q (oder leer) kommen \
-          die aktiven Abteilungen bis limit (1 bis 100, Vorgabe 20); es gibt keine weiteren \
-          Seiten, weitere Abteilungen sind nur ueber q zu finden.
+          Kleinschreibung; Leerzeichen aussen werden entfernt (danach hoechstens 200 Zeichen, \
+          sonst 400), %, _ und [ werden woertlich gesucht. Abteilungen ohne Namen fallen bei \
+          gesetztem q heraus. Ohne q (oder leer) kommen die aktiven Abteilungen bis limit (1 bis \
+          100, Vorgabe 20); es gibt keine weiteren Seiten, weitere Abteilungen sind nur ueber q \
+          zu finden.
 
           Vorschau: ids liefert die Abteilungen zu bekannten UUIDs (hoechstens 50, Parameter \
           wiederholt oder kommagetrennt, leere Eintraege sind ein Fehler); unbekannte, nicht \
-          aktive und mandantenfremde UUIDs fehlen ohne Fehler. Sind ids gesetzt, wird q ignoriert \
-          und limit nicht angewendet (aber weiterhin auf 1 bis 100 geprueft).
+          aktive und mandantenfremde UUIDs fehlen ohne Fehler. Sind ids gesetzt, wird q \
+          ignoriert (aber weiterhin auf hoechstens 200 Zeichen geprueft) und limit nicht \
+          angewendet (aber weiterhin auf 1 bis 100 geprueft).
 
           Sortierung: nach Name (Abteilungen ohne Namen zuletzt). Bei gleichem Namen und unter den \
           Abteilungen ohne Namen ist die Reihenfolge stabil (technisch nach divisionId in \
@@ -105,9 +107,10 @@ public class DivisionCandidateController {
     @ApiResponse(
         responseCode = "400",
         description =
-            "Ungueltige Parameter: limit ausserhalb von 1 bis 100, mehr als 50 ids, ein leerer"
-                + " Eintrag in ids (etwa ids=,), ein Eintrag in ids ist keine UUID oder limit ist"
-                + " keine Zahl.",
+            "Ungueltige Parameter: limit ausserhalb von 1 bis 100, q laenger als 200 Zeichen (nach"
+                + " dem Entfernen der Leerzeichen aussen), mehr als 50 ids, ein leerer Eintrag in"
+                + " ids (etwa ids=,), ein Eintrag in ids ist keine UUID oder limit ist keine"
+                + " Zahl.",
         content =
             @Content(
                 mediaType = "application/json",
@@ -146,7 +149,10 @@ public class DivisionCandidateController {
               description =
                   "Suchbegriff: Teiltreffer ueber den Namen der Abteilung, unabhaengig von Gross-"
                       + " und Kleinschreibung; %, _ und [ werden woertlich gesucht. Leer oder"
-                      + " fehlend = kein Filter. Ohne Wirkung, wenn ids gesetzt ist.",
+                      + " fehlend = kein Filter. Hoechstens 200 Zeichen nach dem Entfernen der"
+                      + " Leerzeichen aussen (sonst 400, auch bei gesetztem ids). Ohne Wirkung,"
+                      + " wenn ids gesetzt ist.",
+              schema = @Schema(type = "string", maxLength = 200),
               example = "vertrieb")
           @RequestParam(required = false)
           final String q,

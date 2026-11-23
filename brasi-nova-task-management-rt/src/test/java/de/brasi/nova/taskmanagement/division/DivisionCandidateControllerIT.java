@@ -87,8 +87,8 @@ import org.springframework.web.context.WebApplicationContext;
  * {@code _}, {@code [} entschaerft, Lockvoegel samt Gegenprobe), unbenannte fallen dabei heraus;
  * {@code ids} liefert die Vorschau bekannter aktiver Abteilungen und gewinnt vor {@code q} und
  * {@code limit}; {@code limit} 1 bis 100, Vorgabe 20; 400 im KSF-Format (auch bei leeren Eintraegen
- * in {@code ids}), 401 anonym, 403 ohne TASK_READ; der Pfad wird nicht von {@code
- * /api/v1/tasks/{id}} verschluckt.
+ * in {@code ids} und bei {@code q} ueber 200 Zeichen), 401 anonym, 403 ohne TASK_READ; der Pfad
+ * wird nicht von {@code /api/v1/tasks/{id}} verschluckt.
  *
  * <p>Die Projektion wird per JDBC gesaet wie in {@code DivisionProjectionIT}. Mandanten: 561 (A,
  * Haupt-Mandant), 562 (B, fremd), 563 (C, nur fuer die vollstaendige Liste ohne {@code q}), 564 (D,
@@ -435,6 +435,40 @@ class DivisionCandidateControllerIT {
     assertThat(items(token, get(URL).queryParam("q", "qlimit").queryParam("limit", "1")))
         .extracting(Item::name)
         .containsExactly("Qlimit A");
+  }
+
+  @Test
+  @DisplayName(
+      "q mit 200 Zeichen (nach dem Trimmen) -> 200, auch wenn das Muster durch Escapes doppelt so"
+          + " lang wird; q mit 201 Zeichen -> 400 im KSF-Format mit eigenem Text, auch neben ids")
+  void i190_q_over_200_chars_400() throws Exception {
+    final String token = readToken(TENANT_A_UUID, ACTOR_A_REF);
+    final MockMvc mvc = buildMvc();
+    final String message = "Der Parameter 'q' darf hoechstens 200 Zeichen lang sein.";
+
+    // 200 Zeichen laufen durch die Query (kein Name passt); die Leerzeichen aussen zaehlen nicht,
+    // und 200 Prozentzeichen werden zu einem Muster aus 402 Zeichen entschaerft.
+    for (final String q :
+        new String[] {"x".repeat(200), " " + "x".repeat(200) + " ", "%".repeat(200)}) {
+      assertThat(items(token, get(URL).queryParam("q", q)))
+          .as("q mit %d Zeichen", q.length())
+          .isEmpty();
+    }
+
+    for (final String q : new String[] {"x".repeat(201), " " + "x".repeat(201) + " "}) {
+      mvc.perform(get(URL).queryParam("q", q).header("Authorization", bearer(token)))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+          .andExpect(jsonPath("$.message").value(message));
+    }
+    // Wie limit wird q auch neben ids geprueft, obwohl es dort nicht wirkt.
+    mvc.perform(
+            get(URL)
+                .queryParam("q", "x".repeat(201))
+                .queryParam("ids", UUID.randomUUID().toString())
+                .header("Authorization", bearer(token)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
   }
 
   @Test
