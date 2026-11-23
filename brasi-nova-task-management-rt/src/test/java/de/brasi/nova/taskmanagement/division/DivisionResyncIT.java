@@ -63,7 +63,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * RefSchemaItEnabled}).
  *
  * <p>Angenommene Signaturen: {@code record DivisionResyncRow(long tenantId, UUID tenantUuid, UUID
- * divisionRef)} im Paket {@code repository}; {@code List<DivisionResyncRow> findAllForResync()}.
+ * divisionRef)} im Paket {@code repository}; {@code List<DivisionResyncRow> findAllForResync()};
+ * {@code Optional<Long> FirmReadRepository#findTenantIdByUuid(UUID)}.
  */
 @SpringBootTest(
     classes = DivisionResyncIT.ItConfig.class,

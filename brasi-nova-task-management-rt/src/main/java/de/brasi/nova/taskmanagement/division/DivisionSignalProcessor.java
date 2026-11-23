@@ -37,7 +37,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Laufzeitfehler (HTTP 401/403/5xx, Zeitueberschreitung, Datenbank): unterhalb von {@code
  * max-delivery-attempts} (mindestens 1) WARN und erneut werfen, damit der Broker die Nachricht neu
  * zustellt; am Limit ERROR, Quittung {@code DEAD} in eigener Transaktion, kein Wurf (Nachricht wird
- * bestaetigt). Der Resync heilt den Stand spaeter.
+ * bestaetigt).
+ *
+ * <p>Der Nachtlauf des Resync ({@link DivisionResyncJob}) heilt nur Abteilungen mit Kopfzeile in
+ * {@code TASK_ABTEILUNG}, also mit aktivem Stand oder Grabstein. Eine Abteilung, deren Abrufe alle
+ * scheiterten und die deshalb nur eine {@code DEAD}-Quittung und keine Kopfzeile hat, sieht der
+ * Resync nicht; sie heilt erst ein neues Signal von application oder dessen Start-Resync.
  */
 @Service
 public class DivisionSignalProcessor {

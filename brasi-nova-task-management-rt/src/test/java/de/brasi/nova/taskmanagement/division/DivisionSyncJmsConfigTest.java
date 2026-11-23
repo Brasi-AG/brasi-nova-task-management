@@ -36,12 +36,13 @@ import org.springframework.jms.listener.MessageListenerContainer;
  * DivisionSignalTestSupport.ListenerBeans}.
  *
  * <p>Angenommene Signaturen: {@code DivisionSyncJmsConfig} ({@code @EnableJms}, bedingt auf {@code
- * enabled=true}) mit Bean {@code divisionSyncListenerFactory(ConnectionFactory)} vom Typ {@code
- * DefaultJmsListenerContainerFactory}, ohne externen Transaktionsmanager; Pflichtpruefung ueber
- * {@code DivisionSyncProperties#requireCompleteWhenEnabled(ksf.event.profile)}. {@code
- * DivisionMembershipListener} (gleiche Bedingung) mit Abhaengigkeiten nur aus {@code
- * NovaEventProfileGuard}, {@code DivisionSignalGuard}, {@code DivisionSignalProcessor} (und
- * gegebenenfalls {@code DivisionSyncProperties}).
+ * enabled=true}) mit Bean {@code divisionSyncListenerFactory(ConnectionFactory,
+ * DivisionSyncProperties, String eventProfile)} vom Typ {@code DefaultJmsListenerContainerFactory},
+ * ohne externen Transaktionsmanager; die Pflichtpruefung {@code
+ * DivisionSyncProperties#requireCompleteWhenEnabled(eventProfile)} laeuft in dieser Factory-Methode,
+ * also beim Aufbau des Singletons im Kontextstart. {@code DivisionMembershipListener} (gleiche
+ * Bedingung) mit den drei Konstruktor-Abhaengigkeiten {@code NovaEventProfileGuard}, {@code
+ * DivisionSignalGuard} und {@code DivisionSignalProcessor}.
  */
 class DivisionSyncJmsConfigTest {
 
