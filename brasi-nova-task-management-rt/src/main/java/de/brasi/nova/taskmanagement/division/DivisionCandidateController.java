@@ -45,7 +45,8 @@ public class DivisionCandidateController {
    * Liefert Vorschlaege fuer die Erwaehnung von Abteilungen im Kommentar.
    *
    * @param q Suchbegriff ueber den Namen (optional, nach dem Trimmen hoechstens 200 Zeichen)
-   * @param ids UUIDs fuer die Vorschau (optional, hoechstens 50; gewinnt vor {@code q})
+   * @param ids UUIDs fuer die Vorschau (optional, hoechstens 50; gewinnt vor {@code q}); fehlt der
+   *     Parameter, ist der Wert {@code null}, ein leerer Parameter ({@code ?ids=}) ist ein 400
    * @param limit hoechste Zahl der Vorschlaege der Suche (1 bis 100, Vorgabe 20)
    * @return 200 OK mit {@link DivisionCandidatePage}
    */
@@ -73,10 +74,10 @@ public class DivisionCandidateController {
           zu finden.
 
           Vorschau: ids liefert die Abteilungen zu bekannten UUIDs (hoechstens 50, Parameter \
-          wiederholt oder kommagetrennt, leere Eintraege sind ein Fehler); unbekannte, nicht \
-          aktive und mandantenfremde UUIDs fehlen ohne Fehler. Sind ids gesetzt, wird q \
-          ignoriert (aber weiterhin auf hoechstens 200 Zeichen geprueft) und limit nicht \
-          angewendet (aber weiterhin auf 1 bis 100 geprueft).
+          wiederholt oder kommagetrennt, leere Eintraege sind ein Fehler, auch ein Parameter ohne \
+          Wert wie ids=); unbekannte, nicht aktive und mandantenfremde UUIDs fehlen ohne Fehler. \
+          Sind ids gesetzt, wird q ignoriert (aber weiterhin auf hoechstens 200 Zeichen \
+          geprueft) und limit nicht angewendet (aber weiterhin auf 1 bis 100 geprueft).
 
           Sortierung: nach Name (Abteilungen ohne Namen zuletzt). Bei gleichem Namen und unter den \
           Abteilungen ohne Namen ist die Reihenfolge stabil (technisch nach divisionId in \
@@ -109,8 +110,8 @@ public class DivisionCandidateController {
         description =
             "Ungueltige Parameter: limit ausserhalb von 1 bis 100, q laenger als 200 Zeichen (nach"
                 + " dem Entfernen der Leerzeichen aussen), mehr als 50 ids, ein leerer Eintrag in"
-                + " ids (etwa ids=,), ein Eintrag in ids ist keine UUID oder limit ist keine"
-                + " Zahl.",
+                + " ids (etwa ids=, oder ein Parameter ohne Wert ids=), ein Eintrag in ids ist"
+                + " keine UUID oder limit ist keine Zahl.",
         content =
             @Content(
                 mediaType = "application/json",
@@ -159,7 +160,8 @@ public class DivisionCandidateController {
       @Parameter(
               description =
                   "UUIDs bekannter Abteilungen fuer die Vorschau (hoechstens 50; Parameter"
-                      + " wiederholen oder kommagetrennt; ein leerer Eintrag ist ein 400)."
+                      + " wiederholen oder kommagetrennt; ein leerer Eintrag ist ein 400, auch ein"
+                      + " Parameter ohne Wert wie ids=)."
                       + " Unbekannte, nicht aktive und mandantenfremde UUIDs fehlen in der Antwort"
                       + " ohne Fehler. Gesetzt gewinnt ids vor q, limit wird dann nicht"
                       + " angewendet.",

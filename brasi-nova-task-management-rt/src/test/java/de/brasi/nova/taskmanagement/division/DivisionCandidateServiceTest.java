@@ -34,7 +34,8 @@ import org.mockito.ArgumentCaptor;
  * Vorschlags-API {@code GET /api/v1/tasks/divisions} und Abbildung der Zeilen.
  *
  * <p>Regeln: {@code limit} 1 bis 100 (sonst 400, keine Query); {@code ids} hoechstens 50 (sonst
- * 400); {@code q} hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird
+ * 400), nicht leer und ohne leere Eintraege (sonst 400; fehlend = {@code null} = Suche); {@code q}
+ * hoechstens 200 Zeichen nach dem Trimmen (sonst 400, keine Query); {@code q} wird
  * getrimmt, klein geschrieben und als woertlicher Teilstring in ein LIKE-Muster gefasst ({@code
  * %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem {@code !}
  * entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code ksf-novaquery-pitfalls} Punkt
@@ -135,7 +136,7 @@ class DivisionCandidateServiceTest {
     when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
 
     service.find(null, null, 20);
-    service.find("", List.of(), 20);
+    service.find("", null, 20);
     service.find("   ", null, 20);
 
     verify(divisionRepo, times(3)).findCandidates(isNull(), eq(20));
@@ -206,6 +207,32 @@ class DivisionCandidateServiceTest {
           .hasMessage(message);
     }
     verifyNoInteractions(divisionRepo);
+  }
+
+  @Test
+  @DisplayName(
+      "leere ids-Liste (einzelnes ?ids=, Spring bindet sie zur leeren Liste) -> 400 mit demselben"
+          + " Text wie bei leeren Eintraegen, ohne Query; fehlende ids (null) bleiben die Suche")
+  void i190_empty_ids_list_400() {
+    final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
+
+    // Mit und ohne q: die leere Liste darf nie als allgemeine Suche laufen.
+    for (final String q : new String[] {null, "", "vertrieb"}) {
+      assertThatThrownBy(() -> service.find(q, List.of(), 20))
+          .as("q %s", q)
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+      assertThatThrownBy(() -> service.find(q, new ArrayList<>(), 20))
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoInteractions(divisionRepo);
+
+    // Gegenprobe: ids == null (Parameter fehlt) ist die Suche.
+    when(divisionRepo.findCandidates(any(), anyInt())).thenReturn(List.of());
+    assertThat(service.find("vertrieb", null, 20).items()).isEmpty();
+    verify(divisionRepo).findCandidates("%vertrieb%", 20);
+    verify(divisionRepo, never()).findCandidatesByRefs(anyCollection());
   }
 
   @Test

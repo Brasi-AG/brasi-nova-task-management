@@ -54,15 +54,16 @@ public class DivisionCandidateService {
    * @param q Suchbegriff ueber den Namen (null oder leer = kein Filter; bei gesetzten {@code ids}
    *     ohne Wirkung), nach dem Trimmen hoechstens {@value #MAX_QUERY_LENGTH} Zeichen (auch bei
    *     {@code ids} geprueft)
-   * @param ids UUIDs fuer die Vorschau (null oder leer = Suche), hoechstens {@value #MAX_IDS}
+   * @param ids UUIDs fuer die Vorschau ({@code null} = Suche; eine leere Liste, etwa bei {@code
+   *     ?ids=}, ist ein 400), hoechstens {@value #MAX_IDS}
    * @param limit hoechste Zahl der Vorschlaege der Suche ({@value #MIN_LIMIT} bis {@value
    *     #MAX_LIMIT}); wird auch bei {@code ids} geprueft, wirkt dort aber nicht
    * @return die Vorschlaege, sortiert nach Name (unbenannte zuletzt); bei gleichem Namen stabil
    *     nach UUID in GUID-Sortierung (fachlich bedeutungslos, nicht alphabetisch)
    * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt, {@code q}
    *     nach dem Trimmen laenger als {@value #MAX_QUERY_LENGTH} Zeichen ist, mehr als {@value
-   *     #MAX_IDS} {@code ids} uebergeben wurden oder ein Eintrag von {@code ids} leer ({@code
-   *     null}) ist (HTTP 400)
+   *     #MAX_IDS} {@code ids} uebergeben wurden oder {@code ids} leer ist oder einen leeren
+   *     ({@code null}) Eintrag enthaelt (HTTP 400)
    */
   public DivisionCandidatePage find(final String q, final List<UUID> ids, final int limit) {
     if (limit < MIN_LIMIT || limit > MAX_LIMIT) {
@@ -84,15 +85,16 @@ public class DivisionCandidateService {
       throw new EntityValidationException(
           "Der Parameter 'ids' darf hoechstens " + MAX_IDS + " Eintraege enthalten.");
     }
-    // Spring wandelt einen leeren Eintrag (?ids=, oder ?ids=&ids=) in null um; ein null in der
-    // IN-Liste der Query wuerde als untypisierter Null-Parameter gebunden (Lesson
+    // Ein fehlender Parameter ist null (Suche). Ein einzelnes ?ids= bindet Spring dagegen zur
+    // leeren Liste, ?ids=, und ?ids=&ids= zu Listen aus null: beides ist ein leerer Eintrag. Ein
+    // null in der IN-Liste der Query wuerde als untypisierter Null-Parameter gebunden (Lesson
     // ksf-novaquery-pitfalls). stream statt contains: List.of(...) wirft bei contains(null).
-    if (ids != null && ids.stream().anyMatch(Objects::isNull)) {
+    if (ids != null && (ids.isEmpty() || ids.stream().anyMatch(Objects::isNull))) {
       throw new EntityValidationException(
           "Der Parameter 'ids' darf keine leeren Eintraege enthalten.");
     }
     final List<DivisionCandidateRow> rows;
-    if (ids != null && !ids.isEmpty()) {
+    if (ids != null) {
       rows = divisionRepository.findCandidatesByRefs(ids);
     } else {
       rows = divisionRepository.findCandidates(likePattern(term), limit);

@@ -473,21 +473,36 @@ class DivisionCandidateControllerIT {
 
   @Test
   @DisplayName(
-      "leere Eintraege in ids (?ids=, und ein leerer Wert neben einer UUID) -> 400 im KSF-Format"
-          + " mit eigenem Text statt eines Fehlers in der Query")
+      "leere Eintraege in ids (einzelnes ?ids=, ?ids=, und ein leerer Wert neben einer UUID) -> 400"
+          + " im KSF-Format mit eigenem Text statt eines Fehlers in der Query oder der allgemeinen"
+          + " Suche; ohne ids bleibt es 200")
   void i190_empty_ids_entries_400() throws Exception {
     final String token = readToken(TENANT_A_UUID, ACTOR_A_REF);
     final MockMvc mvc = buildMvc();
     final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
 
-    // Spring wandelt einen leeren Eintrag in null um: ?ids=, ergibt [null, null], ?ids=<uuid>&ids=
-    // ergibt [<uuid>, null].
-    for (final String[] ids : new String[][] {{","}, {UUID.randomUUID().toString(), ""}}) {
+    // Spring bindet ein einzelnes ?ids= zur leeren Liste, einen leeren Eintrag in einer Liste zu
+    // null: ?ids=, ergibt [null, null], ?ids=<uuid>&ids= ergibt [<uuid>, null].
+    for (final String[] ids :
+        new String[][] {{""}, {","}, {UUID.randomUUID().toString(), ""}}) {
       mvc.perform(get(URL).queryParam("ids", ids).header("Authorization", bearer(token)))
           .andExpect(status().isBadRequest())
           .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
           .andExpect(jsonPath("$.message").value(message));
     }
+    // Auch mit q: das leere ids darf nicht still zur Namenssuche werden.
+    mvc.perform(
+            get(URL)
+                .queryParam("ids", "")
+                .queryParam("q", "vertrieb")
+                .header("Authorization", bearer(token)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+
+    // Gegenprobe: fehlt der Parameter ganz, ist es die Suche (200).
+    mvc.perform(get(URL).header("Authorization", bearer(token)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items").isArray());
   }
 
   @Test
