@@ -60,6 +60,7 @@ class InboxReadContractTest {
             LocalDate.of(2026, 12, 31),
             Instant.parse("2026-10-18T08:00:00Z"),
             3,
+            2,
             CREATOR,
             Instant.parse("2026-10-01T06:30:00Z"),
             "Beschreibung",
@@ -82,6 +83,7 @@ class InboxReadContractTest {
     assertThat(j.get("dueDate").asText()).isEqualTo("2026-12-31");
     assertThat(j.get("lastActivityAt").asText()).isEqualTo("2026-10-18T08:00:00Z");
     assertThat(j.get("commentCount").asInt()).isEqualTo(3);
+    assertThat(j.get("attachmentCount").asInt()).isEqualTo(2);
 
     // additive Felder
     assertThat(j.get("createdById").asText()).isEqualTo(CREATOR.toString());
@@ -120,6 +122,7 @@ class InboxReadContractTest {
             "NORMAL",
             null,
             Instant.parse("2026-10-18T08:00:00Z"),
+            0,
             0,
             null,
             Instant.parse("2026-10-01T06:30:00Z"),
