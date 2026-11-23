@@ -50,11 +50,13 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.service.model.PatchValue;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -2528,6 +2530,80 @@ class TaskCommandServiceTest {
     verify(notificationService, never())
         .emit(eq(creatorRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
     verify(notificationService, times(4)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190_status_done_with_admitted_mention_only_mention_for_new_participant: PATCH statusCode"
+          + " DONE mit description und der Erwaehnung eines Nicht-Mitglieds, das mit TASK_WRITE"
+          + " aufgenommen wird -> die Aufgenommene erhaelt genau eine MENTION und kein DONE (die"
+          + " Empfaenger stehen vor der Aufnahme fest), die vorher aktiven Beteiligten erhalten"
+          + " DONE wie bisher, der Akteur nichts")
+  void i190_status_done_with_admitted_mention_only_mention_for_new_participant() {
+    final Long taskId = 597L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID memberRef = UUID.randomUUID();
+    final UUID admittedRef = UUID.randomUUID();
+    // Zustandsbehaftete Teilnehmerliste: erst NACH der Aufnahme steht die neue Person darin. Wuerde
+    // der Dienst die Empfaenger nach der Aufnahme ermitteln, bekaeme sie hier auch DONE.
+    final AtomicBoolean admitDone = new AtomicBoolean(false);
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenAnswer(
+            invocation -> {
+              final List<TaskParticipant> rows = new ArrayList<>();
+              rows.add(participantRow(creatorRef, true, false, true, null));
+              rows.add(participantRow(USER_REF, false, true, true, null));
+              rows.add(participantRow(memberRef, false, false, true, null));
+              if (admitDone.get()) {
+                rows.add(participantRow(admittedRef, false, false, true, null));
+              }
+              return rows;
+            });
+    when(mentionRecipientService.resolve(any(), anyLong(), any(), any(), any(), any()))
+        .thenReturn(mentionCandidates);
+    when(mentionRecipientService.admit(mentionCandidates))
+        .thenAnswer(
+            invocation -> {
+              admitDone.set(true);
+              return new MentionRecipients(Set.of(admittedRef), Set.of(admittedRef));
+            });
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(TaskStatusCodes.DONE),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of("Neu"),
+            PatchValue.absent(),
+            List.of(admittedRef),
+            List.of()));
+
+    assertThat(task.getTaskStatusId()).as("Status auf DONE gesetzt").isEqualTo(STATUS_ID_DONE);
+    assertThat(admitDone).as("die Aufnahme lief im PATCH").isTrue();
+    // Die vorher aktiven Beteiligten (ohne Akteur): DONE wie bisher, keine MENTION.
+    verifyStatusDone(creatorRef, taskId);
+    verifyStatusDone(memberRef, taskId);
+    verify(notificationService, never())
+        .emit(eq(creatorRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(memberRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    // Die Aufgenommene: genau eine MENTION, kein DONE.
+    verifyDescriptionMention(admittedRef, taskId, task.getTitle());
+    verify(notificationService, never())
+        .emit(eq(admittedRef), any(), eq(NotificationTypeCodes.DONE), any(), any(), any(), any());
+    // Der Akteur bekommt nichts, insgesamt zwei DONE und eine MENTION.
+    verify(notificationService, never())
+        .emit(eq(USER_REF), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(3)).emit(any(), any(), any(), any(), any(), any(), any());
+    // Die Aufgenommene kommt trotzdem in Bump und Signal.
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue()).contains(admittedRef);
   }
 
   /** Prueft genau eine DONE-Benachrichtigung an {@code recipientRef}. */
