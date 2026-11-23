@@ -151,7 +151,8 @@ class DivisionSyncPropertiesTest {
    * Bindet die Vorgaben aus {@code application.properties} mit aufgeloesten Platzhaltern und dem
    * Profil {@code ksf.event.profile}, wie es die Umgebung liefert.
    */
-  private static DivisionSyncProperties bindWithProfile(final Properties raw, final String profile) {
+  private static DivisionSyncProperties bindWithProfile(
+      final Properties raw, final String profile) {
     final Properties withProfile = new Properties();
     withProfile.putAll(raw);
     withProfile.setProperty("ksf.event.profile", profile);
