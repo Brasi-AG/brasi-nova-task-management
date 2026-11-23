@@ -9,9 +9,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.JMSException;
 import jakarta.jms.TextMessage;
+import java.io.IOException;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -19,9 +21,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Prueft {@link DivisionSignalGuard} (Intake #190, Task 4) mit gemockten JMS-Nachrichten: nur ein
- * vollstaendiges {@code DivisionMembershipChanged} mit uebereinstimmenden Header- und Body-IDs und
- * einer revision aus 64 Kleinbuchstaben-Hex im Snapshot-Link wird zum {@link DivisionSignal}; jeder
- * Verstoss ergibt {@code Optional.empty()}.
+ * vollstaendiges {@code DivisionMembershipChanged} mit passendem {@code eventName} in Header und
+ * Body, uebereinstimmenden Header- und Body-IDs und einer revision aus 64 Kleinbuchstaben-Hex im
+ * Snapshot-Link wird zum {@link DivisionSignal}; jeder Verstoss ergibt {@code Optional.empty()}.
  *
  * <p>Angenommene Signaturen: {@code new DivisionSignalGuard(ObjectMapper)}, {@code
  * Optional<DivisionSignal> parse(Message) throws JMSException}; der Guard liest Header ueber {@code
@@ -53,6 +55,22 @@ class DivisionSignalGuardTest {
     headers.put("eventName", "Other");
 
     assertThat(guard.parse(textMessage(headers, validBody()))).isEmpty();
+  }
+
+  @Test
+  @DisplayName("eventName im Body weicht vom Header ab: wird verworfen")
+  void i190_body_event_name_mismatch_rejected() throws JMSException, IOException {
+    final String body = withBodyEventName(validBody(), "Other");
+
+    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), body))).isEmpty();
+  }
+
+  @Test
+  @DisplayName("eventName fehlt im Body (Pflichtfeld des KSF-Envelope): wird verworfen")
+  void i190_body_event_name_missing_rejected() throws JMSException, IOException {
+    final String body = withBodyEventName(validBody(), null);
+
+    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), body))).isEmpty();
   }
 
   @Test
@@ -96,5 +114,17 @@ class DivisionSignalGuardTest {
 
   private static String validBody() {
     return body(EVT, TEN, DIV, snapshotLink(TEN, DIV, REV));
+  }
+
+  /** Setzt {@code eventName} im Body auf den Wert oder entfernt es bei {@code null}. */
+  private static String withBodyEventName(final String body, final String eventName)
+      throws IOException {
+    final ObjectNode root = (ObjectNode) new ObjectMapper().readTree(body);
+    if (eventName == null) {
+      root.remove("eventName");
+    } else {
+      root.put("eventName", eventName);
+    }
+    return root.toString();
   }
 }

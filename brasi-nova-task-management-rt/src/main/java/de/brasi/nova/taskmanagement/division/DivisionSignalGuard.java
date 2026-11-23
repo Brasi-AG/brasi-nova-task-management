@@ -21,10 +21,12 @@ import org.springframework.stereotype.Component;
  *
  * <p>Verlangt: Header {@code eventName} = {@value #EVENT_NAME}; Header {@code novaEventId}, {@code
  * novaTenantId} und {@code aggregateId} als UUID; eine {@link TextMessage} mit JSON-Envelope,
- * dessen {@code eventId}, {@code tenantId} und {@code aggregateId} den Headern gleichen; im Link
- * {@code links.snapshot} als letztes Pfadsegment eine revision aus 64 Kleinbuchstaben-Hex. Jeder
- * Verstoss ergibt {@link Optional#empty()} mit WARN (Grund und Header-IDs, nie der Body): die
- * Nachricht wird verworfen statt wiederholt zugestellt.
+ * dessen {@code eventName} ebenfalls {@value #EVENT_NAME} ist (das KSF-Envelope traegt es immer,
+ * {@code NovaEventEnvelope} verlangt es nicht-null) und dessen {@code eventId}, {@code tenantId}
+ * und {@code aggregateId} den Headern gleichen; im Link {@code links.snapshot} als letztes
+ * Pfadsegment eine revision aus 64 Kleinbuchstaben-Hex. Jeder Verstoss ergibt {@link
+ * Optional#empty()} mit WARN (Grund und Header-IDs, nie der Body): die Nachricht wird verworfen
+ * statt wiederholt zugestellt.
  */
 @Component
 public class DivisionSignalGuard {
@@ -85,6 +87,9 @@ public class DivisionSignalGuard {
     }
     if (root == null || !root.isObject()) {
       return reject("Body ist kein JSON-Objekt", ids);
+    }
+    if (!EVENT_NAME.equals(text(root.get("eventName")))) {
+      return reject("eventName im Body fehlt oder ist nicht " + EVENT_NAME, ids);
     }
     if (!eventId.equals(uuid(text(root.get("eventId"))))
         || !tenantUuid.equals(uuid(text(root.get("tenantId"))))
