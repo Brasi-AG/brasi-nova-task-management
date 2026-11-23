@@ -13,10 +13,11 @@ import org.springframework.stereotype.Component;
  * #190), nur bei {@code task-management.division-sync.enabled=true}.
  *
  * <p>Je Nachricht: {@link NovaEventProfileGuard} (fremdes oder fehlendes {@code brasiProfile}:
- * verwerfen, WARN des Guards), {@link DivisionSignalGuard} (ungueltig: verwerfen mit WARN), dann
- * {@link DivisionSignalProcessor#process} mit dem Zustellversuch aus {@code JMSXDeliveryCount}
- * (fehlend oder unlesbar: 1). Verworfene Nachrichten werden bestaetigt, kein Poison-Loop; eine
- * Ausnahme des Processors rollt die Session zurueck und loest die Redelivery aus.
+ * verwerfen, WARN des Guards), {@link DivisionSignalGuard} (nur JMS-Properties, jeder
+ * Nachrichtentyp, der Body wird nie gelesen; ungueltig: verwerfen mit WARN), dann {@link
+ * DivisionSignalProcessor#process} mit dem Zustellversuch aus {@code JMSXDeliveryCount} (fehlend
+ * oder unlesbar: 1). Verworfene Nachrichten werden bestaetigt, kein Poison-Loop; eine Ausnahme des
+ * Processors rollt die Session zurueck und loest die Redelivery aus.
  */
 @Component
 @ConditionalOnProperty(
@@ -36,7 +37,7 @@ public class DivisionMembershipListener {
    * Konstruktor-Injektion.
    *
    * @param profileGuard KSF-Pruefung des {@code brasiProfile}
-   * @param signalGuard Pruefung von Header und Body
+   * @param signalGuard Pruefung der JMS-Properties
    * @param processor Verarbeitung des Signals
    */
   public DivisionMembershipListener(
@@ -52,7 +53,7 @@ public class DivisionMembershipListener {
    * Verarbeitet eine Nachricht des Topics.
    *
    * @param message eingegangene Nachricht
-   * @throws JMSException wenn der JMS-Provider Header oder Body nicht liefern kann
+   * @throws JMSException wenn der JMS-Provider die Properties nicht liefern kann
    */
   @JmsListener(
       destination = "${task-management.division-sync.destination}",
