@@ -25,7 +25,7 @@ public class NotificationType extends NovaDictionaryEntry<NotificationType> {
 
   /**
    * Technischer Resolver-Key (unveraenderlich). Wertemenge: ASSIGN, REPLY, DUE, MENTION, DONE,
-   * CHANGE, HANDOVER, SYSTEM, COMMENT, CANCELLED, PARTICIPANT, REMOVED.
+   * CHANGE, HANDOVER, SYSTEM, COMMENT, CANCELLED, PARTICIPANT, REMOVED, UNASSIGN.
    */
   @NovaColumn(name = "CODE", nullable = false, length = 50)
   private String code;

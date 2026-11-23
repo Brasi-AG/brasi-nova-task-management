@@ -92,6 +92,13 @@ public class AssigneeService {
    */
   static final String HISTORY_UNASSIGNED = "hat eine Zuweisung entfernt";
 
+  /**
+   * Text der UNASSIGN-Benachrichtigung je Person, deren Zuweisung im {@code PUT /assignees}
+   * entfaellt, auch beim Ersteller, der nur de-assignt wird (Intake #188, ein Text fuer beide
+   * Faelle).
+   */
+  static final String UNASSIGN_NOTIFICATION_TEXT = "Deine Zuweisung zur Aufgabe wurde entfernt.";
+
   /** Verlaufstext je aufgenommener Person im {@code POST /participants} (Intake #180). */
   static final String HISTORY_PARTICIPANT_ADDED = "hat einen Beteiligten hinzugefuegt";
 
@@ -174,11 +181,17 @@ public class AssigneeService {
    *       je Person, deren Zuweisung entfaellt (auch der Ersteller), ein Eintrag {@link
    *       #HISTORY_UNASSIGNED}; Akteur ist die handelnde Person, Detail der Name der betroffenen
    *       Person (Namen-Snapshot, hoechstens 500 Zeichen, sonst ihre UUID).
+   *   <li>Benachrichtigung (Intake #188): je Person, deren Zuweisung entfaellt (auch der Ersteller,
+   *       der nur de-assignt wird), eine UNASSIGN-Benachrichtigung ({@link
+   *       #UNASSIGN_NOTIFICATION_TEXT}, Schwere INFO, Vorschau der Aufgabentitel), nie an den
+   *       Akteur selbst (Selbst-Abwahl bleibt still). UNASSIGN ist von der Stummschaltung
+   *       ausgenommen, daher keine Filter-Lesung. {@link #exit} und {@link #removeParticipant}
+   *       erzeugen kein UNASSIGN.
    *   <li>Lock-Reihenfolge (Intake #167): alle Reads (Zeilen und States der neuen und der
    *       abgewaehlten Personen, deren Namen, Leser fuer Bump und Signal) stehen VOR der ersten
    *       Schreibung, danach die Schreibungen aller Personen (Hinzukommende und Abgewaehlte) in
-   *       EINER nach UUID sortierten Folge, die Verlaufseintraege in derselben Folge, der
-   *       versionierte TASK-save, der sortierte Bump.
+   *       EINER nach UUID sortierten Folge, die Verlaufseintraege und UNASSIGN-Benachrichtigungen
+   *       in derselben Folge, der versionierte TASK-save, der sortierte Bump.
    *   <li>Bei echter Aenderung: Generation-Bump und nach Commit {@link
    *       InboxSignalService#invalidate} fuer die geaenderten Personen, alle aktiven Leser und alle
    *       ausgetretenen Archivleser (Intake #166, {@link #collectTaskReaders}).
@@ -459,12 +472,28 @@ public class AssigneeService {
     // TASK-save. Neu zugewiesen: HISTORY_ASSIGNED; Zuweisung entfallen (Austritt oder De-Assign
     // des Erstellers): HISTORY_UNASSIGNED. Keine Lesung mehr nach der ersten Schreibung.
     for (final UUID ref : affectedRefs) {
+      final boolean assigned = toAddSet.contains(ref);
       taskHistoryService.record(
           taskId,
           tenantId,
           actorRef,
-          toAddSet.contains(ref) ? HISTORY_ASSIGNED : HISTORY_UNASSIGNED,
+          assigned ? HISTORY_ASSIGNED : HISTORY_UNASSIGNED,
           historyDetail(ref, historyNames));
+      // Intake #188: UNASSIGN an jede Person, deren Zuweisung entfaellt (Austritt oder De-Assign
+      // des Erstellers), nie an den Akteur selbst. Der Emit steht wie der Verlauf NACH Sync 2
+      // (onAfterMembershipWritesForTest) und vor dem TASK-save: jede Benachrichtigung vergibt eine
+      // KSF-Sequenz (TaskNotification, optimistische Sperre); vor Sync 2 kollidierte in #180 die
+      // Sequenz des Verlaufs bei verzahnten Aufrufen. Keine Lesung, der Titel liegt schon vor.
+      if (!assigned && !ref.equals(actorRef)) {
+        notificationService.emit(
+            ref,
+            taskId,
+            NotificationTypeCodes.UNASSIGN,
+            NotificationSeverityCodes.INFO,
+            UNASSIGN_NOTIFICATION_TEXT,
+            task.getTitle(),
+            actorRef);
+      }
     }
 
     // After-Commit: Invalidate NUR bei tatsaechlicher Aenderung (affectedRefs nicht leer).

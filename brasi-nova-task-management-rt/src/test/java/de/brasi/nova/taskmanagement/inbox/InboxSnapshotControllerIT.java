@@ -1267,7 +1267,7 @@ class InboxSnapshotControllerIT {
           seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
           // Der Austritt folgt auf die State-Anlage; die Task-Aktivitaet bleibt bewusst alt.
           jdbcTemplate.update(
-              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = DATEADD(minute, -1, GETDATE())"
                   + " WHERE ID = ? AND TENANT_ID = ?",
               stateId,
               TENANT_A_ID);
@@ -1294,7 +1294,7 @@ class InboxSnapshotControllerIT {
           final long orphanStateId = ID_BASE + 1050 + modeIndex * 100;
           seedUserState(jdbcTemplate, orphanStateId, taskId, USER_B_REF, TENANT_A_ID, null);
           jdbcTemplate.update(
-              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = DATEADD(minute, -1, GETDATE())"
                   + " WHERE ID = ? AND TENANT_ID = ?",
               orphanStateId,
               TENANT_A_ID);
@@ -1423,7 +1423,7 @@ class InboxSnapshotControllerIT {
           final long stateId = ID_BASE + 1420 + operation * 100 + i;
           seedUserState(jdbcTemplate, stateId, taskId, readerRef, TENANT_A_ID, null);
           jdbcTemplate.update(
-              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+              "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = DATEADD(minute, -1, GETDATE())"
                   + " WHERE ID = ? AND TENANT_ID = ?",
               stateId,
               TENANT_A_ID);
@@ -1628,7 +1628,7 @@ class InboxSnapshotControllerIT {
     // Der Archivleser hat sich auch im persoenlichen State abgemeldet (Austrittskern: beides).
     for (final long stateId : List.of(ID_BASE + 1733, ID_BASE + 1736)) {
       jdbcTemplate.update(
-          "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = GETDATE()"
+          "UPDATE [dbo].[TASK_USER_STATE] SET UNSUBSCRIBED_AT = DATEADD(minute, -1, GETDATE())"
               + " WHERE ID = ? AND TENANT_ID = ?",
           stateId,
           TENANT_A_ID);
@@ -2206,13 +2206,17 @@ class InboxSnapshotControllerIT {
       final boolean assignee,
       final boolean participant,
       final String exitKind) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
-            + "VALUES (?, 'ACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, ?, ?, ?, ?)",
+            + "VALUES (?, 'ACTIVE', 'inbox-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " 'PERSON', ?, ?, ?, ?, ?)",
         id,
         id,
         UUID.randomUUID(),
@@ -2255,12 +2259,16 @@ class InboxSnapshotControllerIT {
       final UUID userRef,
       final long tenantId,
       final LocalDateTime unsubscribedAt) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_USER_STATE] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_USER_STATE] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
-            + "VALUES (?, 'ACTIVE', 'inbox-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, ?)",
+            + "VALUES (?, 'ACTIVE', 'inbox-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?, ?,"
+            + " 0, 0, 0, ?)",
         id,
         id,
         UUID.randomUUID(),

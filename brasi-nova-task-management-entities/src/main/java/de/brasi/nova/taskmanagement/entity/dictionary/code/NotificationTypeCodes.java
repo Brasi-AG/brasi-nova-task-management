@@ -39,4 +39,12 @@ public final class NotificationTypeCodes {
    * #PARTICIPANT} und daher von der Stummschaltung ausgenommen. Seed per Flyway V12.
    */
   public static final String REMOVED = "REMOVED";
+
+  /**
+   * Zuweisung einer Person wurde im {@code PUT /api/v1/tasks/{id}/assignees} entfernt (Intake
+   * #188): die Person fehlt in der Ziel-Menge, auch ein ausgelassener Ersteller, der nur de-assignt
+   * wird. Gegenstueck zu {@link #ASSIGN}; nie an den Akteur selbst. Direkt persoenlich wie {@link
+   * #REMOVED} und daher von der Stummschaltung ausgenommen. Seed per Flyway V16.
+   */
+  public static final String UNASSIGN = "UNASSIGN";
 }

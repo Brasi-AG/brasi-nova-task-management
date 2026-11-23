@@ -2300,6 +2300,195 @@ class AssigneeControllerIT {
         .isEqualTo(1);
   }
 
+  // ---- Intake #188: UNASSIGN-Benachrichtigung bei der Abwahl im PUT /assignees ------------------
+
+  @Test
+  @DisplayName(
+      "i188_put_abwahl_persistiert_unassign: ein Assignee (kein Ersteller) laesst A und den"
+          + " Ersteller weg -> je genau eine UNASSIGN-Zeile an A und an den Ersteller (Text, INFO,"
+          + " Vorschau Titel, Akteur), keine an den Akteur; der Ersteller bleibt Mitglied;"
+          + " GET /notifications von A liefert typeCode UNASSIGN")
+  void i188_put_omission_persists_unassign() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenActor =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            HANDOVER_TARGET_REF,
+            HANDOVER_TARGET_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenAssigneeNotifications =
+        buildJwtWithAuthority(
+            TENANT_A_UUID, ASSIGNEE_REF, ASSIGNEE_LOGIN, "task-management:NOTIFICATION_READ");
+    final String title = "I188-Abwahl-Ersteller-und-Assignee";
+    final UUID taskId = createTask(mvc, om, tokenA, title);
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF, HANDOVER_TARGET_REF)
+        .andExpect(status().isNoContent());
+
+    // Akteur ist ein Assignee, aber nicht der Ersteller: er laesst A und den Ersteller weg.
+    putAssignees(mvc, om, tokenActor, taskId, HANDOVER_TARGET_REF)
+        .andExpect(status().isNoContent());
+
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "UNASSIGN"))
+        .as("genau ein UNASSIGN an die abgewaehlte Person")
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, USER_A_REF, "UNASSIGN"))
+        .as("genau ein UNASSIGN an den ausgelassenen Ersteller")
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, HANDOVER_TARGET_REF, "UNASSIGN"))
+        .as("nie an den Akteur")
+        .isZero();
+    for (final UUID ref : List.of(ASSIGNEE_REF, USER_A_REF)) {
+      final Map<String, Object> row =
+          jdbcTemplate.queryForMap(
+              "SELECT n.TEXT, n.PREVIEW, n.ACTOR_REF, s.CODE AS SEVERITY_CODE"
+                  + " FROM [dbo].[TASK_NOTIFICATION] n"
+                  + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+                  + " LEFT JOIN [dbo].[DIC_NOTIFICATION_SEVERITY] s ON n.SEVERITY_ID = s.ID"
+                  + " WHERE n.TASK_ID = ? AND n.RECIPIENT_REF = ? AND d.CODE = 'UNASSIGN'",
+              dbId,
+              ref);
+      assertThat(row.get("TEXT"))
+          .as("Text an %s", ref)
+          .isEqualTo("Deine Zuweisung zur Aufgabe wurde entfernt.");
+      assertThat(row.get("PREVIEW")).as("Vorschau an %s", ref).isEqualTo(title);
+      assertThat(row.get("SEVERITY_CODE")).as("Schwere an %s", ref).isEqualTo("INFO");
+      assertThat(String.valueOf(row.get("ACTOR_REF")))
+          .as("Akteur an %s", ref)
+          .isEqualToIgnoringCase(HANDOVER_TARGET_REF.toString());
+    }
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND CREATOR_FLAG = 1 AND ASSIGNEE_FLAG = 0"
+                    + " AND PARTICIPANT_FLAG = 1 AND EXIT_KIND IS NULL",
+                dbId,
+                USER_A_REF))
+        .as("der Ersteller ist de-assignt und bleibt Mitglied")
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] WHERE TASK_ID = ?"
+                    + " AND PARTICIPANT_REF = ? AND ASSIGNEE_FLAG = 0"
+                    + " AND EXIT_KIND = 'UNSUBSCRIBED'",
+                dbId,
+                ASSIGNEE_REF))
+        .as("die abgewaehlte Person ist ausgetreten (Intake #164, unveraendert)")
+        .isEqualTo(1);
+
+    // Lesepfad: A sieht die Benachrichtigung mit typeCode UNASSIGN.
+    final JsonNode root =
+        om.readTree(
+            mvc.perform(
+                    org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                            "/api/v1/notifications")
+                        .param("limit", "100")
+                        .header("Authorization", "Bearer " + tokenAssigneeNotifications))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    final List<JsonNode> unassign =
+        root.findParents("typeCode").stream()
+            .filter(n -> "UNASSIGN".equals(n.path("typeCode").asText()))
+            .filter(n -> taskId.toString().equalsIgnoreCase(n.path("taskId").asText()))
+            .toList();
+    assertThat(unassign).as("GET /notifications von A, Antwort: %s", root).hasSize(1);
+    assertThat(unassign.get(0).path("text").asText())
+        .isEqualTo("Deine Zuweisung zur Aufgabe wurde entfernt.");
+    assertThat(unassign.get(0).path("preview").asText()).isEqualTo(title);
+    assertThat(unassign.get(0).path("severityCode").asText()).isEqualTo("INFO");
+  }
+
+  @Test
+  @DisplayName(
+      "i188_unassign_trotz_stummschaltung: A hat die Aufgabe per PUT /mute stummgeschaltet und"
+          + " wird abgewaehlt -> UNASSIGN kommt trotzdem genau einmal, keins an den Akteur")
+  void i188_unassign_reaches_muted_person() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final String tokenAssignee =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            ASSIGNEE_REF,
+            ASSIGNEE_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I188-Abwahl-Stumm");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/mute")
+                .header("Authorization", "Bearer " + tokenAssignee)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
+        .andExpect(status().isNoContent());
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] WHERE TASK_ID = ? AND USER_REF = ?"
+                    + " AND IS_MUTED = 1",
+                dbId,
+                ASSIGNEE_REF))
+        .as("Ausgangslage: A ist stummgeschaltet")
+        .isEqualTo(1);
+
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF).andExpect(status().isNoContent());
+
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "UNASSIGN"))
+        .as("UNASSIGN ist von der Stummschaltung ausgenommen: genau eine trotz IS_MUTED")
+        .isEqualTo(1);
+    assertThat(countNotifications(dbId, USER_A_REF, "UNASSIGN")).as("nie an den Akteur").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i188_entfernen_kein_unassign (Wachposten): DELETE /participants/{A} auf den Assignee A"
+          + " erzeugt genau eine REMOVED-Zeile und keine UNASSIGN-Zeile")
+  void i188_remove_assignee_no_unassign() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A_REF,
+            USER_A_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "I188-Entfernen-Assignee");
+    final long dbId = taskDbId(taskId);
+    putAssignees(mvc, om, tokenA, taskId, USER_A_REF, ASSIGNEE_REF)
+        .andExpect(status().isNoContent());
+
+    deleteParticipant(mvc, tokenA, taskId, ASSIGNEE_REF).andExpect(status().isNoContent());
+
+    assertThat(countNotifications(dbId, ASSIGNEE_REF, "REMOVED")).isEqualTo(1);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+                    + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+                    + " WHERE n.TASK_ID = ? AND d.CODE = 'UNASSIGN'",
+                dbId))
+        .as("DELETE erzeugt nie UNASSIGN (eine Benachrichtigung je Person und Ereignis)")
+        .isZero();
+  }
+
   /** {@code PUT /assignees} mit genau den gegebenen Assignees (Status prueft der Aufrufer). */
   private org.springframework.test.web.servlet.ResultActions putAssignees(
       final MockMvc mvc,
