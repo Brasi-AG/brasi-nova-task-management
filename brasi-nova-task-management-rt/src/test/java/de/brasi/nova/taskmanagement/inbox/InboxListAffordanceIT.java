@@ -814,6 +814,8 @@ class InboxListAffordanceIT {
       })
   @org.springframework.context.annotation.Import({
     de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig.class,
+    // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 

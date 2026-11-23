@@ -517,6 +517,8 @@ class DueReminderWorkerIT {
     NoOpNotificationPushConfig.class,
     DueReminderEmitter.class,
     DueReminderWorker.class,
+    // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 

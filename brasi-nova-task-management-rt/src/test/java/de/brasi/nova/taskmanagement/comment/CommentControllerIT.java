@@ -174,6 +174,29 @@ class CommentControllerIT {
 
   private static final long USER_INACTIVE_DB_ID = 567L;
 
+  /**
+   * Aktive Nutzer des Mandanten A fuer die Abteilungserwaehnung (Intake #190), mit eigenem Namen,
+   * damit der Verlaufseintrag je Person unterscheidbar ist. Kein Mitglied, solange ein Test sie
+   * nicht aufnimmt.
+   */
+  private static final UUID DIV_P1_REF = UUID.randomUUID();
+
+  private static final String DIV_P1_NAME = "Abteilung Person Eins";
+  private static final UUID DIV_P2_REF = UUID.randomUUID();
+  private static final String DIV_P2_NAME = "Abteilung Person Zwei";
+  private static final UUID DIV_P3_REF = UUID.randomUUID();
+  private static final String DIV_P3_NAME = "Abteilung Person Drei";
+
+  /** Verlaufstext der Aufnahme per Erwaehnung (wie AssigneeService, dort nur im Paket sichtbar). */
+  private static final String HISTORY_MENTIONED =
+      "hat einen Beteiligten per Erwaehnung hinzugefuegt";
+
+  /** Einheitlicher 400-Text fuer unbekannte, inaktive und mandantenfremde Abteilungen. */
+  private static final String UNKNOWN_DIVISION_MESSAGE = "Unbekannte oder nicht aktive Abteilung.";
+
+  /** IDs der per JDBC gesaeten Abteilungs- und Mitgliederzeilen, weit weg von der KSF-Sequenz. */
+  private static final AtomicLong JDBC_DIVISION_IDS = new AtomicLong(8_210_000_000L);
+
   /** Die Aufgaben-UUID in den OpenAPI-Beispielen (wird durch die verwendete ersetzt). */
   private static final String EXAMPLE_TASK_ID = CommentApiExamples.TASK_REF;
 
@@ -256,6 +279,12 @@ class CommentControllerIT {
     jt.update(
         "UPDATE [dbo].[PROD_BENUTZER] SET ENTITY_STATUS = 'INACTIVE' WHERE ID = ?",
         USER_INACTIVE_DB_ID);
+    seedNamedBenutzerIfAbsent(
+        jt, 5681L, DIV_P1_REF, "div-p1-comment@brasi.de", DIV_P1_NAME, TENANT_A_ID);
+    seedNamedBenutzerIfAbsent(
+        jt, 5682L, DIV_P2_REF, "div-p2-comment@brasi.de", DIV_P2_NAME, TENANT_A_ID);
+    seedNamedBenutzerIfAbsent(
+        jt, 5683L, DIV_P3_REF, "div-p3-comment@brasi.de", DIV_P3_NAME, TENANT_A_ID);
   }
 
   // ---- IT 1: POST comment -> persistiert + COMMENT_COUNT++ + LAST_ACTIVITY_AT +
@@ -2278,6 +2307,440 @@ class CommentControllerIT {
         .andExpect(jsonPath("$.attachments.length()").value(0));
   }
 
+  // ---- Intake #190: Erwaehnung von Abteilungen (divisionMentions) -----------------------------
+  //
+  // Die Projektion (TASK_ABTEILUNG, TASK_ABTEILUNG_MITGLIED) wird je Test per JDBC gesaet, wie sie
+  // der Consumer aus Thema 2 schreibt; jede Abteilung hat eine eigene UUID. Mandant A (560) ist der
+  // Mandant des Akteurs, Mandant B (563) der fremde. Die Personengrenze kommt aus
+  // application.properties (task-management.division-mentions.max-persons=200).
+
+  @Test
+  @DisplayName(
+      "i190_division_mention_adds_members_as_participants: Abteilung (Teilbaum flach in der"
+          + " Projektion) mit 3 aktiven Benutzern -> 201, 3 reine Beteiligte, je ein Verlaufseintrag"
+          + " per Erwaehnung mit dem Namen, je genau eine MENTION, keine PARTICIPANT")
+  void i190_division_mention_adds_members_as_participants() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Abteilung");
+    final UUID division = UUID.randomUUID();
+    insertDivision(
+        TENANT_A_ID, division, "ACTIVE", "Vertrieb", DIV_P1_REF, DIV_P2_REF, DIV_P3_REF);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Bitte ansehen, Vertrieb.", division);
+
+    final Map<UUID, String> names =
+        Map.of(DIV_P1_REF, DIV_P1_NAME, DIV_P2_REF, DIV_P2_NAME, DIV_P3_REF, DIV_P3_NAME);
+    for (final Map.Entry<UUID, String> person : names.entrySet()) {
+      final UUID ref = person.getKey();
+      final Map<String, Object> row = participantRow(taskUuid, ref);
+      assertThat(row.get("PARTICIPANT_FLAG")).as("Beteiligte %s", ref).isEqualTo(true);
+      assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+      assertThat(row.get("EXIT_KIND")).as("aktives Mitglied").isNull();
+      assertThat(countNotifications(taskUuid, ref, "MENTION")).as("MENTION %s", ref).isEqualTo(1);
+      assertThat(countNotifications(taskUuid, ref, "PARTICIPANT")).isZero();
+      assertThat(historyEntries(taskUuid, USER_A_REF, HISTORY_MENTIONED, person.getValue()))
+          .as("Verlauf fuer %s", person.getValue())
+          .isEqualTo(1);
+    }
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(3);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_existing_member_in_division_gets_mention_only: E ist schon Mitglied und steht in der"
+          + " Abteilung -> E bekommt eine MENTION, keine neue Zeile, keinen Verlaufseintrag; das"
+          + " Nicht-Mitglied P1 derselben Abteilung wird aufgenommen")
+  void i190_existing_member_in_division_gets_mention_only() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Mitglied");
+    insertActiveMember(569001L, taskDbId(taskUuid), USER_E_REF);
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Einkauf", USER_E_REF, DIV_P1_REF);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Einkauf, bitte.", division);
+
+    assertThat(participantRowCount(taskUuid, USER_E_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_E_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, USER_E_REF, "PARTICIPANT")).isZero();
+    assertThat(countActiveParticipantRows(taskUuid, DIV_P1_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, DIV_P1_REF, "MENTION")).isEqualTo(1);
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED))
+        .as("nur die Aufnahme von P1 steht im Verlauf")
+        .isEqualTo(1);
+    assertThat(historyEntries(taskUuid, USER_A_REF, HISTORY_MENTIONED, DIV_P1_NAME)).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_actor_in_division_not_notified: der Akteur steht selbst in der Abteilung -> keine"
+          + " Benachrichtigung an ihn, seine Ersteller-Zeile bleibt die einzige; P2 bekommt MENTION")
+  void i190_actor_in_division_not_notified() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Akteur");
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Leitung", USER_A_REF, DIV_P2_REF);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Leitung, bitte.", division);
+
+    assertThat(notificationCountOfRecipient(taskUuid, USER_A_REF)).as("kein Selbst-Ping").isZero();
+    assertThat(participantRowCount(taskUuid, USER_A_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, DIV_P2_REF, "MENTION")).isEqualTo(1);
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED))
+        .as("nur die Aufnahme von P2, kein Eintrag fuer den Akteur")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_empty_division_creates_comment: aktive Abteilung ohne Mitglieder -> 201,"
+          + " COMMENT_COUNT+1, keine weiteren Beteiligten, keine MENTION")
+  void i190_empty_division_creates_comment() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Leer");
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Leere Abteilung");
+    final int countBefore = commentCountOf(taskUuid);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "An eine leere Abteilung.", division);
+
+    assertThat(commentCountOf(taskUuid)).isEqualTo(countBefore + 1);
+    assertThat(participantRowsOfTask(taskUuid)).as("nur die Erstellerin").isEqualTo(1);
+    assertThat(mentionCountOfTask(taskUuid)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_unknown_division_400_nothing_written: unbekannte Abteilung neben einer bekannten (dazu"
+          + " eine gueltige Person in mentions) -> 400 im KSF-Format mit einheitlichem Text; kein"
+          + " Kommentar, COMMENT_COUNT unveraendert, niemand aufgenommen, keine Benachrichtigung")
+  void i190_unknown_division_400_nothing_written() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Unbekannt");
+    final UUID known = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, known, "ACTIVE", "Bekannt", DIV_P1_REF);
+
+    expectUnknownDivision(
+        mvc,
+        om,
+        tokenA,
+        taskUuid,
+        Map.of(
+            "text",
+            "Unbekannt.",
+            "mentions",
+            List.of(USER_D_REF),
+            "divisionMentions",
+            List.of(known, UUID.randomUUID())));
+
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).isZero();
+    assertThat(participantRowCount(taskUuid, DIV_P1_REF)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_foreign_tenant_division_400: die Abteilung gibt es nur in Mandant B (mit aktivem"
+          + " Mitglied), der Akteur ist in Mandant A -> 400 mit demselben Text, nichts geschrieben")
+  void i190_foreign_tenant_division_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Fremd");
+    final UUID foreign = UUID.randomUUID();
+    insertDivision(TENANT_B_ID, foreign, "ACTIVE", "Fremde Abteilung", USER_C_REF);
+
+    expectUnknownDivision(
+        mvc, om, tokenA, taskUuid, Map.of("text", "Fremd.", "divisionMentions", List.of(foreign)));
+
+    assertThat(participantRowCount(taskUuid, USER_C_REF)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_inactive_division_400: Grabstein (DEACTIVE) im eigenen Mandanten -> 400 mit demselben"
+          + " Text; die (hier absichtlich vorhandene) Mitgliederzeile wird nicht aufgeloest")
+  void i190_inactive_division_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Inaktiv");
+    final UUID tombstone = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, tombstone, "DEACTIVE", "Aufgeloest", DIV_P3_REF);
+
+    expectUnknownDivision(
+        mvc,
+        om,
+        tokenA,
+        taskUuid,
+        Map.of("text", "Grabstein.", "divisionMentions", List.of(tombstone)));
+
+    assertThat(participantRowCount(taskUuid, DIV_P3_REF)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_without_task_write_non_members_dropped: B (Mitglied, nur TASK_READ) erwaehnt eine"
+          + " Abteilung aus E (Mitglied) und D (kein Mitglied) -> 201, E bekommt MENTION, D wird"
+          + " nicht aufgenommen und nicht benachrichtigt")
+  void i190_without_task_write_non_members_dropped() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final String tokenBReadOnly =
+        buildJwtWithAuthority(TENANT_A_UUID, USER_B_REF, USER_B_LOGIN, "task-management:TASK_READ");
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-OhneRecht");
+    final long taskId = taskDbId(taskUuid);
+    insertActiveMember(569011L, taskId, USER_B_REF);
+    insertActiveMember(569012L, taskId, USER_E_REF);
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Gemischt", USER_E_REF, USER_D_REF);
+
+    postCommentWithDivisions(mvc, om, tokenBReadOnly, taskUuid, "Ohne Recht.", division);
+
+    assertThat(countNotifications(taskUuid, USER_E_REF, "MENTION")).isEqualTo(1);
+    assertThat(participantRowCount(taskUuid, USER_D_REF)).isZero();
+    assertThat(userStateRowCount(taskUuid, USER_D_REF)).isZero();
+    assertThat(notificationCountOfRecipient(taskUuid, USER_D_REF)).isZero();
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_member_without_active_user_is_skipped: Abteilung aus P1 (aktiv), einer UUID ohne"
+          + " Benutzer und einem inaktiven Benutzer -> 201, nur P1 wird aufgenommen und erwaehnt,"
+          + " die anderen still ohne Zeile und ohne Benachrichtigung")
+  void i190_member_without_active_user_is_skipped() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-OhneBenutzer");
+    final UUID withoutUser = UUID.randomUUID();
+    final UUID division = UUID.randomUUID();
+    insertDivision(
+        TENANT_A_ID, division, "ACTIVE", "Mit Luecken", DIV_P1_REF, withoutUser, USER_INACTIVE_REF);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Mit Luecken.", division);
+
+    assertThat(countActiveParticipantRows(taskUuid, DIV_P1_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, DIV_P1_REF, "MENTION")).isEqualTo(1);
+    for (final UUID skipped : List.of(withoutUser, USER_INACTIVE_REF)) {
+      assertThat(participantRowCount(taskUuid, skipped)).as("keine Zeile %s", skipped).isZero();
+      assertThat(notificationCountOfRecipient(taskUuid, skipped)).isZero();
+    }
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_overlapping_divisions_and_mentions_dedup: P2 steht in zwei Abteilungen und in"
+          + " mentions, eine Abteilung ist doppelt genannt -> fuer P2 genau eine Teilnehmerzeile,"
+          + " ein Verlaufseintrag, eine MENTION")
+  void i190_overlapping_divisions_and_mentions_dedup() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Dedup");
+    final UUID first = UUID.randomUUID();
+    final UUID second = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, first, "ACTIVE", "Erste", DIV_P2_REF, DIV_P3_REF);
+    insertDivision(TENANT_A_ID, second, "ACTIVE", "Zweite", DIV_P2_REF);
+
+    final String body =
+        om.writeValueAsString(
+            Map.of(
+                "text",
+                "Ueberschneidung.",
+                "mentions",
+                List.of(DIV_P2_REF),
+                "divisionMentions",
+                List.of(first, second, first)));
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isCreated());
+
+    assertThat(participantRowCount(taskUuid, DIV_P2_REF)).isEqualTo(1);
+    assertThat(historyEntries(taskUuid, USER_A_REF, HISTORY_MENTIONED, DIV_P2_NAME)).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, DIV_P2_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskUuid, DIV_P3_REF, "MENTION")).isEqualTo(1);
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(2);
+  }
+
+  /** Token der Erstellerin A mit TASK_WRITE und TASK_READ (darf Beteiligte aufnehmen). */
+  private static String writerTokenA() {
+    return buildJwtWithAuthority(
+        TENANT_A_UUID,
+        USER_A_REF,
+        USER_A_LOGIN,
+        "task-management:TASK_WRITE",
+        "task-management:TASK_READ");
+  }
+
+  /** Postet einen Kommentar nur mit erwaehnten Abteilungen (erwartet 201). */
+  private void postCommentWithDivisions(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final String text,
+      final UUID... divisions)
+      throws Exception {
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    om.writeValueAsString(
+                        Map.of("text", text, "divisionMentions", List.of(divisions)))))
+        .andExpect(status().isCreated());
+  }
+
+  /**
+   * Postet {@code body} und erwartet die 400 der unbekannten Abteilung im KSF-Format; danach darf
+   * an der Aufgabe nichts geschrieben sein (Kommentarzeilen, COMMENT_COUNT, Teilnehmer, Verlauf und
+   * Benachrichtigungen unveraendert).
+   */
+  private void expectUnknownDivision(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final Map<String, Object> body)
+      throws Exception {
+    final int commentRowsBefore = commentRowsOf(taskUuid);
+    final int countBefore = commentCountOf(taskUuid);
+    final int participantsBefore = participantRowsOfTask(taskUuid);
+    final int historyBefore = historyCount(taskUuid, HISTORY_MENTIONED);
+    final int notificationsBefore = notificationCountOfTask(taskUuid);
+
+    mvc.perform(
+            post("/api/v1/tasks/" + taskUuid + "/comments")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(body)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+        .andExpect(jsonPath("$.message").value(UNKNOWN_DIVISION_MESSAGE));
+
+    assertThat(commentRowsOf(taskUuid)).as("kein Kommentar").isEqualTo(commentRowsBefore);
+    assertThat(commentCountOf(taskUuid)).as("COMMENT_COUNT").isEqualTo(countBefore);
+    assertThat(participantRowsOfTask(taskUuid)).as("Teilnehmer").isEqualTo(participantsBefore);
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(historyBefore);
+    assertThat(notificationCountOfTask(taskUuid)).isEqualTo(notificationsBefore);
+  }
+
+  /**
+   * Saet eine Abteilung der lokalen Projektion per JDBC: Kopf mit Status und Name und je Person eine
+   * Mitgliederzeile (MITARBEITER_REF), so wie der Consumer aus Thema 2 sie schreibt.
+   */
+  private void insertDivision(
+      final long tenantId,
+      final UUID divisionRef,
+      final String status,
+      final String name,
+      final UUID... members) {
+    final long divisionId = JDBC_DIVISION_IDS.incrementAndGet();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ABTEILUNG] (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM,"
+            + " EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_REF, NAME, REVISION, ABGERUFEN_AM)"
+            + " VALUES (?, ?, 'comment-it', SYSDATETIME(), NEWID(), 1, ?, ?, ?, ?, SYSDATETIME())",
+        divisionId,
+        status,
+        tenantId,
+        divisionRef,
+        name,
+        new SqlParameterValue(Types.CHAR, "DEACTIVE".equals(status) ? null : "b".repeat(64)));
+    for (final UUID member : members) {
+      jdbcTemplate.update(
+          "INSERT INTO [dbo].[TASK_ABTEILUNG_MITGLIED] (ID, ENTITY_STATUS, ANGELEGT_VON,"
+              + " ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_ID, MITARBEITER_REF,"
+              + " KERNMITGLIED) VALUES (?, 'ACTIVE', 'comment-it', SYSDATETIME(), NEWID(), 1, ?, ?,"
+              + " ?, 0)",
+          JDBC_DIVISION_IDS.incrementAndGet(),
+          tenantId,
+          divisionId,
+          member);
+    }
+  }
+
+  /** Verlaufseintraege einer Aufgabe mit Akteur, Text und Detail (Name der Person). */
+  private int historyEntries(
+      final UUID taskUuid, final UUID actorRef, final String text, final String detail) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND h.ACTOR_REF = ?"
+            + " AND h.TEXT = ? AND h.CHANGE_DETAIL = ?",
+        Integer.class,
+        taskUuid,
+        actorRef,
+        text,
+        detail);
+  }
+
+  /** Verlaufseintraege einer Aufgabe mit dem gegebenen Text. */
+  private int historyCount(final UUID taskUuid, final String text) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND h.TEXT = ?",
+        Integer.class,
+        taskUuid,
+        text);
+  }
+
+  /** COMMENT_COUNT der Aufgabe. */
+  private int commentCountOf(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COMMENT_COUNT FROM [dbo].[TASK] WHERE EXTERNALID = ?", Integer.class, taskUuid);
+  }
+
+  /** Alle Kommentarzeilen (jeder Status) der Aufgabe. */
+  private int commentRowsOf(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_COMMENT] c JOIN [dbo].[TASK] t ON c.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskUuid);
+  }
+
+  /** Alle Teilnehmerzeilen (jeder Status) der Aufgabe. */
+  private int participantRowsOfTask(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskUuid);
+  }
+
+  /** Alle Benachrichtigungen (jeden Typs) der Aufgabe. */
+  private int notificationCountOfTask(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskUuid);
+  }
+
+  /** Alle MENTION-Benachrichtigungen der Aufgabe. */
+  private int mentionCountOfTask(final UUID taskUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE t.EXTERNALID = ? AND d.CODE = 'MENTION'",
+        Integer.class,
+        taskUuid);
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
 
   /** IDs der per JDBC gesaeten Anhang-Zeilen (Intake #152), weit weg von der KSF-Sequenz. */
@@ -2737,6 +3200,27 @@ class CommentControllerIT {
         id);
   }
 
+  /** Wie {@link #seedBenutzerIfAbsent}, aber mit eigenem VOLLER_NAME (Verlaufsdetail, #190). */
+  private static void seedNamedBenutzerIfAbsent(
+      final JdbcTemplate jt,
+      final long id,
+      final UUID externalId,
+      final String loginName,
+      final String fullName,
+      final long tenantId) {
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_BENUTZER] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[PROD_BENUTZER] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
+            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName,
+        fullName);
+  }
+
   private static void seedBenutzerIfAbsent(
       final JdbcTemplate jt,
       final long id,
@@ -2828,6 +3312,8 @@ class CommentControllerIT {
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
     NoOpNotificationPushConfig.class,
+    // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 

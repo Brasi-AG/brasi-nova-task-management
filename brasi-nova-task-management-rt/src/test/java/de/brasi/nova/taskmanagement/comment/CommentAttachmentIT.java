@@ -18,6 +18,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
 import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
 import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
+import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
@@ -801,6 +802,55 @@ class CommentAttachmentIT {
         .isZero();
   }
 
+  // ---- Abteilungserwaehnung (Intake #190) -----------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i190_multipart_comment_accepts_division_mentions: Teil comment mit divisionMentions einer"
+          + " aktiven Abteilung (ein Nicht-Mitglied) -> 201 mit Anhang, die Person ist Beteiligte"
+          + " mit genau einer MENTION und einem Verlaufseintrag per Erwaehnung; eine unbekannte"
+          + " Abteilung im selben Weg -> 400 im KSF-Format, nichts gespeichert (auch keine Datei)")
+  void i190_multipart_comment_accepts_division_mentions() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT Abteilung");
+    final UUID divisionRef = UUID.randomUUID();
+    insertDivision(divisionRef, "ACTIVE", "Anhang-Abteilung", MENTIONED_REF);
+    final int beforeHistory = historyTotal(taskId);
+
+    postWithAttachments(
+            mvc,
+            creator,
+            taskId,
+            commentJsonWithDivisions("Bitte ansehen, Abteilung", divisionRef),
+            file("Notiz.txt", TXT_BYTES))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.attachments.length()").value(1));
+
+    assertThat(activeParticipantRows(taskId, MENTIONED_REF))
+        .as("per Abteilung aufgenommen")
+        .isEqualTo(1);
+    assertThat(countNotifications(taskId, MENTIONED_REF, "MENTION")).isEqualTo(1);
+    assertThat(countNotifications(taskId, MENTIONED_REF, "PARTICIPANT")).isZero();
+    assertThat(historyTotal(taskId) - beforeHistory).as("genau ein Eintrag").isEqualTo(1);
+    assertThat(historyEntries(taskId, CREATOR_REF, HISTORY_MENTIONED, MENTIONED_NAME))
+        .isEqualTo(1);
+
+    final Snapshot before = snapshot(taskId);
+    final int notificationsBefore = notificationCountOfTask(taskId);
+    postWithAttachments(
+            mvc,
+            creator,
+            taskId,
+            commentJsonWithDivisions("Unbekannte Abteilung", UUID.randomUUID()),
+            pdfFile("Bericht.pdf"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+        .andExpect(jsonPath("$.message").value("Unbekannte oder nicht aktive Abteilung."));
+    assertUnchanged(taskId, before);
+    assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
+  }
+
   // ---- Rollback --------------------------------------------------------------------------------
 
   @Test
@@ -955,6 +1005,13 @@ class CommentAttachmentIT {
   private static String commentJson(final String text, final UUID... mentions) throws Exception {
     return new ObjectMapper()
         .writeValueAsString(Map.of("text", text, "mentions", List.of(mentions)));
+  }
+
+  /** JSON des Teils {@code comment} mit Text und erwaehnten Abteilungen (Intake #190). */
+  private static String commentJsonWithDivisions(final String text, final UUID... divisions)
+      throws Exception {
+    return new ObjectMapper()
+        .writeValueAsString(Map.of("text", text, "divisionMentions", List.of(divisions)));
   }
 
   private static MockMultipartFile file(final String name, final byte[] content) {
@@ -1125,6 +1182,51 @@ class CommentAttachmentIT {
   private long commentDbId(final UUID commentId) {
     return jdbcTemplate.queryForObject(
         "SELECT ID FROM [dbo].[TASK_COMMENT] WHERE EXTERNALID = ?", Long.class, commentId);
+  }
+
+  /** IDs der per JDBC gesaeten Abteilungs- und Mitgliederzeilen (Intake #190). */
+  private static final AtomicLong JDBC_DIVISION_IDS = new AtomicLong(8_310_000_000L);
+
+  /**
+   * Saet eine Abteilung der lokalen Projektion im Mandanten A per JDBC (Kopf mit Status und Name,
+   * eine Mitgliederzeile je Person), wie sie der Consumer aus Thema 2 schreibt.
+   */
+  private void insertDivision(
+      final UUID divisionRef, final String status, final String name, final UUID... members) {
+    final long divisionId = JDBC_DIVISION_IDS.incrementAndGet();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ABTEILUNG] (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM,"
+            + " EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_REF, NAME, REVISION, ABGERUFEN_AM)"
+            + " VALUES (?, ?, 'comment-attachment-it', SYSDATETIME(), NEWID(), 1, ?, ?, ?, ?,"
+            + " SYSDATETIME())",
+        divisionId,
+        status,
+        TENANT_A_ID,
+        divisionRef,
+        name,
+        "a".repeat(64));
+    for (final UUID member : members) {
+      jdbcTemplate.update(
+          "INSERT INTO [dbo].[TASK_ABTEILUNG_MITGLIED] (ID, ENTITY_STATUS, ANGELEGT_VON,"
+              + " ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_ID, MITARBEITER_REF,"
+              + " KERNMITGLIED) VALUES (?, 'ACTIVE', 'comment-attachment-it', SYSDATETIME(),"
+              + " NEWID(), 1, ?, ?, ?, 0)",
+          JDBC_DIVISION_IDS.incrementAndGet(),
+          TENANT_A_ID,
+          divisionId,
+          member);
+    }
+  }
+
+  /** Aktive (nicht ausgetretene) Teilnehmerzeilen einer Person an einer Aufgabe. */
+  private int activeParticipantRows(final UUID taskId, final UUID ref) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ? AND p.ENTITY_STATUS = 'ACTIVE'"
+            + " AND p.EXIT_KIND IS NULL",
+        Integer.class,
+        taskId,
+        ref);
   }
 
   /** Alle Verlaufseintraege einer Aufgabe. */
@@ -1389,7 +1491,8 @@ class CommentAttachmentIT {
         final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
-        final AttachmentProperties attachmentProperties) {
+        final AttachmentProperties attachmentProperties,
+        final DivisionMentionResolver divisionMentionResolver) {
       super(
           taskRepository,
           commentRepository,
@@ -1406,7 +1509,8 @@ class CommentAttachmentIT {
           assigneeService,
           attachmentWriter,
           attachmentModelMapper,
-          attachmentProperties);
+          attachmentProperties,
+          divisionMentionResolver);
     }
 
     @Override
@@ -1484,6 +1588,8 @@ class CommentAttachmentIT {
     NoOpNotificationPushConfig.class,
     // Paket web wird nicht gescannt: fehlende Multipart-Teile sonst 500 statt 400.
     MultipartErrorAdvice.class,
+    // Intake #190: CommentService haengt am DivisionMentionResolver (Paket division).
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 
@@ -1511,7 +1617,8 @@ class CommentAttachmentIT {
         final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
-        final AttachmentProperties attachmentProperties) {
+        final AttachmentProperties attachmentProperties,
+        final DivisionMentionResolver divisionMentionResolver) {
       return new SeamFailingCommentService(
           taskRepository,
           commentRepository,
@@ -1528,7 +1635,8 @@ class CommentAttachmentIT {
           assigneeService,
           attachmentWriter,
           attachmentModelMapper,
-          attachmentProperties);
+          attachmentProperties,
+          divisionMentionResolver);
     }
   }
 }

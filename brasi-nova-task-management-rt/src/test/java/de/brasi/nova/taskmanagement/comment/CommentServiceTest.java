@@ -21,6 +21,7 @@ import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
 import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
+import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
@@ -59,6 +60,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -118,6 +120,7 @@ class CommentServiceTest {
   @Mock private TaskMembershipGuard membershipGuard;
   @Mock private AssigneeService assigneeService;
   @Mock private AttachmentWriter attachmentWriter;
+  @Mock private DivisionMentionResolver divisionMentionResolver;
 
   private AttachmentModelMapper attachmentModelMapper;
   private AttachmentProperties attachmentProperties;
@@ -148,7 +151,8 @@ class CommentServiceTest {
             assigneeService,
             attachmentWriter,
             attachmentModelMapper,
-            attachmentProperties);
+            attachmentProperties,
+            divisionMentionResolver);
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -221,7 +225,7 @@ class CommentServiceTest {
         .thenReturn(List.of(archivedReader));
 
     final CommentCreateInput input =
-        new CommentCreateInput("Einfacher Kommentar.", null, List.of());
+        new CommentCreateInput("Einfacher Kommentar.", null, List.of(), List.of());
     final CommentModel model = service.createComment(taskUuid, input);
 
     // Kommentar gespeichert
@@ -304,7 +308,7 @@ class CommentServiceTest {
 
     service.createComment(
         taskUuid,
-        new CommentCreateInput("Hallo zusammen.", null, List.of(ALICE_UUID, BOB_UUID, GHOST_UUID)));
+        new CommentCreateInput("Hallo zusammen.", null, List.of(ALICE_UUID, BOB_UUID, GHOST_UUID), List.of()));
 
     // Genau 2 MENTION-Notifications (alice + bob); ghost still verworfen
     verify(notificationService, times(1))
@@ -364,7 +368,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of());
 
     final CommentModel model =
-        service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of(BOB_UUID)));
+        service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of(BOB_UUID), List.of()));
 
     assertThat(model).isNotNull();
     verify(commentRepository).save(any(TaskComment.class));
@@ -396,7 +400,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Doppelt.", null, List.of(ALICE_UUID, ALICE_UUID)));
+        taskUuid, new CommentCreateInput("Doppelt.", null, List.of(ALICE_UUID, ALICE_UUID), List.of()));
 
     verify(notificationService, times(1))
         .emit(
@@ -437,7 +441,7 @@ class CommentServiceTest {
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Antwort auf deinen Kommentar.", parentUuid, List.of()));
+        taskUuid, new CommentCreateInput("Antwort auf deinen Kommentar.", parentUuid, List.of(), List.of()));
 
     // 1 REPLY-Notification an Eltern-Autor
     verify(notificationService, times(1))
@@ -487,7 +491,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("danke!", parentUuid, List.of(ALICE_UUID)));
+        taskUuid, new CommentCreateInput("danke!", parentUuid, List.of(ALICE_UUID), List.of()));
 
     // alice bekommt nur REPLY, nicht MENTION
     verify(notificationService, times(1))
@@ -536,7 +540,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(ACTOR_REF)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("eigene Anmerkung.", parentUuid, List.of(ACTOR_REF)));
+        taskUuid, new CommentCreateInput("eigene Anmerkung.", parentUuid, List.of(ACTOR_REF), List.of()));
 
     // Kein emit an Akteur (weder REPLY noch MENTION)
     verify(notificationService, never())
@@ -554,7 +558,7 @@ class CommentServiceTest {
     assertThatThrownBy(
             () ->
                 service.createComment(
-                    UUID.randomUUID(), new CommentCreateInput("Text.", null, List.of())))
+                    UUID.randomUUID(), new CommentCreateInput("Text.", null, List.of(), List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -565,13 +569,13 @@ class CommentServiceTest {
   @Test
   @DisplayName("leerer_text_400: Text leer -> EntityValidationException")
   void leerer_text_400() {
-    assertThatThrownBy(() -> new CommentCreateInput("", null, List.of()))
+    assertThatThrownBy(() -> new CommentCreateInput("", null, List.of(), List.of()))
         .isInstanceOf(EntityValidationException.class);
 
-    assertThatThrownBy(() -> new CommentCreateInput("   ", null, List.of()))
+    assertThatThrownBy(() -> new CommentCreateInput("   ", null, List.of(), List.of()))
         .isInstanceOf(EntityValidationException.class);
 
-    assertThatThrownBy(() -> new CommentCreateInput(null, null, List.of()))
+    assertThatThrownBy(() -> new CommentCreateInput(null, null, List.of(), List.of()))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -580,7 +584,7 @@ class CommentServiceTest {
   @Test
   @DisplayName("mentions_null_element_400: mentions=[null] -> EntityValidationException")
   void mentions_null_element_400() {
-    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, Arrays.asList((UUID) null)))
+    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, Arrays.asList((UUID) null), List.of()))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -593,7 +597,7 @@ class CommentServiceTest {
     for (int i = 0; i < 101; i++) {
       tooMany.add(UUID.randomUUID());
     }
-    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, tooMany))
+    assertThatThrownBy(() -> new CommentCreateInput("Text.", null, tooMany, List.of()))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -618,7 +622,7 @@ class CommentServiceTest {
     assertThatThrownBy(
             () ->
                 service.createComment(
-                    taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of())))
+                    taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(), List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -642,7 +646,7 @@ class CommentServiceTest {
     assertThatThrownBy(
             () ->
                 service.createComment(
-                    taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of())))
+                    taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(), List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -673,7 +677,7 @@ class CommentServiceTest {
 
     final CommentModel model =
         service.createComment(
-            taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null, List.of()));
+            taskUuid, new CommentCreateInput("Persistenz-Zone-Test.", null, List.of(), List.of()));
 
     assertThat(model.createdAt()).isEqualTo(expectedInstant);
   }
@@ -695,7 +699,7 @@ class CommentServiceTest {
         .requireWriteMember(taskId, ACTOR_REF, TENANT_ID);
 
     assertThatThrownBy(
-            () -> service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of())))
+            () -> service.createComment(taskUuid, new CommentCreateInput("Text.", null, List.of(), List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
 
@@ -736,7 +740,7 @@ class CommentServiceTest {
     when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID), List.of()));
 
     // MENTION nur an alice, NICHT an bob.
     verify(notificationService, times(1))
@@ -783,7 +787,7 @@ class CommentServiceTest {
         .thenReturn(false);
 
     final CommentModel model =
-        service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of()));
+        service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(), List.of()));
 
     assertThat(model).isNotNull();
     verify(commentRepository).save(any(TaskComment.class));
@@ -819,7 +823,7 @@ class CommentServiceTest {
     when(membershipGuard.isWriteMember(eq(taskId), eq(parentAuthorRef), eq(TENANT_ID)))
         .thenReturn(true);
 
-    service.createComment(taskUuid, new CommentCreateInput("danke!", parentUuid, List.of()));
+    service.createComment(taskUuid, new CommentCreateInput("danke!", parentUuid, List.of(), List.of()));
 
     verify(notificationService, times(1))
         .emit(
@@ -854,7 +858,7 @@ class CommentServiceTest {
         .thenReturn(List.of(assigneeWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Top-Level ohne Mention.", null, List.of()));
+        taskUuid, new CommentCreateInput("Top-Level ohne Mention.", null, List.of(), List.of()));
 
     // Genau 1 COMMENT-Notification an den Assignee (Typ/Empfaenger/Text/Actor verifiziert).
     final ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
@@ -894,7 +898,7 @@ class CommentServiceTest {
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
         .thenReturn(List.of(assigneeWith(ACTOR_REF)));
 
-    service.createComment(taskUuid, new CommentCreateInput("Eigener Kommentar.", null, List.of()));
+    service.createComment(taskUuid, new CommentCreateInput("Eigener Kommentar.", null, List.of(), List.of()));
 
     verify(notificationService, never())
         .emit(eq(ACTOR_REF), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
@@ -921,7 +925,7 @@ class CommentServiceTest {
         .thenReturn(List.of(assigneeWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Hallo Alice.", null, List.of(ALICE_UUID)));
+        taskUuid, new CommentCreateInput("Hallo Alice.", null, List.of(ALICE_UUID), List.of()));
 
     // alice bekommt MENTION, aber KEIN COMMENT (Vorrang).
     verify(notificationService, times(1))
@@ -955,7 +959,7 @@ class CommentServiceTest {
     stubSave();
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
-    service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of()));
+    service.createComment(taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(), List.of()));
 
     // Kein COMMENT (Reply ist nicht Top-Level); der Assignee-Read darf fuer Reply gar nicht laufen.
     verify(notificationService, never())
@@ -981,7 +985,7 @@ class CommentServiceTest {
         .thenReturn(
             List.of(assigneeWith(ALICE_UUID), assigneeWith(BOB_UUID), assigneeWith(ACTOR_REF)));
 
-    service.createComment(taskUuid, new CommentCreateInput("Fuer alle.", null, List.of()));
+    service.createComment(taskUuid, new CommentCreateInput("Fuer alle.", null, List.of(), List.of()));
 
     verify(notificationService, times(1))
         .emit(
@@ -1025,7 +1029,7 @@ class CommentServiceTest {
     when(participantQueryRepository.findActiveAssigneesByTaskId(taskId)).thenReturn(List.of());
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Nur Participant vorhanden.", null, List.of()));
+        taskUuid, new CommentCreateInput("Nur Participant vorhanden.", null, List.of(), List.of()));
 
     verify(notificationService, never())
         .emit(any(), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
@@ -1053,7 +1057,7 @@ class CommentServiceTest {
         .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Top-Level, bob ist stumm.", null, List.of()));
+        taskUuid, new CommentCreateInput("Top-Level, bob ist stumm.", null, List.of(), List.of()));
 
     verify(notificationService, times(1))
         .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.COMMENT), any(), any(), any(), any());
@@ -1084,7 +1088,7 @@ class CommentServiceTest {
         .thenReturn(List.of(mutedState(BOB_UUID, taskId)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("@bob trotz Mute.", null, List.of(BOB_UUID)));
+        taskUuid, new CommentCreateInput("@bob trotz Mute.", null, List.of(BOB_UUID), List.of()));
 
     verify(notificationService, times(1))
         .emit(eq(BOB_UUID), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
@@ -1111,7 +1115,7 @@ class CommentServiceTest {
         .thenReturn(List.of(mutedState(ALICE_UUID, taskId)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Antwort an stumme alice.", parentUuid, List.of()));
+        taskUuid, new CommentCreateInput("Antwort an stumme alice.", parentUuid, List.of(), List.of()));
 
     verify(notificationService, times(1))
         .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.REPLY), any(), any(), any(), any());
@@ -1137,7 +1141,7 @@ class CommentServiceTest {
         .thenReturn(List.of(assigneeWith(ALICE_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Top-Level mit Mention.", null, List.of(BOB_UUID)));
+        taskUuid, new CommentCreateInput("Top-Level mit Mention.", null, List.of(BOB_UUID), List.of()));
 
     // GETRENNTE Aufrufe: die MENTION-WRITE-Pruefung und der Assignee-Read muessen VOR dem TASK-save
     // liegen (Teilnehmer-dann-Task == gleiche Lock-Reihenfolge wie updateAssignees).
@@ -1162,7 +1166,7 @@ class CommentServiceTest {
     stubSave();
     when(userStateQueryRepository.findActiveUserRefsByTaskId(taskId)).thenReturn(List.of());
 
-    service.createComment(taskUuid, new CommentCreateInput("Nach dem TASK-save.", null, List.of()));
+    service.createComment(taskUuid, new CommentCreateInput("Nach dem TASK-save.", null, List.of(), List.of()));
 
     final org.mockito.InOrder inOrder =
         org.mockito.Mockito.inOrder(taskRepository, commentRepository);
@@ -1190,7 +1194,7 @@ class CommentServiceTest {
     when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Antwort mit Mention.", parentUuid, List.of(BOB_UUID)));
+        taskUuid, new CommentCreateInput("Antwort mit Mention.", parentUuid, List.of(BOB_UUID), List.of()));
 
     // GETRENNTE Aufrufe (Reply-Pfad): REPLY-WRITE-Pruefung (parent-Autor) und
     // MENTION-WRITE-Pruefung
@@ -1222,7 +1226,7 @@ class CommentServiceTest {
         .thenReturn(List.of(BOB_UUID));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID), List.of()));
 
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> added = ArgumentCaptor.forClass(Collection.class);
@@ -1260,7 +1264,7 @@ class CommentServiceTest {
         .thenReturn(List.of(BOB_UUID));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Top-Level mit Aufnahme.", null, List.of(BOB_UUID)));
+        taskUuid, new CommentCreateInput("Top-Level mit Aufnahme.", null, List.of(BOB_UUID), List.of()));
 
     final org.mockito.InOrder inOrder =
         org.mockito.Mockito.inOrder(
@@ -1290,7 +1294,7 @@ class CommentServiceTest {
     when(assigneeService.mayAddParticipants()).thenReturn(false);
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID)));
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(ALICE_UUID, BOB_UUID), List.of()));
 
     verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
     verifyMention(ALICE_UUID, taskId);
@@ -1312,7 +1316,7 @@ class CommentServiceTest {
 
     final CommentModel model =
         service.createComment(
-            taskUuid, new CommentCreateInput("Hallo.", null, List.of(GHOST_UUID)));
+            taskUuid, new CommentCreateInput("Hallo.", null, List.of(GHOST_UUID), List.of()));
 
     assertThat(model).isNotNull();
     verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
@@ -1334,7 +1338,7 @@ class CommentServiceTest {
     when(assigneeService.mayAddParticipants()).thenReturn(true);
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(ACTOR_REF, ALICE_UUID)));
+        taskUuid, new CommentCreateInput("Antwort.", parentUuid, List.of(ACTOR_REF, ALICE_UUID), List.of()));
 
     verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
     verify(notificationService, never())
@@ -1356,7 +1360,7 @@ class CommentServiceTest {
     when(assigneeService.mayAddParticipants()).thenReturn(true);
     when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any())).thenReturn(List.of());
 
-    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID)));
+    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID), List.of()));
 
     verifyMention(BOB_UUID, taskId);
     verify(inboxGenerationService).bump(TENANT_ID, BOB_UUID);
@@ -1374,7 +1378,7 @@ class CommentServiceTest {
     when(assigneeService.mayAddParticipants()).thenReturn(true);
     when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any())).thenReturn(List.of());
 
-    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID)));
+    service.createComment(taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID), List.of()));
 
     verify(notificationService, never())
         .emit(eq(BOB_UUID), any(), any(), any(), any(), any(), any());
@@ -1395,7 +1399,7 @@ class CommentServiceTest {
         .thenReturn(List.of(BOB_UUID));
 
     service.createComment(
-        taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID, BOB_UUID)));
+        taskUuid, new CommentCreateInput("Hallo.", null, List.of(BOB_UUID, BOB_UUID), List.of()));
 
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> added = ArgumentCaptor.forClass(Collection.class);
@@ -1656,7 +1660,7 @@ class CommentServiceTest {
   }
 
   private static CommentCreateInput input(final String text) {
-    return new CommentCreateInput(text, null, List.of());
+    return new CommentCreateInput(text, null, List.of(), List.of());
   }
 
   /** CommentService wie im Setup, aber mit Seam, der {@code seam:<Kommentar-ID>} protokolliert. */
@@ -1677,7 +1681,8 @@ class CommentServiceTest {
         assigneeService,
         attachmentWriter,
         attachmentModelMapper,
-        attachmentProperties) {
+        attachmentProperties,
+        divisionMentionResolver) {
       @Override
       protected void onAfterAttachmentsStoredForTest(final Long commentId) {
         events.add("seam:" + commentId);
@@ -1706,6 +1711,187 @@ class CommentServiceTest {
             any(),
             any(),
             eq(ACTOR_REF));
+  }
+
+  // ---- Intake #190: Erwaehnung von Abteilungen (divisionMentions) -----------------------------
+  //
+  // Angenommene Signaturen: CommentService erhaelt den DivisionMentionResolver als letzten
+  // Konstruktor-Parameter; CommentCreateInput(text, parentCommentId, mentions, divisionMentions);
+  // Set<UUID> DivisionMentionResolver#resolve(Collection<UUID>). Der Mock liefert ohne Stub eine
+  // leere Menge, daher verhalten sich die Tests oben wie ohne Abteilungen.
+
+  @Test
+  @DisplayName(
+      "i190: Personen der erwaehnten Abteilungen werden mit mentions vereinigt und laufen in EINER"
+          + " Aufloesung ueber findActiveByUuids; jede Person bekommt genau eine MENTION")
+  void i190_division_members_united_with_mentions_before_dedup() {
+    final Long taskId = 190L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    final UUID division = UUID.randomUUID();
+    when(divisionMentionResolver.resolve(any())).thenReturn(Set.of(ALICE_UUID, BOB_UUID));
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ALICE_UUID), userWith(BOB_UUID)));
+
+    service.createComment(
+        taskUuid,
+        new CommentCreateInput("Hallo Abteilung.", null, List.of(ALICE_UUID), List.of(division)));
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> divisions = ArgumentCaptor.forClass(Collection.class);
+    verify(divisionMentionResolver).resolve(divisions.capture());
+    assertThat(divisions.getValue()).containsExactly(division);
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> lookedUp = ArgumentCaptor.forClass(Collection.class);
+    verify(userReadRepository, times(1)).findActiveByUuids(lookedUp.capture());
+    assertThat(lookedUp.getValue())
+        .as("Vereinigung ohne Duplikat (alice steht in mentions und in der Abteilung)")
+        .containsExactlyInAnyOrder(ALICE_UUID, BOB_UUID);
+
+    verifyMention(ALICE_UUID, taskId);
+    verifyMention(BOB_UUID, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i190: Lock-Reihenfolge - Abteilungsaufloesung und Benutzer-Aufloesung laufen VOR"
+          + " taskRepository.save")
+  void i190_division_resolution_runs_before_task_save() {
+    final Long taskId = 191L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(divisionMentionResolver.resolve(any())).thenReturn(Set.of(BOB_UUID));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+
+    service.createComment(
+        taskUuid,
+        new CommentCreateInput("Lock-Reihenfolge.", null, List.of(), List.of(UUID.randomUUID())));
+
+    final InOrder inOrder = inOrder(divisionMentionResolver, userReadRepository, taskRepository);
+    inOrder.verify(divisionMentionResolver).resolve(any());
+    inOrder.verify(userReadRepository).findActiveByUuids(any());
+    inOrder.verify(taskRepository).save(any(Task.class));
+  }
+
+  @Test
+  @DisplayName(
+      "i190: wirft der Resolver (unbekannte Abteilung oder Grenze), wird nichts geschrieben: kein"
+          + " TASK-save, kein Kommentar, keine Aufnahme, keine Benachrichtigung, kein Bump")
+  void i190_division_resolver_rejection_writes_nothing() {
+    final Long taskId = 192L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(divisionMentionResolver.resolve(any()))
+        .thenThrow(new EntityValidationException("Unbekannte oder nicht aktive Abteilung."));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+
+    assertThatThrownBy(
+            () ->
+                service.createComment(
+                    taskUuid,
+                    new CommentCreateInput(
+                        "Unbekannt.", null, List.of(BOB_UUID), List.of(UUID.randomUUID()))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Unbekannte oder nicht aktive Abteilung.");
+
+    verify(taskRepository, never()).save(any(Task.class));
+    verify(commentRepository, never()).save(any(TaskComment.class));
+    verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(inboxGenerationService, never()).bumpSorted(anyLong(), any());
+    verify(inboxSignalService, never()).invalidate(anyLong(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190: Abteilungsmitglied ohne Mitgliedschaft wird wie eine erwaehnte Person aufgenommen"
+          + " (nur mit Hinzufuegen-Recht) und bekommt nur die MENTION")
+  void i190_division_member_non_member_added_like_mention() {
+    final Long taskId = 193L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(divisionMentionResolver.resolve(any())).thenReturn(Set.of(BOB_UUID));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(BOB_UUID)));
+    when(membershipGuard.isWriteMember(eq(taskId), eq(BOB_UUID), eq(TENANT_ID))).thenReturn(false);
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+    when(assigneeService.addAsParticipants(eq(taskId), eq(TENANT_ID), any()))
+        .thenReturn(List.of(BOB_UUID));
+
+    service.createComment(
+        taskUuid,
+        new CommentCreateInput("Nur Abteilung.", null, List.of(), List.of(UUID.randomUUID())));
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> added = ArgumentCaptor.forClass(Collection.class);
+    verify(assigneeService).addAsParticipants(eq(taskId), eq(TENANT_ID), added.capture());
+    assertThat(added.getValue()).containsExactly(BOB_UUID);
+    verifyMention(BOB_UUID, taskId);
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.PARTICIPANT), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190: Akteur und REPLY-Empfaenger in der Abteilung -> Akteur nichts, Eltern-Autorin nur"
+          + " REPLY, das uebrige Mitglied MENTION")
+  void i190_actor_and_reply_recipient_in_division_not_mentioned() {
+    final Long taskId = 194L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    final UUID parentUuid = UUID.randomUUID();
+    when(commentRepository.findByUuid(parentUuid.toString()))
+        .thenReturn(Optional.of(commentWithId(19L, taskId, ALICE_UUID, parentUuid)));
+    when(divisionMentionResolver.resolve(any()))
+        .thenReturn(Set.of(ACTOR_REF, ALICE_UUID, BOB_UUID));
+    when(userReadRepository.findActiveByUuids(any()))
+        .thenReturn(List.of(userWith(ACTOR_REF), userWith(ALICE_UUID), userWith(BOB_UUID)));
+
+    service.createComment(
+        taskUuid,
+        new CommentCreateInput("Antwort.", parentUuid, List.of(), List.of(UUID.randomUUID())));
+
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(1))
+        .emit(eq(ALICE_UUID), eq(taskId), eq(NotificationTypeCodes.REPLY), any(), any(), any(),
+            any());
+    verify(notificationService, never())
+        .emit(eq(ALICE_UUID), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    verifyMention(BOB_UUID, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i190: Abteilung ohne aktive Benutzer (findActiveByUuids leer) -> Kommentar wird angelegt,"
+          + " keine MENTION, keine Aufnahme")
+  void i190_division_members_without_active_user_are_dropped() {
+    final Long taskId = 195L;
+    final UUID taskUuid = stubOpenTask(taskId);
+    when(divisionMentionResolver.resolve(any())).thenReturn(Set.of(GHOST_UUID));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of());
+    when(assigneeService.mayAddParticipants()).thenReturn(true);
+
+    final CommentModel model =
+        service.createComment(
+            taskUuid,
+            new CommentCreateInput("Geister.", null, List.of(), List.of(UUID.randomUUID())));
+
+    assertThat(model).isNotNull();
+    verify(commentRepository).save(any(TaskComment.class));
+    verify(assigneeService, never()).addAsParticipants(anyLong(), anyLong(), any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190: ohne mentions und ohne divisionMentions bleibt der Benutzer-Lookup aus (wie bisher)")
+  void i190_without_any_mentions_no_user_lookup() {
+    final Long taskId = 196L;
+    final UUID taskUuid = stubOpenTask(taskId);
+
+    service.createComment(taskUuid, new CommentCreateInput("Ohne.", null, null, null));
+
+    verify(userReadRepository, never()).findActiveByUuids(any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
   }
 
   // ---- Hilfsmethoden ---------------------------------------------------------------------------
