@@ -1,5 +1,6 @@
 package de.brasi.nova.taskmanagement.inbox;
 
+import static de.brasi.nova.taskmanagement.support.AttachmentCountAssertions.assertCountMatchesRows;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -40,6 +41,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -77,6 +79,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -2028,7 +2031,138 @@ class InboxSnapshotControllerIT {
         .andExpect(status().isBadRequest());
   }
 
+  // ---- Intake #194: attachmentCount in allen Lesewegen ---------------------------------------
+
+  /**
+   * Eine Aufgabe mit einem Aufgaben-Anhang und einem Kommentar mit zwei Anhaengen (Zaehler 3, per
+   * Seed gesetzt und gegen die Zeilen geprueft) liefert {@code attachmentCount = 3} im Snapshot und
+   * in der aktiven Liste; nach dem Abschliessen dieselbe Zahl im Archiv und in der Archivsuche.
+   * Eigene Person, damit die Archivsummen anderer Tests unberuehrt bleiben; alle Zeitstempel liegen
+   * vor dem asOf der Anfragen.
+   */
+  @Test
+  @DisplayName("i194_same_count_in_snapshot_active_archive_and_search")
+  void i194_same_count_in_snapshot_active_archive_and_search() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final UUID userRef = UUID.randomUUID();
+    final String login = "user-i194-inbox@brasi.de";
+    seedBenutzerIfAbsent(jdbcTemplate, 594L, userRef, login, TENANT_A_ID);
+    final long taskId = ID_BASE + 1901;
+    final UUID taskUuid = UUID.randomUUID();
+    final String title = "i194 Zaehler-Aufgabe " + taskUuid;
+    seedTask(
+        jdbcTemplate,
+        taskId,
+        taskUuid,
+        TENANT_A_ID,
+        statusId("OPEN"),
+        priorityId("NORMAL"),
+        directionId("CUSTOMER_INTERNAL"),
+        LocalDateTime.now().minusMinutes(30),
+        title);
+    seedParticipant(
+        jdbcTemplate, ID_BASE + 1902, taskId, userRef, TENANT_A_ID, true, true, true, null);
+    seedUserState(jdbcTemplate, ID_BASE + 1903, taskId, userRef, TENANT_A_ID, null);
+    final long commentId = ID_BASE + 1904;
+    seedComment(jdbcTemplate, commentId, taskId, userRef, TENANT_A_ID);
+    seedAttachment(jdbcTemplate, ID_BASE + 1905, taskId, null, TENANT_A_ID, userRef);
+    seedAttachment(jdbcTemplate, ID_BASE + 1906, taskId, commentId, TENANT_A_ID, userRef);
+    seedAttachment(jdbcTemplate, ID_BASE + 1907, taskId, commentId, TENANT_A_ID, userRef);
+    jdbcTemplate.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 3 WHERE [ID] = ?", taskId);
+    assertCountMatchesRows(jdbcTemplate, taskUuid);
+
+    final String token = jwt(TENANT_A_UUID, userRef, login, "task-management:TASK_READ");
+
+    // Snapshot (TaskSummaryInfoModel) und aktive Liste (TaskSummaryModel)
+    final JsonNode snapshot = getJson(mvc, token, "/api/v1/tasks/snapshot");
+    assertAttachmentCount(itemById(snapshot.get("tasks").get("items"), taskUuid), "Snapshot");
+    final JsonNode active = getJson(mvc, token, "/api/v1/tasks");
+    assertAttachmentCount(itemById(taskItemsOf(active), taskUuid), "aktive Liste");
+
+    // Abschliessen (DONE): die Aufgabe wandert ins Archiv der Person
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK] SET [TASK_STATUS_ID] = ? WHERE [ID] = ?", statusId("DONE"), taskId);
+    final JsonNode archive = getJson(mvc, token, "/api/v1/tasks/archive?filter=done");
+    assertAttachmentCount(itemById(taskItemsOf(archive), taskUuid), "Archiv");
+    final JsonNode search = searchArchive(mvc, token, "i194 Zaehler-Aufgabe", 10);
+    assertAttachmentCount(itemById(taskItemsOf(search), taskUuid), "Archivsuche");
+  }
+
   // ---- Hilfsmethoden -------------------------------------------------------------------------
+
+  /** GET mit Bearer-Token, erwartet 200, liefert den JSON-Baum (Intake #194). */
+  private static JsonNode getJson(final MockMvc mvc, final String token, final String url)
+      throws Exception {
+    return new ObjectMapper()
+        .readTree(
+            mvc.perform(get(url).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+  }
+
+  /** Das Item mit der gegebenen ID aus einem JSON-Array; fehlt es, scheitert der Test. */
+  private static JsonNode itemById(final JsonNode items, final UUID id) {
+    for (final JsonNode item : items) {
+      if (id.toString().equals(item.get("id").asText())) {
+        return item;
+      }
+    }
+    throw new AssertionError("Aufgabe " + id + " fehlt in " + items);
+  }
+
+  /** {@code attachmentCount} ist vorhanden, eine Zahl und gleich 3 (Intake #194). */
+  private static void assertAttachmentCount(final JsonNode item, final String readPath) {
+    assertThat(item.has("attachmentCount")).as("%s: attachmentCount im JSON", readPath).isTrue();
+    assertThat(item.get("attachmentCount").isInt()).as("%s: als Zahl", readPath).isTrue();
+    assertThat(item.get("attachmentCount").asInt()).as(readPath).isEqualTo(3);
+  }
+
+  /** Aktiver Kommentar, zurueckdatiert vor das asOf der Anfragen (Intake #194). */
+  private static void seedComment(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final UUID authorRef,
+      final long tenantId) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_COMMENT] (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM,"
+            + " EXTERNALID, VERSION, TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED)"
+            + " VALUES (?, 'ACTIVE', 'inbox-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " N'Kommentar mit Anhaengen', 0)",
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        authorRef);
+  }
+
+  /**
+   * Aktive Anhangzeile ohne Datei an der Aufgabe ({@code commentId} null) oder an einem Kommentar,
+   * zurueckdatiert vor das asOf der Anfragen (Intake #194).
+   */
+  private static void seedAttachment(
+      final JdbcTemplate jt,
+      final long id,
+      final long taskId,
+      final Long commentId,
+      final long tenantId,
+      final UUID uploadedByRef) {
+    jt.update(
+        "INSERT INTO [dbo].[TASK_ANHANG] (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM,"
+            + " EXTERNALID, VERSION, TENANT_ID, TASK_ID, KOMMENTAR_ID, DATEINAME, MIME_TYP,"
+            + " DATEIENDUNG, GROESSE_BYTES, SHA256, HOCHGELADEN_VON_REF)"
+            + " VALUES (?, 'ACTIVE', 'inbox-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " N'notiz.txt', 'text/plain', 'txt', 5, ?, ?)",
+        id,
+        UUID.randomUUID(),
+        tenantId,
+        taskId,
+        new SqlParameterValue(Types.BIGINT, commentId),
+        "a".repeat(64),
+        uploadedByRef);
+  }
 
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)

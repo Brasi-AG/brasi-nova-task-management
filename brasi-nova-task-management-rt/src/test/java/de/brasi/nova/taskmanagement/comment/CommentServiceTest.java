@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -1606,6 +1607,39 @@ class CommentServiceTest {
     final CommentModel model =
         service.createComment(task.getUuid(), input("Genau 20"), Collections.nCopies(20, prepared));
     assertThat(model.attachments()).hasSize(20);
+  }
+
+  // ===========================================================================================
+  // Intake #194: Anhang-Zaehler am selben versionierten TASK-save wie commentCount
+  // ===========================================================================================
+
+  @Test
+  @DisplayName(
+      "#194 Kommentar mit zwei Dateien: commentCount +1 und attachmentCount +2 stehen beim"
+          + " einzigen TASK-save schon an der Aufgabe")
+  void i194_create_comment_sets_both_counters_on_same_save() {
+    final Task task = stubAttachmentTask();
+    task.setCommentCount(3);
+    task.setAttachmentCount(5);
+    stubWriterStoresAll();
+    // Zaehlerstand im Moment des save festhalten (die Instanz wird danach nicht mehr gelesen).
+    final List<int[]> countersAtSave = new ArrayList<>();
+    doAnswer(
+            inv -> {
+              final Task saved = inv.getArgument(0);
+              countersAtSave.add(new int[] {saved.getCommentCount(), saved.getAttachmentCount()});
+              return saved;
+            })
+        .when(taskRepository)
+        .save(any(Task.class));
+
+    service.createComment(
+        task.getUuid(), input("Siehe Anhang"), List.of(prepared("a.pdf"), prepared("b.pdf")));
+
+    assertThat(countersAtSave).as("genau ein TASK-save").hasSize(1);
+    assertThat(countersAtSave.get(0))
+        .as("commentCount 3 + 1, attachmentCount 5 + 2 am selben save")
+        .containsExactly(4, 7);
   }
 
   /**

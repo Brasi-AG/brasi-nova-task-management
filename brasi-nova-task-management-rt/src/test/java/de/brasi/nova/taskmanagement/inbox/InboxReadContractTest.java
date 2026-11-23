@@ -9,15 +9,18 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveTotals;
 import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
+import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
+import java.lang.reflect.Field;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.util.ReflectionUtils;
 
 /**
  * P2.5-Vertragstest (BE-1): fixiert die JSON-/Wire-Form der additiv erweiterten Lese-Modelle VOR
@@ -145,6 +148,29 @@ class InboxReadContractTest {
     assertThat(j.get("isDone").asBoolean()).isTrue();
   }
 
+  /**
+   * Intake #194: beide Zusammenfassungen tragen {@code attachmentCount} als Zahl. Die Modelle
+   * entstehen ueber den parameterlosen Konstruktor, der Wert wird per Reflexion gesetzt, damit der
+   * Test unabhaengig von der Konstruktor-Signatur bleibt; fehlt das Feld, fehlt es im JSON.
+   */
+  @Test
+  @DisplayName("i194: beide Zusammenfassungen serialisieren attachmentCount als Zahl")
+  void i194_summary_and_info_model_serialize_attachment_count() throws Exception {
+    final TaskSummaryModel summary = new TaskSummaryModel();
+    final TaskSummaryInfoModel info = new TaskSummaryInfoModel();
+    setAttachmentCountIfPresent(summary, 7);
+    setAttachmentCountIfPresent(info, 7);
+
+    for (final Object model : List.of(summary, info)) {
+      final JsonNode j = om.readTree(om.writeValueAsString(model));
+      assertThat(j.has("attachmentCount"))
+          .as("%s traegt attachmentCount im JSON", model.getClass().getSimpleName())
+          .isTrue();
+      assertThat(j.get("attachmentCount").isInt()).as("attachmentCount als Zahl").isTrue();
+      assertThat(j.get("attachmentCount").asInt()).isEqualTo(7);
+    }
+  }
+
   @Test
   @DisplayName("InboxSnapshotModel JSON-Form: currentUserId vorhanden")
   void snapshot_wire_form_current_user_id() throws Exception {
@@ -162,5 +188,14 @@ class InboxReadContractTest {
     assertThat(j.has("currentUserId")).as("Snapshot muss currentUserId tragen").isTrue();
     assertThat(j.get("currentUserId").asText()).isEqualTo(CURRENT_USER.toString());
     assertThat(j.get("asOf").asText()).isEqualTo("2026-10-18T08:00:00Z");
+  }
+
+  /** Setzt das Feld {@code attachmentCount}, falls die Klasse es hat (sonst bleibt es weg). */
+  private static void setAttachmentCountIfPresent(final Object model, final int value) {
+    final Field field = ReflectionUtils.findField(model.getClass(), "attachmentCount");
+    if (field != null) {
+      ReflectionUtils.makeAccessible(field);
+      ReflectionUtils.setField(field, model, value);
+    }
   }
 }

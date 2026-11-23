@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.attachment;
 
+import static de.brasi.nova.taskmanagement.support.AttachmentCountAssertions.assertCountMatchesRows;
+import static de.brasi.nova.taskmanagement.support.AttachmentCountAssertions.attachmentCount;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
@@ -108,6 +110,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.mock.web.MockPart;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -1420,6 +1423,112 @@ class AttachmentControllerIT {
     assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
   }
 
+  // ---- Intake #194: Anhang-Zaehler ANHANG_ANZAHL ----------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i194_upload_increments_count: zwei Dateien an der Aufgabe -> ANHANG_ANZAHL +2, Zaehler"
+          + " gleich den aktiven Anhangzeilen")
+  void i194_upload_increments_count() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Zaehler Upload");
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    final int countBefore = attachmentCount(jdbcTemplate, taskId);
+
+    upload(mvc, creator, taskId, pdfFile("Bericht.pdf"), file("Notiz.txt", TXT_BYTES))
+        .andExpect(status().isCreated());
+
+    assertThat(attachmentCount(jdbcTemplate, taskId) - countBefore)
+        .as("ANHANG_ANZAHL nach zwei Dateien")
+        .isEqualTo(2);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_remove_decrements_count: zwei Dateien, eine entfernt (204) -> ANHANG_ANZAHL -1,"
+          + " Zaehler gleich den aktiven Anhangzeilen")
+  void i194_remove_decrements_count() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Zaehler Entfernen");
+    final UUID attId = uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    uploadOne(mvc, creator, taskId, file("bleibt.txt", TXT_BYTES));
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    final int countBefore = attachmentCount(jdbcTemplate, taskId);
+    assertThat(countBefore).as("Vorlauf: zwei Aufgaben-Anhaenge").isEqualTo(2);
+
+    mvc.perform(delete(contentUrlBase(taskId, attId)).header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNoContent());
+
+    assertThat(attachmentCount(jdbcTemplate, taskId)).as("ANHANG_ANZAHL").isEqualTo(1);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_remove_comment_attachment_404_count_unchanged: Kommentar-Anhang ueber den"
+          + " Aufgaben-Pfad entfernen -> 404, ANHANG_ANZAHL und VERSION unveraendert")
+  void i194_remove_comment_attachment_404_count_unchanged() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Zaehler Kommentar-Anhang");
+    final JsonNode comment =
+        json(
+            postCommentWithAttachments(
+                    mvc, creator, taskId, "Mit Datei", file("kommentar.txt", TXT_BYTES))
+                .andExpect(status().isCreated()));
+    final UUID commentAttachmentId =
+        UUID.fromString(comment.get("attachments").get(0).get("id").asText());
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    assertThat(attachmentCount(jdbcTemplate, taskId))
+        .as("Vorlauf: ein Kommentar-Anhang")
+        .isEqualTo(1);
+    final int versionBefore = taskVersion(taskId);
+
+    mvc.perform(
+            delete(contentUrlBase(taskId, commentAttachmentId))
+                .header("Authorization", "Bearer " + creator))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorKey").value("NOVA_NOT_FOUND"));
+
+    assertThat(row(commentAttachmentId).entityStatus()).isEqualTo("ACTIVE");
+    assertThat(attachmentCount(jdbcTemplate, taskId)).as("ANHANG_ANZAHL").isEqualTo(1);
+    assertThat(taskVersion(taskId)).isEqualTo(versionBefore);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_rejected_upload_leaves_count: nach einem Upload (1) lassen eine abgelehnte Datei (400)"
+          + " und ein Abbruch nach dem Schreiben (500) ANHANG_ANZAHL unveraendert")
+  void i194_rejected_upload_leaves_count() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Anhang-IT Zaehler abgelehnt");
+    uploadOne(mvc, creator, taskId, pdfFile("Bericht.pdf"));
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    assertThat(attachmentCount(jdbcTemplate, taskId)).as("Vorlauf: ein Anhang").isEqualTo(1);
+
+    // Alles oder nichts: PDF und EXE -> 400
+    upload(mvc, creator, taskId, pdfFile("Zweiter.pdf"), file("Programm.exe", MZ_BYTES))
+        .andExpect(status().isBadRequest());
+    assertThat(attachmentCount(jdbcTemplate, taskId)).as("nach 400").isEqualTo(1);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+
+    // Abbruch im Seam nach dem Schreiben der Dateien -> 500, voller Rollback
+    SeamFailingCommandService.FAIL_ON_TASK.set(taskDbId(taskId));
+    try {
+      upload(mvc, creator, taskId, file("Notiz.txt", TXT_BYTES))
+          .andExpect(status().isInternalServerError());
+    } finally {
+      SeamFailingCommandService.FAIL_ON_TASK.set(null);
+    }
+    assertThat(attachmentCount(jdbcTemplate, taskId)).as("nach 500").isEqualTo(1);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
   // ---- Hilfen: Requests ----------------------------------------------------------------------
 
   private MockMvc buildMvc() {
@@ -1503,6 +1612,29 @@ class AttachmentControllerIT {
             .getResponse()
             .getContentAsString();
     return UUID.fromString(new ObjectMapper().readTree(response).get("id").asText());
+  }
+
+  /**
+   * Kommentar mit Dateien ueber {@code POST /comments/with-attachments} (Intake #194): Teil {@code
+   * comment} als JSON-{@link MockPart}, dazu die Teile {@code files}.
+   */
+  private static ResultActions postCommentWithAttachments(
+      final MockMvc mvc,
+      final String token,
+      final UUID taskId,
+      final String text,
+      final MockMultipartFile... files)
+      throws Exception {
+    final MockMultipartHttpServletRequestBuilder request =
+        multipart("/api/v1/tasks/{id}/comments/with-attachments", taskId);
+    final byte[] json = new ObjectMapper().writeValueAsBytes(Map.of("text", text));
+    final MockPart comment = new MockPart("comment", json);
+    comment.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+    request.part(comment);
+    for (final MockMultipartFile file : files) {
+      request.file(file);
+    }
+    return mvc.perform(request.header("Authorization", "Bearer " + token));
   }
 
   /** Laedt eine Datei hoch (201) und liefert die UUID des neuen Anhangs. */

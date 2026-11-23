@@ -14,6 +14,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskAttachment;
@@ -55,6 +59,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.util.unit.DataSize;
@@ -403,7 +408,67 @@ class AttachmentCommandServiceTest {
     verifyNoInteractions(generation, signal);
   }
 
+  // ---- Intake #194: Anhang-Zaehler am versionierten TASK-save ---------------------------------
+
+  @Test
+  void i194_store_adds_number_of_files() {
+    task.setAttachmentCount(2);
+
+    service.storeTaskAttachments(
+        TASK_UUID, List.of(prepared("a.pdf"), prepared("b.txt"), prepared("c.pdf")));
+
+    assertThat(savedTask().getAttachmentCount()).as("2 + 3 hochgeladene Dateien").isEqualTo(5);
+  }
+
+  @Test
+  void i194_remove_subtracts_one() {
+    task.setAttachmentCount(5);
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(existing(ACTOR, null)));
+
+    final List<ILoggingEvent> warnings = warningsOf(() -> service.remove(TASK_UUID, ATT_UUID));
+
+    assertThat(savedTask().getAttachmentCount()).as("5 - 1 entfernter Anhang").isEqualTo(4);
+    assertThat(warnings).as("kein WARN bei positivem Zaehler").isEmpty();
+  }
+
+  @Test
+  void i194_remove_at_zero_stays_zero_and_warns() {
+    task.setAttachmentCount(0);
+    when(attachmentRepo.findActiveByTaskIdAndUuid(TASK_ID, ATT_UUID))
+        .thenReturn(List.of(existing(ACTOR, null)));
+
+    final List<ILoggingEvent> warnings = warningsOf(() -> service.remove(TASK_UUID, ATT_UUID));
+
+    assertThat(savedTask().getAttachmentCount()).as("Untergrenze 0").isZero();
+    assertThat(warnings)
+        .as("genau ein WARN zur Drift des Zaehlers, mit der Aufgabe")
+        .singleElement()
+        .satisfies(event -> assertThat(event.getFormattedMessage()).contains(TASK_UUID.toString()));
+  }
+
   // ---- Hilfen ------------------------------------------------------------------------------
+
+  /** Die einmal gespeicherte Aufgabe (versionierter TASK-save). */
+  private Task savedTask() {
+    final ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
+    verify(taskRepo, times(1)).save(captor.capture());
+    return captor.getValue();
+  }
+
+  /** WARN-Ereignisse des Logs von {@link AttachmentCommandService} waehrend der Aktion. */
+  private static List<ILoggingEvent> warningsOf(final Runnable action) {
+    final Logger logger = (Logger) LoggerFactory.getLogger(AttachmentCommandService.class);
+    final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      action.run();
+    } finally {
+      logger.detachAppender(appender);
+    }
+    return appender.list.stream().filter(event -> event.getLevel() == Level.WARN).toList();
+  }
 
   private AttachmentCommandService newService() {
     return new AttachmentCommandService(
