@@ -191,12 +191,7 @@ class TaskPatchInputTest {
       "Pruefreihenfolge wie im Javadoc: mentions komplett (Grenze, null-Element) vor"
           + " divisionMentions, beides vor der fehlenden Beschreibung")
   void i190_patch_mentions_check_order() {
-    assertThatThrownBy(
-            () ->
-                patch(
-                    PatchValue.of("Text."),
-                    Arrays.asList((UUID) null),
-                    uuids(11)))
+    assertThatThrownBy(() -> patch(PatchValue.of("Text."), Arrays.asList((UUID) null), uuids(11)))
         .as("null-Element von mentions kommt vor der Grenze von divisionMentions")
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("mentions darf keine null-Elemente enthalten.");
@@ -204,8 +199,7 @@ class TaskPatchInputTest {
         .as("Grenze kommt vor der fehlenden Beschreibung")
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("mentions darf hoechstens 100 Eintraege enthalten.");
-    assertThatThrownBy(
-            () -> patch(PatchValue.absent(), List.of(), Arrays.asList((UUID) null)))
+    assertThatThrownBy(() -> patch(PatchValue.absent(), List.of(), Arrays.asList((UUID) null)))
         .as("null-Element kommt vor der fehlenden Beschreibung")
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("divisionMentions darf keine null-Elemente enthalten.");
