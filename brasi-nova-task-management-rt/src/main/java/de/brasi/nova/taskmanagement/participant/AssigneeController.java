@@ -58,6 +58,8 @@ public class AssigneeController {
    * (der Mute-Marker wird zurueckgesetzt, Folge von Intake #158); unveraendert bleibende Assignees
    * behalten ihren Mute. Abgewaehlte werden mit EXIT_KIND=UNSUBSCRIBED markiert. Eine ausgetretene
    * oder deaktivierte Teilnehmerzeile einer neu zugewiesenen Person wird reaktiviert (Intake #163).
+   * Abgewaehlte Personen erhalten eine UNASSIGN-Benachrichtigung (auch ein ausgelassener
+   * Ersteller), ausser der Akteur selbst; sie ist von der Stummschaltung ausgenommen (Intake #188).
    *
    * @param id externe UUID der Aufgabe
    * @param input Ziel-Assignee-Menge
@@ -76,7 +78,10 @@ public class AssigneeController {
               + " Zuvor ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (der"
               + " Benutzer selbst ist aktiv) werden dabei wieder als Assignee aufgenommen."
               + " Ein ausgelassener Creator wird nur de-assigned und bleibt Mitglied der Aufgabe"
-              + " (kein Austritt).")
+              + " (kein Austritt)."
+              + " Abgewaehlte Personen erhalten eine UNASSIGN-Benachrichtigung (auch ein"
+              + " ausgelassener Ersteller), ausser der Akteur selbst. Sie ist von der"
+              + " Stummschaltung ausgenommen.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Assignees erfolgreich aktualisiert."),
     @ApiResponse(
@@ -127,9 +132,10 @@ public class AssigneeController {
                 + " auf, noch bevor die Aufgabe gespeichert wird; die Anfrage wiederholen."
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei"
                 + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert."
-                + " (4) Sequenzkonflikt des Verlaufs: jede neu zugewiesene und jede abgewaehlte"
-                + " Person schreibt einen Verlaufseintrag, daher kann auch ein PUT, der nur eine"
-                + " Zuweisung entfernt, mit 409 scheitern."
+                + " (4) Sequenzkonflikt von Verlauf oder Benachrichtigung: jede neu zugewiesene und"
+                + " jede abgewaehlte Person schreibt einen Verlaufseintrag, jede abgewaehlte Person"
+                + " ausser dem Akteur zusaetzlich eine UNASSIGN-Benachrichtigung; daher kann auch"
+                + " ein PUT, der nur eine Zuweisung entfernt, mit 409 scheitern."
                 + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =

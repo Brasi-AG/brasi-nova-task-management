@@ -3,6 +3,7 @@ package de.brasi.nova.taskmanagement.participant;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes;
 import de.brasi.nova.taskmanagement.entity.enums.ExitKind;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
@@ -570,6 +571,15 @@ class MembershipConcurrencyIT {
     assertThat(exitedUnsubscribed(taskId, PERSON_B)).as("B ausgetreten").isEqualTo(1);
     assertThat(userStateUnsubscribed(taskId, PERSON_B)).as("State B abgemeldet").isEqualTo(1);
     assertUntouched(taskId, PERSON_C, true, loseParticipantVersionBefore, loseStateVersionBefore);
+    // Intake #188: nur das UNASSIGN der Gewinnerin ist festgeschrieben. Der Ersteller waehlt B
+    // ab; das UNASSIGN der Verliererin (A waehlt C ab) wird vor dem versionierten TASK-save
+    // emittiert und mit dem 409 voll zurueckgerollt.
+    assertThat(notificationCount(taskId, PERSON_B, NotificationTypeCodes.UNASSIGN))
+        .as("genau ein UNASSIGN an B (von der Gewinnerin abgewaehlt)")
+        .isEqualTo(1);
+    assertThat(notificationCount(taskId, PERSON_C, NotificationTypeCodes.UNASSIGN))
+        .as("kein UNASSIGN an C (von der Verliererin abgewaehlt, zurueckgerollt)")
+        .isZero();
     assertSingleSignalContaining(PERSON_B);
   }
 
@@ -1352,6 +1362,18 @@ class MembershipConcurrencyIT {
         taskId,
         TENANT_ID,
         recipientRef);
+  }
+
+  /** Benachrichtigungen eines Typs (Dictionary-CODE) an einen Empfaenger je Aufgabe. */
+  private int notificationCount(final long taskId, final UUID recipientRef, final String typeCode) {
+    return count(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE n.TASK_ID=? AND n.TENANT_ID=? AND n.RECIPIENT_REF=? AND d.CODE=?",
+        taskId,
+        TENANT_ID,
+        recipientRef,
+        typeCode);
   }
 
   // ---- Seed-Helfer
