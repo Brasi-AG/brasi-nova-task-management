@@ -59,8 +59,7 @@ public class AssigneeController {
    * behalten ihren Mute. Abgewaehlte werden mit EXIT_KIND=UNSUBSCRIBED markiert. Eine ausgetretene
    * oder deaktivierte Teilnehmerzeile einer neu zugewiesenen Person wird reaktiviert (Intake #163).
    * Abgewaehlte Personen erhalten eine UNASSIGN-Benachrichtigung (auch ein ausgelassener
-   * Ersteller), ausser der Akteur selbst; sie ist von der Stummschaltung ausgenommen (Intake
-   * #188).
+   * Ersteller), ausser der Akteur selbst; sie ist von der Stummschaltung ausgenommen (Intake #188).
    *
    * @param id externe UUID der Aufgabe
    * @param input Ziel-Assignee-Menge

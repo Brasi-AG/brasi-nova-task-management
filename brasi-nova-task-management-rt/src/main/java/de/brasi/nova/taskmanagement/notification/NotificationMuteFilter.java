@@ -58,9 +58,9 @@ import org.springframework.stereotype.Component;
  * Lesung je Empfaenger (N+1) und NACH dem TASK-save; ein {@code TASK_USER_STATE}-Read unter dem
  * TASK-X-Lock invertierte die Lock-Reihenfolge gegen {@code AssigneeService#exit} (UserState vor
  * TASK) und koennte auf MSSQL einen Deadlock ausloesen. Pfade, die nur ausgenommene Typen
- * emittieren ({@code ASSIGN}/{@code HANDOVER}/{@code PARTICIPANT}/{@code REMOVED}/{@code
- * UNASSIGN} in {@code TaskCommandService#create} und {@code AssigneeService}), brauchen den Filter
- * nicht; er waere dort ein No-Op ohne Abfrage.
+ * emittieren ({@code ASSIGN}/{@code HANDOVER}/{@code PARTICIPANT}/{@code REMOVED}/{@code UNASSIGN}
+ * in {@code TaskCommandService#create} und {@code AssigneeService}), brauchen den Filter nicht; er
+ * waere dort ein No-Op ohne Abfrage.
  *
  * <p><b>Mute und (Wieder-)Zuweisung:</b> Eine NEUE Zuweisung hebt den Mute der Aufgabe fuer die
  * zugewiesene Person auf: {@code UserStateService#reactivateAsAssignee} setzt {@code IS_MUTED} auf
