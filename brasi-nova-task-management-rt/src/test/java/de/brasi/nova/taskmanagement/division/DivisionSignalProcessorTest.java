@@ -47,7 +47,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>Ablauf nach dem Ruling vom 2026-11-22 (immer {@code self}): Mandant aufloesen, Quittung
  * vorhanden, Kurzschluss bei gleicher revision, Abrufstart, {@code fetchCurrent}, eine Transaktion
  * mit {@code executeOnce(signal, () -> projection.apply(...))}. Laufzeitfehler unterhalb von {@code
- * maxDeliveryAttempts} werden weitergeworfen, am Limit wird die Quittung {@code DEAD}.
+ * maxDeliveryAttempts} werden weitergeworfen, am Limit wird die Quittung {@code DEAD}; scheitert
+ * dagegen die Mandantenaufloesung selbst, ist keine Quittung moeglich und die Ausnahme geht auch am
+ * Limit an den Broker zurueck.
  *
  * <p>Die Uhr tickt bei jedem Lesen eine Sekunde weiter: so zeigt der Vergleich mit der Zeit des
  * Client-Aufrufs, ob der Abrufstart vor dem HTTP-Aufruf genommen wurde. Ihre Zone ist die
@@ -210,6 +212,22 @@ class DivisionSignalProcessorTest {
 
     verify(store).markDead(eq(signal), contains("403"));
     verify(projection, never()).apply(any(), any(), any());
+  }
+
+  @Test
+  @DisplayName("Mandantenaufloesung scheitert: Ausnahme geht auch am Limit zurueck, kein DEAD")
+  void i190_tenant_lookup_failure_at_limit_is_returned_to_broker() {
+    final RuntimeException lookupFailure = new IllegalStateException("Datenbank nicht erreichbar");
+    when(firmRepository.findTenantIdByUuid(TEN)).thenThrow(lookupFailure);
+
+    assertThatThrownBy(() -> processor.process(signal, 4)).isSameAs(lookupFailure);
+    assertThatThrownBy(() -> processor.process(signal, 5)).isSameAs(lookupFailure);
+    assertThatThrownBy(() -> processor.process(signal, 6)).isSameAs(lookupFailure);
+
+    verify(store, never()).markDead(any(), any());
+    verifyNoInteractions(client, projection);
+    verify(store, never()).executeOnce(any(DivisionSignal.class), any());
+    assertThat(transactionManager.commits).hasValue(0);
   }
 
   @Test
