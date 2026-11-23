@@ -4399,6 +4399,287 @@ class AssigneeServiceTest {
     verify(taskHistoryService).record(taskId, TENANT_ID, ACTOR_REF, I180_LEFT, "Anna Akteur");
   }
 
+  // ---- Intake #188: UNASSIGN-Benachrichtigung bei der Abwahl im PUT /assignees ------------------
+
+  /** Typ-Code der neuen Benachrichtigung (als String, bis die Konstante existiert). */
+  private static final String I188_UNASSIGN = "UNASSIGN";
+
+  /** Text der UNASSIGN-Benachrichtigung (ein Text fuer Austritt und De-Assign des Erstellers). */
+  private static final String I188_TEXT = "Deine Zuweisung zur Aufgabe wurde entfernt.";
+
+  /** Feste UUIDs (Schreibfolge des PUT ist nach UUID sortiert, daher kein Zufall). */
+  private static final UUID I188_LOW = UUID.fromString("00000188-0000-4000-8000-000000000001");
+
+  private static final UUID I188_MID = UUID.fromString("00000188-0000-4000-8000-000000000002");
+
+  private static final UUID I188_HIGH = UUID.fromString("00000188-0000-4000-8000-000000000003");
+
+  /**
+   * Stubt einen PUT-Ausgangsstand: aktive Assignees der Aufgabe und je abwaehlbarer Person
+   * Teilnehmerzeile und State (Lesung vor der ersten Schreibung).
+   */
+  private Task i188StubPut(final Long taskId, final TaskParticipant... currentAssignees) {
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findActiveAssigneesByTaskId(taskId))
+        .thenReturn(List.of(currentAssignees));
+    for (final TaskParticipant p : currentAssignees) {
+      when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, p.getParticipantRef()))
+          .thenReturn(List.of(p));
+      when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, p.getParticipantRef()))
+          .thenReturn(List.of(userStateFor(taskId, p.getParticipantRef())));
+    }
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    return task;
+  }
+
+  @Test
+  @DisplayName(
+      "i188_abgewaehlter_assignee_bekommt_unassign: PUT {Ersteller, A} -> {Ersteller} emittiert"
+          + " genau ein UNASSIGN an A (INFO, Text, Vorschau Aufgabentitel, Akteur)")
+  void i188_omitted_assignee_gets_unassign() {
+    final Long taskId = 18801L;
+    final Task task =
+        i188StubPut(
+            taskId,
+            activeAssignee(taskId, ACTOR_REF, true),
+            activeAssignee(taskId, I188_LOW, false));
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(ACTOR_REF)));
+
+    verify(notificationService, times(1))
+        .emit(
+            I188_LOW,
+            taskId,
+            I188_UNASSIGN,
+            NotificationSeverityCodes.INFO,
+            I188_TEXT,
+            "Testtitel",
+            ACTOR_REF);
+    verify(notificationService, times(1))
+        .emit(any(), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_ausgelassener_ersteller_bekommt_unassign: Akteur ist Assignee, PUT {Ersteller,"
+          + " Akteur} -> {Akteur}: UNASSIGN an den Ersteller, der Ersteller bleibt Mitglied (kein"
+          + " Austritt), keins an den Akteur")
+  void i188_omitted_creator_gets_unassign() {
+    final Long taskId = 18802L;
+    final TaskParticipant creator = activeAssignee(taskId, I188_LOW, true);
+    final Task task = i188StubPut(taskId, creator, activeAssignee(taskId, ACTOR_REF, false));
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(ACTOR_REF)));
+
+    verify(notificationService, times(1))
+        .emit(
+            I188_LOW,
+            taskId,
+            I188_UNASSIGN,
+            NotificationSeverityCodes.INFO,
+            I188_TEXT,
+            "Testtitel",
+            ACTOR_REF);
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    assertThat(creator.isAssigneeFlag()).as("Ersteller de-assignt").isFalse();
+    assertThat(creator.getExitKind()).as("Ersteller bleibt Mitglied").isNull();
+    assertThat(creator.isParticipantFlag()).isTrue();
+  }
+
+  @Test
+  @DisplayName(
+      "i188_selbst_abwahl_ohne_unassign (Wachposten): der Akteur laesst sich im PUT selbst weg ->"
+          + " kein UNASSIGN an ihn (und an niemanden sonst); Austritt und Verlauf wie bisher")
+  void i188_self_omission_no_unassign_to_actor() {
+    final Long taskId = 18803L;
+    final TaskParticipant actorRow = activeAssignee(taskId, ACTOR_REF, false);
+    final Task task = i188StubPut(taskId, activeAssignee(taskId, I188_LOW, true), actorRow);
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(I188_LOW)));
+
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(any(), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    assertThat(actorRow.getExitKind())
+        .as("Selbst-Abwahl tritt wie bisher aus")
+        .isEqualTo(ExitKind.UNSUBSCRIBED);
+    verify(taskHistoryService)
+        .record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), eq(I180_UNASSIGNED), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_put_plus_b_minus_a: PUT {Ersteller, A} -> {Ersteller, B} emittiert ASSIGN an B und"
+          + " UNASSIGN an A, je genau einmal, keine Vertauschung")
+  void i188_put_add_and_remove_emits_assign_and_unassign() {
+    final Long taskId = 18804L;
+    final UUID removedRef = I188_HIGH;
+    final UUID addedRef = I188_LOW;
+    final Task task =
+        i188StubPut(
+            taskId,
+            activeAssignee(taskId, ACTOR_REF, true),
+            activeAssignee(taskId, removedRef, false));
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(ACTOR_REF, addedRef)));
+
+    verify(notificationService, times(1))
+        .emit(
+            eq(addedRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.ASSIGN),
+            eq(NotificationSeverityCodes.INFO),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(notificationService, times(1))
+        .emit(
+            removedRef,
+            taskId,
+            I188_UNASSIGN,
+            NotificationSeverityCodes.INFO,
+            I188_TEXT,
+            "Testtitel",
+            ACTOR_REF);
+    verify(notificationService, never())
+        .emit(eq(addedRef), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(removedRef), any(), eq(NotificationTypeCodes.ASSIGN), any(), any(), any(), any());
+    verify(notificationService, times(2)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_noop_put_ohne_unassign (Wachposten): PUT mit unveraenderter Menge emittiert nichts")
+  void i188_noop_put_no_unassign() {
+    final Long taskId = 18805L;
+    final Task task =
+        i188StubPut(
+            taskId,
+            activeAssignee(taskId, ACTOR_REF, true),
+            activeAssignee(taskId, I188_LOW, false));
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(ACTOR_REF, I188_LOW)));
+
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_unassign_nach_sync2_vor_task_save: UNASSIGN folgt auf die Personen-Schreibungen und"
+          + " den Seam onAfterMembershipWritesForTest (dort noch keine Benachrichtigung), steht in"
+          + " UUID-Reihenfolge vor dem TASK-save; kein Read nach der ersten Schreibung")
+  void i188_unassign_after_membership_writes_before_task_save() {
+    final Long taskId = 18806L;
+    final TaskParticipant low = activeAssignee(taskId, I188_LOW, false);
+    final TaskParticipant high = activeAssignee(taskId, I188_HIGH, false);
+    final Task task = i188StubPut(taskId, activeAssignee(taskId, ACTOR_REF, true), low, high);
+    final List<String> atSeam = new ArrayList<>();
+    final List<String> atAfterSeam = new ArrayList<>();
+    final AssigneeService seamed = serviceRecordingAtSeams(atSeam, atAfterSeam);
+    final Object[] observed = orderObserved();
+    org.mockito.Mockito.clearInvocations(observed);
+
+    seamed.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(ACTOR_REF)));
+
+    final List<String> calls = orderedCalls(observed);
+    assertReadsBeforeFirstWrite(calls, atSeam);
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam sind beide Personen geschrieben, Aufrufe: %s", atAfterSeam)
+        .contains("TaskParticipantQueryRepository#save", "TaskUserStateQueryRepository#save");
+    assertThat(atAfterSeam)
+        .as("am Sync-2-Seam steht noch keine Benachrichtigung, Aufrufe: %s", atAfterSeam)
+        .doesNotContain("NotificationService#emit");
+    final InOrder order = inOrder(participantQueryRepository, notificationService, taskRepository);
+    order.verify(participantQueryRepository).save(low);
+    order.verify(participantQueryRepository).save(high);
+    order
+        .verify(notificationService)
+        .emit(eq(I188_LOW), eq(taskId), eq(I188_UNASSIGN), any(), any(), any(), eq(ACTOR_REF));
+    order
+        .verify(notificationService)
+        .emit(eq(I188_HIGH), eq(taskId), eq(I188_UNASSIGN), any(), any(), any(), eq(ACTOR_REF));
+    order.verify(taskRepository).save(task);
+    final int taskSave = calls.indexOf("BaseTaskRepository#save");
+    assertThat(calls.lastIndexOf("NotificationService#emit"))
+        .as("letzte Benachrichtigung vor dem TASK-save, Aufrufe: %s", calls)
+        .isLessThan(taskSave);
+  }
+
+  @Test
+  @DisplayName(
+      "i188_entfernen_nur_removed (Wachposten): DELETE /participants auf einen aktiven Assignee"
+          + " emittiert genau ein REMOVED und nie UNASSIGN")
+  void i188_remove_assignee_emits_only_removed() {
+    final Long taskId = 18807L;
+    final UUID taskUuid = UUID.randomUUID();
+    final Task task = taskWithId(taskId, taskUuid);
+    when(taskRepository.findByUuid(taskUuid.toString())).thenReturn(Optional.of(task));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(taskId, ACTOR_REF, true)));
+    final TaskParticipant target = activeAssignee(taskId, I188_LOW, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(taskId, I188_LOW))
+        .thenReturn(List.of(target));
+    when(userStateQueryRepository.findByTaskIdAndUserRef(taskId, I188_LOW))
+        .thenReturn(List.of(userStateFor(taskId, I188_LOW)));
+
+    service.removeParticipant(taskUuid, I188_LOW);
+
+    assertThat(target.isAssigneeFlag()).as("die Zuweisung entfaellt").isFalse();
+    verify(notificationService, times(1)).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(notificationService)
+        .emit(
+            eq(I188_LOW),
+            eq(taskId),
+            eq(NotificationTypeCodes.REMOVED),
+            any(),
+            any(),
+            any(),
+            eq(ACTOR_REF));
+    verify(notificationService, never())
+        .emit(any(), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_austritt_nie_unassign (Wachposten): POST /exit UNSUBSCRIBED und HANDOVER mit"
+          + " shouldStay erzeugen nie UNASSIGN")
+  void i188_exit_never_emits_unassign() {
+    // UNSUBSCRIBED: der Akteur (Assignee, kein Ersteller) verlaesst die Aufgabe.
+    final Long unsubscribedTaskId = 18808L;
+    final UUID unsubscribedTaskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(unsubscribedTaskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(unsubscribedTaskId, unsubscribedTaskUuid)));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(unsubscribedTaskId, ACTOR_REF))
+        .thenReturn(List.of(activeAssignee(unsubscribedTaskId, ACTOR_REF, false)));
+
+    service.exit(unsubscribedTaskUuid, new ExitInput(ExitKind.UNSUBSCRIBED));
+
+    // HANDOVER mit shouldStay: der Akteur gibt die Zuweisung ab und bleibt Beteiligter.
+    final Long handoverTaskId = 18809L;
+    final UUID handoverTaskUuid = UUID.randomUUID();
+    when(taskRepository.findByUuid(handoverTaskUuid.toString()))
+        .thenReturn(Optional.of(taskWithId(handoverTaskId, handoverTaskUuid)));
+    final TaskParticipant actor = activeAssignee(handoverTaskId, ACTOR_REF, false);
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(handoverTaskId, ACTOR_REF))
+        .thenReturn(List.of(actor));
+    when(participantQueryRepository.findByTaskIdAndParticipantRef(handoverTaskId, I188_MID))
+        .thenReturn(List.of());
+    when(participantQueryRepository.save(any(TaskParticipant.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    service.exit(handoverTaskUuid, new ExitInput(ExitKind.HANDOVER, List.of(I188_MID), true));
+
+    assertThat(actor.isAssigneeFlag()).as("HANDOVER nimmt dem Akteur die Zuweisung").isFalse();
+    verify(notificationService, never())
+        .emit(any(), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+  }
+
   /**
    * Stubt den Benutzerstamm: {@code findActiveByUuids} liefert nur die Personen aus {@code names}
    * (aktiv) mit ihrem Anzeigenamen; alle anderen gelten als nicht aktiv.

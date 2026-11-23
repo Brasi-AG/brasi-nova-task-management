@@ -69,7 +69,9 @@ class NotificationMuteFilterTest {
         NotificationTypeCodes.ASSIGN,
         NotificationTypeCodes.HANDOVER,
         NotificationTypeCodes.PARTICIPANT,
-        NotificationTypeCodes.REMOVED
+        NotificationTypeCodes.REMOVED,
+        // Intake #188: Code als String, bis die Konstante NotificationTypeCodes.UNASSIGN existiert.
+        "UNASSIGN"
       })
   @DisplayName("ausgenommene Typen: stumme Empfaenger bleiben erhalten, keine Abfrage")
   void ausgenommener_typ_filtert_nicht_und_liest_nicht(final String typeCode) {
@@ -93,7 +95,8 @@ class NotificationMuteFilterTest {
             NotificationTypeCodes.ASSIGN,
             NotificationTypeCodes.HANDOVER,
             NotificationTypeCodes.PARTICIPANT,
-            NotificationTypeCodes.REMOVED);
+            NotificationTypeCodes.REMOVED,
+            "UNASSIGN");
   }
 
   @Test
