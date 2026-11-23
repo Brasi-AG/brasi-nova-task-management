@@ -15,7 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * @param enabled schaltet Consumer, Token-Pflichtpruefung und Resync ein
  * @param destination JMS-Topic des Ereignisses {@code DivisionMembershipChanged}
- * @param subscriptionName Name der geteilten, dauerhaften Subscription
+ * @param subscriptionName Name der geteilten, dauerhaften Subscription; er ist ein Queue-Name des
+ *     ganzen Brokers und traegt deshalb das Profil
  * @param applicationBaseUrl Basis-URL von application fuer die S2S-Abrufe
  * @param oauth2 client_credentials-Zugang gegen KPL Identity
  * @param maxDeliveryAttempts Zustellversuche, bevor eine Nachricht endgueltig verworfen wird
@@ -50,6 +51,12 @@ public record DivisionSyncProperties(
       return;
     }
     final List<String> missing = new ArrayList<>();
+    if (isBlank(destination)) {
+      missing.add(PREFIX + ".destination");
+    }
+    if (isBlank(subscriptionName)) {
+      missing.add(PREFIX + ".subscription-name");
+    }
     if (isBlank(applicationBaseUrl)) {
       missing.add(PREFIX + ".application-base-url");
     }
