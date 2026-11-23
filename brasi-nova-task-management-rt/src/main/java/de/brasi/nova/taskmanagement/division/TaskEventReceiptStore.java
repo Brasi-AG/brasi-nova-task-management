@@ -9,6 +9,7 @@ import io.keel.framework.api.security.tenant.TenantContextHolder;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import java.sql.SQLException;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +34,10 @@ import org.springframework.transaction.annotation.Transactional;
  * nimmt die Quittung mit.
  *
  * <p>{@link #markDead} schreibt in eigener Transaktion ({@code REQUIRES_NEW}), damit die Verwerfung
- * den Rollback der Verarbeitung ueberlebt. Eine Quittung in jedem Status zaehlt als verarbeitet.
+ * den Rollback der Verarbeitung ueberlebt. Eine vorhandene {@code PROCESSED}-Quittung bleibt dabei
+ * unveraendert: Eine gelungene Verarbeitung (etwa durch eine andere Instanz oder eine erneute
+ * Veroeffentlichung) darf nicht nachtraeglich als gescheitert gelten. Eine Quittung in jedem Status
+ * zaehlt als verarbeitet.
  */
 @Component
 public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
@@ -93,8 +97,11 @@ public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
 
   /**
    * Verwirft das Signal endgueltig: Quittung {@code DEAD} mit Grund (auf {@value #MAX_ERROR_LENGTH}
-   * Zeichen gekuerzt), eine vorhandene Quittung wird auf {@code DEAD} gesetzt. Laeuft in eigener
-   * Transaktion und unter dem Kontext-Mandanten.
+   * Zeichen gekuerzt). Fehlt die Quittung, wird sie angelegt; eine vorhandene {@code DEAD}-Quittung
+   * bekommt den neuen Grund. Eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert (nur ein
+   * INFO-Log ohne Body), weil das Ereignis dann schon erfolgreich verarbeitet wurde, etwa bei
+   * paralleler Verarbeitung auf zwei Instanzen oder nach erneuter Veroeffentlichung. Laeuft in
+   * eigener Transaktion und unter dem Kontext-Mandanten.
    *
    * @param signal geprueftes Signal
    * @param reason Grund ohne Token oder Secret
@@ -103,13 +110,20 @@ public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
   public void markDead(final DivisionSignal signal, final String reason) {
     Objects.requireNonNull(signal, "signal");
     final TenantInfo tenant = requireScope(signal.tenantUuid());
+    final Optional<TaskEventReceipt> existing =
+        repository.findByEvent(signal.tenantUuid(), signal.eventId());
+    if (existing.isPresent() && existing.get().getStatus() == EventReceiptStatus.PROCESSED) {
+      log.info(
+          "Ereignis {} (Mandant {}): bereits PROCESSED quittiert, Quittung bleibt unveraendert.",
+          signal.eventId(),
+          signal.tenantUuid());
+      return;
+    }
     final TaskEventReceipt receipt =
-        repository
-            .findByEvent(signal.tenantUuid(), signal.eventId())
-            .orElseGet(
-                () ->
-                    newReceipt(
-                        tenant.id(), signal.tenantUuid(), signal.eventId(), signal.divisionRef()));
+        existing.orElseGet(
+            () ->
+                newReceipt(
+                    tenant.id(), signal.tenantUuid(), signal.eventId(), signal.divisionRef()));
     receipt.setStatus(EventReceiptStatus.DEAD);
     receipt.setErrorMessage(truncate(reason));
     repository.save(receipt);

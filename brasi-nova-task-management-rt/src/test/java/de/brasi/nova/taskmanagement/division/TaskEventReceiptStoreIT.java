@@ -59,8 +59,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Belegt: Claim vor dem Handler und genau ein Handler-Lauf je Ereignis, Rollback des Claims bei
  * Handler-Fehler (gleiche Ausnahme-Instanz), ein Gewinner bei gleichzeitigem Claim, {@code
- * markDead} in eigener Transaktion ({@code REQUIRES_NEW}) mit auf 900 Zeichen gekuerztem Grund,
- * Trennung je Mandant und die mandantenuebergreifende Aufbewahrungsbereinigung ({@code
+ * markDead} in eigener Transaktion ({@code REQUIRES_NEW}) mit auf 900 Zeichen gekuerztem Grund
+ * (eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert, eine {@code DEAD}-Quittung
+ * bekommt den neuen Grund), Trennung je Mandant und die mandantenuebergreifende Aufbewahrungsbereinigung ({@code
  * deleteOlderThan} unter {@code runAsSystem}).
  *
  * <p>{@code executeOnce} laeuft {@code MANDATORY}: jeder Aufruf liegt in einem eigenen {@link
@@ -288,8 +289,8 @@ class TaskEventReceiptStoreIT {
   }
 
   @Test
-  @DisplayName("markDead auf eine vorhandene PROCESSED-Quittung setzt sie auf DEAD, keine 2. Zeile")
-  void i190_mark_dead_turns_existing_receipt_dead() {
+  @DisplayName("markDead auf eine vorhandene PROCESSED-Quittung laesst sie unveraendert")
+  void i190_mark_dead_keeps_existing_processed_receipt() {
     final DivisionSignal signal = signal(TENANT_A_UUID);
     assertThat(claim(TENANT_A_ID, TENANT_A_UUID, signal, () -> {})).isTrue();
     assertThat(singleReceipt(TENANT_A_UUID, signal.eventId()).get("STATUS")).isEqualTo("PROCESSED");
@@ -303,8 +304,37 @@ class TaskEventReceiptStoreIT {
         });
 
     final Map<String, Object> row = singleReceipt(TENANT_A_UUID, signal.eventId());
+    assertThat(row.get("STATUS")).isEqualTo("PROCESSED");
+    assertThat(row.get("FEHLER_MELDUNG")).isNull();
+    assertThat(uuid(row.get("ABTEILUNG_REF"))).isEqualTo(DIV);
+    assertThat(isProcessed(TENANT_A_ID, TENANT_A_UUID, signal)).isTrue();
+  }
+
+  @Test
+  @DisplayName("markDead auf eine vorhandene DEAD-Quittung aktualisiert den Grund, keine 2. Zeile")
+  void i190_mark_dead_updates_existing_dead_receipt() {
+    final DivisionSignal signal = signal(TENANT_A_UUID);
+
+    inTenantTx(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        status -> {
+          store.markDead(signal, "Abruf fehlgeschlagen: HTTP 503");
+          return null;
+        });
+    assertThat(singleReceipt(TENANT_A_UUID, signal.eventId()).get("STATUS")).isEqualTo("DEAD");
+
+    inTenantTx(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        status -> {
+          store.markDead(signal, "Abruf fehlgeschlagen: HTTP 500");
+          return null;
+        });
+
+    final Map<String, Object> row = singleReceipt(TENANT_A_UUID, signal.eventId());
     assertThat(row.get("STATUS")).isEqualTo("DEAD");
-    assertThat(row.get("FEHLER_MELDUNG")).isEqualTo("Abruf fehlgeschlagen: HTTP 503");
+    assertThat(row.get("FEHLER_MELDUNG")).isEqualTo("Abruf fehlgeschlagen: HTTP 500");
     assertThat(uuid(row.get("ABTEILUNG_REF"))).isEqualTo(DIV);
   }
 
