@@ -107,7 +107,6 @@ class DivisionResyncIT {
 
   private static final LocalDateTime T1 = LocalDateTime.of(2026, 11, 20, 10, 0, 0);
   private static final String REV1 = "1".repeat(64);
-  private static final String SIGNAL_REV = "c".repeat(64);
 
   private static HikariDataSource master;
   private static String dbName;
@@ -311,8 +310,7 @@ class DivisionResyncIT {
    * Legt eine {@code DEAD}-Quittung mit Abteilungsbezug an (eigene Transaktion, neues Ereignis).
    */
   private void markDead(final long tenantId, final UUID tenantUuid, final UUID divisionRef) {
-    final DivisionSignal signal =
-        new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef, SIGNAL_REV);
+    final DivisionSignal signal = new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef);
     TenantContextHolder.setTenant(new TenantInfo(tenantUuid, tenantId));
     try {
       receiptStore.markDead(signal, "Abruf fehlgeschlagen: HTTP 503");
@@ -323,8 +321,7 @@ class DivisionResyncIT {
 
   /** Legt eine {@code PROCESSED}-Quittung mit Abteilungsbezug an (ohne Kopfzeile). */
   private void markProcessed(final long tenantId, final UUID tenantUuid, final UUID divisionRef) {
-    final DivisionSignal signal =
-        new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef, SIGNAL_REV);
+    final DivisionSignal signal = new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef);
     final Boolean claimed =
         inTenantTx(tenantId, tenantUuid, status -> receiptStore.executeOnce(signal, () -> {}));
     assertThat(claimed).isTrue();

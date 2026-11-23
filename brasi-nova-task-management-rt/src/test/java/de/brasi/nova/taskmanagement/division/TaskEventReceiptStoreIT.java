@@ -113,7 +113,6 @@ class TaskEventReceiptStoreIT {
   private static final UUID TENANT_B_UUID = UUID.fromString("00000056-0000-0056-0000-000000000564");
 
   private static final UUID DIV = UUID.fromString("00000056-0000-0056-dddd-000000000563");
-  private static final String REV = "c".repeat(64);
 
   /** Runden des Zwei-Thread-Claims, je Runde mit eigener Ereignis-ID. */
   private static final int RACE_ROUNDS = 5;
@@ -369,8 +368,8 @@ class TaskEventReceiptStoreIT {
   @DisplayName("gleiche Ereignis-ID in Mandant 563 und 564 ergibt zwei getrennte Quittungen")
   void i190_receipts_are_tenant_scoped() {
     final UUID eventId = UUID.randomUUID();
-    final DivisionSignal signalA = new DivisionSignal(eventId, TENANT_A_UUID, DIV, REV);
-    final DivisionSignal signalB = new DivisionSignal(eventId, TENANT_B_UUID, DIV, REV);
+    final DivisionSignal signalA = new DivisionSignal(eventId, TENANT_A_UUID, DIV);
+    final DivisionSignal signalB = new DivisionSignal(eventId, TENANT_B_UUID, DIV);
     final AtomicInteger runs = new AtomicInteger();
 
     assertThat(claim(TENANT_A_ID, TENANT_A_UUID, signalA, runs::incrementAndGet)).isTrue();
@@ -478,7 +477,7 @@ class TaskEventReceiptStoreIT {
   // ---- Hilfsmethoden --------------------------------------------------------------------------
 
   private static DivisionSignal signal(final UUID tenantUuid) {
-    return new DivisionSignal(UUID.randomUUID(), tenantUuid, DIV, REV);
+    return new DivisionSignal(UUID.randomUUID(), tenantUuid, DIV);
   }
 
   /**

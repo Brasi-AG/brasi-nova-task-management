@@ -40,11 +40,10 @@ class TaskEventReceiptStoreTest {
   private static final UUID TEN = UUID.fromString("00000056-0000-0056-0000-000000000565");
   private static final long TENANT_ID = 565L;
   private static final UUID DIV = UUID.fromString("00000056-0000-0056-dddd-000000000565");
-  private static final String REV = "d".repeat(64);
 
   private final TaskEventReceiptQueryRepository repository =
       mock(TaskEventReceiptQueryRepository.class);
-  private final DivisionSignal signal = new DivisionSignal(EVT, TEN, DIV, REV);
+  private final DivisionSignal signal = new DivisionSignal(EVT, TEN, DIV);
   private final AtomicInteger handlerRuns = new AtomicInteger();
 
   private TaskEventReceiptStore store;

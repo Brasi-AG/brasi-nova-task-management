@@ -1,130 +1,186 @@
 package de.brasi.nova.taskmanagement.division;
 
-import static de.brasi.nova.taskmanagement.division.DivisionSignalTestSupport.body;
 import static de.brasi.nova.taskmanagement.division.DivisionSignalTestSupport.headers;
-import static de.brasi.nova.taskmanagement.division.DivisionSignalTestSupport.snapshotLink;
 import static de.brasi.nova.taskmanagement.division.DivisionSignalTestSupport.stubHeaders;
-import static de.brasi.nova.taskmanagement.division.DivisionSignalTestSupport.textMessage;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.JMSException;
+import jakarta.jms.Message;
+import jakarta.jms.ObjectMessage;
 import jakarta.jms.TextMessage;
-import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 
 /**
- * Prueft {@link DivisionSignalGuard} (Intake #190, Task 4) mit gemockten JMS-Nachrichten: nur ein
- * vollstaendiges {@code DivisionMembershipChanged} mit passendem {@code eventName} in Header und
- * Body, uebereinstimmenden Header- und Body-IDs und einer revision aus 64 Kleinbuchstaben-Hex im
- * Snapshot-Link wird zum {@link DivisionSignal}; jeder Verstoss ergibt {@code Optional.empty()}.
+ * Prueft {@link DivisionSignalGuard} (Intake #190, Fix {@code tm-division-signal-properties}) mit
+ * gemockten JMS-Nachrichten: Nur die JMS-Properties zaehlen ({@code eventName}, {@code
+ * novaEventId}, {@code novaTenantId}, {@code aggregateId}, {@code aggregateType}, {@code
+ * semantics}), jeder Nachrichtentyp ist zulaessig, und der Body wird nie gelesen.
  *
- * <p>Angenommene Signaturen: {@code new DivisionSignalGuard(ObjectMapper)}, {@code
- * Optional<DivisionSignal> parse(Message) throws JMSException}; der Guard liest Header ueber {@code
- * getStringProperty} (die Mocks beantworten auch {@code getObjectProperty} und {@code
- * propertyExists}) und den Body ueber {@link TextMessage#getText()}.
+ * <p>Die Header kommen ueber {@link DivisionSignalTestSupport#headers} aus dem KSF-{@code
+ * NovaEventStandardHeaders#assemble}, also genau so, wie application sie setzt.
  */
 class DivisionSignalGuardTest {
 
   private static final UUID EVT = UUID.fromString("00000056-0000-0056-eeee-000000000190");
   private static final UUID TEN = UUID.fromString("00000056-0000-0056-0000-000000000561");
   private static final UUID DIV = UUID.fromString("00000056-0000-0056-dddd-000000000001");
-  private static final UUID OTHER_TENANT = UUID.fromString("00000056-0000-0056-0000-000000000562");
-  private static final String REV = "0123456789abcdef".repeat(4);
 
-  private final DivisionSignalGuard guard = new DivisionSignalGuard(new ObjectMapper());
+  private final DivisionSignalGuard guard = new DivisionSignalGuard();
 
   @Test
-  @DisplayName("gueltiges Ereignis ergibt das Signal mit IDs und revision aus dem Snapshot-Link")
-  void i190_valid_signal_parsed() throws JMSException {
-    final TextMessage msg = textMessage(headers(EVT, TEN, DIV), validBody());
+  @DisplayName("ObjectMessage mit allen Properties wird akzeptiert, ohne den Body zu lesen")
+  void i190_object_message_accepted_without_body() throws JMSException {
+    final ObjectMessage msg = mock(ObjectMessage.class);
+    stubHeaders(msg, headers(EVT, TEN, DIV));
 
-    assertThat(guard.parse(msg)).contains(new DivisionSignal(EVT, TEN, DIV, REV));
+    assertThat(guard.parse(msg)).contains(new DivisionSignal(EVT, TEN, DIV));
+    verify(msg, never()).getObject();
+    verify(msg, never()).getBody(any());
+    assertOnlyPropertiesRead(msg);
   }
 
   @Test
-  @DisplayName("anderer eventName wird verworfen")
-  void i190_wrong_event_name_rejected() throws JMSException {
-    final Map<String, String> headers = headers(EVT, TEN, DIV);
-    headers.put("eventName", "Other");
+  @DisplayName("TextMessage wird akzeptiert, ohne den Text zu lesen")
+  void i190_text_message_accepted_without_body() throws JMSException {
+    final TextMessage msg = mock(TextMessage.class);
+    stubHeaders(msg, headers(EVT, TEN, DIV));
 
-    assertThat(guard.parse(textMessage(headers, validBody()))).isEmpty();
+    assertThat(guard.parse(msg)).contains(new DivisionSignal(EVT, TEN, DIV));
+    verify(msg, never()).getText();
+    verify(msg, never()).getBody(any());
+    assertOnlyPropertiesRead(msg);
   }
 
   @Test
-  @DisplayName("eventName im Body weicht vom Header ab: wird verworfen")
-  void i190_body_event_name_mismatch_rejected() throws JMSException, IOException {
-    final String body = withBodyEventName(validBody(), "Other");
-
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), body))).isEmpty();
-  }
-
-  @Test
-  @DisplayName("eventName fehlt im Body (Pflichtfeld des KSF-Envelope): wird verworfen")
-  void i190_body_event_name_missing_rejected() throws JMSException, IOException {
-    final String body = withBodyEventName(validBody(), null);
-
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), body))).isEmpty();
-  }
-
-  @Test
-  @DisplayName("Mandant im Header und im Body verschieden wird verworfen")
-  void i190_header_body_tenant_mismatch_rejected() throws JMSException {
-    final String body = body(EVT, OTHER_TENANT, DIV, snapshotLink(OTHER_TENANT, DIV, REV));
-
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), body))).isEmpty();
-  }
-
-  @Test
-  @DisplayName("fehlende Ereignis-ID im Header oder im Body wird verworfen")
-  void i190_missing_event_id_rejected() throws JMSException {
-    final Map<String, String> withoutHeader = headers(EVT, TEN, DIV);
-    withoutHeader.remove("novaEventId");
-    final String bodyWithoutEventId = body(null, TEN, DIV, snapshotLink(TEN, DIV, REV));
-
-    assertThat(guard.parse(textMessage(withoutHeader, validBody()))).isEmpty();
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), bodyWithoutEventId))).isEmpty();
-  }
-
-  @Test
-  @DisplayName("Snapshot-Link ohne gueltige revision (Grossbuchstaben, 63 Zeichen) wird verworfen")
-  void i190_snapshot_link_without_valid_revision_rejected() throws JMSException {
-    final String upperCase = body(EVT, TEN, DIV, snapshotLink(TEN, DIV, "ABC"));
-    final String tooShort = body(EVT, TEN, DIV, snapshotLink(TEN, DIV, REV.substring(1)));
-
-    assertThat(REV.substring(1)).hasSize(63);
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), upperCase))).isEmpty();
-    assertThat(guard.parse(textMessage(headers(EVT, TEN, DIV), tooShort))).isEmpty();
-  }
-
-  @Test
-  @DisplayName("Nachricht ohne Text (BytesMessage) wird trotz gueltiger Header verworfen")
-  void i190_non_text_message_rejected() throws JMSException {
+  @DisplayName("BytesMessage wird akzeptiert, ohne Bytes zu lesen")
+  void i190_bytes_message_accepted_without_body() throws JMSException {
     final BytesMessage msg = mock(BytesMessage.class);
     stubHeaders(msg, headers(EVT, TEN, DIV));
 
+    assertThat(guard.parse(msg)).contains(new DivisionSignal(EVT, TEN, DIV));
+    verify(msg, never()).readBytes(any(byte[].class));
+    verify(msg, never()).getBodyLength();
+    verify(msg, never()).getBody(any());
+    assertOnlyPropertiesRead(msg);
+  }
+
+  @ParameterizedTest(name = "{0} fehlt")
+  @ValueSource(
+      strings = {
+        "eventName",
+        "novaEventId",
+        "novaTenantId",
+        "aggregateId",
+        "aggregateType",
+        "semantics"
+      })
+  @DisplayName("fehlende Pflicht-Property: verworfen, Body unberuehrt")
+  void i190_missing_property_rejected(final String property) throws JMSException {
+    final Map<String, String> headers = headers(EVT, TEN, DIV);
+    assertThat(headers).containsKey(property);
+    headers.remove(property);
+    final ObjectMessage msg = mock(ObjectMessage.class);
+    stubHeaders(msg, headers);
+
     assertThat(guard.parse(msg)).isEmpty();
+    verify(msg, never()).getObject();
+    assertOnlyPropertiesRead(msg);
   }
 
-  private static String validBody() {
-    return body(EVT, TEN, DIV, snapshotLink(TEN, DIV, REV));
+  @ParameterizedTest(name = "{0} = {1}")
+  @CsvSource({
+    "eventName, Other",
+    "eventName, divisionmembershipchanged",
+    "novaEventId, keine-uuid",
+    "novaTenantId, keine-uuid",
+    "aggregateId, keine-uuid",
+    "novaEventId, ' '",
+    "aggregateType, Company",
+    "aggregateType, division",
+    "semantics, STATE",
+    "semantics, fact"
+  })
+  @DisplayName("falsche Pflicht-Property: verworfen, Body unberuehrt")
+  void i190_wrong_property_rejected(final String property, final String value) throws JMSException {
+    final Map<String, String> headers = headers(EVT, TEN, DIV);
+    headers.put(property, value);
+    final ObjectMessage msg = mock(ObjectMessage.class);
+    stubHeaders(msg, headers);
+
+    assertThat(guard.parse(msg)).isEmpty();
+    verify(msg, never()).getObject();
+    assertOnlyPropertiesRead(msg);
   }
 
-  /** Setzt {@code eventName} im Body auf den Wert oder entfernt es bei {@code null}. */
-  private static String withBodyEventName(final String body, final String eventName)
-      throws IOException {
-    final ObjectNode root = (ObjectNode) new ObjectMapper().readTree(body);
-    if (eventName == null) {
-      root.remove("eventName");
-    } else {
-      root.put("eventName", eventName);
+  @Test
+  @DisplayName("KSF-Header tragen aggregateType Division und semantics FACT (Vertrag §2)")
+  void i190_ksf_headers_carry_contract_values() {
+    final Map<String, String> headers = headers(EVT, TEN, DIV);
+
+    assertThat(headers)
+        .containsEntry("eventName", "DivisionMembershipChanged")
+        .containsEntry("novaEventId", EVT.toString())
+        .containsEntry("novaTenantId", TEN.toString())
+        .containsEntry("aggregateId", DIV.toString())
+        .containsEntry("aggregateType", "Division")
+        .containsEntry("semantics", "FACT")
+        .containsKeys("aggregateVersion", "aggregateRefId", "brasiMessageVersion")
+        .containsKey("brasiSourceService");
+  }
+
+  @Test
+  @DisplayName("Ablehnung nennt Grund und Nachrichtenklasse im WARN")
+  void i190_rejection_log_names_reason_and_message_class() throws JMSException {
+    final Map<String, String> headers = headers(EVT, TEN, DIV);
+    headers.put("semantics", "STATE");
+    final ObjectMessage msg = mock(ObjectMessage.class);
+    stubHeaders(msg, headers);
+    final Logger logger = (Logger) LoggerFactory.getLogger(DivisionSignalGuard.class);
+    final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(guard.parse(msg)).isEmpty();
+    } finally {
+      logger.detachAppender(appender);
     }
-    return root.toString();
+
+    assertThat(appender.list).hasSize(1);
+    final String line = appender.list.get(0).getFormattedMessage();
+    assertThat(line)
+        .contains("semantics fehlt oder ist nicht FACT")
+        .contains("Nachricht=" + msg.getClass().getSimpleName())
+        .contains("ObjectMessage")
+        .contains(EVT.toString());
+  }
+
+  /** Jeder Zugriff auf die Nachricht war ein Property-Zugriff, keiner auf den Body. */
+  private static void assertOnlyPropertiesRead(final Message msg) {
+    final List<String> methods =
+        mockingDetails(msg).getInvocations().stream()
+            .map(invocation -> invocation.getMethod().getName())
+            .toList();
+    assertThat(methods)
+        .isNotEmpty()
+        .allMatch(
+            name -> name.endsWith("Property") || "propertyExists".equals(name),
+            "nur Property-Zugriffe");
   }
 }
