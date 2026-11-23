@@ -120,9 +120,9 @@ class TaskPatchInputTest {
         .isInstanceOf(EntityValidationException.class)
         .hasMessage(MENTIONS_WITHOUT_DESCRIPTION);
 
-    final TaskPatchInput ohneErwaehnung = patch(PatchValue.absent(), List.of(), null);
-    assertThat(ohneErwaehnung.mentions()).isEmpty();
-    assertThat(ohneErwaehnung.divisionMentions()).isEmpty();
+    final TaskPatchInput withoutMentions = patch(PatchValue.absent(), List.of(), null);
+    assertThat(withoutMentions.mentions()).isEmpty();
+    assertThat(withoutMentions.divisionMentions()).isEmpty();
   }
 
   @Test
@@ -133,15 +133,15 @@ class TaskPatchInputTest {
     final UUID person = UUID.randomUUID();
     final UUID division = UUID.randomUUID();
 
-    final TaskPatchInput mitText =
+    final TaskPatchInput withText =
         patch(PatchValue.of("Bitte ansehen."), List.of(person), List.of(division));
-    assertThat(mitText.mentions()).containsExactly(person);
-    assertThat(mitText.divisionMentions()).containsExactly(division);
+    assertThat(withText.mentions()).containsExactly(person);
+    assertThat(withText.divisionMentions()).containsExactly(division);
 
-    final TaskPatchInput geleert = patch(PatchValue.ofNull(), List.of(person), List.of(division));
-    assertThat(geleert.description().isPresent()).isTrue();
-    assertThat(geleert.mentions()).containsExactly(person);
-    assertThat(geleert.divisionMentions()).containsExactly(division);
+    final TaskPatchInput cleared = patch(PatchValue.ofNull(), List.of(person), List.of(division));
+    assertThat(cleared.description().isPresent()).isTrue();
+    assertThat(cleared.mentions()).containsExactly(person);
+    assertThat(cleared.divisionMentions()).containsExactly(division);
   }
 
   @Test
@@ -168,9 +168,9 @@ class TaskPatchInputTest {
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("divisionMentions darf hoechstens 10 Eintraege enthalten.");
 
-    final TaskPatchInput grenze = patch(description, uuids(100), uuids(10));
-    assertThat(grenze.mentions()).hasSize(100);
-    assertThat(grenze.divisionMentions()).hasSize(10);
+    final TaskPatchInput atLimit = patch(description, uuids(100), uuids(10));
+    assertThat(atLimit.mentions()).hasSize(100);
+    assertThat(atLimit.divisionMentions()).hasSize(10);
   }
 
   @Test
@@ -182,6 +182,31 @@ class TaskPatchInputTest {
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("mentions darf keine null-Elemente enthalten.");
     assertThatThrownBy(() -> patch(description, List.of(), Arrays.asList(null, UUID.randomUUID())))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("divisionMentions darf keine null-Elemente enthalten.");
+  }
+
+  @Test
+  @DisplayName(
+      "Pruefreihenfolge wie im Javadoc: mentions komplett (Grenze, null-Element) vor"
+          + " divisionMentions, beides vor der fehlenden Beschreibung")
+  void i190_patch_mentions_check_order() {
+    assertThatThrownBy(
+            () ->
+                patch(
+                    PatchValue.of("Text."),
+                    Arrays.asList((UUID) null),
+                    uuids(11)))
+        .as("null-Element von mentions kommt vor der Grenze von divisionMentions")
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("mentions darf keine null-Elemente enthalten.");
+    assertThatThrownBy(() -> patch(PatchValue.absent(), uuids(101), List.of()))
+        .as("Grenze kommt vor der fehlenden Beschreibung")
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("mentions darf hoechstens 100 Eintraege enthalten.");
+    assertThatThrownBy(
+            () -> patch(PatchValue.absent(), List.of(), Arrays.asList((UUID) null)))
+        .as("null-Element kommt vor der fehlenden Beschreibung")
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("divisionMentions darf keine null-Elemente enthalten.");
   }
@@ -215,18 +240,18 @@ class TaskPatchInputTest {
     final UUID person = UUID.randomUUID();
     final UUID division = UUID.randomUUID();
 
-    final TaskPatchInput ohne = mapper.readValue("{\"title\":\"T\"}", TaskPatchInput.class);
-    assertThat(ohne.mentions()).isEmpty();
-    assertThat(ohne.divisionMentions()).isEmpty();
+    final TaskPatchInput noMentions = mapper.readValue("{\"title\":\"T\"}", TaskPatchInput.class);
+    assertThat(noMentions.mentions()).isEmpty();
+    assertThat(noMentions.divisionMentions()).isEmpty();
 
-    final TaskPatchInput nullListen =
+    final TaskPatchInput nullLists =
         mapper.readValue(
             "{\"description\":\"D\",\"mentions\":null,\"divisionMentions\":null}",
             TaskPatchInput.class);
-    assertThat(nullListen.mentions()).isEmpty();
-    assertThat(nullListen.divisionMentions()).isEmpty();
+    assertThat(nullLists.mentions()).isEmpty();
+    assertThat(nullLists.divisionMentions()).isEmpty();
 
-    final TaskPatchInput gelesen =
+    final TaskPatchInput parsed =
         mapper.readValue(
             "{\"description\":\"D\",\"mentions\":[\""
                 + person
@@ -234,8 +259,8 @@ class TaskPatchInputTest {
                 + division
                 + "\"]}",
             TaskPatchInput.class);
-    assertThat(gelesen.mentions()).containsExactly(person);
-    assertThat(gelesen.divisionMentions()).containsExactly(division);
+    assertThat(parsed.mentions()).containsExactly(person);
+    assertThat(parsed.divisionMentions()).containsExactly(division);
 
     assertThatThrownBy(
             () ->

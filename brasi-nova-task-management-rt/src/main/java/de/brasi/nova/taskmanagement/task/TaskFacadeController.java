@@ -404,7 +404,15 @@ public class TaskFacadeController {
     @ApiResponse(
         responseCode = "409",
         description =
-            LockConflictApiExamples.DESCRIPTION + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT,
+            LockConflictApiExamples.DESCRIPTION
+                + " Mit Erwaehnungen in der Beschreibung (mentions, divisionMentions) kommt hinzu:"
+                + " Jede erwaehnte Person, die als Beteiligte aufgenommen wird, bekommt eine neue"
+                + " Teilnehmerzeile und eine neue Zeile des persoenlichen Zustands, die je eine"
+                + " Sequenz vergeben; beim gleichzeitigen Insert derselben Person tritt ein"
+                + " Unique- oder Sequenzkonflikt auf, noch bevor die Aufgabe gespeichert wird. Auch"
+                + " ihr Verlaufseintrag 'per Erwaehnung' vergibt eine Sequenz. In allen Faellen"
+                + " wurde nichts geaendert; die Anfrage wiederholen."
+                + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT,
         content =
             @Content(
                 mediaType = "application/json",

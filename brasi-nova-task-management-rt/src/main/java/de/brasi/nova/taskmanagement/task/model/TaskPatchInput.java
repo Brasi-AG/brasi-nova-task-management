@@ -39,16 +39,20 @@ import java.util.UUID;
  * leer). Der kompakte Konstruktor prueft in fester Reihenfolge, jeweils mit HTTP 400:
  *
  * <ol>
- *   <li>Rohlaenge (vor jeder Deduplizierung, Lesson {@code input-dto-patterns}): {@code mentions}
- *       hoechstens 100, {@code divisionMentions} hoechstens 10 Eintraege;
- *   <li>keine {@code null}-Elemente (je Liste, {@code mentions} zuerst);
+ *   <li>{@code mentions} komplett: Rohlaenge (vor jeder Deduplizierung, Lesson {@code
+ *       input-dto-patterns}) hoechstens 100 Eintraege, danach keine {@code null}-Elemente;
+ *   <li>{@code divisionMentions} komplett: Rohlaenge hoechstens 10 Eintraege, danach keine {@code
+ *       null}-Elemente;
  *   <li>erst dann: eine nicht leere Liste ist nur zusammen mit einem vorhandenen {@code
  *       description} zulaessig ({@link PatchValue#isPresent()}, auch wenn der Wert die Beschreibung
  *       leert).
  * </ol>
  *
- * Die fachliche Deduplizierung, die Aufloesung der Abteilungen und die Benachrichtigung macht
- * {@code TaskCommandService#patch}.
+ * Die Pruefung ist je Liste vollstaendig, bevor die naechste beginnt: bei {@code mentions=[null]}
+ * und 11 {@code divisionMentions} kommt die Meldung zum null-Element von {@code mentions}, nicht
+ * die Grenze von {@code divisionMentions}; Grenze oder null-Element schlagen die fehlende
+ * Beschreibung. Das entspricht {@code CommentCreateInput}. Die fachliche Deduplizierung, die
+ * Aufloesung der Abteilungen und die Benachrichtigung macht {@code TaskCommandService#patch}.
  *
  * @param title neuer Titel (oder absent)
  * @param dueDate neues Faelligkeitsdatum (oder absent/null)
