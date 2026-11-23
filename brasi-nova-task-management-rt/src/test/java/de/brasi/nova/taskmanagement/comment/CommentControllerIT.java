@@ -198,8 +198,9 @@ class CommentControllerIT {
   private static final String UNKNOWN_DIVISION_MESSAGE = "Unbekannte oder nicht aktive Abteilung.";
 
   /**
-   * Personengrenze der Abteilungserwaehnung in dieser Klasse (Test-Property in {@code
-   * @SpringBootTest}); gezaehlt werden die verschiedenen Personen aller erwaehnten Abteilungen.
+   * Personengrenze der Abteilungserwaehnung in dieser Klasse (Test-Property in
+   * {@code @SpringBootTest}); gezaehlt werden die verschiedenen Personen aller erwaehnten
+   * Abteilungen.
    */
   static final int DIVISION_CAP = 5;
 

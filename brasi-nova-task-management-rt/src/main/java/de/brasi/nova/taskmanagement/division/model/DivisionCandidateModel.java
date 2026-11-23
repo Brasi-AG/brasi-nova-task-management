@@ -8,8 +8,8 @@ import java.util.UUID;
  *
  * @param divisionId UUID der Abteilung in application (Wert fuer {@code divisionMentions})
  * @param name Anzeigename, {@code null}, solange application keinen liefert
- * @param memberCount Mitglieder der Abteilung mit aktivem Benutzer im Mandanten; die
- *     Personengrenze der Erwaehnung zaehlt dagegen alle Mitglieder
+ * @param memberCount Mitglieder der Abteilung mit aktivem Benutzer im Mandanten; die Personengrenze
+ *     der Erwaehnung zaehlt dagegen alle Mitglieder
  */
 @Schema(
     description =
