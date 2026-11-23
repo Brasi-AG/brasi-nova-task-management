@@ -124,6 +124,9 @@ import org.springframework.web.context.WebApplicationContext;
       "ksf.web-security.tenant.entity-class=de.brasi.nova.taskmanagement.refentity.Firm",
       "ksf.security.jwt.enabled=true",
       "ksf.module-registration.enabled=false",
+      // Intake #190: kleine Personengrenze der Abteilungserwaehnung, damit die Grenz-ITs ohne
+      // hunderte Zeilen auskommen (die Vorgabe 200 steht in application.properties).
+      "task-management.division-mentions.max-persons=" + CommentControllerIT.DIVISION_CAP,
     })
 @RefSchemaItEnabled
 @Execution(ExecutionMode.SAME_THREAD)
@@ -193,6 +196,16 @@ class CommentControllerIT {
 
   /** Einheitlicher 400-Text fuer unbekannte, inaktive und mandantenfremde Abteilungen. */
   private static final String UNKNOWN_DIVISION_MESSAGE = "Unbekannte oder nicht aktive Abteilung.";
+
+  /**
+   * Personengrenze der Abteilungserwaehnung in dieser Klasse (Test-Property in {@code
+   * @SpringBootTest}); gezaehlt werden die verschiedenen Personen aller erwaehnten Abteilungen.
+   */
+  static final int DIVISION_CAP = 5;
+
+  /** 400-Text bei mehr als {@link #DIVISION_CAP} verschiedenen Personen. */
+  private static final String DIVISION_CAP_MESSAGE =
+      "Die erwaehnten Abteilungen umfassen mehr als " + DIVISION_CAP + " Personen.";
 
   /** IDs der per JDBC gesaeten Abteilungs- und Mitgliederzeilen, weit weg von der KSF-Sequenz. */
   private static final AtomicLong JDBC_DIVISION_IDS = new AtomicLong(8_210_000_000L);
@@ -2311,8 +2324,8 @@ class CommentControllerIT {
   //
   // Die Projektion (TASK_ABTEILUNG, TASK_ABTEILUNG_MITGLIED) wird je Test per JDBC gesaet, wie sie
   // der Consumer aus Thema 2 schreibt; jede Abteilung hat eine eigene UUID. Mandant A (560) ist der
-  // Mandant des Akteurs, Mandant B (563) der fremde. Die Personengrenze kommt aus
-  // application.properties (task-management.division-mentions.max-persons=200).
+  // Mandant des Akteurs, Mandant B (563) der fremde. Die Personengrenze ist in dieser Klasse per
+  // Test-Property auf DIVISION_CAP gesenkt (Vorgabe 200 in application.properties).
 
   @Test
   @DisplayName(
@@ -2515,8 +2528,9 @@ class CommentControllerIT {
   @Test
   @DisplayName(
       "i190_member_without_active_user_is_skipped: Abteilung aus P1 (aktiv), einer UUID ohne"
-          + " Benutzer und einem inaktiven Benutzer -> 201, nur P1 wird aufgenommen und erwaehnt,"
-          + " die anderen still ohne Zeile und ohne Benachrichtigung")
+          + " Benutzer, einem inaktiven Benutzer und einem aktiven Benutzer des fremden Mandanten B"
+          + " (USER_C) -> 201, nur P1 wird aufgenommen und erwaehnt, die anderen still ohne Zeile,"
+          + " ohne Benachrichtigung und ohne MENTION")
   void i190_member_without_active_user_is_skipped() throws Exception {
     final MockMvc mvc = buildMvc();
     final ObjectMapper om = new ObjectMapper();
@@ -2524,17 +2538,30 @@ class CommentControllerIT {
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-OhneBenutzer");
     final UUID withoutUser = UUID.randomUUID();
     final UUID division = UUID.randomUUID();
+    // USER_C hat einen aktiven Benutzer, aber im Mandanten B: die Mitgliederzeile liegt im
+    // Mandanten A, der Benutzerfilter des Mandanten A findet ihn nicht.
     insertDivision(
-        TENANT_A_ID, division, "ACTIVE", "Mit Luecken", DIV_P1_REF, withoutUser, USER_INACTIVE_REF);
+        TENANT_A_ID,
+        division,
+        "ACTIVE",
+        "Mit Luecken",
+        DIV_P1_REF,
+        withoutUser,
+        USER_INACTIVE_REF,
+        USER_C_REF);
 
     postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Mit Luecken.", division);
 
     assertThat(countActiveParticipantRows(taskUuid, DIV_P1_REF)).isEqualTo(1);
     assertThat(countNotifications(taskUuid, DIV_P1_REF, "MENTION")).isEqualTo(1);
-    for (final UUID skipped : List.of(withoutUser, USER_INACTIVE_REF)) {
+    for (final UUID skipped : List.of(withoutUser, USER_INACTIVE_REF, USER_C_REF)) {
       assertThat(participantRowCount(taskUuid, skipped)).as("keine Zeile %s", skipped).isZero();
       assertThat(notificationCountOfRecipient(taskUuid, skipped)).isZero();
+      assertThat(countNotifications(taskUuid, skipped, "MENTION"))
+          .as("keine MENTION %s", skipped)
+          .isZero();
     }
+    assertThat(mentionCountOfTask(taskUuid)).as("nur die MENTION fuer P1").isEqualTo(1);
     assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(1);
   }
 
@@ -2576,6 +2603,83 @@ class CommentControllerIT {
     assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(2);
   }
 
+  @Test
+  @DisplayName(
+      "i190_cap_counts_distinct_persons: zwei Abteilungen mit Ueberschneidung (4 und 3 Mitglieder,"
+          + " D steht in beiden) umfassen 6 verschiedene Personen, eine davon ohne Benutzer, bei"
+          + " Grenze 5 -> 400 NOVA_VALIDATION_FAILED mit der Grenze im Text; kein Kommentar,"
+          + " COMMENT_COUNT unveraendert, niemand aufgenommen, keine Benachrichtigung")
+  void i190_cap_counts_distinct_persons() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Grenze");
+    final UUID first = UUID.randomUUID();
+    final UUID second = UUID.randomUUID();
+    // Verschieden: P1, P2, P3, D, E und eine UUID ohne Benutzer = 6 (Mitgliederzeilen: 7). Die
+    // Grenze zaehlt vor dem Filter auf aktive Benutzer; mit 5 aktiven Personen waere sie erfuellt.
+    insertDivision(
+        TENANT_A_ID,
+        first,
+        "ACTIVE",
+        "Grenze Eins",
+        DIV_P1_REF,
+        DIV_P2_REF,
+        DIV_P3_REF,
+        USER_D_REF);
+    insertDivision(
+        TENANT_A_ID, second, "ACTIVE", "Grenze Zwei", USER_D_REF, USER_E_REF, UUID.randomUUID());
+
+    expectDivisionRejected(
+        mvc,
+        om,
+        tokenA,
+        taskUuid,
+        Map.of(
+            "text",
+            "Zu gross.",
+            "mentions",
+            List.of(USER_B_REF),
+            "divisionMentions",
+            List.of(first, second)),
+        DIVISION_CAP_MESSAGE);
+
+    for (final UUID person : List.of(DIV_P1_REF, DIV_P2_REF, DIV_P3_REF, USER_D_REF, USER_E_REF)) {
+      assertThat(participantRowCount(taskUuid, person)).as("keine Zeile %s", person).isZero();
+    }
+    assertThat(participantRowCount(taskUuid, USER_B_REF)).as("auch mentions nicht").isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_cap_counts_after_dedup: zwei Abteilungen mit Ueberschneidung (4 und 3 Mitglieder, P3"
+          + " und D in beiden) umfassen genau 5 verschiedene Personen bei Grenze 5 -> 201; die"
+          + " Grenze zaehlt nach der Deduplizierung und gilt inklusive, alle 5 werden aufgenommen"
+          + " und je einmal erwaehnt")
+  void i190_cap_counts_after_dedup() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Grenze-ok");
+    final UUID first = UUID.randomUUID();
+    final UUID second = UUID.randomUUID();
+    // Verschieden: P1, P2, P3, D, E = genau 5; P3 und D stehen in beiden Abteilungen.
+    insertDivision(
+        TENANT_A_ID, first, "ACTIVE", "Dedup Eins", DIV_P1_REF, DIV_P2_REF, DIV_P3_REF, USER_D_REF);
+    insertDivision(TENANT_A_ID, second, "ACTIVE", "Dedup Zwei", DIV_P3_REF, USER_D_REF, USER_E_REF);
+    final int countBefore = commentCountOf(taskUuid);
+
+    postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Genau an der Grenze.", first, second);
+
+    assertThat(commentCountOf(taskUuid)).isEqualTo(countBefore + 1);
+    assertThat(participantRowsOfTask(taskUuid)).as("Erstellerin plus 5").isEqualTo(1 + 5);
+    assertThat(mentionCountOfTask(taskUuid)).as("je Person eine MENTION").isEqualTo(5);
+    assertThat(historyCount(taskUuid, HISTORY_MENTIONED)).isEqualTo(5);
+    for (final UUID person : List.of(DIV_P1_REF, DIV_P2_REF, DIV_P3_REF, USER_D_REF, USER_E_REF)) {
+      assertThat(countNotifications(taskUuid, person, "MENTION")).as("MENTION %s", person).isOne();
+    }
+  }
+
   /** Token der Erstellerin A mit TASK_WRITE und TASK_READ (darf Beteiligte aufnehmen). */
   private static String writerTokenA() {
     return buildJwtWithAuthority(
@@ -2607,8 +2711,7 @@ class CommentControllerIT {
 
   /**
    * Postet {@code body} und erwartet die 400 der unbekannten Abteilung im KSF-Format; danach darf
-   * an der Aufgabe nichts geschrieben sein (Kommentarzeilen, COMMENT_COUNT, Teilnehmer, Verlauf und
-   * Benachrichtigungen unveraendert).
+   * an der Aufgabe nichts geschrieben sein (siehe {@link #expectDivisionRejected}).
    */
   private void expectUnknownDivision(
       final MockMvc mvc,
@@ -2616,6 +2719,22 @@ class CommentControllerIT {
       final String token,
       final UUID taskUuid,
       final Map<String, Object> body)
+      throws Exception {
+    expectDivisionRejected(mvc, om, token, taskUuid, body, UNKNOWN_DIVISION_MESSAGE);
+  }
+
+  /**
+   * Postet {@code body} und erwartet 400 {@code NOVA_VALIDATION_FAILED} mit {@code message} im
+   * KSF-Format; danach darf an der Aufgabe nichts geschrieben sein (Kommentarzeilen, COMMENT_COUNT,
+   * Teilnehmer, Verlauf und Benachrichtigungen unveraendert).
+   */
+  private void expectDivisionRejected(
+      final MockMvc mvc,
+      final ObjectMapper om,
+      final String token,
+      final UUID taskUuid,
+      final Map<String, Object> body,
+      final String message)
       throws Exception {
     final int commentRowsBefore = commentRowsOf(taskUuid);
     final int countBefore = commentCountOf(taskUuid);
@@ -2630,7 +2749,7 @@ class CommentControllerIT {
                 .content(om.writeValueAsString(body)))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
-        .andExpect(jsonPath("$.message").value(UNKNOWN_DIVISION_MESSAGE));
+        .andExpect(jsonPath("$.message").value(message));
 
     assertThat(commentRowsOf(taskUuid)).as("kein Kommentar").isEqualTo(commentRowsBefore);
     assertThat(commentCountOf(taskUuid)).as("COMMENT_COUNT").isEqualTo(countBefore);
