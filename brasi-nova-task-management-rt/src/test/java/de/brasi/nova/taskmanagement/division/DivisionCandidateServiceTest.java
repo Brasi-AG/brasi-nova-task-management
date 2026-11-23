@@ -21,6 +21,7 @@ import de.brasi.nova.taskmanagement.repository.DivisionCandidateRow;
 import de.brasi.nova.taskmanagement.repository.TaskDivisionQueryRepository;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -150,6 +151,26 @@ class DivisionCandidateServiceTest {
         .containsExactly(
             new DivisionCandidateModel(a, "Einkauf", 3),
             new DivisionCandidateModel(b, "Verkauf", 0));
+  }
+
+  @Test
+  @DisplayName(
+      "leere Eintraege in ids (null, etwa bei ?ids=,) -> 400 mit eigenem Text, ohne Query; auch"
+          + " neben gueltigen UUIDs")
+  void i190_null_elements_in_ids_400() {
+    final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
+    // Spring wandelt einen leeren Eintrag in null um: ?ids=, ergibt [null, null].
+    final List<UUID> onlyNulls = Arrays.asList(null, null);
+    final List<UUID> nullLast = Arrays.asList(UUID.randomUUID(), null);
+    final List<UUID> nullFirst = Arrays.asList(null, UUID.randomUUID());
+
+    for (final List<UUID> ids : List.of(onlyNulls, nullLast, nullFirst)) {
+      assertThatThrownBy(() -> service.find("q", ids, 20))
+          .as("ids %s", ids)
+          .isInstanceOf(EntityValidationException.class)
+          .hasMessage(message);
+    }
+    verifyNoInteractions(divisionRepo);
   }
 
   @Test

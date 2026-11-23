@@ -86,8 +86,9 @@ import org.springframework.web.context.WebApplicationContext;
  * dann nach Abteilungs-UUID; {@code q} filtert woertlich ueber den Namen (Sonderzeichen {@code %},
  * {@code _}, {@code [} entschaerft, Lockvoegel samt Gegenprobe), unbenannte fallen dabei heraus;
  * {@code ids} liefert die Vorschau bekannter aktiver Abteilungen und gewinnt vor {@code q} und
- * {@code limit}; {@code limit} 1 bis 100, Vorgabe 20; 400 im KSF-Format, 401 anonym, 403 ohne
- * TASK_READ; der Pfad wird nicht von {@code /api/v1/tasks/{id}} verschluckt.
+ * {@code limit}; {@code limit} 1 bis 100, Vorgabe 20; 400 im KSF-Format (auch bei leeren Eintraegen
+ * in {@code ids}), 401 anonym, 403 ohne TASK_READ; der Pfad wird nicht von {@code
+ * /api/v1/tasks/{id}} verschluckt.
  *
  * <p>Die Projektion wird per JDBC gesaet wie in {@code DivisionProjectionIT}. Mandanten: 561 (A,
  * Haupt-Mandant), 562 (B, fremd), 563 (C, nur fuer die vollstaendige Liste ohne {@code q}), 564 (D,
@@ -434,6 +435,25 @@ class DivisionCandidateControllerIT {
     assertThat(items(token, get(URL).queryParam("q", "qlimit").queryParam("limit", "1")))
         .extracting(Item::name)
         .containsExactly("Qlimit A");
+  }
+
+  @Test
+  @DisplayName(
+      "leere Eintraege in ids (?ids=, und ein leerer Wert neben einer UUID) -> 400 im KSF-Format"
+          + " mit eigenem Text statt eines Fehlers in der Query")
+  void i190_empty_ids_entries_400() throws Exception {
+    final String token = readToken(TENANT_A_UUID, ACTOR_A_REF);
+    final MockMvc mvc = buildMvc();
+    final String message = "Der Parameter 'ids' darf keine leeren Eintraege enthalten.";
+
+    // Spring wandelt einen leeren Eintrag in null um: ?ids=, ergibt [null, null], ?ids=<uuid>&ids=
+    // ergibt [<uuid>, null].
+    for (final String[] ids : new String[][] {{","}, {UUID.randomUUID().toString(), ""}}) {
+      mvc.perform(get(URL).queryParam("ids", ids).header("Authorization", bearer(token)))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errorKey").value("NOVA_VALIDATION_FAILED"))
+          .andExpect(jsonPath("$.message").value(message));
+    }
   }
 
   @Test

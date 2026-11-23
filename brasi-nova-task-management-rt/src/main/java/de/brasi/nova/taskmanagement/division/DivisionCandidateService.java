@@ -7,6 +7,7 @@ import de.brasi.nova.taskmanagement.repository.TaskDivisionQueryRepository;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -51,8 +52,9 @@ public class DivisionCandidateService {
    * @param limit hoechste Zahl der Vorschlaege der Suche ({@value #MIN_LIMIT} bis {@value
    *     #MAX_LIMIT}); wird auch bei {@code ids} geprueft, wirkt dort aber nicht
    * @return die Vorschlaege, sortiert nach Name (unbenannte zuletzt), dann nach UUID
-   * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt oder mehr
-   *     als {@value #MAX_IDS} {@code ids} uebergeben wurden (HTTP 400)
+   * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt, mehr als
+   *     {@value #MAX_IDS} {@code ids} uebergeben wurden oder ein Eintrag von {@code ids} leer
+   *     ({@code null}) ist (HTTP 400)
    */
   public DivisionCandidatePage find(final String q, final List<UUID> ids, final int limit) {
     if (limit < MIN_LIMIT || limit > MAX_LIMIT) {
@@ -68,6 +70,13 @@ public class DivisionCandidateService {
     if (ids != null && ids.size() > MAX_IDS) {
       throw new EntityValidationException(
           "Der Parameter 'ids' darf hoechstens " + MAX_IDS + " Eintraege enthalten.");
+    }
+    // Spring wandelt einen leeren Eintrag (?ids=, oder ?ids=&ids=) in null um; ein null in der
+    // IN-Liste der Query wuerde als untypisierter Null-Parameter gebunden (Lesson
+    // ksf-novaquery-pitfalls). stream statt contains: List.of(...) wirft bei contains(null).
+    if (ids != null && ids.stream().anyMatch(Objects::isNull)) {
+      throw new EntityValidationException(
+          "Der Parameter 'ids' darf keine leeren Eintraege enthalten.");
     }
     final List<DivisionCandidateRow> rows;
     if (ids != null && !ids.isEmpty()) {
