@@ -49,26 +49,51 @@ public interface TaskDivisionQueryRepository extends BaseTaskDivisionRepository 
   Optional<String> findRevision(@Param("divisionRef") UUID divisionRef);
 
   /**
-   * Alle bekannten Abteilungen aller Mandanten in jedem Status (auch Grabsteine), mit der UUID des
-   * aktiven Mandanten, fuer den Resync-Job. Nur unter {@code runAsSystem}; der Job arbeitet danach
-   * je Zeile unter {@code runWithTenant}.
+   * Alle Abteilungen aller Mandanten, die der Resync-Job nachladen soll, mit der UUID des aktiven
+   * Mandanten. Nur unter {@code runAsSystem}; der Job arbeitet danach je Zeile unter {@code
+   * runWithTenant}.
    *
-   * @return eine Zeile je Mandant und Abteilung, nach Mandant und Kopf-ID sortiert
+   * <p>Zwei Quellen, per {@code UNION} vereinigt (je Mandant und Abteilung eine Zeile): jede
+   * Abteilung mit Kopfzeile in {@code TASK_ABTEILUNG} in jedem Status (auch Grabsteine) und jede
+   * Abteilung mit einer {@code DEAD}-Quittung (mit gesetztem {@code ABTEILUNG_REF}) in {@code
+   * TASK_EREIGNIS_QUITTUNG}, fuer die es im selben Mandanten keine Kopfzeile gibt, egal in welchem
+   * Status. So erreicht der Nachlauf auch eine Abteilung, deren Erstabruf bis zum Zustelllimit
+   * scheiterte und die deshalb nur die {@code DEAD}-Spur hat. Mehrere {@code DEAD}-Quittungen
+   * derselben Abteilung ergeben eine Zeile. Quittungen ohne Abteilungsbezug (SPI-Pfad) und {@code
+   * PROCESSED}-Quittungen zaehlen nicht. Die {@code DEAD}-Spur gilt bis zur Aufbewahrung der
+   * Quittungen ({@code receipt-retention}); danach erfasst diese Query die Abteilung nicht mehr.
+   *
+   * @return eine Zeile je Mandant und Abteilung, nach Mandant und Abteilung sortiert
    */
   @GlobalQuery(
       reason =
-          "Resync-Job laedt den aktuellen Stand jeder bekannten Abteilung aller Mandanten nach;"
-              + " liefert nur Mandanten- und Abteilungs-Schluessel, danach runWithTenant je Zeile.")
+          "Resync-Job laedt den aktuellen Stand jeder bekannten Abteilung aller Mandanten nach"
+              + " (Kopfzeile oder DEAD-Quittung ohne Kopfzeile); liefert nur Mandanten- und"
+              + " Abteilungs-Schluessel, danach runWithTenant je Zeile.")
   @NovaQuery(
       value =
           "SELECT a.TENANT_ID AS tenantId, f.EXTERNALID AS tenantUuid,"
               + " a.ABTEILUNG_REF AS divisionRef FROM TASK_ABTEILUNG a"
               + " JOIN PROD_FIRMA f ON f.ID = a.TENANT_ID AND f.ENTITY_STATUS = 'ACTIVE'"
-              + " ORDER BY a.TENANT_ID, a.ID",
+              + " UNION"
+              + " SELECT q.TENANT_ID AS tenantId, f.EXTERNALID AS tenantUuid,"
+              + " q.ABTEILUNG_REF AS divisionRef FROM TASK_EREIGNIS_QUITTUNG q"
+              + " JOIN PROD_FIRMA f ON f.ID = q.TENANT_ID AND f.ENTITY_STATUS = 'ACTIVE'"
+              + " WHERE q.STATUS = 'DEAD' AND q.ABTEILUNG_REF IS NOT NULL"
+              + " AND NOT EXISTS (SELECT 1 FROM TASK_ABTEILUNG h"
+              + " WHERE h.TENANT_ID = q.TENANT_ID AND h.ABTEILUNG_REF = q.ABTEILUNG_REF)"
+              + " ORDER BY tenantId, divisionRef",
       mssql =
           "SELECT a.TENANT_ID AS tenantId, f.EXTERNALID AS tenantUuid,"
               + " a.ABTEILUNG_REF AS divisionRef FROM [dbo].[TASK_ABTEILUNG] a"
               + " JOIN [dbo].[PROD_FIRMA] f ON f.ID = a.TENANT_ID AND f.ENTITY_STATUS = 'ACTIVE'"
-              + " ORDER BY a.TENANT_ID, a.ID")
+              + " UNION"
+              + " SELECT q.TENANT_ID AS tenantId, f.EXTERNALID AS tenantUuid,"
+              + " q.ABTEILUNG_REF AS divisionRef FROM [dbo].[TASK_EREIGNIS_QUITTUNG] q"
+              + " JOIN [dbo].[PROD_FIRMA] f ON f.ID = q.TENANT_ID AND f.ENTITY_STATUS = 'ACTIVE'"
+              + " WHERE q.STATUS = 'DEAD' AND q.ABTEILUNG_REF IS NOT NULL"
+              + " AND NOT EXISTS (SELECT 1 FROM [dbo].[TASK_ABTEILUNG] h"
+              + " WHERE h.TENANT_ID = q.TENANT_ID AND h.ABTEILUNG_REF = q.ABTEILUNG_REF)"
+              + " ORDER BY tenantId, divisionRef")
   List<DivisionResyncRow> findAllForResync();
 }

@@ -46,6 +46,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -59,10 +60,20 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 562 mit einem Grabstein (404, {@code DEACTIVE}). Gelesen wird unter {@code runAsSystem}
  * ({@code @GlobalQuery}). Mandant 565 ist als {@code DEACTIVE}-Firma angelegt.
  *
+ * <p>Die Liste enthaelt zusaetzlich Abteilungen, die nur eine {@code DEAD}-Quittung mit {@code
+ * ABTEILUNG_REF} und keine Kopfzeile haben (Erstabruf bis zum Zustelllimit gescheitert): je
+ * Abteilung genau eine Zeile, auch bei mehreren {@code DEAD}-Quittungen oder vorhandener Kopfzeile
+ * (aktiv oder Grabstein); {@code PROCESSED}-Quittungen und {@code DEAD}-Quittungen ohne
+ * Abteilungsbezug (SPI-Pfad) zaehlen nicht. Die Quittungen entstehen ueber {@link
+ * TaskEventReceiptStore}.
+ *
  * <p>Kontext wie {@code DivisionProjectionIT}. Uebersprungen ohne MSSQL-Zugang ({@link
  * RefSchemaItEnabled}).
  *
- * <p>Angenommene Signaturen: {@code record DivisionResyncRow(long tenantId, UUID tenantUuid, UUID
+ * <p>Angenommene Signaturen: {@code TaskEventReceiptStore} (Bean ohne Abhaengigkeiten ausserhalb
+ * von {@code repository}) mit {@code markDead(DivisionSignal, String)}, {@code
+ * executeOnce(DivisionSignal, Runnable)} und {@code executeOnce(UUID, UUID, Runnable)}; {@code
+ * record DivisionResyncRow(long tenantId, UUID tenantUuid, UUID
  * divisionRef)} im Paket {@code repository}; {@code List<DivisionResyncRow> findAllForResync()};
  * {@code Optional<Long> FirmReadRepository#findTenantIdByUuid(UUID)}.
  */
@@ -96,12 +107,14 @@ class DivisionResyncIT {
 
   private static final LocalDateTime T1 = LocalDateTime.of(2026, 11, 20, 10, 0, 0);
   private static final String REV1 = "1".repeat(64);
+  private static final String SIGNAL_REV = "c".repeat(64);
 
   private static HikariDataSource master;
   private static String dbName;
 
   @Autowired private DivisionProjectionService projectionService;
   @Autowired private TaskDivisionQueryRepository divisionRepository;
+  @Autowired private TaskEventReceiptStore receiptStore;
   @Autowired private FirmReadRepository firmRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -181,6 +194,86 @@ class DivisionResyncIT {
   }
 
   @Test
+  @DisplayName("findAllForResync: DEAD-Quittung mit Abteilung ohne Kopfzeile ist enthalten")
+  void i190_find_all_for_resync_includes_dead_receipt_without_head() {
+    final UUID divisionRef = UUID.randomUUID();
+    assertThat(headCount(TENANT_A_ID, divisionRef)).as("keine Kopfzeile").isZero();
+    markDead(TENANT_A_ID, TENANT_A_UUID, divisionRef);
+
+    assertThat(resyncRowsFor(divisionRef))
+        .containsExactly(new DivisionResyncRow(TENANT_A_ID, TENANT_A_UUID, divisionRef));
+  }
+
+  @Test
+  @DisplayName("findAllForResync: mehrere DEAD-Quittungen derselben Abteilung ergeben eine Zeile")
+  void i190_find_all_for_resync_dead_receipts_of_same_division_yield_one_row() {
+    final UUID divisionRef = UUID.randomUUID();
+    markDead(TENANT_B_ID, TENANT_B_UUID, divisionRef);
+    markDead(TENANT_B_ID, TENANT_B_UUID, divisionRef);
+    assertThat(deadReceiptCount(TENANT_B_UUID, divisionRef)).as("zwei Quittungen").isEqualTo(2);
+
+    assertThat(resyncRowsFor(divisionRef))
+        .containsExactly(new DivisionResyncRow(TENANT_B_ID, TENANT_B_UUID, divisionRef));
+  }
+
+  @Test
+  @DisplayName("findAllForResync: DEAD-Quittung zu Abteilung mit Kopfzeile ergibt genau eine Zeile")
+  void i190_find_all_for_resync_dead_receipt_with_head_yields_one_row() {
+    final UUID activeRef = UUID.randomUUID();
+    final UUID tombstoneRef = UUID.randomUUID();
+    apply(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        activeRef,
+        new Members(new DivisionMembersPayload(activeRef, "Einkauf", REV1, List.of())));
+    apply(TENANT_A_ID, TENANT_A_UUID, tombstoneRef, new NotFound());
+    markDead(TENANT_A_ID, TENANT_A_UUID, activeRef);
+    markDead(TENANT_A_ID, TENANT_A_UUID, tombstoneRef);
+    assertThat(headCount(TENANT_A_ID, activeRef)).isEqualTo(1);
+    assertThat(headCount(TENANT_A_ID, tombstoneRef)).isEqualTo(1);
+
+    assertThat(resyncRowsFor(activeRef))
+        .as("aktive Kopfzeile")
+        .containsExactly(new DivisionResyncRow(TENANT_A_ID, TENANT_A_UUID, activeRef));
+    assertThat(resyncRowsFor(tombstoneRef))
+        .as("Grabstein")
+        .containsExactly(new DivisionResyncRow(TENANT_A_ID, TENANT_A_UUID, tombstoneRef));
+  }
+
+  @Test
+  @DisplayName("findAllForResync: PROCESSED-Quittung ohne Kopfzeile ist nicht enthalten")
+  void i190_find_all_for_resync_excludes_processed_receipt_without_head() {
+    final UUID divisionRef = UUID.randomUUID();
+    markProcessed(TENANT_A_ID, TENANT_A_UUID, divisionRef);
+    assertThat(receiptCount(TENANT_A_UUID, divisionRef)).as("Quittung vorhanden").isEqualTo(1);
+    assertThat(headCount(TENANT_A_ID, divisionRef)).as("keine Kopfzeile").isZero();
+
+    assertThat(resyncRowsFor(divisionRef)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("findAllForResync: DEAD-Quittung ohne ABTEILUNG_REF (SPI-Pfad) ist nicht enthalten")
+  void i190_find_all_for_resync_excludes_dead_receipt_without_division_ref() {
+    final UUID eventId = UUID.randomUUID();
+    inTenantTx(
+        TENANT_A_ID,
+        TENANT_A_UUID,
+        status -> receiptStore.executeOnce(TENANT_A_UUID, eventId, () -> {}));
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_EREIGNIS_QUITTUNG] SET STATUS = 'DEAD' WHERE EREIGNIS_ID = ?",
+        eventId.toString());
+    final Integer withoutRef =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM [dbo].[TASK_EREIGNIS_QUITTUNG] WHERE EREIGNIS_ID = ?"
+                + " AND STATUS = 'DEAD' AND ABTEILUNG_REF IS NULL",
+            Integer.class,
+            eventId.toString());
+    assertThat(withoutRef).as("DEAD-Quittung ohne Abteilungsbezug").isEqualTo(1);
+
+    assertThat(resyncRows()).noneMatch(row -> row.divisionRef() == null);
+  }
+
+  @Test
   @DisplayName("findTenantIdByUuid: aktive Firma liefert ihre ID, je UUID die eigene")
   void i190_find_tenant_id_by_uuid_returns_id_of_active_firm() {
     assertThat(findTenantId(TENANT_A_UUID)).contains(TENANT_A_ID);
@@ -205,6 +298,71 @@ class DivisionResyncIT {
   }
 
   // ---- Hilfsmethoden --------------------------------------------------------------------------
+
+  private List<DivisionResyncRow> resyncRows() {
+    return TenantContextHolder.runAsSystem(() -> divisionRepository.findAllForResync());
+  }
+
+  private List<DivisionResyncRow> resyncRowsFor(final UUID divisionRef) {
+    return resyncRows().stream().filter(row -> divisionRef.equals(row.divisionRef())).toList();
+  }
+
+  /** Legt eine {@code DEAD}-Quittung mit Abteilungsbezug an (eigene Transaktion, neues Ereignis). */
+  private void markDead(final long tenantId, final UUID tenantUuid, final UUID divisionRef) {
+    final DivisionSignal signal =
+        new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef, SIGNAL_REV);
+    TenantContextHolder.setTenant(new TenantInfo(tenantUuid, tenantId));
+    try {
+      receiptStore.markDead(signal, "Abruf fehlgeschlagen: HTTP 503");
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
+  /** Legt eine {@code PROCESSED}-Quittung mit Abteilungsbezug an (ohne Kopfzeile). */
+  private void markProcessed(final long tenantId, final UUID tenantUuid, final UUID divisionRef) {
+    final DivisionSignal signal =
+        new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef, SIGNAL_REV);
+    final Boolean claimed =
+        inTenantTx(tenantId, tenantUuid, status -> receiptStore.executeOnce(signal, () -> {}));
+    assertThat(claimed).isTrue();
+  }
+
+  private <T> T inTenantTx(
+      final long tenantId, final UUID tenantUuid, final TransactionCallback<T> body) {
+    TenantContextHolder.setTenant(new TenantInfo(tenantUuid, tenantId));
+    try {
+      return new TransactionTemplate(transactionManager).execute(body);
+    } finally {
+      TenantContextHolder.clear();
+    }
+  }
+
+  private int headCount(final long tenantId, final UUID divisionRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_ABTEILUNG] WHERE TENANT_ID = ? AND ABTEILUNG_REF = ?",
+        Integer.class,
+        tenantId,
+        divisionRef.toString());
+  }
+
+  private int receiptCount(final UUID tenantUuid, final UUID divisionRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_EREIGNIS_QUITTUNG]"
+            + " WHERE MANDANT_UUID = ? AND ABTEILUNG_REF = ?",
+        Integer.class,
+        tenantUuid.toString(),
+        divisionRef.toString());
+  }
+
+  private int deadReceiptCount(final UUID tenantUuid, final UUID divisionRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_EREIGNIS_QUITTUNG]"
+            + " WHERE MANDANT_UUID = ? AND ABTEILUNG_REF = ? AND STATUS = 'DEAD'",
+        Integer.class,
+        tenantUuid.toString(),
+        divisionRef.toString());
+  }
 
   /** Aufloesung wie im Processor: unter {@code runAsSystem}, ohne Mandanten-Kontext. */
   private Optional<Long> findTenantId(final UUID tenantUuid) {
@@ -257,7 +415,7 @@ class DivisionResyncIT {
     KsfIntegrationAutoConfiguration.class,
     AopAutoConfiguration.class,
   })
-  @Import(DivisionProjectionService.class)
+  @Import({DivisionProjectionService.class, TaskEventReceiptStore.class})
   static class ItConfig {
 
     @Bean

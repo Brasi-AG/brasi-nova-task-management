@@ -44,10 +44,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * macht sie sichtbar. Ein unbekannter oder nicht aktiver Mandant ist dagegen kein Fehler (INFO,
  * verworfen).
  *
- * <p>Der Nachtlauf des Resync ({@link DivisionResyncJob}) heilt nur Abteilungen mit Kopfzeile in
- * {@code TASK_ABTEILUNG}, also mit aktivem Stand oder Grabstein. Eine Abteilung, deren Abrufe alle
- * scheiterten und die deshalb nur eine {@code DEAD}-Quittung und keine Kopfzeile hat, sieht der
- * Resync nicht; sie heilt erst ein neues Signal von application oder dessen Start-Resync.
+ * <p>Der Nachtlauf des Resync ({@link DivisionResyncJob}) erfasst auch eine Abteilung, deren Abrufe
+ * alle scheiterten und die deshalb nur eine {@code DEAD}-Quittung und keine Kopfzeile in {@code
+ * TASK_ABTEILUNG} hat; der Abruf legt die Kopfzeile an. Nach {@code receipt-retention} verfaellt die
+ * {@code DEAD}-Spur; eine bis dahin nicht geheilte Abteilung erfasst der Resync danach nicht mehr,
+ * dann hilft nur ein neues Signal von application oder dessen Start-Resync.
  */
 @Service
 public class DivisionSignalProcessor {

@@ -23,11 +23,13 @@ import org.springframework.stereotype.Component;
  * jeder bekannten Abteilung aller Mandanten nach (auch deaktivierte) und loescht Quittungen, die
  * aelter als {@code receipt-retention} sind.
  *
- * <p>Bekannt ist eine Abteilung nur mit Kopfzeile in {@code TASK_ABTEILUNG}, also mit aktivem Stand
- * oder Grabstein (404). Eine Abteilung, deren Abrufe seit dem ersten Signal alle scheiterten, hat
- * nur eine {@code DEAD}-Quittung und keine Kopfzeile; der Lauf sieht sie nicht. Sie heilt erst ein
- * neues Signal von application oder dessen Start-Resync; die {@code DEAD}-Quittung verfaellt nach
- * {@code receipt-retention}.
+ * <p>Erfasst werden Abteilungen mit Kopfzeile in {@code TASK_ABTEILUNG} (aktiver Stand oder
+ * Grabstein nach 404) und Abteilungen, deren Abrufe seit dem ersten Signal alle scheiterten und die
+ * deshalb nur eine {@code DEAD}-Quittung ohne Kopfzeile haben ({@code
+ * TaskDivisionQueryRepository#findAllForResync}); der Abruf legt dann die Kopfzeile an. Grenze: Die
+ * {@code DEAD}-Spur verfaellt nach {@code receipt-retention}; eine bis dahin nicht geheilte
+ * Abteilung ohne Kopfzeile erfasst der Lauf danach nicht mehr, dann hilft nur ein neues Signal von
+ * application oder dessen Start-Resync. Im Lauf kommt der Resync vor der Aufbewahrung.
  *
  * <p>Gelesen und geloescht wird mandantenuebergreifend unter {@code runAsSystem}; jeder Abruf
  * laeuft ueber {@link DivisionSignalProcessor#resync} unter seinem Mandanten. Ein Fehler bei einer
