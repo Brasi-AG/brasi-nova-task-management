@@ -73,9 +73,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Angenommene Signaturen: {@code TaskEventReceiptStore} (Bean ohne Abhaengigkeiten ausserhalb
  * von {@code repository}) mit {@code markDead(DivisionSignal, String)}, {@code
  * executeOnce(DivisionSignal, Runnable)} und {@code executeOnce(UUID, UUID, Runnable)}; {@code
- * record DivisionResyncRow(long tenantId, UUID tenantUuid, UUID
- * divisionRef)} im Paket {@code repository}; {@code List<DivisionResyncRow> findAllForResync()};
- * {@code Optional<Long> FirmReadRepository#findTenantIdByUuid(UUID)}.
+ * record DivisionResyncRow(long tenantId, UUID tenantUuid, UUID divisionRef)} im Paket {@code
+ * repository}; {@code List<DivisionResyncRow> findAllForResync()}; {@code Optional<Long>
+ * FirmReadRepository#findTenantIdByUuid(UUID)}.
  */
 @SpringBootTest(
     classes = DivisionResyncIT.ItConfig.class,
@@ -307,7 +307,9 @@ class DivisionResyncIT {
     return resyncRows().stream().filter(row -> divisionRef.equals(row.divisionRef())).toList();
   }
 
-  /** Legt eine {@code DEAD}-Quittung mit Abteilungsbezug an (eigene Transaktion, neues Ereignis). */
+  /**
+   * Legt eine {@code DEAD}-Quittung mit Abteilungsbezug an (eigene Transaktion, neues Ereignis).
+   */
   private void markDead(final long tenantId, final UUID tenantUuid, final UUID divisionRef) {
     final DivisionSignal signal =
         new DivisionSignal(UUID.randomUUID(), tenantUuid, divisionRef, SIGNAL_REV);

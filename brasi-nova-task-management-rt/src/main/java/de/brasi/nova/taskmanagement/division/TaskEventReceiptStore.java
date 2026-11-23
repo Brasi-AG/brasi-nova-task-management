@@ -98,8 +98,8 @@ public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
   /**
    * Verwirft das Signal endgueltig: Quittung {@code DEAD} mit Grund (auf {@value #MAX_ERROR_LENGTH}
    * Zeichen gekuerzt). Fehlt die Quittung, wird sie angelegt; eine vorhandene {@code DEAD}-Quittung
-   * bekommt den neuen Grund. Eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert (nur ein
-   * INFO-Log ohne Body), weil das Ereignis dann schon erfolgreich verarbeitet wurde, etwa bei
+   * bekommt den neuen Grund. Eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert (nur
+   * ein INFO-Log ohne Body), weil das Ereignis dann schon erfolgreich verarbeitet wurde, etwa bei
    * paralleler Verarbeitung auf zwei Instanzen oder nach erneuter Veroeffentlichung. Laeuft in
    * eigener Transaktion und unter dem Kontext-Mandanten.
    *

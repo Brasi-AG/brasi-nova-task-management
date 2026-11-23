@@ -61,8 +61,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Handler-Fehler (gleiche Ausnahme-Instanz), ein Gewinner bei gleichzeitigem Claim, {@code
  * markDead} in eigener Transaktion ({@code REQUIRES_NEW}) mit auf 900 Zeichen gekuerztem Grund
  * (eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert, eine {@code DEAD}-Quittung
- * bekommt den neuen Grund), Trennung je Mandant und die mandantenuebergreifende Aufbewahrungsbereinigung ({@code
- * deleteOlderThan} unter {@code runAsSystem}).
+ * bekommt den neuen Grund), Trennung je Mandant und die mandantenuebergreifende
+ * Aufbewahrungsbereinigung ({@code deleteOlderThan} unter {@code runAsSystem}).
  *
  * <p>{@code executeOnce} laeuft {@code MANDATORY}: jeder Aufruf liegt in einem eigenen {@link
  * TransactionTemplate} unter dem Mandantenkontext; liefert er {@code false}, setzt der Test die
