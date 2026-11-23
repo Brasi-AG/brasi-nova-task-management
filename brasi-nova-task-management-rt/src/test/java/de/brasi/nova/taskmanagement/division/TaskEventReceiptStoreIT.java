@@ -309,12 +309,12 @@ class TaskEventReceiptStoreIT {
     assertThat(isProcessed(TENANT_A_ID, TENANT_A_UUID, signalA)).isTrue();
     assertThat(isProcessed(TENANT_B_ID, TENANT_B_UUID, signalB)).isTrue();
     // :tenantId bindet den Kontext-Mandanten: Mandant 564 sieht die Quittung von 563 nicht.
-    assertThat(
-            inTenantTx(
-                TENANT_B_ID,
-                TENANT_B_UUID,
-                status -> receiptRepository.existsByEvent(TENANT_A_UUID, eventId)))
-        .isFalse();
+    final boolean visibleToOtherTenant =
+        inTenantTx(
+            TENANT_B_ID,
+            TENANT_B_UUID,
+            status -> receiptRepository.existsByEvent(TENANT_A_UUID, eventId));
+    assertThat(visibleToOtherTenant).isFalse();
   }
 
   @Test
