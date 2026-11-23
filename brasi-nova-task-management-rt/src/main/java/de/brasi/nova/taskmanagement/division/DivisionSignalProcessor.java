@@ -38,10 +38,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * max-delivery-attempts} (mindestens 1) WARN und erneut werfen, damit der Broker die Nachricht neu
  * zustellt; am Limit ERROR und Quittung {@code DEAD} in eigener Transaktion, kein Wurf (Nachricht
  * wird bestaetigt). Ist am Limit der Mandant noch nicht aufgeloest (die Aufloesung selbst ist
- * gescheitert, etwa Datenbankfehler), ist keine {@code DEAD}-Zeile moeglich (Fremdschluessel auf den
- * Mandanten): Nach dem ERROR-Log wird die Ausnahme unveraendert weitergeworfen, die Nachricht geht
- * an den Broker zurueck und dessen Dead-Letter-Address bzw. {@code max-delivery-attempts} macht sie
- * sichtbar. Ein unbekannter oder nicht aktiver Mandant ist dagegen kein Fehler (INFO, verworfen).
+ * gescheitert, etwa Datenbankfehler), ist keine {@code DEAD}-Zeile moeglich (Fremdschluessel auf
+ * den Mandanten): Nach dem ERROR-Log wird die Ausnahme unveraendert weitergeworfen, die Nachricht
+ * geht an den Broker zurueck und dessen Dead-Letter-Address bzw. {@code max-delivery-attempts}
+ * macht sie sichtbar. Ein unbekannter oder nicht aktiver Mandant ist dagegen kein Fehler (INFO,
+ * verworfen).
  *
  * <p>Der Nachtlauf des Resync ({@link DivisionResyncJob}) heilt nur Abteilungen mit Kopfzeile in
  * {@code TASK_ABTEILUNG}, also mit aktivem Stand oder Grabstein. Eine Abteilung, deren Abrufe alle
@@ -124,9 +125,9 @@ public class DivisionSignalProcessor {
    *
    * @param signal geprueftes Signal
    * @param deliveryCount Zustellversuch laut Broker ({@code JMSXDeliveryCount}, ab 1)
-   * @throws RuntimeException unterhalb des Zustelllimits, damit der Broker neu zustellt; am Limit nur,
-   *     wenn der Mandant nicht aufgeloest werden konnte und deshalb keine {@code DEAD}-Quittung
-   *     moeglich ist (Rueckgabe an den Broker, Dead-Letter)
+   * @throws RuntimeException unterhalb des Zustelllimits, damit der Broker neu zustellt; am Limit
+   *     nur, wenn der Mandant nicht aufgeloest werden konnte und deshalb keine {@code
+   *     DEAD}-Quittung moeglich ist (Rueckgabe an den Broker, Dead-Letter)
    */
   public void process(final DivisionSignal signal, final int deliveryCount) {
     Objects.requireNonNull(signal, "signal");
@@ -165,7 +166,8 @@ public class DivisionSignalProcessor {
       }
       if (tenant == null) {
         // Ohne aufgeloesten Mandanten ist keine DEAD-Zeile moeglich (Fremdschluessel auf den
-        // Mandanten): Fehler an den Broker zurueckgeben, dessen Dead-Letter-Address macht ihn sichtbar.
+        // Mandanten): Fehler an den Broker zurueckgeben, dessen Dead-Letter-Address macht ihn
+        // sichtbar.
         log.error(
             "Abteilungs-Signal {} (Mandant {}, Abteilung {}): Zustellversuch {} von {}"
                 + " fehlgeschlagen, nicht quittierbar ohne Mandant, Rueckgabe an den Broker"
