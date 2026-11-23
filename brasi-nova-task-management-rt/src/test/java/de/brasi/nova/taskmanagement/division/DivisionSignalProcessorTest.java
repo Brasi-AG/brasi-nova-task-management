@@ -45,8 +45,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * TransactionTemplate} ueber einen aufzeichnenden Fake-Transaktionsmanager.
  *
  * <p>Ablauf nach dem Ruling vom 2026-11-22 (immer {@code self}): Mandant aufloesen, Quittung
- * vorhanden, Kurzschluss bei gleicher revision, Abrufstart, {@code fetchCurrent}, eine Transaktion
- * mit {@code executeOnce(signal, () -> projection.apply(...))}. Laufzeitfehler unterhalb von {@code
+ * vorhanden, Abrufstart, {@code fetchCurrent}, eine Transaktion mit {@code executeOnce(signal, () ->
+ * projection.apply(...))}. Einen Kurzschluss ueber die revision gibt es nicht mehr: Das Signal
+ * traegt keine (Fix {@code tm-division-signal-properties}), also wird immer abgerufen. Laufzeitfehler unterhalb von {@code
  * maxDeliveryAttempts} werden weitergeworfen, am Limit wird die Quittung {@code DEAD}; scheitert
  * dagegen die Mandantenaufloesung selbst, ist keine Quittung moeglich und die Ausnahme geht auch am
  * Limit an den Broker zurueck.
@@ -69,7 +70,6 @@ class DivisionSignalProcessorTest {
   private static final UUID DIV = UUID.fromString("00000056-0000-0056-dddd-000000000001");
   private static final UUID EMPLOYEE = UUID.fromString("00000056-0000-0056-eeee-00000000000a");
   private static final String REV = "b".repeat(64);
-  private static final String OLD_REV = "a".repeat(64);
 
   private static final ZoneId PERSISTENCE_ZONE = ZoneId.of("Europe/Berlin");
   private static final Instant START = Instant.parse("2026-11-20T09:00:00Z");
@@ -80,7 +80,7 @@ class DivisionSignalProcessorTest {
   private final FirmReadRepository firmRepository = mock(FirmReadRepository.class);
   private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
   private final TickingClock clock = new TickingClock(START, PERSISTENCE_ZONE);
-  private final DivisionSignal signal = new DivisionSignal(EVT, TEN, DIV, REV);
+  private final DivisionSignal signal = new DivisionSignal(EVT, TEN, DIV);
 
   private DivisionSignalProcessor processor;
 
@@ -94,7 +94,6 @@ class DivisionSignalProcessorTest {
               invocation.<Runnable>getArgument(1).run();
               return true;
             });
-    when(projection.currentRevision(DIV)).thenReturn(Optional.of(OLD_REV));
     when(projection.apply(eq(DIV), any(), any())).thenReturn(DivisionApplyOutcome.UPDATED);
     when(client.fetchCurrent(TEN, DIV)).thenReturn(members());
     processor =
@@ -129,8 +128,9 @@ class DivisionSignalProcessorTest {
   }
 
   @Test
-  @DisplayName("gleiche revision: nur Quittung in einer Transaktion, kein HTTP, kein apply")
-  void i190_same_revision_skips_http() {
+  @DisplayName("unveraenderter Stand: trotzdem fetchCurrent und apply, kein revision-Vergleich")
+  void i190_unchanged_state_still_fetches() {
+    // Lokal liegt schon genau der Stand, den application liefert (gleiche revision).
     when(projection.currentRevision(DIV)).thenReturn(Optional.of(REV));
     final AtomicBoolean transactionalClaim = new AtomicBoolean();
     when(store.executeOnce(eq(signal), any()))
@@ -143,10 +143,12 @@ class DivisionSignalProcessorTest {
 
     processor.process(signal, 1);
 
-    verifyNoInteractions(client);
+    verify(client).fetchCurrent(TEN, DIV);
     verify(store).executeOnce(eq(signal), any());
-    verify(projection, never()).apply(any(), any(), any());
+    verify(projection).apply(eq(DIV), isA(Members.class), any());
+    verify(projection, never()).currentRevision(any());
     assertThat(transactionalClaim).as("executeOnce ist MANDATORY").isTrue();
+    assertThat(transactionManager.commits).hasValue(1);
   }
 
   @Test

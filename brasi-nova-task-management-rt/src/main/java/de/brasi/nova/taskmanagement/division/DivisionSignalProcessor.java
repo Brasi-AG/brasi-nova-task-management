@@ -27,8 +27,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>Mandant ueber {@code PROD_FIRMA.EXTERNALID} aufloesen ({@code runAsSystem}); unbekannt:
  *       INFO und verwerfen. Alles Weitere unter {@code runWithTenant}.
  *   <li>Quittung vorhanden ({@code PROCESSED} oder {@code DEAD}): nichts tun.
- *   <li>Lokale revision gleich Signal-revision: nur Quittung {@code PROCESSED}, kein HTTP-Aufruf.
  *   <li>Abrufstart (Wanduhr der Persistenz-Zone) vor dem HTTP-Aufruf nehmen, {@code fetchCurrent}.
+ *       Das geschieht immer: Das Signal traegt keine revision (der Body wird nie gelesen), also gibt
+ *       es keinen Kurzschluss ohne HTTP. Ein unveraenderter Stand wird von {@link
+ *       DivisionProjectionService#apply} ersetzt; ein Neustart von application ergibt damit einen
+ *       Abruf je Abteilung.
  *   <li>Eine Transaktion: Quittung, dann Projektion ({@link TaskEventReceiptStore#executeOnce} mit
  *       {@link DivisionProjectionService#apply}). Verliert der Claim, wird die Transaktion
  *       rollback-only.
@@ -224,16 +227,6 @@ public class DivisionSignalProcessor {
   private void handle(final DivisionSignal signal) {
     if (store.isProcessed(signal)) {
       log.debug("Abteilungs-Signal {}: bereits quittiert.", signal.eventId());
-      return;
-    }
-    final Optional<String> currentRevision =
-        projection.currentRevision(signal.divisionRef()).map(String::trim);
-    if (currentRevision.isPresent() && currentRevision.get().equals(signal.revision())) {
-      log.debug(
-          "Abteilung {}: revision unveraendert, nur Quittung fuer Signal {}.",
-          signal.divisionRef(),
-          signal.eventId());
-      claimInTransaction(signal, () -> {});
       return;
     }
     final LocalDateTime fetchStartedAt = LocalDateTime.now(clock);
