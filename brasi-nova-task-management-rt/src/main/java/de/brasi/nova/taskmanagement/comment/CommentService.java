@@ -7,6 +7,7 @@ import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
 import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
+import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
@@ -80,6 +81,7 @@ public class CommentService {
   private final AttachmentWriter attachmentWriter;
   private final AttachmentModelMapper attachmentModelMapper;
   private final AttachmentProperties attachmentProperties;
+  private final DivisionMentionResolver divisionMentionResolver;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -98,7 +100,8 @@ public class CommentService {
       final AssigneeService assigneeService,
       final AttachmentWriter attachmentWriter,
       final AttachmentModelMapper attachmentModelMapper,
-      final AttachmentProperties attachmentProperties) {
+      final AttachmentProperties attachmentProperties,
+      final DivisionMentionResolver divisionMentionResolver) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -115,6 +118,7 @@ public class CommentService {
     this.attachmentWriter = attachmentWriter;
     this.attachmentModelMapper = attachmentModelMapper;
     this.attachmentProperties = attachmentProperties;
+    this.divisionMentionResolver = divisionMentionResolver;
   }
 
   /**
@@ -145,6 +149,9 @@ public class CommentService {
    *   <li>Actor aus dem Security-Context laden.
    *   <li>Aufgabe tenant-scoped laden (404-Masking bei fremder/fehlender UUID).
    *   <li>Optionalen Eltern-Kommentar aufloesen und validieren (400 bei fremder/fehlender UUID).
+   *   <li>Erwaehnte Abteilungen ueber den {@link DivisionMentionResolver} auf ihre Personen
+   *       aufloesen (lokale Projektion, Intake #190; 400 bei unbekannter oder inaktiver Abteilung
+   *       oder zu vielen Personen) und mit den Mentions vereinigen.
    *   <li>Mentions aufloesen (aktive Mandanten-Nutzer); Mitglieder sind MENTION-Ziele. Nicht-
    *       Mitglieder werden als Beteiligte aufgenommen, wenn der Kommentierende das Recht von
    *       {@code POST /participants} hat (Intake #156), sonst still verworfen.
@@ -173,8 +180,9 @@ public class CommentService {
    * @throws EntityNotFoundException wenn Aufgabe nicht gefunden oder fremdem Mandant zugehoerig
    * @throws NullPointerException wenn {@code attachments} {@code null} ist (der Aufrufer uebergibt
    *     {@code List.of()}); die Pruefung steht vor jedem Zugriff
-   * @throws EntityValidationException wenn Text leer/null, Eltern-Kommentar ungueltig oder mehr
-   *     Anhaenge als erlaubt
+   * @throws EntityValidationException wenn Text leer/null, Eltern-Kommentar ungueltig, eine
+   *     erwaehnte Abteilung unbekannt oder inaktiv ist, die erwaehnten Abteilungen zu viele Personen
+   *     umfassen oder mehr Anhaenge als erlaubt uebergeben wurden
    * @throws java.io.UncheckedIOException wenn eine Anhang-Datei nicht geschrieben werden kann
    */
   @Transactional
@@ -248,11 +256,16 @@ public class CommentService {
     // Selbst-Notify, REPLY-Vorrang und Nicht-WRITE-Member werden hier bereits herausgefiltert,
     // sodass
     // mentionTargets exakt die spaeter zu benachrichtigende MENTION-Menge ist.
+    // Intake #190: erwaehnte Abteilungen auf die Personen der lokalen Projektion aufloesen (reiner
+    // Read, vor jeder Schreibung; 400 bei unbekannter/inaktiver Abteilung oder ueber der
+    // Personengrenze, dann ist nichts geschrieben) und VOR der Deduplizierung mit mentions
+    // vereinigen. Ab hier laufen die Personen der Abteilungen denselben Weg wie mentions.
+    final Set<UUID> dedupedMentions = new LinkedHashSet<>(input.mentions());
+    dedupedMentions.addAll(divisionMentionResolver.resolve(input.divisionMentions()));
     final List<UUID> mentionRefs;
-    if (input.mentions().isEmpty()) {
+    if (dedupedMentions.isEmpty()) {
       mentionRefs = List.of();
     } else {
-      final Set<UUID> dedupedMentions = new LinkedHashSet<>(input.mentions());
       mentionRefs =
           userReadRepository.findActiveByUuids(dedupedMentions).stream()
               .map(User::getUuid)

@@ -46,6 +46,17 @@ final class CommentApiExamples {
   static final String REQUEST_WITH_MENTION =
       "{\"text\":\"@Anna Bitte pruefen.\",\"mentions\":[\"" + USER_REF_A + "\"]}";
 
+  /** Beispiel-UUID einer erwaehnten Abteilung (Intake #190). */
+  static final String DIVISION_REF = "5d1c0a3e-2b4f-4c6d-8e9f-0a1b2c3d4e5f";
+
+  /** Anfrage: Kommentar mit Erwaehnung einer Abteilung und einer Person (Intake #190). */
+  static final String REQUEST_WITH_DIVISION_MENTION =
+      "{\"text\":\"@Vertrieb @Anna Bitte bis Freitag abstimmen.\",\"mentions\":[\""
+          + USER_REF_A
+          + "\"],\"divisionMentions\":[\""
+          + DIVISION_REF
+          + "\"]}";
+
   /** Anfrage: Antwort auf einen Kommentar. */
   static final String REQUEST_REPLY =
       "{\"text\":\"Erledigt, danke.\",\"parentCommentId\":\"" + PARENT_COMMENT_REF + "\"}";
@@ -161,9 +172,49 @@ final class CommentApiExamples {
           + "\"details\":[\"io.keel.framework.api.validation.EntityValidationException:"
           + " Der angegebene Eltern-Kommentar ist ungueltig.\"]}";
 
+  // Texte wortgleich mit DivisionMentionResolver (Intake #190); die Grenze ist die Vorgabe
+  // task-management.division-mentions.max-persons aus application.properties.
+  private static final String TEXT_UNKNOWN_DIVISION = "Unbekannte oder nicht aktive Abteilung.";
+  private static final String TEXT_DIVISION_PERSON_LIMIT =
+      "Die erwaehnten Abteilungen umfassen mehr als 200 Personen.";
+
+  /**
+   * 400: eine erwaehnte Abteilung ist unbekannt, nicht aktiv oder gehoert zu einem anderen
+   * Mandanten (ein Text fuer alle Faelle, Intake #190).
+   */
+  static final String BAD_REQUEST_DIVISION =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\""
+          + TEXT_UNKNOWN_DIVISION
+          + "\",\"path\":\""
+          + PATH_COMMENTS
+          + "\",\"errorKey\":\"NOVA_VALIDATION_FAILED\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.validation.EntityValidationException: "
+          + TEXT_UNKNOWN_DIVISION
+          + "\"]}";
+
+  /**
+   * 400: die erwaehnten Abteilungen umfassen zusammen mehr verschiedene Personen als erlaubt
+   * (Vorgabe 200, Intake #190).
+   */
+  static final String BAD_REQUEST_DIVISION_PERSON_LIMIT =
+      ERROR_HEAD
+          + "\"status\":400,\"error\":\"Bad Request\","
+          + "\"message\":\""
+          + TEXT_DIVISION_PERSON_LIMIT
+          + "\",\"path\":\""
+          + PATH_COMMENTS
+          + "\",\"errorKey\":\"NOVA_VALIDATION_FAILED\","
+          + "\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\","
+          + "\"details\":[\"io.keel.framework.api.validation.EntityValidationException: "
+          + TEXT_DIVISION_PERSON_LIMIT
+          + "\"]}";
+
   /**
    * 400: der Text fehlt oder ist leer (ebenso null-Element oder mehr als 100 Eintraege in
-   * mentions). Die Validierung greift beim Lesen des Bodys; die KSF-Fehlerbehandlung meldet daher
+   * mentions bzw. mehr als 10 in divisionMentions). Die Validierung greift beim Lesen des Bodys; die KSF-Fehlerbehandlung meldet daher
    * "nicht lesbar" und legt den Validierungstext nach details.
    */
   static final String BAD_REQUEST_BODY =
@@ -316,7 +367,7 @@ final class CommentApiExamples {
 
   /**
    * 400: der Text im Teil comment fehlt oder ist leer (ebenso kein gueltiges JSON, ein null-Element
-   * oder mehr als 100 Eintraege in mentions). Die Pruefung greift beim Lesen des Teils, vor jeder
+   * oder mehr als 100 Eintraege in mentions bzw. mehr als 10 in divisionMentions). Die Pruefung greift beim Lesen des Teils, vor jeder
    * Dateipruefung; die KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den
    * Validierungstext nach details.
    */
@@ -333,6 +384,14 @@ final class CommentApiExamples {
   /** 400: der Eltern-Kommentar ist unbekannt, gehoert zu einer anderen Aufgabe oder ist inaktiv. */
   static final String BAD_REQUEST_WITH_ATTACHMENTS_PARENT =
       VALIDATION_HEAD + TEXT_PARENT + VALIDATION_MIDDLE + TEXT_PARENT + VALIDATION_TAIL;
+
+  /** 400: eine erwaehnte Abteilung ist unbekannt, nicht aktiv oder mandantenfremd (Intake #190). */
+  static final String BAD_REQUEST_WITH_ATTACHMENTS_DIVISION =
+      VALIDATION_HEAD
+          + TEXT_UNKNOWN_DIVISION
+          + VALIDATION_MIDDLE
+          + TEXT_UNKNOWN_DIVISION
+          + VALIDATION_TAIL;
 
   /** 400: Endung einer Datei nicht in der Erlaubtliste. */
   static final String BAD_REQUEST_WITH_ATTACHMENTS_TYPE =
