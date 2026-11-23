@@ -937,10 +937,13 @@ class FlywayMigrationIT {
               .as("Spalte genau einmal vorhanden")
               .isEqualTo(1);
 
-          // Abweichender Zaehler an A (Drift) wird beim erneuten Lauf auf den Ist-Wert gesetzt
+          // Abweichende Zaehler (Drift) werden beim erneuten Lauf auf den Ist-Wert gesetzt, auch
+          // an einer Aufgabe ohne aktive Anhaenge (B zurueck auf 0)
           jt.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 9 WHERE [ID] = ?", LEGACY_TASK_A);
+          jt.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 2 WHERE [ID] = ?", LEGACY_TASK_B);
           runV17Script(jt);
           assertThat(attachmentCountOf(jt, LEGACY_TASK_A)).isEqualTo(4);
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).as("B ohne Anhaenge wieder 0").isZero();
 
           assertThat(auditColumns(jt, LEGACY_TASK_A)).isEqualTo(taskABefore);
           assertThat(auditColumns(jt, LEGACY_TASK_B)).isEqualTo(taskBBefore);
