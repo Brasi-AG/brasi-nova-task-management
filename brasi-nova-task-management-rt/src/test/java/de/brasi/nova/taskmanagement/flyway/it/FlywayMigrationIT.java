@@ -1234,8 +1234,8 @@ class FlywayMigrationIT {
   }
 
   /**
-   * VERSION, AKTUALISIERT_AM und LAST_ACTIVITY_AT einer Aufgabe; Zeitstempel als ISO-Text mit
-   * allen sieben Nachkommastellen, damit der Vergleich nicht an der Treiber-Abbildung haengt.
+   * VERSION, AKTUALISIERT_AM und LAST_ACTIVITY_AT einer Aufgabe; Zeitstempel als ISO-Text mit allen
+   * sieben Nachkommastellen, damit der Vergleich nicht an der Treiber-Abbildung haengt.
    */
   private static Map<String, Object> auditColumns(final JdbcTemplate jt, final long taskId) {
     return jt.queryForMap(
