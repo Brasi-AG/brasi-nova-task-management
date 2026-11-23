@@ -3428,6 +3428,47 @@ class TaskFacadeControllerIT {
 
   @Test
   @DisplayName(
+      "i190_description_foreign_tenant_division_400: die Abteilung gibt es nur in Mandant B (mit"
+          + " aktivem Mitglied), der Akteur ist in Mandant A -> 400 mit demselben Text wie bei"
+          + " einer unbekannten Abteilung; Beschreibung, Verlauf, Teilnehmer, Benachrichtigungen,"
+          + " Aktivitaet und Generation unveraendert")
+  void i190_description_foreign_tenant_division_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Fremd");
+    patchRaw(mvc, tokenA, taskId, om.writeValueAsString(Map.of("description", "Alt")))
+        .andExpect(status().isNoContent());
+    final UUID foreign = UUID.randomUUID();
+    insertDivision(TENANT_B_ID, foreign, "ACTIVE", "Fremde Abteilung", USER_B_REF);
+    final int historyBefore = historyCountOf(taskId);
+    final int participantsBefore = participantRowsOfTask(taskId);
+    final int notificationsBefore = notificationCountOfTask(taskId);
+    final String activityBefore = lastActivityOf(taskId);
+    final long generationBefore = readGeneration(USER_A_REF);
+
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of("description", "Neu", "divisionMentions", List.of(foreign)))),
+        UNKNOWN_DIVISION_MESSAGE);
+
+    assertThat(descriptionOf(taskId)).as("Beschreibung unveraendert").isEqualTo("Alt");
+    assertThat(historyCountOf(taskId)).as("kein Verlauf").isEqualTo(historyBefore);
+    assertThat(participantRowsOfTask(taskId))
+        .as("nichts geschrieben")
+        .isEqualTo(participantsBefore);
+    assertThat(participantRowCount(taskId, USER_B_REF)).as("Fremde nicht aufgenommen").isZero();
+    assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
+    assertThat(lastActivityOf(taskId)).as("keine Aktivitaet").isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF)).as("kein Bump").isEqualTo(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
       "i190_patch_without_mentions_unchanged_behavior: PATCH nur description -> 204 wie bisher,"
           + " keine Benachrichtigung, keine Beteiligten, kein Verlauf per Erwaehnung")
   void i190_patch_without_mentions_unchanged_behavior() throws Exception {
