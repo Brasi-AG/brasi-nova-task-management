@@ -1311,8 +1311,9 @@ class CommentConcurrencyIT {
     }
 
     /**
-     * Intake #190 (Task 10): Erwaehnungs-Empfaenger des CommentService, aus ihm herausgeloest; nutzt
-     * die Test-Subklasse des AssigneeService, damit deren Seams auch auf dem Erwaehnungspfad greifen.
+     * Intake #190 (Task 10): Erwaehnungs-Empfaenger des CommentService, aus ihm herausgeloest;
+     * nutzt die Test-Subklasse des AssigneeService, damit deren Seams auch auf dem Erwaehnungspfad
+     * greifen.
      */
     @Bean
     MentionRecipientService mentionRecipientService(

@@ -39,10 +39,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Types;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Date;
@@ -185,8 +185,8 @@ class TaskFacadeControllerIT {
   private static final String USER_READ_ONLY_LOGIN = "read-only@brasi.de";
 
   /**
-   * Aktive Nutzer des Mandanten A fuer die Erwaehnung in der Beschreibung (Intake #190), mit eigenem
-   * Namen fuer das Verlaufsdetail. Kein Mitglied, solange ein Test sie nicht aufnimmt.
+   * Aktive Nutzer des Mandanten A fuer die Erwaehnung in der Beschreibung (Intake #190), mit
+   * eigenem Namen fuer das Verlaufsdetail. Kein Mitglied, solange ein Test sie nicht aufnimmt.
    */
   private static final UUID DIV_P1_REF = UUID.randomUUID();
 
@@ -3253,7 +3253,10 @@ class TaskFacadeControllerIT {
             taskId,
             om.writeValueAsString(
                 Map.of(
-                    "description", "Bitte ansehen, Vertrieb.", "divisionMentions", List.of(division))))
+                    "description",
+                    "Bitte ansehen, Vertrieb.",
+                    "divisionMentions",
+                    List.of(division))))
         .andExpect(status().isNoContent());
 
     assertThat(descriptionOf(taskId)).isEqualTo("Bitte ansehen, Vertrieb.");
@@ -3296,7 +3299,10 @@ class TaskFacadeControllerIT {
             taskId,
             om.writeValueAsString(
                 Map.of(
-                    "description", "A2, bitte ansehen.", "mentions", List.of(USER_A2_REF, USER_A_REF))))
+                    "description",
+                    "A2, bitte ansehen.",
+                    "mentions",
+                    List.of(USER_A2_REF, USER_A_REF))))
         .andExpect(status().isNoContent());
 
     assertThat(countNotifications(taskId, USER_A2_REF, "MENTION")).isEqualTo(1);
@@ -3410,7 +3416,9 @@ class TaskFacadeControllerIT {
 
     assertThat(descriptionOf(taskId)).as("Beschreibung unveraendert").isEqualTo("Alt");
     assertThat(historyCountOf(taskId)).as("kein Verlauf").isEqualTo(historyBefore);
-    assertThat(participantRowsOfTask(taskId)).as("niemand aufgenommen").isEqualTo(participantsBefore);
+    assertThat(participantRowsOfTask(taskId))
+        .as("niemand aufgenommen")
+        .isEqualTo(participantsBefore);
     assertThat(participantRowCount(taskId, DIV_P1_REF)).isZero();
     assertThat(participantRowCount(taskId, DIV_P2_REF)).isZero();
     assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);

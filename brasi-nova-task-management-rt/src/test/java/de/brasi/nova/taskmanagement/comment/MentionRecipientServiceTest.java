@@ -33,8 +33,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * Unit-Tests fuer {@link MentionRecipientService} (Intake #190, Task 10; gemockt, kein
- * DB-Zugriff).
+ * Unit-Tests fuer {@link MentionRecipientService} (Intake #190, Task 10; gemockt, kein DB-Zugriff).
  *
  * <p>Der Dienst ist die aus {@code CommentService#createComment} herausgeloeste Ermittlung der
  * Erwaehnungs-Empfaenger und wird vom Kommentar und vom PATCH der Beschreibung geteilt: Abteilungen
@@ -208,8 +207,7 @@ class MentionRecipientServiceTest {
           + " nicht (gleichzeitig aufgenommen), ist sie danach WRITE-Mitglied und wird trotzdem"
           + " Ziel und als aufgenommen gefuehrt (Verhalten wie bisher im Kommentar)")
   void i190_concurrently_admitted_person_still_targeted() {
-    when(userReadRepository.findActiveByUuids(any()))
-        .thenReturn(List.of(userWith(NON_MEMBER_REF)));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(NON_MEMBER_REF)));
     when(membershipGuard.isWriteMember(TASK_ID, NON_MEMBER_REF, TENANT_ID))
         .thenReturn(false)
         .thenReturn(true);
@@ -231,8 +229,7 @@ class MentionRecipientServiceTest {
   void i190_reads_before_admission() {
     when(divisionMentionResolver.resolve(any()))
         .thenReturn(new LinkedHashSet<>(List.of(NON_MEMBER_REF)));
-    when(userReadRepository.findActiveByUuids(any()))
-        .thenReturn(List.of(userWith(NON_MEMBER_REF)));
+    when(userReadRepository.findActiveByUuids(any())).thenReturn(List.of(userWith(NON_MEMBER_REF)));
     when(assigneeService.mayAddParticipants()).thenReturn(true);
     when(assigneeService.addAsParticipants(eq(TASK_ID), eq(TENANT_ID), any()))
         .thenReturn(List.of(NON_MEMBER_REF));
