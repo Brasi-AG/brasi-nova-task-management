@@ -3,8 +3,8 @@
  */
 package de.brasi.nova.taskmanagement.query;
 
-import de.brasi.nova.taskmanagement.entity.dictionary.TaskStatus;
 import de.brasi.nova.taskmanagement.entity.dictionary.TaskDirection;
+import de.brasi.nova.taskmanagement.entity.dictionary.TaskStatus;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.dictionary.TaskPriority;
 import java.math.BigDecimal;
@@ -21,9 +21,7 @@ import io.keel.framework.persistence.query.path.*;
  */
 public final class QTask extends QNovaEntity {
 
-    public final LongProperty taskStatusId = NovaPropertyFactory.createLong("taskStatusId");
     public final StringProperty sourceEntityType = NovaPropertyFactory.createString("sourceEntityType");
-    public final UUIDProperty sourceEntityRef = NovaPropertyFactory.createUUID("sourceEntityRef");
     public final LongProperty directionId = NovaPropertyFactory.createLong("directionId");
     public final DateProperty dueDate = NovaPropertyFactory.createDate("dueDate");
     public final StringProperty description = NovaPropertyFactory.createString("description");
@@ -31,15 +29,18 @@ public final class QTask extends QNovaEntity {
     public final DateTimeProperty lastActivityAt = NovaPropertyFactory.createDateTime("lastActivityAt");
     public final StringProperty title = NovaPropertyFactory.createString("title");
     public final LongProperty priorityId = NovaPropertyFactory.createLong("priorityId");
+    public final LongProperty taskStatusId = NovaPropertyFactory.createLong("taskStatusId");
+    public final UUIDProperty sourceEntityRef = NovaPropertyFactory.createUUID("sourceEntityRef");
     public final IntegerProperty commentCount = NovaPropertyFactory.createInteger("commentCount");
+    public final IntegerProperty attachmentCount = NovaPropertyFactory.createInteger("attachmentCount");
     public final StringProperty sourceModule = NovaPropertyFactory.createString("sourceModule");
     public final DateProperty startDate = NovaPropertyFactory.createDate("startDate");
 
 
     // --- Relations ---
-    public final NovaProperty<TaskStatus> taskStatus = NovaPropertyFactory.<TaskStatus>createRelation("taskStatus");
     public final NovaProperty<TaskDirection> direction = NovaPropertyFactory.<TaskDirection>createRelation("direction");
     public final NovaProperty<TaskPriority> priority = NovaPropertyFactory.<TaskPriority>createRelation("priority");
+    public final NovaProperty<TaskStatus> taskStatus = NovaPropertyFactory.<TaskStatus>createRelation("taskStatus");
 
     public static final QTask task = new QTask();
 }
