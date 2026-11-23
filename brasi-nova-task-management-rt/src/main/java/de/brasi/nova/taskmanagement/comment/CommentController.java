@@ -159,7 +159,8 @@ public class CommentController {
    * /participants} hat (Intake #156); sonst werden sie still verworfen, ebenso unbekannte, inaktive
    * oder mandantenfremde UUIDs. Die in {@code divisionMentions} genannten Abteilungen stehen fuer
    * ihre Personen laut lokaler Projektion; diese werden mit {@code mentions} vereinigt und genauso
-   * behandelt (Intake #190). Eine unbekannte oder inaktive Abteilung und zu viele Personen sind 400.
+   * behandelt (Intake #190). Eine unbekannte oder inaktive Abteilung und zu viele Personen sind
+   * 400.
    *
    * @param id externe UUID der Aufgabe
    * @param input Kommentar-Eingabe

@@ -56,12 +56,15 @@ final class DivisionCandidateApiExamples {
           + SALES_REF
           + "\",\"name\":\"Vertrieb\",\"memberCount\":12}]}";
 
-  /** Text der 400 bei {@code limit} ausserhalb des Bereichs (wie {@link DivisionCandidateService}). */
+  /**
+   * Text der 400 bei {@code limit} ausserhalb des Bereichs (wie {@link DivisionCandidateService}).
+   */
   private static final String TEXT_LIMIT =
       "Der Parameter 'limit' muss zwischen 1 und 100 liegen, ist aber 0.";
 
   /** Text der 400 bei zu vielen {@code ids} (wie {@link DivisionCandidateService}). */
-  private static final String TEXT_IDS = "Der Parameter 'ids' darf hoechstens 50 Eintraege enthalten.";
+  private static final String TEXT_IDS =
+      "Der Parameter 'ids' darf hoechstens 50 Eintraege enthalten.";
 
   /** 400: {@code limit} ausserhalb von 1 bis 100. */
   static final String BAD_REQUEST_LIMIT =

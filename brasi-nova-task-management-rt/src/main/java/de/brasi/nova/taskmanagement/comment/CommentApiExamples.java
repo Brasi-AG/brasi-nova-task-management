@@ -213,9 +213,9 @@ final class CommentApiExamples {
           + "\"]}";
 
   /**
-   * 400: der Text fehlt oder ist leer (ebenso null-Element oder mehr als 100 Eintraege in
-   * mentions bzw. mehr als 10 in divisionMentions). Die Validierung greift beim Lesen des Bodys; die KSF-Fehlerbehandlung meldet daher
-   * "nicht lesbar" und legt den Validierungstext nach details.
+   * 400: der Text fehlt oder ist leer (ebenso null-Element oder mehr als 100 Eintraege in mentions
+   * bzw. mehr als 10 in divisionMentions). Die Validierung greift beim Lesen des Bodys; die
+   * KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den Validierungstext nach details.
    */
   static final String BAD_REQUEST_BODY =
       ERROR_HEAD
@@ -367,9 +367,9 @@ final class CommentApiExamples {
 
   /**
    * 400: der Text im Teil comment fehlt oder ist leer (ebenso kein gueltiges JSON, ein null-Element
-   * oder mehr als 100 Eintraege in mentions bzw. mehr als 10 in divisionMentions). Die Pruefung greift beim Lesen des Teils, vor jeder
-   * Dateipruefung; die KSF-Fehlerbehandlung meldet daher "nicht lesbar" und legt den
-   * Validierungstext nach details.
+   * oder mehr als 100 Eintraege in mentions bzw. mehr als 10 in divisionMentions). Die Pruefung
+   * greift beim Lesen des Teils, vor jeder Dateipruefung; die KSF-Fehlerbehandlung meldet daher
+   * "nicht lesbar" und legt den Validierungstext nach details.
    */
   static final String BAD_REQUEST_WITH_ATTACHMENTS_TEXT =
       ERROR_HEAD

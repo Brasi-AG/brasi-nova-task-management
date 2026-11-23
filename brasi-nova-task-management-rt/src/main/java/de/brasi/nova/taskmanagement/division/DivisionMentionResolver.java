@@ -19,10 +19,11 @@ import org.springframework.stereotype.Service;
  *
  * <p>Nur die Projektion des Kontext-Mandanten wird gelesen ({@code :tenantId} in beiden Queries),
  * nie application. Eine erwaehnte Abteilung muss im Mandanten aktiv sein; unbekannt, Grabstein
- * ({@code DEACTIVE}) und mandantenfremd ergeben denselben Fehler, damit kein Existenz-Leck entsteht.
- * Die Personen aller erwaehnten Abteilungen werden vereinigt und dedupliziert; ihre Zahl ist durch
- * {@link DivisionMentionProperties#maxPersons()} begrenzt. Gezaehlt werden die verschiedenen {@code
- * MITARBEITER_REF} vor dem Filter auf aktive Benutzer, den der Aufrufer danach anwendet.
+ * ({@code DEACTIVE}) und mandantenfremd ergeben denselben Fehler, damit kein Existenz-Leck
+ * entsteht. Die Personen aller erwaehnten Abteilungen werden vereinigt und dedupliziert; ihre Zahl
+ * ist durch {@link DivisionMentionProperties#maxPersons()} begrenzt. Gezaehlt werden die
+ * verschiedenen {@code MITARBEITER_REF} vor dem Filter auf aktive Benutzer, den der Aufrufer danach
+ * anwendet.
  *
  * <p>Laeuft in der Transaktion des Aufrufers und dort vor jeder Schreibung (Lock-Reihenfolge von
  * {@code CommentService#createComment}): beide Queries sind reine Reads.

@@ -51,8 +51,8 @@ public class DivisionCandidateService {
    * @param limit hoechste Zahl der Vorschlaege der Suche ({@value #MIN_LIMIT} bis {@value
    *     #MAX_LIMIT}); wird auch bei {@code ids} geprueft, wirkt dort aber nicht
    * @return die Vorschlaege, sortiert nach Name (unbenannte zuletzt), dann nach UUID
-   * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt oder mehr als
-   *     {@value #MAX_IDS} {@code ids} uebergeben wurden (HTTP 400)
+   * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt oder mehr
+   *     als {@value #MAX_IDS} {@code ids} uebergeben wurden (HTTP 400)
    */
   public DivisionCandidatePage find(final String q, final List<UUID> ids, final int limit) {
     if (limit < MIN_LIMIT || limit > MAX_LIMIT) {
@@ -77,7 +77,8 @@ public class DivisionCandidateService {
     }
     return new DivisionCandidatePage(
         rows.stream()
-            .map(row -> new DivisionCandidateModel(row.divisionRef(), row.name(), row.memberCount()))
+            .map(
+                row -> new DivisionCandidateModel(row.divisionRef(), row.name(), row.memberCount()))
             .toList());
   }
 

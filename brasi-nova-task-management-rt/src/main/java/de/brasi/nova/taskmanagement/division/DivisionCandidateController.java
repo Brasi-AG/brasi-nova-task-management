@@ -78,7 +78,8 @@ public class DivisionCandidateController {
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",
-        description = "Vorschlaege (aktive Abteilungen des eigenen Mandanten); leer, wenn nichts passt.",
+        description =
+            "Vorschlaege (aktive Abteilungen des eigenen Mandanten); leer, wenn nichts passt.",
         content =
             @Content(
                 mediaType = "application/json",

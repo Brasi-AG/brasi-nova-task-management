@@ -154,12 +154,12 @@ public interface TaskDivisionQueryRepository extends BaseTaskDivisionRepository 
               + " AND a.ENTITY_STATUS = 'ACTIVE'"
               + " AND (:like IS NULL OR LOWER(a.NAME) LIKE :like ESCAPE '!')"
               + " ORDER BY CASE WHEN a.NAME IS NULL THEN 1 ELSE 0 END, a.NAME, a.ABTEILUNG_REF")
-  List<DivisionCandidateRow> findCandidates(
-      @Param("like") String like, @Param("limit") int limit);
+  List<DivisionCandidateRow> findCandidates(@Param("like") String like, @Param("limit") int limit);
 
   /**
-   * Vorschau bekannter Abteilungen: wie {@link #findCandidates}, aber fuer die angegebenen UUIDs und
-   * ohne Namensfilter und Obergrenze. Unbekannte, deaktivierte und mandantenfremde UUIDs fehlen.
+   * Vorschau bekannter Abteilungen: wie {@link #findCandidates}, aber fuer die angegebenen UUIDs
+   * und ohne Namensfilter und Obergrenze. Unbekannte, deaktivierte und mandantenfremde UUIDs
+   * fehlen.
    *
    * <p><b>Pflicht des Aufrufers:</b> {@code refs} nie leer uebergeben; die Menge ist vom Service
    * auf 50 begrenzt.

@@ -181,8 +181,8 @@ public class CommentService {
    * @throws NullPointerException wenn {@code attachments} {@code null} ist (der Aufrufer uebergibt
    *     {@code List.of()}); die Pruefung steht vor jedem Zugriff
    * @throws EntityValidationException wenn Text leer/null, Eltern-Kommentar ungueltig, eine
-   *     erwaehnte Abteilung unbekannt oder inaktiv ist, die erwaehnten Abteilungen zu viele Personen
-   *     umfassen oder mehr Anhaenge als erlaubt uebergeben wurden
+   *     erwaehnte Abteilung unbekannt oder inaktiv ist, die erwaehnten Abteilungen zu viele
+   *     Personen umfassen oder mehr Anhaenge als erlaubt uebergeben wurden
    * @throws java.io.UncheckedIOException wenn eine Anhang-Datei nicht geschrieben werden kann
    */
   @Transactional

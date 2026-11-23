@@ -128,7 +128,8 @@ public record CommentCreateInput(
 
   /**
    * Normalisiert eine optionale UUID-Liste: {@code null} wird leer, die Rohlaenge darf {@code max}
-   * nicht ueberschreiten, null-Elemente sind verboten; das Ergebnis ist eine unveraenderliche Kopie.
+   * nicht ueberschreiten, null-Elemente sind verboten; das Ergebnis ist eine unveraenderliche
+   * Kopie.
    *
    * @param values Eingabeliste (darf null sein)
    * @param field Feldname fuer die Fehlermeldung
