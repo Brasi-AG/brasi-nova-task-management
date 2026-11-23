@@ -16,6 +16,7 @@ import jakarta.jms.Message;
 import jakarta.jms.TextMessage;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +24,7 @@ import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
@@ -59,6 +61,13 @@ final class DivisionSignalTestSupport {
 
   private static final String APPLICATION_BASE = "https://application.example.test";
   private static final ObjectMapper JSON = new ObjectMapper();
+
+  /** Audit-Logger des eingebetteten Artemis (siehe {@link #startBroker}). */
+  private static final List<String> ARTEMIS_AUDIT_LOGGERS =
+      List.of(
+          "org.apache.activemq.audit.base",
+          "org.apache.activemq.audit.message",
+          "org.apache.activemq.audit.resource");
 
   private DivisionSignalTestSupport() {}
 
@@ -197,11 +206,18 @@ final class DivisionSignalTestSupport {
   /**
    * Startet einen eingebetteten Artemis mit in-VM-Acceptor.
    *
+   * <p>Vor dem Start werden die Audit-Logger von Artemis ausgeschaltet: Steht {@code
+   * org.apache.activemq.audit.base} auf INFO, ruft {@code AuditLogger#getCaller} {@code
+   * Subject.getSubject} auf, und das wirft unter Java 25 eine {@link
+   * UnsupportedOperationException}. Der Broker startet dann nicht (AMQ224000). Das Audit-Log
+   * braucht der Test nicht.
+   *
    * @param brokerUrl in-VM-URL, etwa {@code vm://1901}
    * @return laufender Broker
    * @throws Exception wenn der Start scheitert
    */
   static EmbeddedActiveMQ startBroker(final String brokerUrl) throws Exception {
+    disableArtemisAuditLoggers();
     final Configuration configuration = new ConfigurationImpl();
     configuration.setPersistenceEnabled(false);
     configuration.setSecurityEnabled(false);
@@ -211,6 +227,18 @@ final class DivisionSignalTestSupport {
     broker.setConfiguration(configuration);
     broker.start();
     return broker;
+  }
+
+  /**
+   * Setzt die drei Audit-Logger von Artemis auf OFF; ohne Logback als Logging-Backend bleibt alles
+   * unveraendert.
+   */
+  private static void disableArtemisAuditLoggers() {
+    for (final String name : ARTEMIS_AUDIT_LOGGERS) {
+      if (LoggerFactory.getLogger(name) instanceof ch.qos.logback.classic.Logger logger) {
+        logger.setLevel(ch.qos.logback.classic.Level.OFF);
+      }
+    }
   }
 
   /**
