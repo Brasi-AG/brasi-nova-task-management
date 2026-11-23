@@ -1570,12 +1570,12 @@ class AttachmentControllerIT {
    *
    * <p>Der Filter sitzt innerhalb der Security-Kette und wartet nach der Verarbeitung auf das
    * Async-Ergebnis. Dessen Ablage ({@code volatile}) folgt auf den Commit; danach sieht der {@code
-   * HeaderWriterFilter} den Commit und schreibt nichts mehr. Kommt das Ergebnis nicht innerhalb von
-   * {@link #ASYNC_RESULT_TIMEOUT}, scheitert der Abruf hart.
+   * HeaderWriterFilter} den Commit und schreibt nichts mehr. Gewartet wird hoechstens die
+   * Async-Frist des Requests ({@code spring.mvc.async.request-timeout}), mit der auch {@code
+   * asyncDispatch} auf das Ergebnis wartet; danach, oder ohne begrenzte Frist, scheitert der Abruf
+   * hart.
    */
   private static final class AwaitStreamingBodyFilter implements Filter {
-
-    private static final Duration ASYNC_RESULT_TIMEOUT = Duration.ofSeconds(10);
 
     @Override
     public void doFilter(
@@ -1585,14 +1585,17 @@ class AttachmentControllerIT {
       if (!request.isAsyncStarted()) {
         return;
       }
+      final Duration timeout = Duration.ofMillis(request.getAsyncContext().getTimeout());
+      if (timeout.isNegative() || timeout.isZero()) {
+        throw new IllegalStateException(
+            "Async-Frist des Requests ist nicht begrenzt (" + timeout + ").");
+      }
       final WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
-      final long deadline = System.nanoTime() + ASYNC_RESULT_TIMEOUT.toNanos();
+      final long deadline = System.nanoTime() + timeout.toNanos();
       while (!asyncManager.hasConcurrentResult()) {
         if (System.nanoTime() - deadline > 0) {
           throw new IllegalStateException(
-              "Async-Ergebnis der Auslieferung nicht innerhalb von "
-                  + ASYNC_RESULT_TIMEOUT
-                  + " abgelegt.");
+              "Async-Ergebnis der Auslieferung nicht innerhalb von " + timeout + " abgelegt.");
         }
         LockSupport.parkNanos(Duration.ofMillis(1).toNanos());
       }
