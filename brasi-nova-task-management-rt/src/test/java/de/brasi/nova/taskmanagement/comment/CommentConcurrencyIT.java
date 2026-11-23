@@ -429,7 +429,8 @@ class CommentConcurrencyIT {
               () ->
                   commentService.createComment(
                       TASK_VERSION_UUID,
-                      new CommentCreateInput("Verliert den Versions-Race.", null, List.of(), List.of())))
+                      new CommentCreateInput(
+                          "Verliert den Versions-Race.", null, List.of(), List.of())))
           .as("Versions-Verlierer -> 409 (BusinessRuleException)")
           .isInstanceOf(BusinessRuleException.class);
     } finally {

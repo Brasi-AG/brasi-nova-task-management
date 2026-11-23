@@ -142,8 +142,7 @@ class DivisionMentionResolverTest {
   }
 
   @Test
-  @DisplayName(
-      "zwei Abteilungen: Personen werden vereinigt, die Query bekommt beide internen IDs")
+  @DisplayName("zwei Abteilungen: Personen werden vereinigt, die Query bekommt beide internen IDs")
   void i190_members_of_all_divisions_are_united() {
     final UUID refA = UUID.randomUUID();
     final UUID refB = UUID.randomUUID();

@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Import;
  * comment} scannen, das Paket {@code division} aber nicht: {@code CommentService} haengt am {@link
  * DivisionMentionResolver}, der {@link DivisionMentionProperties} braucht.
  *
- * <p>Bewusst ohne {@code @Configuration}: die Klasse wird nur per {@code @Import} in den
- * {@code ItConfig} der ITs geholt und von keinem Paket-Scan erfasst. Der Wert {@code
+ * <p>Bewusst ohne {@code @Configuration}: die Klasse wird nur per {@code @Import} in den {@code
+ * ItConfig} der ITs geholt und von keinem Paket-Scan erfasst. Der Wert {@code
  * task-management.division-mentions.max-persons} kommt aus {@code application.properties}.
  */
 @Import(DivisionMentionResolver.class)

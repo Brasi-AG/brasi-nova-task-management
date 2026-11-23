@@ -253,7 +253,8 @@ class DivisionCandidateControllerIT {
           + " sortiert, unbenannte zuletzt; der Grabstein (DEACTIVE) fehlt")
   void i190_lists_active_divisions_with_counts() throws Exception {
     // UUIDs unterscheiden sich nur im letzten Block: so stimmen die Sortierung von SQL Server
-    // (uniqueidentifier vergleicht den letzten Block zuerst) und die erwartete Reihenfolge ueberein.
+    // (uniqueidentifier vergleicht den letzten Block zuerst) und die erwartete Reihenfolge
+    // ueberein.
     final UUID alpha = cRef(1);
     final UUID beta = cRef(2);
     final UUID gamma1 = cRef(3);

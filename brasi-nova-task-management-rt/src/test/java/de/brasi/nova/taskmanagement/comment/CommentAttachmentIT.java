@@ -833,8 +833,7 @@ class CommentAttachmentIT {
     assertThat(countNotifications(taskId, MENTIONED_REF, "MENTION")).isEqualTo(1);
     assertThat(countNotifications(taskId, MENTIONED_REF, "PARTICIPANT")).isZero();
     assertThat(historyTotal(taskId) - beforeHistory).as("genau ein Eintrag").isEqualTo(1);
-    assertThat(historyEntries(taskId, CREATOR_REF, HISTORY_MENTIONED, MENTIONED_NAME))
-        .isEqualTo(1);
+    assertThat(historyEntries(taskId, CREATOR_REF, HISTORY_MENTIONED, MENTIONED_NAME)).isEqualTo(1);
 
     final Snapshot before = snapshot(taskId);
     final int notificationsBefore = notificationCountOfTask(taskId);

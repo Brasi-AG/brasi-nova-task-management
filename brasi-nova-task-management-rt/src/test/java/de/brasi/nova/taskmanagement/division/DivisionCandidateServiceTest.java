@@ -32,17 +32,18 @@ import org.mockito.ArgumentCaptor;
  * Vorschlags-API {@code GET /api/v1/tasks/divisions} und Abbildung der Zeilen.
  *
  * <p>Regeln: {@code limit} 1 bis 100 (sonst 400, keine Query); {@code ids} hoechstens 50 (sonst
- * 400); {@code q} wird getrimmt, klein geschrieben und als woertlicher Teilstring in ein LIKE-Muster
- * gefasst ({@code %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit vorangestelltem
- * {@code !} entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code
+ * 400); {@code q} wird getrimmt, klein geschrieben und als woertlicher Teilstring in ein
+ * LIKE-Muster gefasst ({@code %}, {@code _}, {@code [} und das Escape-Zeichen {@code !} mit
+ * vorangestelltem {@code !} entschaerft, Muster wie {@code ArchiveSearchTerm}, Lesson {@code
  * ksf-novaquery-pitfalls} Punkt 9); leeres oder fehlendes {@code q} heisst kein Namensfilter
  * ({@code like = null}); mit {@code ids} laeuft die Vorschau ueber {@code findCandidatesByRefs}.
  *
  * <p>Angenommene Signaturen: {@code DivisionCandidateService(TaskDivisionQueryRepository)}; {@code
  * DivisionCandidatePage find(String q, List<UUID> ids, int limit)} (Mandant aus dem Kontext, die
- * Queries binden {@code :tenantId}); {@code record DivisionCandidatePage(List<DivisionCandidateModel>
- * items)}; {@code record DivisionCandidateModel(UUID divisionId, String name, int memberCount)};
- * {@code record DivisionCandidateRow(UUID divisionRef, String name, int memberCount)}; {@code
+ * Queries binden {@code :tenantId}); {@code record
+ * DivisionCandidatePage(List<DivisionCandidateModel> items)}; {@code record
+ * DivisionCandidateModel(UUID divisionId, String name, int memberCount)}; {@code record
+ * DivisionCandidateRow(UUID divisionRef, String name, int memberCount)}; {@code
  * TaskDivisionQueryRepository#findCandidates(String like, int limit)} und {@code
  * #findCandidatesByRefs(Collection<UUID> refs)}.
  */

@@ -77,7 +77,8 @@ class CommentCreateInputTest {
     final ObjectMapper mapper = new ObjectMapper();
     final UUID division = UUID.randomUUID();
 
-    assertThat(mapper.readValue("{\"text\":\"Hallo\"}", CommentCreateInput.class).divisionMentions())
+    assertThat(
+            mapper.readValue("{\"text\":\"Hallo\"}", CommentCreateInput.class).divisionMentions())
         .isEmpty();
     assertThat(
             mapper

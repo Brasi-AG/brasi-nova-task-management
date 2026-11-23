@@ -2325,8 +2325,7 @@ class CommentControllerIT {
     final String tokenA = writerTokenA();
     final UUID taskUuid = createTask(mvc, om, tokenA, "Comment-IT-190-Abteilung");
     final UUID division = UUID.randomUUID();
-    insertDivision(
-        TENANT_A_ID, division, "ACTIVE", "Vertrieb", DIV_P1_REF, DIV_P2_REF, DIV_P3_REF);
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Vertrieb", DIV_P1_REF, DIV_P2_REF, DIV_P3_REF);
 
     postCommentWithDivisions(mvc, om, tokenA, taskUuid, "Bitte ansehen, Vertrieb.", division);
 
@@ -2641,8 +2640,8 @@ class CommentControllerIT {
   }
 
   /**
-   * Saet eine Abteilung der lokalen Projektion per JDBC: Kopf mit Status und Name und je Person eine
-   * Mitgliederzeile (MITARBEITER_REF), so wie der Consumer aus Thema 2 sie schreibt.
+   * Saet eine Abteilung der lokalen Projektion per JDBC: Kopf mit Status und Name und je Person
+   * eine Mitgliederzeile (MITARBEITER_REF), so wie der Consumer aus Thema 2 sie schreibt.
    */
   private void insertDivision(
       final long tenantId,
