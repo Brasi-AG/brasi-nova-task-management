@@ -6,7 +6,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Ergebnis der Ermittlung der Erwaehnungs-Empfaenger ({@link MentionRecipientService#collect}).
+ * Ergebnis der Ermittlung der Erwaehnungs-Empfaenger ({@link MentionRecipientService#admit}, auch
+ * als {@link MentionRecipientService#collect} in einem Schritt).
  *
  * @param notifyTargets Personen, die eine MENTION bekommen: erwaehnte WRITE-Mitglieder und die per
  *     Erwaehnung aufgenommenen Personen; ohne Akteur und ohne den ausgenommenen Empfaenger

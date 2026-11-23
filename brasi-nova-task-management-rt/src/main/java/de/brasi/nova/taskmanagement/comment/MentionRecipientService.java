@@ -38,12 +38,17 @@ import org.springframework.transaction.annotation.Transactional;
  *       (inklusive Verlauf "per Erwaehnung"); sonst still verworfen.
  * </ol>
  *
- * <p>{@link #collect} fasst beide Phasen zusammen; {@link #resolve} (nur Reads) und {@link #admit}
- * (Aufnahme) einzeln erlauben dem Aufrufer eigene Reads dazwischen.
+ * <p>Die Phasen sind einzeln aufrufbar, weil beide Aufrufer ihre Reads vor die erste Schreibung
+ * legen muessen: {@link #resolve} (nur Reads) liefert die opake {@link Candidates}, {@link #admit}
+ * (Aufnahme) nimmt sie entgegen. {@link Candidates} entsteht ausschliesslich in {@link #resolve}
+ * (privater Konstruktor); niemand kann der Aufnahme eine selbst gebaute Kandidatenmenge reichen und
+ * damit die Pruefung auf aktive Benutzer des eigenen Mandanten umgehen. {@link #collect} fasst
+ * beide Phasen zusammen und bleibt fuer Aufrufer, die dazwischen nichts zu lesen haben (die
+ * Produktion nutzt derzeit nur die Einzelphasen).
  *
- * <p>Laeuft in der Transaktion des Aufrufers ({@link Propagation#MANDATORY}) und dort vor dessen
- * TASK-save: die Aufnahme schreibt Teilnehmer- und State-Zeilen (Mitgliedschaft vor Aufgabe, Karte
- * {@code participants-actions}). Benachrichtigung, Generation-Bump und Signal bleiben beim
+ * <p>Laeuft in der Transaktion des Aufrufers ({@link Propagation#MANDATORY}); die Aufnahme liegt
+ * dort vor dem TASK-save: sie schreibt Teilnehmer- und State-Zeilen (Mitgliedschaft vor Aufgabe,
+ * Karte {@code participants-actions}). Benachrichtigung, Generation-Bump und Signal bleiben beim
  * Aufrufer.
  */
 @Service
@@ -70,7 +75,7 @@ public class MentionRecipientService {
 
   /**
    * Ermittelt die MENTION-Ziele und nimmt erwaehnte Nicht-Mitglieder (mit Recht) als Beteiligte
-   * auf: {@link #resolve} und danach {@link #admit} in einem Schritt.
+   * auf: {@link #resolve} und danach {@link #admit} in einem Schritt, ohne eigene Reads dazwischen.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
@@ -98,9 +103,11 @@ public class MentionRecipientService {
    * Lesephase: loest die Erwaehnten auf und teilt sie in WRITE-Mitglieder und Nicht-Mitglieder,
    * ohne etwas zu schreiben.
    *
-   * <p>Getrennt von {@link #admit}, damit ein Aufrufer zwischen beiden Phasen eigene Reads
-   * einschieben kann ({@code CommentService#createComment} liest dort die Assignees fuer COMMENT;
-   * alle Reads bleiben vor der ersten Schreibung).
+   * <p>Getrennt von {@link #admit}, damit der Aufrufer die Reads vor die erste Schreibung legen
+   * kann: {@code CommentService#createComment} liest zwischen beiden Phasen die Assignees fuer
+   * COMMENT, {@code TaskCommandService#patch} ruft {@code resolve} noch vor der ersten Mutation
+   * (Verlauf, Tags) und {@link #admit} erst danach, vor dem TASK-save. Ein 400 aus der
+   * Abteilungsaufloesung kommt damit in beiden Pfaden vor jeder Schreibung.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
@@ -109,7 +116,7 @@ public class MentionRecipientService {
    *     null}
    * @param personRefs erwaehnte Personen (Duplikate erlaubt, nie {@code null})
    * @param divisionRefs erwaehnte Abteilungen (Duplikate erlaubt, nie {@code null})
-   * @return die aufgeteilten Erwaehnten fuer {@link #admit}
+   * @return die aufgeteilten Erwaehnten, nur fuer {@link #admit} bestimmt
    * @throws EntityValidationException wenn eine erwaehnte Abteilung unbekannt oder nicht aktiv ist
    *     oder die Abteilungen zu viele Personen umfassen (HTTP 400)
    */
@@ -154,16 +161,17 @@ public class MentionRecipientService {
 
   /**
    * Schreibphase: nimmt die Nicht-Mitglieder aus {@link #resolve} (mit Recht) als Beteiligte auf
-   * und liefert die Ziele der MENTION. Laeuft vor dem TASK-save des Aufrufers.
+   * und liefert die Ziele der MENTION. Laeuft vor dem TASK-save des Aufrufers und in derselben
+   * Transaktion wie {@link #resolve}.
    *
-   * @param candidates Ergebnis von {@link #resolve}
+   * @param candidates Ergebnis von {@link #resolve} (nur dort erzeugbar)
    * @return Ziele der MENTION (Mitglieder und Aufgenommene) und die Aufgenommenen
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public MentionRecipients admit(final Candidates candidates) {
     final Set<UUID> admitted =
-        admitNonMembers(candidates.taskId(), candidates.tenantId(), candidates.nonMembers());
-    final Set<UUID> notifyTargets = new LinkedHashSet<>(candidates.members());
+        admitNonMembers(candidates.taskId, candidates.tenantId, candidates.nonMembers);
+    final Set<UUID> notifyTargets = new LinkedHashSet<>(candidates.members);
     notifyTargets.addAll(admitted);
     return new MentionRecipients(notifyTargets, admitted);
   }
@@ -171,17 +179,38 @@ public class MentionRecipientService {
   /**
    * Zwischenergebnis von {@link #resolve}: die Erwaehnten, getrennt nach WRITE-Mitgliedschaft.
    *
-   * @param taskId interne Aufgaben-ID
-   * @param tenantId interner Mandanten-Schluessel
-   * @param members erwaehnte WRITE-Mitglieder (Ziele der MENTION)
-   * @param nonMembers erwaehnte aktive Mandanten-Nutzer ohne WRITE-Mitgliedschaft
+   * <p>Opak und nur ueber {@link #resolve} erhaeltlich: der Konstruktor ist privat und es gibt
+   * keine Zugriffsmethoden. So kann kein Aufrufer die Pruefung auf aktive Benutzer des eigenen
+   * Mandanten und den Ausschluss des Akteurs umgehen, die {@code addAsParticipants} vom Aufrufer
+   * verlangt (sonst droht eine mandantenfremde Aufnahme).
    */
-  public record Candidates(Long taskId, long tenantId, Set<UUID> members, Set<UUID> nonMembers) {
+  public static final class Candidates {
 
-    /** Kompakter Konstruktor: unveraenderliche Kopien, die Reihenfolge bleibt erhalten. */
-    public Candidates {
-      members = Collections.unmodifiableSet(new LinkedHashSet<>(members));
-      nonMembers = Collections.unmodifiableSet(new LinkedHashSet<>(nonMembers));
+    /** Interne Aufgaben-ID. */
+    private final Long taskId;
+
+    /** Interner Mandanten-Schluessel. */
+    private final long tenantId;
+
+    /** Erwaehnte WRITE-Mitglieder (Ziele der MENTION). */
+    private final Set<UUID> members;
+
+    /** Erwaehnte aktive Mandanten-Nutzer ohne WRITE-Mitgliedschaft. */
+    private final Set<UUID> nonMembers;
+
+    /**
+     * Nur aus {@link MentionRecipientService#resolve}: unveraenderliche Kopien, die Reihenfolge
+     * bleibt erhalten.
+     */
+    private Candidates(
+        final Long taskId,
+        final long tenantId,
+        final Set<UUID> members,
+        final Set<UUID> nonMembers) {
+      this.taskId = taskId;
+      this.tenantId = tenantId;
+      this.members = Collections.unmodifiableSet(new LinkedHashSet<>(members));
+      this.nonMembers = Collections.unmodifiableSet(new LinkedHashSet<>(nonMembers));
     }
   }
 
@@ -211,7 +240,7 @@ public class MentionRecipientService {
       }
     }
     log.info(
-        "MentionRecipientService.collect: {} erwaehnte Person(en) in Aufgabe (id={}) als Beteiligte"
+        "MentionRecipientService.admit: {} erwaehnte Person(en) in Aufgabe (id={}) als Beteiligte"
             + " aufgenommen, Mandant {}.",
         members.size(),
         taskId,
