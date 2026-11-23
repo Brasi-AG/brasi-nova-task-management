@@ -135,6 +135,10 @@ public class DivisionResyncJob {
   /**
    * Loescht Quittungen aller Mandanten, die aelter als {@code receipt-retention} sind.
    *
+   * <p>Ohne umgebende Transaktion: das einzelne {@code DELETE} laeuft im Autocommit, ein
+   * modifizierendes {@code @NovaQuery} verlangt in KSF keine Transaktion. Belegt durch {@code
+   * TaskEventReceiptStoreIT#i190_purge_receipts_without_surrounding_transaction}.
+   *
    * @return Zahl der geloeschten Quittungen
    */
   public int purgeReceipts() {

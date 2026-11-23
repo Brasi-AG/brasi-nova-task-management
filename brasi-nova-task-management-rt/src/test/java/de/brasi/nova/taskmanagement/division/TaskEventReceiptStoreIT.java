@@ -3,8 +3,10 @@ package de.brasi.nova.taskmanagement.division;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.Mockito.mock;
 
 import com.zaxxer.hikari.HikariDataSource;
+import de.brasi.nova.taskmanagement.repository.TaskDivisionQueryRepository;
 import de.brasi.nova.taskmanagement.repository.TaskEventReceiptQueryRepository;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
@@ -17,7 +19,10 @@ import io.keel.framework.integration.autoconfigure.KsfIntegrationAutoConfigurati
 import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfiguration;
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -50,6 +55,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -62,7 +68,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * markDead} in eigener Transaktion ({@code REQUIRES_NEW}) mit auf 900 Zeichen gekuerztem Grund
  * (eine vorhandene {@code PROCESSED}-Quittung bleibt unveraendert, eine {@code DEAD}-Quittung
  * bekommt den neuen Grund), Trennung je Mandant und die mandantenuebergreifende
- * Aufbewahrungsbereinigung ({@code deleteOlderThan} unter {@code runAsSystem}).
+ * Aufbewahrungsbereinigung ({@code deleteOlderThan} unter {@code runAsSystem}), auch auf dem Pfad
+ * des Schedulers: {@code DivisionResyncJob#purgeReceipts} ohne umgebende Transaktion (ein einzelnes
+ * {@code DELETE} im Autocommit, KSF verlangt fuer ein modifizierendes {@code @NovaQuery} keine
+ * Transaktion).
  *
  * <p>{@code executeOnce} laeuft {@code MANDATORY}: jeder Aufruf liegt in einem eigenen {@link
  * TransactionTemplate} unter dem Mandantenkontext; liefert er {@code false}, setzt der Test die
@@ -416,6 +425,49 @@ class TaskEventReceiptStoreIT {
                         status ->
                             receiptRepository.deleteOlderThan(LocalDateTime.of(2021, 1, 1, 0, 0))));
 
+    assertThat(deleted).isEqualTo(2);
+    assertThat(receiptCount(TENANT_A_UUID, oldA.eventId())).isZero();
+    assertThat(receiptCount(TENANT_B_UUID, oldB.eventId())).isZero();
+    assertThat(receiptCount(TENANT_A_UUID, newA.eventId())).isEqualTo(1);
+    assertThat(receiptCount(TENANT_B_UUID, newB.eventId())).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "purgeReceipts des Jobs loescht ohne umgebende Transaktion (Scheduler-Pfad) und committet")
+  void i190_purge_receipts_without_surrounding_transaction() {
+    final DivisionSignal oldA = signal(TENANT_A_UUID);
+    final DivisionSignal newA = signal(TENANT_A_UUID);
+    final DivisionSignal oldB = signal(TENANT_B_UUID);
+    final DivisionSignal newB = signal(TENANT_B_UUID);
+    claim(TENANT_A_ID, TENANT_A_UUID, oldA, () -> {});
+    claim(TENANT_A_ID, TENANT_A_UUID, newA, () -> {});
+    claim(TENANT_B_ID, TENANT_B_UUID, oldB, () -> {});
+    claim(TENANT_B_ID, TENANT_B_UUID, newB, () -> {});
+    final Timestamp longAgo = Timestamp.valueOf(LocalDateTime.of(2020, 1, 1, 0, 0));
+    jdbcTemplate.update(
+        "UPDATE [dbo].[TASK_EREIGNIS_QUITTUNG] SET ANGELEGT_AM = ? WHERE EREIGNIS_ID IN (?, ?)",
+        longAgo,
+        oldA.eventId().toString(),
+        oldB.eventId().toString());
+    // Der Job wie unter @Scheduled: Retention 30 Tage, Stichtag aus der Uhr, kein Mandant, keine
+    // Transaktion am Thread. Resync-Abhaengigkeiten bleiben ungenutzt.
+    final DivisionResyncJob job =
+        new DivisionResyncJob(
+            mock(TaskDivisionQueryRepository.class),
+            receiptRepository,
+            mock(DivisionSignalProcessor.class),
+            new DivisionSyncProperties(
+                true, null, null, null, null, 5, null, null, Duration.ofDays(30)),
+            Clock.system(ZoneId.of("Europe/Berlin")));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+        .as("Scheduler-Pfad: keine umgebende Transaktion")
+        .isFalse();
+
+    final int deleted = job.purgeReceipts();
+
+    // Die Zaehlung laeuft ebenfalls ohne Transaktion: ein nicht committetes DELETE waere mit der
+    // Rueckgabe der Verbindung an den Pool zurueckgerollt, die alten Zeilen waeren wieder da.
     assertThat(deleted).isEqualTo(2);
     assertThat(receiptCount(TENANT_A_UUID, oldA.eventId())).isZero();
     assertThat(receiptCount(TENANT_B_UUID, oldB.eventId())).isZero();
