@@ -106,6 +106,10 @@ public class Task extends NovaEntity<Task> {
   @NovaColumn(name = "COMMENT_COUNT", nullable = false)
   private int commentCount = 0;
 
+  /** Anzahl der aktiven Anhaenge an Aufgabe und Kommentaren (denormalisiert, Default 0). */
+  @NovaColumn(name = "ANHANG_ANZAHL", nullable = false)
+  private int attachmentCount = 0;
+
   /** Quellmodul (z.B. "production"), das die Aufgabe ausgeloest hat. */
   @NovaColumn(name = "SOURCE_MODULE", nullable = true, length = 100)
   private String sourceModule;
