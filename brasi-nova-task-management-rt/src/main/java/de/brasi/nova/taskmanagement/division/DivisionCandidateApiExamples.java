@@ -32,7 +32,7 @@ final class DivisionCandidateApiExamples {
   /** Beispiel-UUID einer Abteilung ohne Namen. */
   private static final String UNNAMED_REF = "7f3e2c5a-4d6b-4e8f-a0b1-2c3d4e5f6071";
 
-  /** 200 ohne Parameter: alle aktiven Abteilungen, eine davon noch ohne Namen (zuletzt). */
+  /** 200 ohne Parameter: die aktiven Abteilungen bis limit, eine davon ohne Namen (zuletzt). */
   static final String ALL =
       "{\"items\":[{\"divisionId\":\""
           + SALES_REF

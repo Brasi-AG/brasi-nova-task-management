@@ -8,7 +8,8 @@ import java.util.UUID;
  *
  * @param divisionId UUID der Abteilung in application (Wert fuer {@code divisionMentions})
  * @param name Anzeigename, {@code null}, solange application keinen liefert
- * @param memberCount Mitglieder der Abteilung mit aktivem Benutzer im Mandanten
+ * @param memberCount Mitglieder der Abteilung mit aktivem Benutzer im Mandanten; die
+ *     Personengrenze der Erwaehnung zaehlt dagegen alle Mitglieder
  */
 @Schema(
     description =
@@ -32,7 +33,10 @@ public record DivisionCandidateModel(
     @Schema(
             description =
                 "Zahl der Mitglieder der Abteilung (mit Unterabteilungen) mit aktivem Benutzer im"
-                    + " eigenen Mandanten: so viele Personen erreicht eine Erwaehnung hoechstens.",
+                    + " eigenen Mandanten: so viele Personen erreicht eine Erwaehnung hoechstens."
+                    + " Zaehlt nur aktive Benutzer; die Personengrenze der Erwaehnung am Kommentar"
+                    + " zaehlt dagegen alle Mitglieder, auch solche ohne aktiven Benutzer. Ein"
+                    + " Client darf memberCount daher nicht gegen diese Grenze vorpruefen.",
             example = "12",
             requiredMode = Schema.RequiredMode.REQUIRED)
         int memberCount) {}

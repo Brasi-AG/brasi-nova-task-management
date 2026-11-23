@@ -61,20 +61,24 @@ public class DivisionCandidateController {
           Je Abteilung: divisionId (der Wert fuer divisionMentions), name (null, solange \
           application keinen Namen geliefert hat) und memberCount (Mitglieder mit Unterabteilungen, \
           die einen aktiven Benutzer im eigenen Mandanten haben: so viele Personen erreicht eine \
-          Erwaehnung hoechstens).
+          Erwaehnung hoechstens). memberCount zaehlt nur aktive Benutzer; die Personengrenze der \
+          Erwaehnung am Kommentar zaehlt dagegen alle Mitglieder, auch solche ohne aktiven \
+          Benutzer. Ein Client darf memberCount daher nicht gegen diese Grenze vorpruefen.
 
           Suche: q filtert als Teiltreffer ueber den Namen, unabhaengig von Gross- und \
           Kleinschreibung; Leerzeichen aussen werden entfernt, %, _ und [ werden woertlich \
           gesucht. Abteilungen ohne Namen fallen bei gesetztem q heraus. Ohne q (oder leer) kommen \
-          alle aktiven Abteilungen. limit begrenzt die Zahl der Vorschlaege (1 bis 100, Vorgabe \
-          20); es gibt keine weiteren Seiten.
+          die aktiven Abteilungen bis limit (1 bis 100, Vorgabe 20); es gibt keine weiteren \
+          Seiten, weitere Abteilungen sind nur ueber q zu finden.
 
           Vorschau: ids liefert die Abteilungen zu bekannten UUIDs (hoechstens 50, Parameter \
-          wiederholt oder kommagetrennt); unbekannte, nicht aktive und mandantenfremde UUIDs \
-          fehlen ohne Fehler. Sind ids gesetzt, wird q ignoriert und limit nicht angewendet \
-          (aber weiterhin auf 1 bis 100 geprueft).
+          wiederholt oder kommagetrennt, leere Eintraege sind ein Fehler); unbekannte, nicht \
+          aktive und mandantenfremde UUIDs fehlen ohne Fehler. Sind ids gesetzt, wird q ignoriert \
+          und limit nicht angewendet (aber weiterhin auf 1 bis 100 geprueft).
 
-          Sortierung: nach Name (Abteilungen ohne Namen zuletzt), dann nach divisionId.""")
+          Sortierung: nach Name (Abteilungen ohne Namen zuletzt). Bei gleichem Namen und unter den \
+          Abteilungen ohne Namen ist die Reihenfolge stabil (technisch nach divisionId in \
+          GUID-Sortierung, fachlich bedeutungslos), aber NICHT alphabetisch nach divisionId.""")
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",
@@ -87,7 +91,7 @@ public class DivisionCandidateController {
                 examples = {
                   @ExampleObject(
                       name = "alle",
-                      summary = "Ohne Parameter: alle aktiven Abteilungen, ohne Namen zuletzt",
+                      summary = "Ohne Parameter: aktive Abteilungen bis limit, ohne Namen zuletzt",
                       value = DivisionCandidateApiExamples.ALL),
                   @ExampleObject(
                       name = "suche",
@@ -101,8 +105,9 @@ public class DivisionCandidateController {
     @ApiResponse(
         responseCode = "400",
         description =
-            "Ungueltige Parameter: limit ausserhalb von 1 bis 100, mehr als 50 ids, ein Eintrag in"
-                + " ids ist keine UUID oder limit ist keine Zahl.",
+            "Ungueltige Parameter: limit ausserhalb von 1 bis 100, mehr als 50 ids, ein leerer"
+                + " Eintrag in ids (etwa ids=,), ein Eintrag in ids ist keine UUID oder limit ist"
+                + " keine Zahl.",
         content =
             @Content(
                 mediaType = "application/json",
@@ -148,9 +153,10 @@ public class DivisionCandidateController {
       @Parameter(
               description =
                   "UUIDs bekannter Abteilungen fuer die Vorschau (hoechstens 50; Parameter"
-                      + " wiederholen oder kommagetrennt). Unbekannte, nicht aktive und"
-                      + " mandantenfremde UUIDs fehlen in der Antwort ohne Fehler. Gesetzt gewinnt"
-                      + " ids vor q, limit wird dann nicht angewendet.",
+                      + " wiederholen oder kommagetrennt; ein leerer Eintrag ist ein 400)."
+                      + " Unbekannte, nicht aktive und mandantenfremde UUIDs fehlen in der Antwort"
+                      + " ohne Fehler. Gesetzt gewinnt ids vor q, limit wird dann nicht"
+                      + " angewendet.",
               array =
                   @ArraySchema(
                       maxItems = 50,
@@ -165,6 +171,13 @@ public class DivisionCandidateController {
       @Parameter(
               description =
                   "Hoechste Zahl der Vorschlaege der Suche, 1 bis 100 (sonst 400). Vorgabe 20.",
+              schema =
+                  @Schema(
+                      type = "integer",
+                      format = "int32",
+                      minimum = "1",
+                      maximum = "100",
+                      defaultValue = "20"),
               example = "20")
           @RequestParam(required = false, defaultValue = "20")
           final int limit) {

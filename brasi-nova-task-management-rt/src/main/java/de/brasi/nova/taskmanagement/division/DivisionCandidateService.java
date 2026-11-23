@@ -51,7 +51,8 @@ public class DivisionCandidateService {
    * @param ids UUIDs fuer die Vorschau (null oder leer = Suche), hoechstens {@value #MAX_IDS}
    * @param limit hoechste Zahl der Vorschlaege der Suche ({@value #MIN_LIMIT} bis {@value
    *     #MAX_LIMIT}); wird auch bei {@code ids} geprueft, wirkt dort aber nicht
-   * @return die Vorschlaege, sortiert nach Name (unbenannte zuletzt), dann nach UUID
+   * @return die Vorschlaege, sortiert nach Name (unbenannte zuletzt); bei gleichem Namen stabil
+   *     nach UUID in GUID-Sortierung (fachlich bedeutungslos, nicht alphabetisch)
    * @throws EntityValidationException wenn {@code limit} ausserhalb des Bereichs liegt, mehr als
    *     {@value #MAX_IDS} {@code ids} uebergeben wurden oder ein Eintrag von {@code ids} leer
    *     ({@code null}) ist (HTTP 400)
