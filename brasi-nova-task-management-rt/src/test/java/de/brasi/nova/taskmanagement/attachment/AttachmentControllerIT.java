@@ -42,6 +42,11 @@ import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfigurati
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import io.keel.framework.security.KsfSecurityAutoConfiguration;
 import io.keel.framework.security.web.KsfWebSecurityAutoConfiguration;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -55,6 +60,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -67,6 +73,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -123,6 +130,8 @@ import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequ
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.context.request.async.WebAsyncManager;
+import org.springframework.web.context.request.async.WebAsyncUtils;
 
 /**
  * Integrationstest fuer den {@link AttachmentController} gegen echtes MSSQL (Wegwerf-DB) und ein
@@ -1543,7 +1552,54 @@ class AttachmentControllerIT {
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
+        // nach springSecurity() registriert, also innerhalb der Security-Kette
+        .addFilters(new AwaitStreamingBodyFilter())
         .build();
+  }
+
+  /**
+   * Laesst den Request-Thread die Filterkette erst verlassen, wenn ein gestarteter {@code
+   * StreamingResponseBody} fertig ist (Wackler i152).
+   *
+   * <p>Spring Securitys {@code HeaderWriterFilter} schreibt seine Header verzoegert: beim Commit
+   * der Antwort oder im {@code finally} nach der Kette. Bei einer Auslieferung committet der
+   * Async-Thread des Anhang-Pools die Antwort, waehrend der Request-Thread aus der Kette
+   * zurueckkehrt; die Sperre dagegen ist ein einfaches {@code boolean} ohne Synchronisation. Ohne
+   * diesen Filter schreiben beide Threads zugleich in dieselbe {@code MockHttpServletResponse}
+   * ({@code ConcurrentModificationException} in {@code setHeader}).
+   *
+   * <p>Der Filter sitzt innerhalb der Security-Kette und wartet nach der Verarbeitung auf das
+   * Async-Ergebnis. Dessen Ablage ({@code volatile}) folgt auf den Commit; danach sieht der {@code
+   * HeaderWriterFilter} den Commit und schreibt nichts mehr. Gewartet wird hoechstens die
+   * Async-Frist des Requests ({@code spring.mvc.async.request-timeout}), mit der auch {@code
+   * asyncDispatch} auf das Ergebnis wartet; danach, oder ohne begrenzte Frist, scheitert der Abruf
+   * hart.
+   */
+  private static final class AwaitStreamingBodyFilter implements Filter {
+
+    @Override
+    public void doFilter(
+        final ServletRequest request, final ServletResponse response, final FilterChain chain)
+        throws IOException, ServletException {
+      chain.doFilter(request, response);
+      if (!request.isAsyncStarted()) {
+        return;
+      }
+      final Duration timeout = Duration.ofMillis(request.getAsyncContext().getTimeout());
+      if (timeout.isNegative() || timeout.isZero()) {
+        throw new IllegalStateException(
+            "Async-Frist des Requests ist nicht begrenzt (" + timeout + ").");
+      }
+      final WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
+      final long deadline = System.nanoTime() + timeout.toNanos();
+      while (!asyncManager.hasConcurrentResult()) {
+        if (System.nanoTime() - deadline > 0) {
+          throw new IllegalStateException(
+              "Async-Ergebnis der Auslieferung nicht innerhalb von " + timeout + " abgelegt.");
+        }
+        LockSupport.parkNanos(Duration.ofMillis(1).toNanos());
+      }
+    }
   }
 
   private static String creatorToken() {
@@ -1670,8 +1726,9 @@ class AttachmentControllerIT {
 
   /**
    * Ruft einen Binaer-Endpunkt ab. Die Antwort ist ein {@code StreamingResponseBody}: der erste
-   * Durchlauf startet die asynchrone Verarbeitung, {@code asyncDispatch} wartet auf das Kopieren
-   * und schliesst den Request ab. Ohne Async (304, Fehler) zaehlt der erste Durchlauf.
+   * Durchlauf startet die asynchrone Verarbeitung und kehrt erst nach dem Kopieren zurueck ({@link
+   * AwaitStreamingBodyFilter}), {@code asyncDispatch} schliesst den Request ab. Ohne Async (304,
+   * Fehler) zaehlt der erste Durchlauf.
    */
   private static MvcResult fetch(
       final MockMvc mvc, final MockHttpServletRequestBuilder request, final String token)
