@@ -433,6 +433,281 @@
       ]
     },
     {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskDivision",
+      "kind": "ENTITY",
+      "name": "TaskDivision",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_ABTEILUNG" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "divisionRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "ABTEILUNG_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "name",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "NAME",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "revision",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "REVISION",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "fetchedAt",
+          "javaType": "java.time.LocalDateTime",
+          "source": "PERSISTED",
+          "columnName": "ABGERUFEN_AM",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskDivisionCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskDivisionUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskDivisionModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskDivisionInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskDivisionMember",
+      "kind": "ENTITY",
+      "name": "TaskDivisionMember",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_ABTEILUNG_MITGLIED" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "divisionId",
+          "javaType": "java.lang.Long",
+          "source": "PERSISTED",
+          "columnName": "ABTEILUNG_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "employeeRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "MITARBEITER_REF",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "displayName",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "ANZEIGENAME",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "firstName",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "VORNAME",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "lastName",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "NACHNAME",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "loginName",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "LOGIN_NAME",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "coreMember",
+          "javaType": "boolean",
+          "source": "PERSISTED",
+          "columnName": "KERNMITGLIED",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskDivisionMemberCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskDivisionMemberUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskDivisionMemberModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskDivisionMemberInfoModel"
+        }
+      ]
+    },
+    {
+      "id": "de.brasi.nova.taskmanagement.entity.TaskEventReceipt",
+      "kind": "ENTITY",
+      "name": "TaskEventReceipt",
+      "packageName": "de.brasi.nova.taskmanagement.entity",
+      "domain": null,
+      "label": null,
+      "category": null,
+      "table": { "schema": "", "name": "TASK_EREIGNIS_QUITTUNG" },
+      "tenantCapable": true,
+      "scaffoldEligible": true,
+      "associationCandidate": false,
+      "properties": [
+        {
+          "name": "tenantUuid",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "MANDANT_UUID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "eventId",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "EREIGNIS_ID",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "divisionRef",
+          "javaType": "java.util.UUID",
+          "source": "PERSISTED",
+          "columnName": "ABTEILUNG_REF",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "status",
+          "javaType": "de.brasi.nova.taskmanagement.entity.enums.EventReceiptStatus",
+          "source": "PERSISTED",
+          "columnName": "STATUS",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
+          "name": "errorMessage",
+          "javaType": "java.lang.String",
+          "source": "PERSISTED",
+          "columnName": "FEHLER_MELDUNG",
+          "nullable": true,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        }
+      ],
+      "dtoSchemas": [
+        {
+          "schema": "CREATE",
+          "dtoName": "TaskEventReceiptCreateModel"
+        },
+        {
+          "schema": "UPDATE",
+          "dtoName": "TaskEventReceiptUpdateModel"
+        },
+        {
+          "schema": "MODEL",
+          "dtoName": "TaskEventReceiptModel"
+        },
+        {
+          "schema": "INFO",
+          "dtoName": "TaskEventReceiptInfoModel"
+        }
+      ]
+    },
+    {
       "id": "de.brasi.nova.taskmanagement.entity.TaskHandover",
       "kind": "ENTITY",
       "name": "TaskHandover",
