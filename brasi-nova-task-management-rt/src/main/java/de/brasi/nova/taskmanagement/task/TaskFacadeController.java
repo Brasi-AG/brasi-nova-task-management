@@ -337,6 +337,10 @@ public class TaskFacadeController {
    * leerer oder inaktiver Code ist 400. Eine Aenderung schreibt einen Verlaufseintrag, eine
    * Benachrichtigung gibt es nicht.
    *
+   * <p>{@code mentions} und {@code divisionMentions} (Intake #190): nur zusammen mit {@code
+   * description}; Erwaehnte bekommen eine MENTION, Nicht-Mitglieder werden mit {@code TASK_WRITE}
+   * als Beteiligte aufgenommen (wie beim Kommentar, {@code TaskCommandService#patch}).
+   *
    * @param id externe UUID der Aufgabe
    * @param input Patch-Eingabe
    * @return 204 No Content
@@ -350,14 +354,48 @@ public class TaskFacadeController {
               + " loeschen bzw. priorityCode auf NORMAL zuruecksetzen). priorityCode ist ein Code"
               + " aus dem Dictionary taskPriority (derzeit LOW, NORMAL, HIGH, URGENT); eine"
               + " Aenderung schreibt den Verlaufseintrag 'Prioritaet geaendert' (z. B. 'NORMAL ->"
-              + " HIGH') und loest keine Benachrichtigung aus.")
+              + " HIGH') und loest keine Benachrichtigung aus. Zusammen mit description koennen"
+              + " mentions (Benutzer, hoechstens 100) und divisionMentions (Abteilungen, hoechstens"
+              + " 10) gesendet werden, ohne description ist das ein 400. Die Erwaehnten werden wie"
+              + " bei einem Kommentar behandelt: Abteilungen stehen fuer die Personen ihres"
+              + " Teilbaums (Momentaufnahme), Mitglieder der Aufgabe erhalten die MENTION 'Du"
+              + " wurdest in der Aufgabenbeschreibung erwaehnt.' (auch bei stummgeschalteter"
+              + " Aufgabe und zusaetzlich zu einer DONE- oder CANCELLED-Benachrichtigung desselben"
+              + " Aufrufs), aktive Benutzer des eigenen Mandanten ohne Mitgliedschaft werden mit"
+              + " der Berechtigung TASK_WRITE als Beteiligte hinzugefuegt (Verlauf 'hat einen"
+              + " Beteiligten per Erwaehnung hinzugefuegt') und erhalten die MENTION, sonst still"
+              + " verworfen; die aufrufende Person erhaelt keine. Alles oder nichts: eine"
+              + " unbekannte, nicht aktive oder mandantenfremde Abteilung oder mehr als 200"
+              + " Personen in den erwaehnten Abteilungen (Vorgabe) ergeben 400, und nichts wird"
+              + " geaendert, auch die Beschreibung nicht.")
   @ApiResponses({
     @ApiResponse(responseCode = "204", description = "Aufgabe erfolgreich aktualisiert."),
     @ApiResponse(
         responseCode = "400",
         description =
             "Ungueltige Eingabe (z.B. unbekannter statusCode, unbekannte Tag-UUID, unbekannter,"
-                + " leerer oder inaktiver priorityCode)."),
+                + " leerer oder inaktiver priorityCode; mentions oder divisionMentions ohne"
+                + " description, mehr als 100 bzw. 10 Eintraege oder ein null-Element darin; eine"
+                + " erwaehnte Abteilung unbekannt, nicht aktiv oder mandantenfremd oder mehr als"
+                + " 200 Personen in den erwaehnten Abteilungen). Nichts wird geaendert.",
+        content =
+            @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ApiError.class),
+                examples = {
+                  @ExampleObject(
+                      name = "erwaehnung-ohne-beschreibung",
+                      summary = "mentions oder divisionMentions ohne description",
+                      value = TaskPatchApiExamples.BAD_REQUEST_MENTIONS_WITHOUT_DESCRIPTION),
+                  @ExampleObject(
+                      name = "abteilung-unbekannt",
+                      summary = "Erwaehnte Abteilung unbekannt, nicht aktiv oder mandantenfremd",
+                      value = TaskPatchApiExamples.BAD_REQUEST_DIVISION),
+                  @ExampleObject(
+                      name = "prioritaet-unbekannt",
+                      summary = "Unbekannter priorityCode",
+                      value = TaskPatchApiExamples.BAD_REQUEST_PRIORITY)
+                })),
     @ApiResponse(responseCode = "401", description = "Kein oder ungueltiges JWT."),
     @ApiResponse(
         responseCode = "404",
@@ -378,7 +416,30 @@ public class TaskFacadeController {
   public ResponseEntity<Void> patch(
       @Parameter(description = "Externe UUID der Aufgabe.", required = true) @PathVariable
           final UUID id,
-      @RequestBody final TaskPatchInput input) {
+      @io.swagger.v3.oas.annotations.parameters.RequestBody(
+              description =
+                  "Zu aendernde Felder; fehlende Felder bleiben unveraendert. mentions und"
+                      + " divisionMentions nur zusammen mit description.",
+              required = true,
+              content =
+                  @Content(
+                      mediaType = "application/json",
+                      schema = @Schema(implementation = TaskPatchInput.class),
+                      examples = {
+                        @ExampleObject(
+                            name = "titel-und-prioritaet",
+                            summary = "Titel und Prioritaet aendern",
+                            value = TaskPatchApiExamples.REQUEST_TITLE_PRIORITY),
+                        @ExampleObject(
+                            name = "beschreibung-mit-erwaehnung",
+                            summary = "Beschreibung mit Erwaehnung einer Abteilung und einer Person",
+                            description =
+                                "Die Personen der Abteilung werden mit mentions vereinigt; wer"
+                                    + " noch kein Mitglied ist, wird mit TASK_WRITE Beteiligter.",
+                            value = TaskPatchApiExamples.REQUEST_DESCRIPTION_WITH_MENTIONS)
+                      }))
+          @RequestBody
+          final TaskPatchInput input) {
     commandService.patch(id, input);
     return ResponseEntity.noContent().build();
   }

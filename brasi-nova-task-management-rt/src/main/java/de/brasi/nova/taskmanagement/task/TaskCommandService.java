@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.task;
 
+import de.brasi.nova.taskmanagement.comment.MentionRecipientService;
+import de.brasi.nova.taskmanagement.comment.MentionRecipients;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskTag;
@@ -67,6 +69,9 @@ public class TaskCommandService {
 
   private static final Logger log = LoggerFactory.getLogger(TaskCommandService.class);
 
+  /** Text der MENTION aus der Aufgabenbeschreibung (Intake #190). */
+  static final String DESCRIPTION_MENTION_TEXT = "Du wurdest in der Aufgabenbeschreibung erwaehnt.";
+
   private final BaseTaskRepository taskRepository;
   private final BaseTaskParticipantRepository participantRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
@@ -84,6 +89,7 @@ public class TaskCommandService {
   private final TaskMembershipGuard membershipGuard;
   private final TaskSourceRegistry sourceRegistry;
   private final NotificationMuteFilter muteFilter;
+  private final MentionRecipientService mentionRecipientService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -103,7 +109,8 @@ public class TaskCommandService {
       final InboxGenerationService inboxGenerationService,
       final TaskMembershipGuard membershipGuard,
       final TaskSourceRegistry sourceRegistry,
-      final NotificationMuteFilter muteFilter) {
+      final NotificationMuteFilter muteFilter,
+      final MentionRecipientService mentionRecipientService) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -121,6 +128,7 @@ public class TaskCommandService {
     this.membershipGuard = membershipGuard;
     this.sourceRegistry = sourceRegistry;
     this.muteFilter = muteFilter;
+    this.mentionRecipientService = mentionRecipientService;
   }
 
   /**
@@ -379,7 +387,7 @@ public class TaskCommandService {
 
   /**
    * Patcht eine bestehende Aufgabe (title, dueDate, startDate, description, statusCode, tagIds,
-   * priorityCode).
+   * priorityCode; mit description auch mentions und divisionMentions).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion. Nach
    * Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
@@ -416,6 +424,19 @@ public class TaskCommandService {
    * bereits NORMAL) schreibt keinen Verlauf und loest allein weder Save noch Bump/Invalidate aus.
    * Eine Prioritaetsaenderung loest keine Benachrichtigung aus.
    *
+   * <p><b>Erwaehnungen in der Beschreibung (Intake #190):</b> Mit {@code description} duerfen
+   * {@code mentions} und {@code divisionMentions} kommen (ohne {@code description} lehnt schon
+   * {@link TaskPatchInput} ab). Der {@link MentionRecipientService} ermittelt die Empfaenger wie
+   * beim Kommentar (Abteilungen aus der lokalen Projektion, nur lesend; aktive Mandanten-Nutzer;
+   * ohne Akteur; WRITE-Mitglieder als Ziel; Nicht-Mitglieder nur mit {@code TASK_WRITE} als
+   * Beteiligte aufgenommen, mit Verlauf "per Erwaehnung"). Das laeuft nach der Aufloesung der
+   * Prioritaet und den uebrigen Reads, aber vor dem TASK-save; eine unbekannte oder inaktive
+   * Abteilung oder zu viele Personen ergeben 400, und die ganze Aenderung (auch die Beschreibung)
+   * rollt zurueck. Nach dem save bekommt jedes Ziel eine MENTION "Du wurdest in der
+   * Aufgabenbeschreibung erwaehnt." (Vorschau = Titel, trotz Mute, unabhaengig von einer DONE-
+   * oder CANCELLED-Benachrichtigung desselben Patches); die Aufgenommenen kommen in Bump und
+   * Signal.
+   *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
    * JEDES aktiven Teilnehmers der Aufgabe gebumpt - exakt die Menge, fuer die auch {@link
@@ -441,8 +462,9 @@ public class TaskCommandService {
    * @param input Patch-Eingabe
    * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant
    *     gehoert
-   * @throws EntityValidationException bei unbekanntem statusCode oder unbekanntem, leerem bzw.
-   *     inaktivem priorityCode
+   * @throws EntityValidationException bei unbekanntem statusCode, unbekanntem, leerem bzw.
+   *     inaktivem priorityCode, unbekannter oder inaktiver erwaehnter Abteilung oder zu vielen
+   *     Personen in den erwaehnten Abteilungen
    */
   @Transactional
   public void patch(final UUID taskExternalId, final TaskPatchInput input) {
@@ -759,6 +781,14 @@ public class TaskCommandService {
           statusNotificationType != null
               ? findStatusChangeRecipients(taskId, statusNotificationType, actorRef, leftRefs)
               : List.of();
+      // Intake #190: Erwaehnungen in der Beschreibung. Nach allen Reads dieses Pfads und vor dem
+      // TASK-save: der Dienst liest zuerst (Abteilungen, Benutzer, Mitgliedschaft) und nimmt dann
+      // erwaehnte Nicht-Mitglieder auf (Teilnehmer- und State-Writes, Mitgliedschaft vor Aufgabe).
+      // Ein 400 (Abteilung) rollt die ganze Aenderung zurueck. Kein REPLY, daher kein
+      // ausgenommener Empfaenger.
+      final MentionRecipients mentionRecipients = collectDescriptionMentions(taskId, tenantId,
+          actorRef, input);
+      readerRefs.addAll(mentionRecipients.admitted());
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
       log.info(
@@ -787,12 +817,52 @@ public class TaskCommandService {
             statusNotificationType,
             statusRecipients.size());
       }
+      // Intake #190: MENTION je Ziel der Beschreibung, wie beim Kommentar (gleicher Typ, kein
+      // Mute-Filter, kein Selbst-Ping); unabhaengig von einer Statusbenachrichtigung oben.
+      for (final UUID mentionRef : mentionRecipients.notifyTargets()) {
+        notificationService.emit(
+            mentionRef,
+            taskId,
+            NotificationTypeCodes.MENTION,
+            NotificationSeverityCodes.INFO,
+            DESCRIPTION_MENTION_TEXT,
+            task.getTitle(),
+            actorRef);
+      }
+      if (!mentionRecipients.notifyTargets().isEmpty()) {
+        log.info(
+            "TaskCommandService.patch: Erwaehnung in der Beschreibung der Aufgabe {} -"
+                + " MENTION an {} Empfaenger, {} Person(en) aufgenommen.",
+            taskExternalId,
+            mentionRecipients.notifyTargets().size(),
+            mentionRecipients.admitted().size());
+      }
       // Gleiche deduplizierte Menge fuer atomaren Generation-Bump und Signal nach Commit.
       if (!readerRefs.isEmpty()) {
         inboxGenerationService.bumpSorted(tenantId, readerRefs);
         inboxSignalService.invalidate(tenantId, readerRefs);
       }
     }
+  }
+
+  /**
+   * Ermittelt die Empfaenger der Erwaehnungen in der Beschreibung (Intake #190). Ohne Erwaehnung
+   * wird der Dienst nicht gerufen (kein Read, keine Aufnahme).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param tenantId interner Mandanten-Schluessel
+   * @param actorRef handelnde Person
+   * @param input Patch-Eingabe
+   * @return Ziele der MENTION und Aufgenommene, leer ohne Erwaehnung
+   */
+  private MentionRecipients collectDescriptionMentions(
+      final Long taskId, final long tenantId, final UUID actorRef, final TaskPatchInput input) {
+    if (!input.description().isPresent()
+        || (input.mentions().isEmpty() && input.divisionMentions().isEmpty())) {
+      return new MentionRecipients(Set.of(), Set.of());
+    }
+    return mentionRecipientService.collect(
+        taskId, tenantId, actorRef, null, input.mentions(), input.divisionMentions());
   }
 
   /**

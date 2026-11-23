@@ -3544,6 +3544,65 @@ class TaskFacadeControllerIT {
     assertThat(lastActivityOf(taskId)).isEqualTo(activityBefore);
   }
 
+  @Test
+  @DisplayName(
+      "i190_patch_openapi_examples_match_live: die 400-Beispiele 'Erwaehnung ohne Beschreibung' und"
+          + " 'Abteilung unbekannt' der Operation patch stimmen in status, error, message, errorKey"
+          + " und details mit der Live-Antwort ueberein; der Pfad unterscheidet sich nur in der"
+          + " Aufgaben-UUID")
+  void i190_patch_openapi_examples_match_live() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Beispiele");
+
+    final String withoutDescription =
+        patchRaw(
+                mvc,
+                tokenA,
+                taskId,
+                om.writeValueAsString(Map.of("title", "T", "mentions", List.of(USER_A2_REF))))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+    assertMatchesExample(
+        om,
+        withoutDescription,
+        TaskPatchApiExamples.BAD_REQUEST_MENTIONS_WITHOUT_DESCRIPTION,
+        taskId);
+
+    final String unknownDivision =
+        patchRaw(
+                mvc,
+                tokenA,
+                taskId,
+                om.writeValueAsString(
+                    Map.of("description", "D", "divisionMentions", List.of(UUID.randomUUID()))))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+    assertMatchesExample(om, unknownDivision, TaskPatchApiExamples.BAD_REQUEST_DIVISION, taskId);
+  }
+
+  /** Vergleicht eine Live-Fehlerantwort mit einem Beispiel (ohne Zeitstempel und Trace-Id). */
+  private static void assertMatchesExample(
+      final ObjectMapper om, final String live, final String example, final UUID taskId)
+      throws Exception {
+    final JsonNode actual = om.readTree(live);
+    final JsonNode expected = om.readTree(example);
+    for (final String field : List.of("status", "error", "message", "errorKey", "details")) {
+      assertThat(actual.path(field)).as("Feld %s", field).isEqualTo(expected.path(field));
+    }
+    assertThat(actual.path("path").asText())
+        .isEqualTo(
+            expected
+                .path("path")
+                .asText()
+                .replace(TaskPatchApiExamples.TASK_REF, taskId.toString()));
+  }
+
   // ---- Hilfsmethoden Intake #190 ---------------------------------------------------------------
 
   /** Token von A (Ersteller) mit TASK_WRITE und TASK_READ. */
