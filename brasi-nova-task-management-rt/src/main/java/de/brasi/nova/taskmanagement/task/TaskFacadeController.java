@@ -339,7 +339,9 @@ public class TaskFacadeController {
    *
    * <p>{@code mentions} und {@code divisionMentions} (Intake #190): nur zusammen mit {@code
    * description}; Erwaehnte bekommen eine MENTION, Nicht-Mitglieder werden mit {@code TASK_WRITE}
-   * als Beteiligte aufgenommen (wie beim Kommentar, {@code TaskCommandService#patch}).
+   * als Beteiligte aufgenommen (wie beim Kommentar, {@code TaskCommandService#patch}). Eine
+   * DONE- oder CANCELLED-Benachrichtigung desselben Aufrufs geht an die vor dem Aufruf aktiven
+   * Beteiligten; wer erst durch die Erwaehnung aufgenommen wird, erhaelt nur die MENTION.
    *
    * @param id externe UUID der Aufgabe
    * @param input Patch-Eingabe
@@ -364,7 +366,10 @@ public class TaskFacadeController {
               + " Aufrufs), aktive Benutzer des eigenen Mandanten ohne Mitgliedschaft werden mit"
               + " der Berechtigung TASK_WRITE als Beteiligte hinzugefuegt (Verlauf 'hat einen"
               + " Beteiligten per Erwaehnung hinzugefuegt') und erhalten die MENTION, sonst still"
-              + " verworfen; die aufrufende Person erhaelt keine. Alles oder nichts: eine"
+              + " verworfen; die aufrufende Person erhaelt keine. Die DONE- oder"
+              + " CANCELLED-Benachrichtigung eines Aufrufs geht an die Beteiligten, die vor dem"
+              + " Aufruf aktiv waren; wer erst durch eine Erwaehnung desselben Aufrufs aufgenommen"
+              + " wird, erhaelt nur die MENTION. Alles oder nichts: eine"
               + " unbekannte, nicht aktive oder mandantenfremde Abteilung oder mehr als 200"
               + " Personen in den erwaehnten Abteilungen (Vorgabe) ergeben 400, und nichts wird"
               + " geaendert, auch die Beschreibung nicht.")
@@ -406,11 +411,14 @@ public class TaskFacadeController {
         description =
             LockConflictApiExamples.DESCRIPTION
                 + " Mit Erwaehnungen in der Beschreibung (mentions, divisionMentions) kommt hinzu:"
-                + " Jede erwaehnte Person, die als Beteiligte aufgenommen wird, bekommt eine neue"
-                + " Teilnehmerzeile und eine neue Zeile des persoenlichen Zustands, die je eine"
-                + " Sequenz vergeben; beim gleichzeitigen Insert derselben Person tritt ein"
-                + " Unique- oder Sequenzkonflikt auf, noch bevor die Aufgabe gespeichert wird. Auch"
-                + " ihr Verlaufseintrag 'per Erwaehnung' vergibt eine Sequenz. In allen Faellen"
+                + " Jede erwaehnte Person, die als Beteiligte aufgenommen wird, bekommt neue Zeilen"
+                + " (Teilnehmerzeile und persoenlicher Zustand, die je eine Sequenz vergeben),"
+                + " sofern sie noch keine hatte; beim gleichzeitigen Insert derselben Person tritt"
+                + " ein Unique- oder Sequenzkonflikt auf. War die Person ausgetreten oder ihre"
+                + " Teilnehmerzeile DEACTIVE, werden ihre vorhandenen Zeilen reaktiviert statt neu"
+                + " angelegt; aendert jemand diese Zeilen gleichzeitig, tritt ein Versionskonflikt"
+                + " auf. Beides geschieht, noch bevor die Aufgabe gespeichert wird. Auch ihr"
+                + " Verlaufseintrag 'per Erwaehnung' vergibt eine Sequenz. In allen Faellen"
                 + " wurde nichts geaendert; die Anfrage wiederholen."
                 + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT,
         content =

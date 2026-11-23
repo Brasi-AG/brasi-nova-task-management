@@ -399,9 +399,11 @@ public class TaskCommandService {
    * andere Status-Wechsel in beide Richtungen.
    *
    * <p><b>DONE-Benachrichtigung (Intake #151):</b> Nur beim <i>Uebergang</i> in {@code DONE} (neuer
-   * Status DONE, bisheriger nicht) erhaelt jeder aktive Beteiligte (Ersteller, Zugewiesene,
-   * Beteiligte) genau eine {@code DONE}-Benachrichtigung inkl. WebSocket-Push nach Commit - ohne
-   * den schliessenden Akteur und ohne Personen, die die Aufgabe verlassen haben. Ein Patch ohne
+   * Status DONE, bisheriger nicht) erhaelt jeder <i>vor diesem PATCH</i> aktive Beteiligte
+   * (Ersteller, Zugewiesene, Beteiligte) genau eine {@code DONE}-Benachrichtigung inkl.
+   * WebSocket-Push nach Commit - ohne den schliessenden Akteur und ohne Personen, die die Aufgabe
+   * verlassen haben. Wer erst durch eine Erwaehnung im selben PATCH als Beteiligter aufgenommen
+   * wird (siehe unten), gehoert nicht dazu und erhaelt nur die MENTION. Ein Patch ohne
    * Statuswechsel oder in einen anderen Status loest keine DONE-Benachrichtigung aus. Die Emission
    * laeuft in derselben Transaktion wie die Statusaenderung.
    *
@@ -438,6 +440,12 @@ public class TaskCommandService {
    * Wer im selben Patch DONE oder CANCELLED bekommt und erwaehnt wird, erhaelt beide
    * Benachrichtigungen unabhaengig voneinander (DONE mit Mute-Filter, MENTION ohne, keine
    * Deduplizierung ueber die Typen hinweg); die Aufgenommenen kommen in Bump und Signal.
+   *
+   * <p><b>Empfaenger der Statusbenachrichtigung gegen Aufnahme (Intake #190):</b> Die Empfaenger
+   * von DONE und CANCELLED stehen VOR der Aufnahme fest (Lock-Reihenfolge: Mitgliedschafts-Read vor
+   * dem TASK-save) und sind die vor diesem PATCH aktiven Beteiligten. Wer durch die Erwaehnung
+   * desselben PATCH erst aufgenommen wird, erhaelt genau eine MENTION und keine DONE- oder
+   * CANCELLED-Benachrichtigung; das ist gewollt.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
@@ -787,6 +795,8 @@ public class TaskCommandService {
       // Intake #151/#157: Empfaenger der Statusbenachrichtigung aus demselben Grund ebenfalls VOR
       // dem TASK-save lesen (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
       // Intake #158: inklusive gebuendelter Mute-Lesung (stumme Personen fallen heraus).
+      // Intake #190: Empfaenger = die VOR diesem PATCH aktiven Beteiligten; wer unten per Erwaehnung
+      // erst aufgenommen wird, bekommt nur die MENTION (gewollt, Aufruf bewusst vor der Aufnahme).
       final List<UUID> statusRecipients =
           statusNotificationType != null
               ? findStatusChangeRecipients(taskId, statusNotificationType, actorRef, leftRefs)
@@ -934,9 +944,11 @@ public class TaskCommandService {
 
   /**
    * Ermittelt die Empfaenger einer Statusbenachrichtigung beim Schliessen (DONE, Intake #151) und
-   * beim Abbrechen (CANCELLED, Intake #157): alle aktiven Beteiligten der Aufgabe (Ersteller,
-   * Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren Rollen -, ohne den
-   * handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben.
+   * beim Abbrechen (CANCELLED, Intake #157): alle <i>vor diesem PATCH</i> aktiven Beteiligten der
+   * Aufgabe (Ersteller, Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren
+   * Rollen -, ohne den handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben. Wer
+   * im selben PATCH erst per Erwaehnung aufgenommen wird, ist (der Aufruf liegt vor der Aufnahme)
+   * nie Empfaenger.
    *
    * <p>Bewusst EINE gemeinsame Ermittlung fuer beide Statuswechsel: Anpassungen der Empfaengerlogik
    * (z. B. Stummschalten, Intake #158) gelten damit automatisch fuer Schliessen und Abbrechen.
