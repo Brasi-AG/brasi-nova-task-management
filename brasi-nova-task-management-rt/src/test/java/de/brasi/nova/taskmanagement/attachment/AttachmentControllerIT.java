@@ -1561,12 +1561,12 @@ class AttachmentControllerIT {
    * Laesst den Request-Thread die Filterkette erst verlassen, wenn ein gestarteter {@code
    * StreamingResponseBody} fertig ist (Wackler i152).
    *
-   * <p>Spring Securitys {@code HeaderWriterFilter} schreibt seine Header verzoegert: beim Commit der
-   * Antwort oder im {@code finally} nach der Kette. Bei einer Auslieferung committet der Async-Thread
-   * des Anhang-Pools die Antwort, waehrend der Request-Thread aus der Kette zurueckkehrt; die Sperre
-   * dagegen ist ein einfaches {@code boolean} ohne Synchronisation. Ohne diesen Filter schreiben
-   * beide Threads zugleich in dieselbe {@code MockHttpServletResponse} ({@code
-   * ConcurrentModificationException} in {@code setHeader}).
+   * <p>Spring Securitys {@code HeaderWriterFilter} schreibt seine Header verzoegert: beim Commit
+   * der Antwort oder im {@code finally} nach der Kette. Bei einer Auslieferung committet der
+   * Async-Thread des Anhang-Pools die Antwort, waehrend der Request-Thread aus der Kette
+   * zurueckkehrt; die Sperre dagegen ist ein einfaches {@code boolean} ohne Synchronisation. Ohne
+   * diesen Filter schreiben beide Threads zugleich in dieselbe {@code MockHttpServletResponse}
+   * ({@code ConcurrentModificationException} in {@code setHeader}).
    *
    * <p>Der Filter sitzt innerhalb der Security-Kette und wartet nach der Verarbeitung auf das
    * Async-Ergebnis. Dessen Ablage ({@code volatile}) folgt auf den Commit; danach sieht der {@code
