@@ -15,9 +15,9 @@ import org.springframework.jms.config.DefaultJmsListenerContainerFactory;
  * <p>Die Factory {@code divisionSyncListenerFactory} baut Container fuer eine geteilte, dauerhafte
  * Subscription auf dem Topic (JMS 2.0, ohne Client-ID; mehrere Instanzen teilen sich die
  * Zustellung), mit transaktionaler Session (Rollback bei Ausnahme, dann Redelivery durch den
- * Broker) und einem Consumer je Instanz. Sie startet immer ({@code autoStartup=true}) und liest
- * das globale {@code spring.jms.listener.auto-startup} bewusst nicht: auf dev-ui steht es auf
- * {@code false} (Ruling 2026-11-22), der Abteilungs-Listener haengt allein an {@code enabled}.
+ * Broker) und einem Consumer je Instanz. Sie startet immer ({@code autoStartup=true}) und liest das
+ * globale {@code spring.jms.listener.auto-startup} bewusst nicht: auf dev-ui steht es auf {@code
+ * false} (Ruling 2026-11-22), der Abteilungs-Listener haengt allein an {@code enabled}.
  *
  * <p>Beim Aufbau prueft {@link DivisionSyncProperties#requireCompleteWhenEnabled(String)} die
  * Pflichtwerte samt {@code ksf.event.profile}; fehlt einer, bricht der Start ab.

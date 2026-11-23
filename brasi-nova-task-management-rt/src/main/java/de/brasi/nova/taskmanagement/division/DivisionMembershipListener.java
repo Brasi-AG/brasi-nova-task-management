@@ -9,8 +9,8 @@ import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Empfaengt {@code DivisionMembershipChanged} auf der geteilten, dauerhaften Subscription
- * (Intake #190), nur bei {@code task-management.division-sync.enabled=true}.
+ * Empfaengt {@code DivisionMembershipChanged} auf der geteilten, dauerhaften Subscription (Intake
+ * #190), nur bei {@code task-management.division-sync.enabled=true}.
  *
  * <p>Je Nachricht: {@link NovaEventProfileGuard} (fremdes oder fehlendes {@code brasiProfile}:
  * verwerfen, WARN des Guards), {@link DivisionSignalGuard} (ungueltig: verwerfen mit WARN), dann

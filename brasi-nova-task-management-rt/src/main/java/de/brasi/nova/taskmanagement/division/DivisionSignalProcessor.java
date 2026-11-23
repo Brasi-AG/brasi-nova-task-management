@@ -18,8 +18,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Verarbeitet ein geprueftes Abteilungs-Signal (Intake #190): aktuellen Stand bei application
- * laden und mit Quittung in die Projektion uebernehmen.
+ * Verarbeitet ein geprueftes Abteilungs-Signal (Intake #190): aktuellen Stand bei application laden
+ * und mit Quittung in die Projektion uebernehmen.
  *
  * <p>Ablauf (Ruling 2026-11-22, immer {@code self}):
  *
@@ -29,8 +29,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>Quittung vorhanden ({@code PROCESSED} oder {@code DEAD}): nichts tun.
  *   <li>Lokale revision gleich Signal-revision: nur Quittung {@code PROCESSED}, kein HTTP-Aufruf.
  *   <li>Abrufstart (Wanduhr der Persistenz-Zone) vor dem HTTP-Aufruf nehmen, {@code fetchCurrent}.
- *   <li>Eine Transaktion: Quittung, dann Projektion ({@link TaskEventReceiptStore#executeOnce}
- *       mit {@link DivisionProjectionService#apply}). Verliert der Claim, wird die Transaktion
+ *   <li>Eine Transaktion: Quittung, dann Projektion ({@link TaskEventReceiptStore#executeOnce} mit
+ *       {@link DivisionProjectionService#apply}). Verliert der Claim, wird die Transaktion
  *       rollback-only.
  * </ol>
  *

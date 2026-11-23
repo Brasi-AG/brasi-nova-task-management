@@ -29,9 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * false} ohne Handler; der Aufrufer setzt seine Transaktion dann auf rollback-only. Eine Ausnahme
  * des Handlers geht unveraendert weiter, der Rollback nimmt die Quittung mit.
  *
- * <p>{@link #markDead} schreibt in eigener Transaktion ({@code REQUIRES_NEW}), damit die
- * Verwerfung den Rollback der Verarbeitung ueberlebt. Eine Quittung in jedem Status zaehlt als
- * verarbeitet.
+ * <p>{@link #markDead} schreibt in eigener Transaktion ({@code REQUIRES_NEW}), damit die Verwerfung
+ * den Rollback der Verarbeitung ueberlebt. Eine Quittung in jedem Status zaehlt als verarbeitet.
  */
 @Component
 public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
@@ -90,9 +89,9 @@ public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
   }
 
   /**
-   * Verwirft das Signal endgueltig: Quittung {@code DEAD} mit Grund (auf {@value
-   * #MAX_ERROR_LENGTH} Zeichen gekuerzt), eine vorhandene Quittung wird auf {@code DEAD} gesetzt.
-   * Laeuft in eigener Transaktion und unter dem Kontext-Mandanten.
+   * Verwirft das Signal endgueltig: Quittung {@code DEAD} mit Grund (auf {@value #MAX_ERROR_LENGTH}
+   * Zeichen gekuerzt), eine vorhandene Quittung wird auf {@code DEAD} gesetzt. Laeuft in eigener
+   * Transaktion und unter dem Kontext-Mandanten.
    *
    * @param signal geprueftes Signal
    * @param reason Grund ohne Token oder Secret

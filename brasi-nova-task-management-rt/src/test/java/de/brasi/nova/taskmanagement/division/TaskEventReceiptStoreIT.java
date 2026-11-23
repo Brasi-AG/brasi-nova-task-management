@@ -288,8 +288,7 @@ class TaskEventReceiptStoreIT {
   void i190_mark_dead_turns_existing_receipt_dead() {
     final DivisionSignal signal = signal(TENANT_A_UUID);
     assertThat(claim(TENANT_A_ID, TENANT_A_UUID, signal, () -> {})).isTrue();
-    assertThat(singleReceipt(TENANT_A_UUID, signal.eventId()).get("STATUS"))
-        .isEqualTo("PROCESSED");
+    assertThat(singleReceipt(TENANT_A_UUID, signal.eventId()).get("STATUS")).isEqualTo("PROCESSED");
 
     inTenantTx(
         TENANT_A_ID,

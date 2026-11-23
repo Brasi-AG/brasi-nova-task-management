@@ -20,11 +20,11 @@ import org.springframework.stereotype.Component;
  * (Intake #190) und liefert daraus das {@link DivisionSignal}.
  *
  * <p>Verlangt: Header {@code eventName} = {@value #EVENT_NAME}; Header {@code novaEventId}, {@code
- * novaTenantId} und {@code aggregateId} als UUID; eine {@link TextMessage} mit JSON-Envelope, dessen
- * {@code eventId}, {@code tenantId} und {@code aggregateId} den Headern gleichen; im Link {@code
- * links.snapshot} als letztes Pfadsegment eine revision aus 64 Kleinbuchstaben-Hex. Jeder Verstoss
- * ergibt {@link Optional#empty()} mit WARN (Grund und Header-IDs, nie der Body): die Nachricht wird
- * verworfen statt wiederholt zugestellt.
+ * novaTenantId} und {@code aggregateId} als UUID; eine {@link TextMessage} mit JSON-Envelope,
+ * dessen {@code eventId}, {@code tenantId} und {@code aggregateId} den Headern gleichen; im Link
+ * {@code links.snapshot} als letztes Pfadsegment eine revision aus 64 Kleinbuchstaben-Hex. Jeder
+ * Verstoss ergibt {@link Optional#empty()} mit WARN (Grund und Header-IDs, nie der Body): die
+ * Nachricht wird verworfen statt wiederholt zugestellt.
  */
 @Component
 public class DivisionSignalGuard {

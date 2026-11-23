@@ -56,7 +56,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>Angenommene Signaturen: paketprivater Test-Konstruktor {@code
  * DivisionSignalProcessor(DivisionMembersClient, DivisionProjectionService, TaskEventReceiptStore,
  * FirmReadRepository, PlatformTransactionManager, DivisionSyncProperties, Clock)}; {@code void
- * process(DivisionSignal, int)}; {@code FirmReadRepository#findTenantIdByUuid(UUID): Optional<Long>}.
+ * process(DivisionSignal, int)}; {@code FirmReadRepository#findTenantIdByUuid(UUID):
+ * Optional<Long>}.
  */
 class DivisionSignalProcessorTest {
 
