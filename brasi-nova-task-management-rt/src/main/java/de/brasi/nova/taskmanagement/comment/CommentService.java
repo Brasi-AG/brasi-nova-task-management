@@ -241,10 +241,12 @@ public class CommentService {
 
     // MENTION-Empfaenger VOR dem TASK-save ermitteln (MentionRecipientService, Intake #190 Task 10;
     // vorher hier inline), hier die Lesephase; die Aufnahme folgt nach den Assignee-Reads. Mentions
-    // sind explizite Ziel-GUIDs des Clients (NICHT aus dem Text geparst); erwaehnte Abteilungen loest der Dienst ueber die lokale Projektion auf (400 bei
+    // sind explizite Ziel-GUIDs des Clients (NICHT aus dem Text geparst); erwaehnte Abteilungen
+    // loest der Dienst ueber die lokale Projektion auf (400 bei
     // unbekannter/inaktiver Abteilung oder ueber der Personengrenze, dann ist nichts geschrieben).
     // Nur aktive Mandanten-Nutzer; Selbst-Notify und REPLY-Vorrang (excludedRecipient) sind
-    // herausgefiltert; WRITE-Mitglieder sind Ziel. Erwaehnte Nicht-Mitglieder nimmt der Dienst unter
+    // herausgefiltert; WRITE-Mitglieder sind Ziel. Erwaehnte Nicht-Mitglieder nimmt der Dienst
+    // unter
     // dem Recht von POST /participants als Beteiligte auf (Intake #156): das sind Teilnehmer- und
     // State-Writes und gehoeren deshalb VOR den TASK-save (Mitgliedschaft vor Aufgabe, wie bei
     // updateAssignees); der sortierte Generation-Bump folgt NACH dem save, gemeinsam mit den

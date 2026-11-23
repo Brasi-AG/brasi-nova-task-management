@@ -432,7 +432,8 @@ public class TaskFacadeController {
                             value = TaskPatchApiExamples.REQUEST_TITLE_PRIORITY),
                         @ExampleObject(
                             name = "beschreibung-mit-erwaehnung",
-                            summary = "Beschreibung mit Erwaehnung einer Abteilung und einer Person",
+                            summary =
+                                "Beschreibung mit Erwaehnung einer Abteilung und einer Person",
                             description =
                                 "Die Personen der Abteilung werden mit mentions vereinigt; wer"
                                     + " noch kein Mitglied ist, wird mit TASK_WRITE Beteiligter.",

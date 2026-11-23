@@ -25,9 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
  * #collect}:
  *
  * <ol>
- *   <li>Erwaehnte Abteilungen ueber den {@link DivisionMentionResolver} auf die Personen der lokalen
- *       Projektion aufloesen (reiner Read; 400 bei unbekannter oder inaktiver Abteilung oder zu
- *       vielen Personen, dann ist nichts geschrieben). Die Projektion wird nur gelesen.
+ *   <li>Erwaehnte Abteilungen ueber den {@link DivisionMentionResolver} auf die Personen der
+ *       lokalen Projektion aufloesen (reiner Read; 400 bei unbekannter oder inaktiver Abteilung
+ *       oder zu vielen Personen, dann ist nichts geschrieben). Die Projektion wird nur gelesen.
  *   <li>Mit den erwaehnten Personen vereinigen und deduplizieren, dann mandanten-scoped auf aktive
  *       Benutzer filtern ({@code findActiveByUuids}); nicht aufloesbare UUIDs fallen still weg.
  *   <li>Akteur (kein Selbst-Ping) und den ausgenommenen Empfaenger (beim Kommentar der Empfaenger
@@ -69,13 +69,14 @@ public class MentionRecipientService {
   }
 
   /**
-   * Ermittelt die MENTION-Ziele und nimmt erwaehnte Nicht-Mitglieder (mit Recht) als Beteiligte auf:
-   * {@link #resolve} und danach {@link #admit} in einem Schritt.
+   * Ermittelt die MENTION-Ziele und nimmt erwaehnte Nicht-Mitglieder (mit Recht) als Beteiligte
+   * auf: {@link #resolve} und danach {@link #admit} in einem Schritt.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
    * @param actorRef handelnde Person (wird nie Ziel)
-   * @param excludedRecipient Person, die keine MENTION bekommt (REPLY-Empfaenger), oder {@code null}
+   * @param excludedRecipient Person, die keine MENTION bekommt (REPLY-Empfaenger), oder {@code
+   *     null}
    * @param personRefs erwaehnte Personen (Duplikate erlaubt, nie {@code null})
    * @param divisionRefs erwaehnte Abteilungen (Duplikate erlaubt, nie {@code null})
    * @return Ziele der MENTION und die per Erwaehnung Aufgenommenen
@@ -94,8 +95,8 @@ public class MentionRecipientService {
   }
 
   /**
-   * Lesephase: loest die Erwaehnten auf und teilt sie in WRITE-Mitglieder und Nicht-Mitglieder, ohne
-   * etwas zu schreiben.
+   * Lesephase: loest die Erwaehnten auf und teilt sie in WRITE-Mitglieder und Nicht-Mitglieder,
+   * ohne etwas zu schreiben.
    *
    * <p>Getrennt von {@link #admit}, damit ein Aufrufer zwischen beiden Phasen eigene Reads
    * einschieben kann ({@code CommentService#createComment} liest dort die Assignees fuer COMMENT;
@@ -104,7 +105,8 @@ public class MentionRecipientService {
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel
    * @param actorRef handelnde Person (wird nie Ziel)
-   * @param excludedRecipient Person, die keine MENTION bekommt (REPLY-Empfaenger), oder {@code null}
+   * @param excludedRecipient Person, die keine MENTION bekommt (REPLY-Empfaenger), oder {@code
+   *     null}
    * @param personRefs erwaehnte Personen (Duplikate erlaubt, nie {@code null})
    * @param divisionRefs erwaehnte Abteilungen (Duplikate erlaubt, nie {@code null})
    * @return die aufgeteilten Erwaehnten fuer {@link #admit}
@@ -151,8 +153,8 @@ public class MentionRecipientService {
   }
 
   /**
-   * Schreibphase: nimmt die Nicht-Mitglieder aus {@link #resolve} (mit Recht) als Beteiligte auf und
-   * liefert die Ziele der MENTION. Laeuft vor dem TASK-save des Aufrufers.
+   * Schreibphase: nimmt die Nicht-Mitglieder aus {@link #resolve} (mit Recht) als Beteiligte auf
+   * und liefert die Ziele der MENTION. Laeuft vor dem TASK-save des Aufrufers.
    *
    * @param candidates Ergebnis von {@link #resolve}
    * @return Ziele der MENTION (Mitglieder und Aufgenommene) und die Aufgenommenen
@@ -187,9 +189,9 @@ public class MentionRecipientService {
    * Nimmt erwaehnte Nicht-Mitglieder als Beteiligte auf (Intake #156), sofern die handelnde Person
    * dazu berechtigt ist.
    *
-   * <p>Ohne das Recht wird niemand aufgenommen: die Erwaehnung von Nicht-Mitgliedern entfaellt still.
-   * Hat ein gleichzeitiger Aufruf eine Person schon aufgenommen (der Kern meldet sie dann nicht), ist
-   * sie inzwischen WRITE-Mitglied und wird trotzdem gefuehrt.
+   * <p>Ohne das Recht wird niemand aufgenommen: die Erwaehnung von Nicht-Mitgliedern entfaellt
+   * still. Hat ein gleichzeitiger Aufruf eine Person schon aufgenommen (der Kern meldet sie dann
+   * nicht), ist sie inzwischen WRITE-Mitglied und wird trotzdem gefuehrt.
    *
    * @param taskId interne Aufgaben-ID
    * @param tenantId interner Mandanten-Schluessel

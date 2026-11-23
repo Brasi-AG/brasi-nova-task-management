@@ -42,8 +42,9 @@ import java.util.UUID;
  *   <li>Rohlaenge (vor jeder Deduplizierung, Lesson {@code input-dto-patterns}): {@code mentions}
  *       hoechstens 100, {@code divisionMentions} hoechstens 10 Eintraege;
  *   <li>keine {@code null}-Elemente (je Liste, {@code mentions} zuerst);
- *   <li>erst dann: eine nicht leere Liste ist nur zusammen mit einem vorhandenen {@code description}
- *       zulaessig ({@link PatchValue#isPresent()}, auch wenn der Wert die Beschreibung leert).
+ *   <li>erst dann: eine nicht leere Liste ist nur zusammen mit einem vorhandenen {@code
+ *       description} zulaessig ({@link PatchValue#isPresent()}, auch wenn der Wert die Beschreibung
+ *       leert).
  * </ol>
  *
  * Die fachliche Deduplizierung, die Aufloesung der Abteilungen und die Benachrichtigung macht

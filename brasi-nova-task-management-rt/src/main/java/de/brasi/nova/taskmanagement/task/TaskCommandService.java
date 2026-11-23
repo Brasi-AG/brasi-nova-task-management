@@ -433,9 +433,8 @@ public class TaskCommandService {
    * Prioritaet und den uebrigen Reads, aber vor dem TASK-save; eine unbekannte oder inaktive
    * Abteilung oder zu viele Personen ergeben 400, und die ganze Aenderung (auch die Beschreibung)
    * rollt zurueck. Nach dem save bekommt jedes Ziel eine MENTION "Du wurdest in der
-   * Aufgabenbeschreibung erwaehnt." (Vorschau = Titel, trotz Mute, unabhaengig von einer DONE-
-   * oder CANCELLED-Benachrichtigung desselben Patches); die Aufgenommenen kommen in Bump und
-   * Signal.
+   * Aufgabenbeschreibung erwaehnt." (Vorschau = Titel, trotz Mute, unabhaengig von einer DONE- oder
+   * CANCELLED-Benachrichtigung desselben Patches); die Aufgenommenen kommen in Bump und Signal.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
@@ -786,8 +785,8 @@ public class TaskCommandService {
       // erwaehnte Nicht-Mitglieder auf (Teilnehmer- und State-Writes, Mitgliedschaft vor Aufgabe).
       // Ein 400 (Abteilung) rollt die ganze Aenderung zurueck. Kein REPLY, daher kein
       // ausgenommener Empfaenger.
-      final MentionRecipients mentionRecipients = collectDescriptionMentions(taskId, tenantId,
-          actorRef, input);
+      final MentionRecipients mentionRecipients =
+          collectDescriptionMentions(taskId, tenantId, actorRef, input);
       readerRefs.addAll(mentionRecipients.admitted());
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
