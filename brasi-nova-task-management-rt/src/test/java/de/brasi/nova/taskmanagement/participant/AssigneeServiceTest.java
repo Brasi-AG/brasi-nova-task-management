@@ -4401,7 +4401,7 @@ class AssigneeServiceTest {
 
   // ---- Intake #188: UNASSIGN-Benachrichtigung bei der Abwahl im PUT /assignees ------------------
 
-  /** Typ-Code der neuen Benachrichtigung (als String, bis die Konstante existiert). */
+  /** Typ-Code der Benachrichtigung; Literal statt Konstante, nagelt den Wert fest (Seed V16). */
   private static final String I188_UNASSIGN = "UNASSIGN";
 
   /** Text der UNASSIGN-Benachrichtigung (ein Text fuer Austritt und De-Assign des Erstellers). */
@@ -4510,6 +4510,40 @@ class AssigneeServiceTest {
         .isEqualTo(ExitKind.UNSUBSCRIBED);
     verify(taskHistoryService)
         .record(eq(taskId), eq(TENANT_ID), eq(ACTOR_REF), eq(I180_UNASSIGNED), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i188_akteur_und_andere_abgewaehlt: der Akteur laesst sich und B im PUT weg -> UNASSIGN"
+          + " genau einmal an B, nie an den Akteur")
+  void i188_actor_and_other_omitted_unassign_only_to_other() {
+    final Long taskId = 18810L;
+    final TaskParticipant actorRow = activeAssignee(taskId, ACTOR_REF, false);
+    final Task task =
+        i188StubPut(
+            taskId,
+            activeAssignee(taskId, I188_LOW, true),
+            actorRow,
+            activeAssignee(taskId, I188_MID, false));
+
+    service.updateAssignees(task.getUuid(), new AssigneeUpdateInput(Set.of(I188_LOW)));
+
+    verify(notificationService, times(1))
+        .emit(
+            I188_MID,
+            taskId,
+            I188_UNASSIGN,
+            NotificationSeverityCodes.INFO,
+            I188_TEXT,
+            "Testtitel",
+            ACTOR_REF);
+    verify(notificationService, never())
+        .emit(eq(ACTOR_REF), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    verify(notificationService, times(1))
+        .emit(any(), any(), eq(I188_UNASSIGN), any(), any(), any(), any());
+    assertThat(actorRow.getExitKind())
+        .as("Selbst-Abwahl tritt wie bisher aus")
+        .isEqualTo(ExitKind.UNSUBSCRIBED);
   }
 
   @Test

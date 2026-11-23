@@ -70,7 +70,8 @@ class NotificationMuteFilterTest {
         NotificationTypeCodes.HANDOVER,
         NotificationTypeCodes.PARTICIPANT,
         NotificationTypeCodes.REMOVED,
-        // Intake #188: Code als String, bis die Konstante NotificationTypeCodes.UNASSIGN existiert.
+        // Intake #188: bewusst als Literal (nicht NotificationTypeCodes.UNASSIGN), damit der
+        // Code-Wert festgenagelt bleibt; der Katalog-Seed V16 haengt an genau diesem String.
         "UNASSIGN"
       })
   @DisplayName("ausgenommene Typen: stumme Empfaenger bleiben erhalten, keine Abfrage")
