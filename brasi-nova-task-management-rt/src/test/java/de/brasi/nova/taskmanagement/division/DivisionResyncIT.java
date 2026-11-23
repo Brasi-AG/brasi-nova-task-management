@@ -7,6 +7,7 @@ import de.brasi.nova.taskmanagement.division.DivisionFetchResult.Members;
 import de.brasi.nova.taskmanagement.division.DivisionFetchResult.NotFound;
 import de.brasi.nova.taskmanagement.division.model.DivisionMemberPayload;
 import de.brasi.nova.taskmanagement.division.model.DivisionMembersPayload;
+import de.brasi.nova.taskmanagement.refentity.FirmReadRepository;
 import de.brasi.nova.taskmanagement.repository.DivisionResyncRow;
 import de.brasi.nova.taskmanagement.repository.TaskDivisionQueryRepository;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
@@ -20,6 +21,7 @@ import io.keel.framework.persistence.autoconfigure.KsfPersistenceAutoConfigurati
 import io.keel.framework.persistence.factory.EnableNovaRepositories;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -49,11 +51,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Real-MSSQL-IT fuer {@code TaskDivisionQueryRepository#findAllForResync} (Intake #190, Task 7):
  * die mandantenuebergreifende Liste aller bekannten Abteilungen fuer den Resync-Job, mit
- * Mandanten-ID und Mandanten-UUID aus {@code PROD_FIRMA}, auch deaktivierte Abteilungen.
+ * Mandanten-ID und Mandanten-UUID aus {@code PROD_FIRMA}, auch deaktivierte Abteilungen. Dazu
+ * {@code FirmReadRepository#findTenantIdByUuid}, die Aufloesung der Mandanten-UUID im Processor:
+ * aktive Firma liefert die ID, unbekannte UUID und nicht aktive Firma liefern leer.
  *
  * <p>Seed ueber {@link DivisionProjectionService}: Mandant 561 mit einer aktiven Abteilung, Mandant
  * 562 mit einem Grabstein (404, {@code DEACTIVE}). Gelesen wird unter {@code runAsSystem}
- * ({@code @GlobalQuery}).
+ * ({@code @GlobalQuery}). Mandant 565 ist als {@code DEACTIVE}-Firma angelegt.
  *
  * <p>Kontext wie {@code DivisionProjectionIT}. Uebersprungen ohne MSSQL-Zugang ({@link
  * RefSchemaItEnabled}).
@@ -85,6 +89,9 @@ class DivisionResyncIT {
   private static final UUID TENANT_A_UUID = UUID.fromString("00000056-0000-0056-0000-000000000561");
   private static final long TENANT_B_ID = 562L;
   private static final UUID TENANT_B_UUID = UUID.fromString("00000056-0000-0056-0000-000000000562");
+  private static final long INACTIVE_TENANT_ID = 565L;
+  private static final UUID INACTIVE_TENANT_UUID =
+      UUID.fromString("00000056-0000-0056-0000-000000000565");
 
   private static final LocalDateTime T1 = LocalDateTime.of(2026, 11, 20, 10, 0, 0);
   private static final String REV1 = "1".repeat(64);
@@ -94,6 +101,8 @@ class DivisionResyncIT {
 
   @Autowired private DivisionProjectionService projectionService;
   @Autowired private TaskDivisionQueryRepository divisionRepository;
+  @Autowired private FirmReadRepository firmRepository;
+  @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private PlatformTransactionManager transactionManager;
 
   @DynamicPropertySource
@@ -123,18 +132,21 @@ class DivisionResyncIT {
 
   @BeforeAll
   static void seedTenants(@Autowired JdbcTemplate jt) {
-    seedTenant(jt, TENANT_A_ID, TENANT_A_UUID);
-    seedTenant(jt, TENANT_B_ID, TENANT_B_UUID);
+    seedTenant(jt, TENANT_A_ID, TENANT_A_UUID, "ACTIVE");
+    seedTenant(jt, TENANT_B_ID, TENANT_B_UUID, "ACTIVE");
+    seedTenant(jt, INACTIVE_TENANT_ID, INACTIVE_TENANT_UUID, "DEACTIVE");
   }
 
-  private static void seedTenant(final JdbcTemplate jt, final long id, final UUID uuid) {
+  private static void seedTenant(
+      final JdbcTemplate jt, final long id, final UUID uuid, final String status) {
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_FIRMA] WHERE ID = ?) "
             + "INSERT INTO [dbo].[PROD_FIRMA] "
             + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, GUELTIG_VON) "
-            + "VALUES (?, 'ACTIVE', ?, 1, ?, CAST(GETDATE() AS DATE))",
+            + "VALUES (?, ?, ?, 1, ?, CAST(GETDATE() AS DATE))",
         id,
         id,
+        status,
         uuid.toString(),
         id);
   }
@@ -167,7 +179,43 @@ class DivisionResyncIT {
             new DivisionResyncRow(TENANT_B_ID, TENANT_B_UUID, tombstoneRef));
   }
 
+  @Test
+  @DisplayName("findTenantIdByUuid: aktive Firma liefert ihre ID, je UUID die eigene")
+  void i190_find_tenant_id_by_uuid_returns_id_of_active_firm() {
+    assertThat(findTenantId(TENANT_A_UUID)).contains(TENANT_A_ID);
+    assertThat(findTenantId(TENANT_B_UUID)).contains(TENANT_B_ID);
+  }
+
+  @Test
+  @DisplayName("findTenantIdByUuid: unbekannte UUID liefert leer")
+  void i190_find_tenant_id_by_uuid_unknown_uuid_is_empty() {
+    final UUID unknown = UUID.randomUUID();
+    assertThat(firmCount(unknown)).as("Firma existiert nicht").isZero();
+
+    assertThat(findTenantId(unknown)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("findTenantIdByUuid: nicht aktive Firma liefert leer, obwohl die Zeile existiert")
+  void i190_find_tenant_id_by_uuid_inactive_firm_is_empty() {
+    assertThat(firmCount(INACTIVE_TENANT_UUID)).as("Zeile ist vorhanden").isEqualTo(1);
+
+    assertThat(findTenantId(INACTIVE_TENANT_UUID)).isEmpty();
+  }
+
   // ---- Hilfsmethoden --------------------------------------------------------------------------
+
+  /** Aufloesung wie im Processor: unter {@code runAsSystem}, ohne Mandanten-Kontext. */
+  private Optional<Long> findTenantId(final UUID tenantUuid) {
+    return TenantContextHolder.runAsSystem(() -> firmRepository.findTenantIdByUuid(tenantUuid));
+  }
+
+  private int firmCount(final UUID tenantUuid) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[PROD_FIRMA] WHERE EXTERNALID = ?",
+        Integer.class,
+        tenantUuid.toString());
+  }
 
   private void apply(
       final long tenantId,
@@ -190,12 +238,14 @@ class DivisionResyncIT {
       basePackages = {
         "de.brasi.nova.taskmanagement.entity",
         "de.brasi.nova.taskmanagement.repository",
+        "de.brasi.nova.taskmanagement.refentity",
       })
   @EnableTransactionManagement
   @EnableNovaRepositories(
       basePackages = {
         "de.brasi.nova.taskmanagement.entity",
         "de.brasi.nova.taskmanagement.repository",
+        "de.brasi.nova.taskmanagement.refentity",
       })
   @ImportAutoConfiguration({
     DataSourceAutoConfiguration.class,
