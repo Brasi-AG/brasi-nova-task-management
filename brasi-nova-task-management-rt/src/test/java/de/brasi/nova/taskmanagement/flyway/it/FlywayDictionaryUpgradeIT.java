@@ -662,6 +662,94 @@ class FlywayDictionaryUpgradeIT {
         });
   }
 
+  // ===========================================================================================
+  // Intake #188 - V16 notification-type UNASSIGN: frischer V1->V16, Heal abweichende
+  // Schreibweise + stale Metadaten, V16-Skript-Idempotenz (zweiter Lauf des heal-or-insert).
+  // ===========================================================================================
+
+  @Test
+  @DisplayName("i188_frisch_v1_zu_v16_genau_ein_aktiver_unassign_typ_resolverfaehig")
+  void i188_fresh_v1_to_v16_exactly_one_active_unassign() {
+    withFreshDbMigratedTo(
+        "16",
+        jt -> {
+          assertThat(historyVersions(jt)).contains("16");
+          assertThat(activeTypeCount(jt, "UNASSIGN")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "UNASSIGN");
+          assertThat(row.get("CODE")).isEqualTo("UNASSIGN");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Zuweisung entfernt");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("TENANT_ID")).longValue()).isZero();
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          // Fester Seed (frische DB ohne Vor-Zeile): ID=413, feste UUIDv4-EXTERNALID.
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(413L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("1e3ffc90-7beb-4c14-bf12-a11be3623af9");
+          // ASSIGN (V1) und REMOVED (V12) bleiben unberuehrt.
+          assertThat(activeTypeCount(jt, "ASSIGN")).isEqualTo(1);
+          assertThat(activeTypeCount(jt, "REMOVED")).isEqualTo(1);
+        });
+  }
+
+  @Test
+  @DisplayName(
+      "i188_heal_abweichende_schreibweise_und_stale_metadaten_wird_kanonisch_id_externalid_erhalten")
+  void i188_heal_variant_spelling_and_stale_metadata() {
+    withFreshDbMigratedTo(
+        "15",
+        jt -> {
+          // Vor V16 eine Zeile mit abweichender Schreibweise 'unassign' und stale Metadaten.
+          jt.update(
+              "INSERT INTO [dbo].[DIC_NOTIFICATION_TYPE]"
+                  + " (ID, ENTITY_STATUS, BEZEICHNUNG, ENTRY_TYPE, GUELTIG_VON, GUELTIG_BIS,"
+                  + "  ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, CODE)"
+                  + " VALUES (774, 'DEACTIVE', N'Abgewaehlt', 'SYSTEM_PRIVATE',"
+                  + "  '2020-01-01', '2020-12-31', 'legacy', GETDATE(),"
+                  + "  '44444416-0000-0000-0000-00000000eeee', 3, 0, 'unassign')");
+
+          migrateTo(jt, "16");
+          assertThat(historyVersions(jt)).contains("16");
+
+          assertThat(activeTypeCount(jt, "UNASSIGN")).isEqualTo(1);
+          final Map<String, Object> row = canonicalTypeRow(jt, "UNASSIGN");
+          assertThat(row.get("CODE")).isEqualTo("UNASSIGN");
+          assertThat(row.get("BEZEICHNUNG")).isEqualTo("Zuweisung entfernt");
+          assertThat(row.get("ENTRY_TYPE")).isEqualTo("SYSTEM_PUBLIC");
+          assertThat(row.get("ENTITY_STATUS")).isEqualTo("ACTIVE");
+          assertThat(((Number) row.get("ID")).longValue()).isEqualTo(774L);
+          assertThat(String.valueOf(row.get("EXTERNALID")))
+              .isEqualToIgnoringCase("44444416-0000-0000-0000-00000000eeee");
+          assertThat(row.get("GUELTIG_BIS")).isNull();
+          assertThat(String.valueOf(row.get("GUELTIG_VON"))).isEqualTo("2020-01-01");
+
+          // V16-Skript-Idempotenz: das echte heal-or-insert ein zweites Mal ausfuehren.
+          for (final String batch : extractHealOrInsertBatches(V16_RESOURCE)) {
+            jt.update(batch);
+          }
+          assertThat(activeTypeCount(jt, "UNASSIGN")).isEqualTo(1);
+          final Map<String, Object> rowAgain = canonicalTypeRow(jt, "UNASSIGN");
+          assertThat(((Number) rowAgain.get("ID")).longValue()).isEqualTo(774L);
+          assertThat(rowAgain.get("BEZEICHNUNG")).isEqualTo("Zuweisung entfernt");
+          assertThat(rowAgain.get("GUELTIG_VON")).isEqualTo(row.get("GUELTIG_VON"));
+        });
+  }
+
+  @Test
+  @DisplayName("i188_v16_skript_zweiter_lauf_auf_frischer_db_aendert_nichts")
+  void i188_v16_script_second_run_on_fresh_db_is_noop() {
+    withFreshDbMigratedTo(
+        "16",
+        jt -> {
+          final Map<String, Object> before = canonicalTypeRow(jt, "UNASSIGN");
+          for (final String batch : extractHealOrInsertBatches(V16_RESOURCE)) {
+            jt.update(batch);
+          }
+          assertThat(activeTypeCount(jt, "UNASSIGN")).isEqualTo(1);
+          assertThat(canonicalTypeRow(jt, "UNASSIGN")).isEqualTo(before);
+        });
+  }
+
   // ---- Helper (Intake #136, #157) -----------------------------------------------------------
 
   /**
@@ -710,6 +798,8 @@ class FlywayDictionaryUpgradeIT {
   private static final String V11_RESOURCE = "db/migration/V11__notification_type_participant.sql";
 
   private static final String V12_RESOURCE = "db/migration/V12__notification_type_removed.sql";
+
+  private static final String V16_RESOURCE = "db/migration/V16__notification_type_unassign.sql";
 
   /**
    * Fuehrt das TATSAECHLICHE heal-or-insert aus {@code V9__notification_type_comment.sql} separat

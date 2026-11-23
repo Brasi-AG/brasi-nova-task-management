@@ -33,6 +33,10 @@ import org.springframework.stereotype.Component;
  *       ausblenden soll; die Person ist danach ausgetreten, ohne die Mitteilung erfuehre sie von
  *       ihrem Ausschluss nur durch das Fehlen der Aufgabe in der Inbox. Das Entfernen aendert den
  *       Mute-Marker nicht.
+ *   <li>{@code UNASSIGN}: direkte persoenliche Mitteilung, dass die eigene Zuweisung im {@code PUT
+ *       /assignees} entfernt wurde (Intake #188), Gegenstueck zu ASSIGN. Wie REMOVED betrifft sie
+ *       die eigene Mitgliedschaft und nicht die Aktivitaet der Aufgabe. Die Abwahl aendert den
+ *       Mute-Marker nicht.
  * </ul>
  *
  * <p>Unterdrueckt werden damit {@code COMMENT}, {@code DONE}, {@code CANCELLED}, {@code CHANGE},
@@ -54,9 +58,9 @@ import org.springframework.stereotype.Component;
  * Lesung je Empfaenger (N+1) und NACH dem TASK-save; ein {@code TASK_USER_STATE}-Read unter dem
  * TASK-X-Lock invertierte die Lock-Reihenfolge gegen {@code AssigneeService#exit} (UserState vor
  * TASK) und koennte auf MSSQL einen Deadlock ausloesen. Pfade, die nur ausgenommene Typen
- * emittieren ({@code ASSIGN}/{@code HANDOVER}/{@code PARTICIPANT}/{@code REMOVED} in {@code
- * TaskCommandService#create} und {@code AssigneeService}), brauchen den Filter nicht; er waere dort
- * ein No-Op ohne Abfrage.
+ * emittieren ({@code ASSIGN}/{@code HANDOVER}/{@code PARTICIPANT}/{@code REMOVED}/{@code
+ * UNASSIGN} in {@code TaskCommandService#create} und {@code AssigneeService}), brauchen den Filter
+ * nicht; er waere dort ein No-Op ohne Abfrage.
  *
  * <p><b>Mute und (Wieder-)Zuweisung:</b> Eine NEUE Zuweisung hebt den Mute der Aufgabe fuer die
  * zugewiesene Person auf: {@code UserStateService#reactivateAsAssignee} setzt {@code IS_MUTED} auf
@@ -83,7 +87,8 @@ public class NotificationMuteFilter {
           NotificationTypeCodes.ASSIGN,
           NotificationTypeCodes.HANDOVER,
           NotificationTypeCodes.PARTICIPANT,
-          NotificationTypeCodes.REMOVED);
+          NotificationTypeCodes.REMOVED,
+          NotificationTypeCodes.UNASSIGN);
 
   private final TaskUserStateQueryRepository userStateRepository;
 
