@@ -10,8 +10,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *
  * <p>Vergleicht den Zaehler einer Aufgabe mit der Zahl der Zeilen, die nach derselben Regel zaehlen
  * wie der Backfill in {@code V17__task_attachment_count.sql}: aktive Zeilen in {@code TASK_ANHANG},
- * Kommentar-Anhaenge nur an aktiven Kommentaren. Die ITs rufen {@link #assertCountMatchesRows}
- * nach jedem Schritt auf, der den Zaehler aendern koennte.
+ * Kommentar-Anhaenge nur an aktiven Kommentaren. Die ITs rufen {@link #assertCountMatchesRows} nach
+ * jedem Schritt auf, der den Zaehler aendern koennte.
  */
 public final class AttachmentCountAssertions {
 
