@@ -141,7 +141,8 @@ public class AttachmentCommandService {
    *       Schreibung.
    *   <li>Erste Schreibung: Zeilen und Dateien ({@link AttachmentWriter#store}); bei Rollback
    *       raeumt der Writer die geschriebenen Dateien weg.
-   *   <li>Aufgabe fortschreiben ({@code LAST_ACTIVITY_AT}, versionierter TASK-save; Konflikt: 409).
+   *   <li>Aufgabe fortschreiben ({@code ANHANG_ANZAHL} um die Zahl der Dateien, {@code
+   *       LAST_ACTIVITY_AT}, versionierter TASK-save; Konflikt: 409).
    *   <li>Historie je Datei, dann genau ein sortierter Bump und ein Signal fuer Leser und Akteur.
    * </ol>
    *
@@ -177,6 +178,8 @@ public class AttachmentCommandService {
 
     // Versionierter TASK-save: ein paralleler VERSION-Bump laesst diesen Upload mit 409 scheitern;
     // die ganze Transaktion rollt zurueck, der Writer entfernt die geschriebenen Dateien.
+    // Intake #194: der Anhang-Zaehler waechst am selben save um die Zahl der neuen Dateien.
+    task.setAttachmentCount(task.getAttachmentCount() + stored.size());
     task.setLastActivityAt(LocalDateTime.now());
     taskRepository.save(task);
 
@@ -222,8 +225,8 @@ public class AttachmentCommandService {
    *       Schreibung.
    *   <li>Erste Schreibung: {@code ENTITY_STATUS} des Anhangs auf {@code DEACTIVE}; die Datei und
    *       ihr Vorschaubild bleiben auf der Platte.
-   *   <li>Aufgabe fortschreiben ({@code LAST_ACTIVITY_AT}, versionierter TASK-save; Konflikt: 409
-   *       mit vollem Rollback).
+   *   <li>Aufgabe fortschreiben ({@code ANHANG_ANZAHL} minus 1, nie unter 0, sonst WARN; {@code
+   *       LAST_ACTIVITY_AT}, versionierter TASK-save; Konflikt: 409 mit vollem Rollback).
    *   <li>Historie {@code Datei entfernt} mit dem Dateinamen, dann genau ein sortierter Bump und
    *       ein Signal fuer Leser und Akteur.
    * </ol>
@@ -263,6 +266,8 @@ public class AttachmentCommandService {
     attachmentRepository.save(attachment);
 
     // Versionierter TASK-save: ein paralleler VERSION-Bump laesst das Entfernen mit 409 scheitern.
+    // Intake #194: der Anhang-Zaehler sinkt am selben save um 1, nie unter 0.
+    decrementAttachmentCount(task, taskExternalId);
     task.setLastActivityAt(LocalDateTime.now());
     taskRepository.save(task);
 
@@ -313,6 +318,26 @@ public class AttachmentCommandService {
     if (!creator) {
       throw new PermissionDeniedException(REMOVE_REQUIRED_ROLE, REMOVE_ROLE_MESSAGE);
     }
+  }
+
+  /**
+   * Senkt den Anhang-Zaehler der Aufgabe um 1 (Intake #194). Steht er schon auf 0, bleibt er dort,
+   * und ein WARN macht die Abweichung vom Bestand sichtbar; nach dem Backfill in V17 kommt das
+   * nicht vor. Die Datenbank sichert die Untergrenze zusaetzlich per CHECK.
+   */
+  private static void decrementAttachmentCount(final Task task, final UUID taskExternalId) {
+    final int current = task.getAttachmentCount();
+    if (current <= 0) {
+      log.warn(
+          "AttachmentCommandService.remove: Anhang-Zaehler der Aufgabe {} (id={}) steht beim"
+              + " Entfernen auf {}; er bleibt auf 0 (Zaehler weicht von den Anhangzeilen ab).",
+          taskExternalId,
+          task.getId(),
+          current);
+      task.setAttachmentCount(0);
+      return;
+    }
+    task.setAttachmentCount(current - 1);
   }
 
   /** Wirft 400, wenn das Ziel mit den neuen Dateien mehr aktive Anhaenge als erlaubt haette. */

@@ -81,6 +81,10 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
   @Schema(description = "Anzahl der Kommentare (denormalisiert).", example = "0")
   private int commentCount;
 
+  @JsonProperty("attachmentCount")
+  @Schema(description = "Anzahl der Anhänge (denormalisiert).", example = "0")
+  private int attachmentCount;
+
   @JsonProperty("createdById")
   @Schema(
       description = "UUID des Erstellers (CREATOR_FLAG, PERSON) oder null.",
@@ -156,6 +160,7 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
       final LocalDate dueDate,
       final Instant lastActivityAt,
       final int commentCount,
+      final int attachmentCount,
       final UUID createdById,
       final Instant createdAt,
       final String description,
@@ -174,6 +179,7 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
     this.dueDate = dueDate;
     this.lastActivityAt = lastActivityAt;
     this.commentCount = commentCount;
+    this.attachmentCount = attachmentCount;
     this.createdById = createdById;
     this.createdInstant = createdAt;
     this.description = description;
