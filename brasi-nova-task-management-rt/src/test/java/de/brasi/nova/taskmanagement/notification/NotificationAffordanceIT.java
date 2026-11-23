@@ -548,6 +548,10 @@ class NotificationAffordanceIT {
       })
   @org.springframework.context.annotation.Import({
     de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig.class,
+    // Intake #190 (Task 10): TaskCommandService haengt am MentionRecipientService (Paket comment,
+    // hier nicht gescannt), der den DivisionMentionResolver braucht.
+    de.brasi.nova.taskmanagement.comment.MentionRecipientService.class,
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 
