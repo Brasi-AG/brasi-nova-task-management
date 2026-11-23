@@ -3,17 +3,22 @@ package de.brasi.nova.taskmanagement.division;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.keel.framework.api.event.NovaEventDeliveryMode;
+import io.keel.framework.api.event.NovaEventEnvelope;
+import io.keel.framework.api.event.NovaEventLinks;
+import io.keel.framework.api.event.NovaEventSemantics;
 import io.keel.framework.integration.event.KsfEventProperties;
 import io.keel.framework.integration.event.consume.NovaEventProfileGuard;
+import io.keel.framework.integration.event.publish.NovaEventStandardHeaders;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
 import jakarta.jms.Message;
 import jakarta.jms.TextMessage;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,15 +39,15 @@ import org.springframework.jms.listener.DefaultMessageListenerContainer;
 import org.springframework.jms.listener.MessageListenerContainer;
 
 /**
- * Gemeinsame Test-Hilfen fuer den Abteilungs-Consumer (Intake #190, Tasks 4 und 6): Header und Body
- * eines {@code DivisionMembershipChanged}-Ereignisses im KSF-Format, ein eingebetteter
+ * Gemeinsame Test-Hilfen fuer den Abteilungs-Consumer (Intake #190): Envelope und Header eines
+ * {@code DivisionMembershipChanged}-Ereignisses wie in application, ein eingebetteter
  * Artemis-Broker (in-VM, ohne Persistenz, ohne Sicherheit) und die Beans des kleinen
  * Listener-Kontexts.
  *
- * <p>Header nach {@code NovaEventStandardHeaders} (camelCase, als String-Properties): {@code
- * eventName}, {@code novaEventId}, {@code novaTenantId}, {@code aggregateId}, {@code brasiProfile}.
- * Der Body ist das Envelope als JSON; die revision steht als letztes Pfadsegment im Link {@code
- * links.snapshot}.
+ * <p>Envelope und Header entstehen wie im {@code DivisionMembershipEventWriter} von application:
+ * {@link NovaEventEnvelope#builder()} mit den Feldern des Plans ({@code Division}, {@code FACT},
+ * Schema-Version 1) und Header ueber {@link NovaEventStandardHeaders#assemble} (KSF). Geprueft
+ * werden beim Empfang nur diese Header; der Body wird nie gelesen.
  */
 final class DivisionSignalTestSupport {
 
@@ -59,8 +64,20 @@ final class DivisionSignalTestSupport {
   /** Schluessel, unter dem die Test-Kontexte die URL des eingebetteten Brokers lesen. */
   static final String BROKER_URL_PROPERTY = "test.division-sync.broker-url";
 
-  private static final String APPLICATION_BASE = "https://application.example.test";
-  private static final ObjectMapper JSON = new ObjectMapper();
+  /** Quelle ({@code brasiSourceService}) der Test-Ereignisse. */
+  static final String SOURCE_SERVICE = "brasi-nova-application";
+
+  /**
+   * Deserialisierungs-Sperre des Listener-Clients: {@code *} verbietet jede Klasse. Ein Zugriff auf
+   * den Body einer {@code ObjectMessage} wuerde damit scheitern.
+   */
+  static final String DENY_ALL_DESERIALIZATION = "*";
+
+  private static final String APPLICATION_BASE = "/api/v1/application/";
+  private static final String SNAPSHOT_REVISION = "d".repeat(64);
+  private static final Instant OCCURRED_AT = Instant.parse("2026-11-20T09:00:00Z");
+  private static final UUID CORRELATION_ID =
+      UUID.fromString("00000056-0000-0056-cccc-000000000190");
 
   /** Audit-Logger des eingebetteten Artemis (siehe {@link #startBroker}). */
   private static final List<String> ARTEMIS_AUDIT_LOGGERS =
@@ -74,7 +91,50 @@ final class DivisionSignalTestSupport {
   // ---- Ereignis ---------------------------------------------------------------------------------
 
   /**
-   * Header eines gueltigen Ereignisses ohne {@code brasiProfile}.
+   * KSF-Envelope zum Signal, aufgebaut wie im {@code DivisionMembershipEventWriter} von application.
+   *
+   * @param signal Inhalt des Ereignisses
+   * @return Envelope ({@code Serializable})
+   */
+  static NovaEventEnvelope envelope(final DivisionSignal signal) {
+    final String base =
+        APPLICATION_BASE
+            + signal.tenantUuid()
+            + "/masterdata/divisions/"
+            + signal.divisionRef()
+            + "/employees";
+    return NovaEventEnvelope.builder()
+        .schemaVersion(1)
+        .eventName(EVENT_NAME)
+        .tenantId(signal.tenantUuid())
+        .aggregateType("Division")
+        .aggregateId(signal.divisionRef())
+        .aggregateVersion(3)
+        .aggregateRefId(4711L)
+        .occurredAt(OCCURRED_AT)
+        .correlationId(CORRELATION_ID)
+        .semantics(NovaEventSemantics.FACT)
+        .deliveryMode(NovaEventDeliveryMode.SNAPSHOT_LINK_PREFERRED)
+        .links(
+            new NovaEventLinks(
+                base + "?includeSubDivisions=true", base + "/snapshots/" + SNAPSHOT_REVISION))
+        .eventId(signal.eventId())
+        .build();
+  }
+
+  /**
+   * KSF-Standard-Header zum Envelope ({@link NovaEventStandardHeaders#assemble}).
+   *
+   * @param envelope Envelope
+   * @param profile Wert fuer {@code brasiProfile} oder {@code null} (dann fehlt der Header)
+   * @return Header, wie der KSF-Transport sie als JMS-Properties setzt
+   */
+  static Map<String, Object> ksfHeaders(final NovaEventEnvelope envelope, final String profile) {
+    return NovaEventStandardHeaders.assemble(envelope, profile, SOURCE_SERVICE);
+  }
+
+  /**
+   * KSF-Standard-Header eines gueltigen Ereignisses ohne {@code brasiProfile}, als Texte.
    *
    * @param eventId novaEventId
    * @param tenantUuid novaTenantId
@@ -84,111 +144,17 @@ final class DivisionSignalTestSupport {
   static Map<String, String> headers(
       final UUID eventId, final UUID tenantUuid, final UUID divisionRef) {
     final Map<String, String> headers = new LinkedHashMap<>();
-    headers.put("eventName", EVENT_NAME);
-    headers.put("novaEventId", eventId.toString());
-    headers.put("novaTenantId", tenantUuid.toString());
-    headers.put("aggregateId", divisionRef.toString());
+    ksfHeaders(envelope(new DivisionSignal(eventId, tenantUuid, divisionRef)), null)
+        .forEach((key, value) -> headers.put(key, String.valueOf(value)));
     return headers;
   }
 
   /**
-   * Snapshot-Link, wie application ihn ins Ereignis schreibt.
-   *
-   * @param tenantUuid Mandant
-   * @param divisionRef Abteilung
-   * @param revision letztes Pfadsegment
-   * @return absoluter Link
-   */
-  static String snapshotLink(final UUID tenantUuid, final UUID divisionRef, final String revision) {
-    return selfLink(tenantUuid, divisionRef) + "/snapshots/" + revision;
-  }
-
-  private static String selfLink(final UUID tenantUuid, final UUID divisionRef) {
-    return APPLICATION_BASE
-        + "/api/v1/application/"
-        + tenantUuid
-        + "/masterdata/divisions/"
-        + divisionRef
-        + "/employees";
-  }
-
-  /**
-   * Envelope als JSON; {@code null}-Werte werden weggelassen.
-   *
-   * @param eventId eventId oder {@code null}
-   * @param tenantUuid tenantId oder {@code null}
-   * @param divisionRef aggregateId oder {@code null}
-   * @param snapshotLink Link {@code links.snapshot} oder {@code null}
-   * @return JSON-Text
-   */
-  static String body(
-      final UUID eventId,
-      final UUID tenantUuid,
-      final UUID divisionRef,
-      final String snapshotLink) {
-    final ObjectNode root = JSON.createObjectNode();
-    root.put("schemaVersion", 1);
-    root.put("eventName", EVENT_NAME);
-    if (tenantUuid != null) {
-      root.put("tenantId", tenantUuid.toString());
-    }
-    root.put("aggregateType", "Division");
-    if (divisionRef != null) {
-      root.put("aggregateId", divisionRef.toString());
-    }
-    root.put("aggregateVersion", 3);
-    root.put("occurredAt", "2026-11-20T09:00:00Z");
-    root.put("semantics", "FACT");
-    root.put("deliveryMode", "SNAPSHOT_LINK_PREFERRED");
-    final ObjectNode links = root.putObject("links");
-    if (tenantUuid != null && divisionRef != null) {
-      links.put("self", selfLink(tenantUuid, divisionRef));
-    }
-    if (snapshotLink != null) {
-      links.put("snapshot", snapshotLink);
-    }
-    if (eventId != null) {
-      root.put("eventId", eventId.toString());
-    }
-    return root.toString();
-  }
-
-  /**
-   * Body eines gueltigen Ereignisses zum Signal.
-   *
-   * @param signal erwartetes Signal
-   * @return JSON-Text
-   */
-  static String body(final DivisionSignal signal) {
-    return body(
-        signal.eventId(),
-        signal.tenantUuid(),
-        signal.divisionRef(),
-        snapshotLink(signal.tenantUuid(), signal.divisionRef(), signal.revision()));
-  }
-
-  /**
-   * Mockito-{@link TextMessage}: Header ueber {@code getStringProperty}, {@code getObjectProperty}
-   * und {@code propertyExists}, Body ueber {@code getText}.
-   *
-   * @param headers Header (fehlender Schluessel = Header fehlt)
-   * @param body JSON-Text
-   * @return gemockte Nachricht
-   * @throws JMSException nie (Signatur der JMS-API)
-   */
-  static TextMessage textMessage(final Map<String, String> headers, final String body)
-      throws JMSException {
-    final TextMessage message = mock(TextMessage.class);
-    stubHeaders(message, headers);
-    when(message.getText()).thenReturn(body);
-    return message;
-  }
-
-  /**
-   * Haengt die Header an eine gemockte Nachricht beliebigen Typs.
+   * Haengt die Header an eine gemockte Nachricht beliebigen Typs: {@code getStringProperty}, {@code
+   * getObjectProperty} und {@code propertyExists}.
    *
    * @param message gemockte Nachricht
-   * @param headers Header
+   * @param headers Header (fehlender Schluessel = Header fehlt)
    * @throws JMSException nie (Signatur der JMS-API)
    */
   static void stubHeaders(final Message message, final Map<String, String> headers)
@@ -242,7 +208,8 @@ final class DivisionSignalTestSupport {
   }
 
   /**
-   * Sendet ein Ereignis zum Signal an {@link #DESTINATION}.
+   * Sendet ein Ereignis zum Signal als {@link TextMessage} an {@link #DESTINATION}: KSF-Header als
+   * String-Properties, der Text ist kein JSON (der Guard liest ihn nicht).
    *
    * @param brokerUrl in-VM-URL des Brokers
    * @param profile Wert des Headers {@code brasiProfile}
@@ -253,7 +220,7 @@ final class DivisionSignalTestSupport {
       throws JMSException {
     try (ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(brokerUrl);
         JMSContext context = factory.createContext()) {
-      final TextMessage message = context.createTextMessage(body(signal));
+      final TextMessage message = context.createTextMessage("kein JSON, wird nicht gelesen");
       for (final Map.Entry<String, String> header :
           headers(signal.eventId(), signal.tenantUuid(), signal.divisionRef()).entrySet()) {
         message.setStringProperty(header.getKey(), header.getValue());
@@ -276,7 +243,7 @@ final class DivisionSignalTestSupport {
       "task-management.division-sync.enabled=true",
       "task-management.division-sync.destination=" + DESTINATION,
       "task-management.division-sync.subscription-name=" + subscriptionName,
-      "task-management.division-sync.application-base-url=" + APPLICATION_BASE,
+      "task-management.division-sync.application-base-url=https://application.example.test",
       "task-management.division-sync.oauth2.token-url=https://identity.example.test/oauth2/token",
       "task-management.division-sync.oauth2.client-id=tm-test-client",
       "task-management.division-sync.oauth2.client-secret=test-secret-value",
@@ -320,9 +287,10 @@ final class DivisionSignalTestSupport {
   }
 
   /**
-   * Beans des kleinen Listener-Kontexts: Verbindung zum eingebetteten Broker, KSF-Profil-Guard mit
-   * {@link #PROFILE}, echter {@link DivisionSignalGuard} und gemockter {@link
-   * DivisionSignalProcessor}.
+   * Beans des kleinen Listener-Kontexts: Verbindung zum eingebetteten Broker mit
+   * Deserialisierungs-Sperre fuer alle Klassen ({@link #DENY_ALL_DESERIALIZATION}), KSF-Profil-Guard
+   * mit {@link #PROFILE}, echter {@link DivisionSignalGuard} als Mockito-Spy (zeigt den
+   * empfangenen Nachrichtentyp) und gemockter {@link DivisionSignalProcessor}.
    */
   @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
   @EnableConfigurationProperties(DivisionSyncProperties.class)
@@ -330,7 +298,9 @@ final class DivisionSignalTestSupport {
 
     @Bean
     ConnectionFactory connectionFactory(@Value("${" + BROKER_URL_PROPERTY + "}") final String url) {
-      return new ActiveMQConnectionFactory(url);
+      final ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(url);
+      factory.setDeserializationDenyList(DENY_ALL_DESERIALIZATION);
+      return factory;
     }
 
     @Bean
@@ -342,7 +312,7 @@ final class DivisionSignalTestSupport {
 
     @Bean
     DivisionSignalGuard divisionSignalGuard() {
-      return new DivisionSignalGuard(new ObjectMapper());
+      return spy(new DivisionSignalGuard());
     }
 
     @Bean
