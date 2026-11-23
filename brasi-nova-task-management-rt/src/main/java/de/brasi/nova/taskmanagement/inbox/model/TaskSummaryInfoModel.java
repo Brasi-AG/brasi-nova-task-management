@@ -73,6 +73,14 @@ public class TaskSummaryInfoModel extends InfoModel<TaskSummaryInfoModel> {
   @Schema(description = "Anzahl der Kommentare (denormalisiert).", example = "0")
   private int commentCount;
 
+  @JsonProperty("attachmentCount")
+  @Schema(
+      description =
+          "Anzahl der Anhänge (denormalisiert). Gezählt werden aktive Anhänge an der Aufgabe und an"
+              + " ihren aktiven Kommentaren.",
+      example = "0")
+  private int attachmentCount;
+
   @JsonProperty("createdById")
   @Schema(
       description = "UUID des Erstellers (CREATOR_FLAG, PERSON) oder null.",
@@ -135,6 +143,7 @@ public class TaskSummaryInfoModel extends InfoModel<TaskSummaryInfoModel> {
    * @param dueDate Faelligkeitsdatum (optional)
    * @param lastActivityAt letzter Aktivitaetszeitpunkt
    * @param commentCount Kommentaranzahl
+   * @param attachmentCount Anzahl der aktiven Anhaenge an Aufgabe und Kommentaren
    * @param createdById UUID des Erstellers
    * @param createdAt Erstellzeitpunkt
    * @param description optionale Beschreibung
@@ -155,6 +164,7 @@ public class TaskSummaryInfoModel extends InfoModel<TaskSummaryInfoModel> {
       final LocalDate dueDate,
       final Instant lastActivityAt,
       final int commentCount,
+      final int attachmentCount,
       final UUID createdById,
       final Instant createdAt,
       final String description,
@@ -174,6 +184,7 @@ public class TaskSummaryInfoModel extends InfoModel<TaskSummaryInfoModel> {
     this.dueDate = dueDate;
     this.lastActivityAt = lastActivityAt;
     this.commentCount = commentCount;
+    this.attachmentCount = attachmentCount;
     this.createdById = createdById;
     this.createdAt = createdAt;
     this.description = description;

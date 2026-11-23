@@ -189,6 +189,7 @@ public class InboxSnapshotController {
                                 + "\"dueDate\":\"2026-12-31\","
                                 + "\"lastActivityAt\":\"2026-11-16T08:30:00.500Z\","
                                 + "\"commentCount\":2,"
+                                + "\"attachmentCount\":3,"
                                 + "\"createdById\":\"550e8400-e29b-41d4-a716-446655440000\","
                                 + "\"createdAt\":\"2026-11-01T06:30:00Z\","
                                 + "\"description\":\"Zahlen aus dem Lager abgleichen\","

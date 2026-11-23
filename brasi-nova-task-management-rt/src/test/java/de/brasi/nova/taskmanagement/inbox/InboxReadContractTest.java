@@ -9,6 +9,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import de.brasi.nova.taskmanagement.inbox.model.ArchiveTotals;
 import de.brasi.nova.taskmanagement.inbox.model.ExitModel;
 import de.brasi.nova.taskmanagement.inbox.model.InboxSnapshotModel;
+import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
@@ -57,6 +58,7 @@ class InboxReadContractTest {
             LocalDate.of(2026, 12, 31),
             Instant.parse("2026-10-18T08:00:00Z"),
             3,
+            2,
             CREATOR,
             Instant.parse("2026-10-01T06:30:00Z"),
             "Beschreibung",
@@ -118,6 +120,7 @@ class InboxReadContractTest {
             null,
             Instant.parse("2026-10-18T08:00:00Z"),
             0,
+            0,
             null,
             Instant.parse("2026-10-01T06:30:00Z"),
             null,
@@ -143,6 +146,68 @@ class InboxReadContractTest {
     assertThat(j.get("exit").get("exitedAt").asText()).isEqualTo("2026-10-17T07:15:00Z");
     // isDone fuer DONE true (Wire-Form; Mapping aus statusCode im Service verankert)
     assertThat(j.get("isDone").asBoolean()).isTrue();
+  }
+
+  /**
+   * Intake #194: beide Zusammenfassungen tragen {@code attachmentCount} als Zahl unter dem
+   * JSON-Schluessel {@code attachmentCount}. Die Modelle entstehen ueber den Voll-Konstruktor mit
+   * verschiedenen Werten fuer {@code commentCount} (3) und {@code attachmentCount} (7), damit auch
+   * eine vertauschte Konstruktor-Zuordnung auffaellt.
+   */
+  @Test
+  @DisplayName("i194: beide Zusammenfassungen serialisieren attachmentCount als Zahl")
+  void i194_summary_and_info_model_serialize_attachment_count() throws Exception {
+    final TaskSummaryModel summary =
+        new TaskSummaryModel(
+            ID,
+            "Titel",
+            "OPEN",
+            "NORMAL",
+            null,
+            Instant.parse("2026-10-18T08:00:00Z"),
+            3,
+            7,
+            CREATOR,
+            Instant.parse("2026-10-01T06:30:00Z"),
+            null,
+            List.of(),
+            List.of(),
+            List.of(),
+            false,
+            false,
+            false,
+            false,
+            null);
+    final TaskSummaryInfoModel info =
+        new TaskSummaryInfoModel(
+            ID,
+            "Titel",
+            "OPEN",
+            "NORMAL",
+            null,
+            Instant.parse("2026-10-18T08:00:00Z"),
+            3,
+            7,
+            CREATOR,
+            Instant.parse("2026-10-01T06:30:00Z"),
+            null,
+            List.of(),
+            List.of(),
+            List.of(),
+            false,
+            false,
+            false,
+            false,
+            null);
+
+    for (final Object model : List.of(summary, info)) {
+      final String name = model.getClass().getSimpleName();
+      final JsonNode j = om.readTree(om.writeValueAsString(model));
+      assertThat(j.has("attachmentCount")).as("%s traegt attachmentCount im JSON", name).isTrue();
+      assertThat(j.get("attachmentCount").isInt()).as("%s: attachmentCount als int", name).isTrue();
+      assertThat(j.get("attachmentCount").asInt()).as("%s: attachmentCount", name).isEqualTo(7);
+      assertThat(j.get("commentCount").asInt()).as("%s: commentCount", name).isEqualTo(3);
+    }
   }
 
   @Test

@@ -243,6 +243,21 @@ class EntityMappingTest {
     assertColumnName(Task.class, "lastActivityAt", "LAST_ACTIVITY_AT");
   }
 
+  /**
+   * Intake #194: denormalisierter Anhang-Zaehler an der Aufgabe. Spalte {@code ANHANG_ANZAHL},
+   * nicht nullable, primitiver {@code int} mit Vorgabe 0 wie {@code commentCount}. Bewusst per
+   * Reflexion (kein Getter), damit der Test auch ohne das Feld kompiliert.
+   */
+  @Test
+  void i194_task_attachmentCount_column() throws Exception {
+    assertColumnName(Task.class, "attachmentCount", "ANHANG_ANZAHL");
+    Field f = Task.class.getDeclaredField("attachmentCount");
+    assertThat(f.getType()).isEqualTo(int.class);
+    assertThat(f.getAnnotation(NovaColumn.class).nullable()).isFalse();
+    f.setAccessible(true);
+    assertThat(f.getInt(new Task())).as("Vorgabe von Task.attachmentCount").isZero();
+  }
+
   @Test
   void taskParticipant_novaTableAndSelectedColumns() throws Exception {
     NovaTable table = TaskParticipant.class.getAnnotation(NovaTable.class);

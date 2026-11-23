@@ -792,6 +792,37 @@ class InboxSnapshotServiceTest {
     assertThat(s.exit()).isNull();
   }
 
+  /**
+   * Intake #194: beide Mapper reichen {@code Task.attachmentCount} durch ({@code toEnrichedSummary}
+   * fuer aktive Liste und Archiv, {@code toSnapshotSummary} fuer den Snapshot).
+   */
+  @Test
+  @DisplayName("i194: Task.attachmentCount 7 -> attachmentCount 7 in Liste, Archiv und Snapshot")
+  void i194_mappers_pass_attachment_count() {
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(tasksWithAttachmentCount(7));
+    when(taskQueryRepository.findArchiveLeftPage(eq(USER_REF), any(), any(), eq(MAX_UUID), eq(11)))
+        .thenReturn(tasksWithAttachmentCount(7));
+    when(taskQueryRepository.findActivePage(
+            eq(USER_REF), eq(OPEN_ID), any(), any(), eq(MAX_UUID), eq(DEFAULT_LIMIT + 1)))
+        .thenReturn(tasksWithAttachmentCount(7));
+    when(taskQueryRepository.countArchiveAll(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveDone(any(), any(), any(), any())).thenReturn(0L);
+    when(taskQueryRepository.countArchiveLeft(any(), any())).thenReturn(0L);
+    when(userReadRepository.findActiveParticipantsForTasks(any())).thenReturn(List.of());
+
+    final TaskSummaryModel active = items(service.loadActivePage(USER_REF, null, 10)).get(0);
+    final TaskSummaryModel archived =
+        items(service.loadArchivePage(USER_REF, "left", null, 10)).get(0);
+    final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
+
+    assertThat(active.attachmentCount()).as("aktive Liste").isEqualTo(7);
+    assertThat(archived.attachmentCount()).as("Archiv").isEqualTo(7);
+    assertThat(snapshot.tasks().items()).hasSize(1);
+    assertThat(snapshot.tasks().items().get(0).getAttachmentCount()).as("Snapshot").isEqualTo(7);
+  }
+
   @Test
   @DisplayName("isDone=true fuer Status DONE UND CANCELLED, false fuer OPEN")
   void isDone_fuer_done_und_cancelled() {
@@ -979,6 +1010,13 @@ class InboxSnapshotServiceTest {
       result.add(t);
     }
     return result;
+  }
+
+  /** Eine Aufgabe wie {@link #buildTasks(int)} mit gesetztem Anhang-Zaehler (Intake #194). */
+  private List<Task> tasksWithAttachmentCount(final int attachmentCount) {
+    final List<Task> tasks = buildTasks(1);
+    tasks.get(0).setAttachmentCount(attachmentCount);
+    return tasks;
   }
 
   private User buildUser(final String login, final String fullName) {

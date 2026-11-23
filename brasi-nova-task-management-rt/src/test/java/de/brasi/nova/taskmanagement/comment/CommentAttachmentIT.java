@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.comment;
 
+import static de.brasi.nova.taskmanagement.support.AttachmentCountAssertions.assertCountMatchesRows;
+import static de.brasi.nova.taskmanagement.support.AttachmentCountAssertions.attachmentCount;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
@@ -892,6 +894,104 @@ class CommentAttachmentIT {
     assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
   }
 
+  // ---- Intake #194: Anhang-Zaehler ANHANG_ANZAHL ----------------------------------------------
+
+  @Test
+  @DisplayName(
+      "i194_comment_with_attachments_adds_n: Kommentar mit zwei Dateien -> COMMENT_COUNT +1,"
+          + " ANHANG_ANZAHL +2, Zaehler gleich den aktiven Anhangzeilen")
+  void i194_comment_with_attachments_adds_n() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT Zaehler +2");
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    final int commentCountBefore = commentCount(taskId);
+    final int attachmentCountBefore = attachmentCount(jdbcTemplate, taskId);
+
+    postWithAttachments(
+            mvc,
+            creator,
+            taskId,
+            commentJson("Zwei Dateien"),
+            pdfFile("Bericht.pdf"),
+            file("Notiz.txt", TXT_BYTES))
+        .andExpect(status().isCreated());
+
+    assertThat(commentCount(taskId) - commentCountBefore).as("COMMENT_COUNT").isEqualTo(1);
+    assertThat(attachmentCount(jdbcTemplate, taskId) - attachmentCountBefore)
+        .as("ANHANG_ANZAHL")
+        .isEqualTo(2);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_comment_without_attachments_keeps_count: nach einem Kommentar mit Datei aendert ein"
+          + " Kommentar ohne Datei ANHANG_ANZAHL nicht, COMMENT_COUNT +1")
+  void i194_comment_without_attachments_keeps_count() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT Zaehler ohne Datei");
+    postWithAttachments(
+            mvc, creator, taskId, commentJson("Mit Datei"), file("Notiz.txt", TXT_BYTES))
+        .andExpect(status().isCreated());
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    final int commentCountBefore = commentCount(taskId);
+    final int attachmentCountBefore = attachmentCount(jdbcTemplate, taskId);
+    assertThat(attachmentCountBefore).as("Vorlauf: ein Kommentar-Anhang").isEqualTo(1);
+
+    mvc.perform(
+            post("/api/v1/tasks/{id}/comments", taskId)
+                .header("Authorization", bearer(creator))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(commentJson("Ohne Datei")))
+        .andExpect(status().isCreated());
+
+    assertThat(commentCount(taskId) - commentCountBefore).as("COMMENT_COUNT").isEqualTo(1);
+    assertThat(attachmentCount(jdbcTemplate, taskId))
+        .as("ANHANG_ANZAHL unveraendert")
+        .isEqualTo(attachmentCountBefore);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
+  @Test
+  @DisplayName(
+      "i194_failed_store_rolls_back_attachment_count: Abbruch im Seam nach dem Schreiben der"
+          + " Anhaenge -> 500; ANHANG_ANZAHL, COMMENT_COUNT, Zeilen und Dateien wie vorher")
+  void i194_failed_store_rolls_back_attachment_count() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final String creator = creatorToken();
+    final UUID taskId = createTask(mvc, creator, "Kommentar-Anhang-IT Zaehler Rollback");
+    // Vorlauf mit einem gespeicherten Kommentar-Anhang, damit der Rollback einen Wert > 0 haelt.
+    postWithAttachments(
+            mvc, creator, taskId, commentJson("Vorlauf"), file("Vorlauf.txt", TXT_BYTES))
+        .andExpect(status().isCreated());
+    assertCountMatchesRows(jdbcTemplate, taskId);
+    final Snapshot before = snapshot(taskId);
+    assertThat(before.attachmentCount()).as("Vorlauf: ein Kommentar-Anhang").isEqualTo(1);
+
+    SeamFailingCommentService.FILES_AT_SEAM.set(null);
+    SeamFailingCommentService.FAIL_NEXT.set(true);
+    try {
+      postWithAttachments(
+              mvc,
+              creator,
+              taskId,
+              commentJson("Wird zurueckgerollt"),
+              pdfFile("Bericht.pdf"),
+              file("Notiz.txt", TXT_BYTES))
+          .andExpect(status().isInternalServerError());
+    } finally {
+      SeamFailingCommentService.FAIL_NEXT.set(false);
+    }
+
+    assertThat(SeamFailingCommentService.FILES_AT_SEAM.get())
+        .as("Seam wurde nicht erreicht")
+        .isNotNull();
+    assertUnchanged(taskId, before);
+    assertCountMatchesRows(jdbcTemplate, taskId);
+  }
+
   // ---- Entfernen ------------------------------------------------------------------------------
 
   @Test
@@ -1101,20 +1201,32 @@ class CommentAttachmentIT {
       Long commentId) {}
 
   /** Zustand einer Aufgabe vor einem abgelehnten oder zurueckgerollten Aufruf. */
-  record Snapshot(int commentRows, int commentCount, int attachmentRows, Set<Path> files) {}
+  record Snapshot(
+      int commentRows,
+      int commentCount,
+      int attachmentRows,
+      int attachmentCount,
+      Set<Path> files) {}
 
   private Snapshot snapshot(final UUID taskId) {
     return new Snapshot(
         commentRowCount(taskId),
         commentCount(taskId),
         attachmentRowCount(taskId),
+        attachmentCount(jdbcTemplate, taskId),
         filesUnder(baseDir.resolve("560")));
   }
 
-  /** Nichts gespeichert: Kommentare, COMMENT_COUNT, Anhangzeilen und Dateien wie vorher. */
+  /**
+   * Nichts gespeichert: Kommentare, COMMENT_COUNT, ANHANG_ANZAHL (Intake #194), Anhangzeilen und
+   * Dateien wie vorher.
+   */
   private void assertUnchanged(final UUID taskId, final Snapshot before) {
     assertThat(commentRowCount(taskId)).as("TASK_COMMENT-Zeilen").isEqualTo(before.commentRows());
     assertThat(commentCount(taskId)).as("COMMENT_COUNT").isEqualTo(before.commentCount());
+    assertThat(attachmentCount(jdbcTemplate, taskId))
+        .as("ANHANG_ANZAHL")
+        .isEqualTo(before.attachmentCount());
     assertThat(attachmentRowCount(taskId))
         .as("TASK_ANHANG-Zeilen")
         .isEqualTo(before.attachmentRows());

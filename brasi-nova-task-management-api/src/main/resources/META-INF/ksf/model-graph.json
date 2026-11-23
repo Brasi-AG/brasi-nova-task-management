@@ -94,6 +94,17 @@
           "dtoProjections": []
         },
         {
+          "name": "attachmentCount",
+          "javaType": "int",
+          "source": "PERSISTED",
+          "columnName": "ANHANG_ANZAHL",
+          "nullable": false,
+          "authoritative": true,
+          "label": null,
+          "description": null,
+          "dtoProjections": []
+        },
+        {
           "name": "sourceModule",
           "javaType": "java.lang.String",
           "source": "PERSISTED",

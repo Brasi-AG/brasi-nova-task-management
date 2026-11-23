@@ -101,6 +101,7 @@ public final class ArchiveSearchPageSchema {
    * @param dueDate Faelligkeitsdatum
    * @param lastActivityAt letzte Aktivitaet
    * @param commentCount Anzahl Kommentare
+   * @param attachmentCount Anzahl der aktiven Anhaenge an Aufgabe und Kommentaren
    * @param createdById Ersteller
    * @param createdAt Erstellzeitpunkt
    * @param description Beschreibung
@@ -136,6 +137,12 @@ public final class ArchiveSearchPageSchema {
               example = "2026-11-16T09:30:00Z")
           Instant lastActivityAt,
       @Schema(description = "Anzahl der Kommentare.", example = "2") int commentCount,
+      @Schema(
+              description =
+                  "Anzahl der Anhänge (denormalisiert). Gezählt werden aktive Anhänge an der"
+                      + " Aufgabe und an ihren aktiven Kommentaren.",
+              example = "3")
+          int attachmentCount,
       @Schema(
               description = "UUID des Erstellers oder null.",
               example = "550e8400-e29b-41d4-a716-446655440000")

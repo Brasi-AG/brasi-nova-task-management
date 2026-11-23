@@ -145,8 +145,9 @@ public class CommentService {
    *   <li>Mentions aufloesen (aktive Mandanten-Nutzer); Mitglieder sind MENTION-Ziele. Nicht-
    *       Mitglieder werden als Beteiligte aufgenommen, wenn der Kommentierende das Recht von
    *       {@code POST /participants} hat (Intake #156), sonst still verworfen.
-   *   <li>COMMENT_COUNT++ + LAST_ACTIVITY_AT aktualisieren (versionierter TASK-save, Schreibsperre
-   *       der Aufgabenzeile bis zum Commit).
+   *   <li>COMMENT_COUNT++, ANHANG_ANZAHL um die Zahl der Anhaenge (Intake #194, ohne Anhaenge +0)
+   *       und LAST_ACTIVITY_AT aktualisieren (ein versionierter TASK-save, Schreibsperre der
+   *       Aufgabenzeile bis zum Commit).
    *   <li>Kommentar persistieren (TENANT_ID, TASK_ID, AUTHOR_REF, TEXT, IS_EDITED=false); erst nach
    *       dem TASK-save, damit ANGELEGT_AM unter der Aufgabensperre entsteht und sich mit {@code
    *       MarkerService#markSeen} serialisiert (Review #150).
@@ -302,6 +303,9 @@ public class CommentService {
     // Notifications; der Kommentar ist zu diesem Zeitpunkt noch nicht angelegt, der
     // After-Commit-Push feuert nicht). Kein Teil-Commit.
     task.setCommentCount(task.getCommentCount() + 1);
+    // Intake #194: Anhaenge des neuen Kommentars am selben save zaehlen; scheitert das Speichern
+    // der Anhaenge danach, rollt der Zaehler mit der ganzen Transaktion zurueck.
+    task.setAttachmentCount(task.getAttachmentCount() + attachments.size());
     task.setLastActivityAt(LocalDateTime.now());
     taskRepository.save(task);
 
