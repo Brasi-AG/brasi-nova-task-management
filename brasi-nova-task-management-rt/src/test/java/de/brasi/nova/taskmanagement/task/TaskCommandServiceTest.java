@@ -11,6 +11,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.brasi.nova.taskmanagement.comment.MentionRecipientService;
+import de.brasi.nova.taskmanagement.comment.MentionRecipients;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskTagAssignment;
@@ -48,11 +50,13 @@ import io.keel.framework.api.security.user.UserAccessor;
 import io.keel.framework.api.service.model.PatchValue;
 import io.keel.framework.api.validation.EntityValidationException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -110,6 +114,7 @@ class TaskCommandServiceTest {
   @Mock private InboxGenerationService inboxGenerationService;
   @Mock private TaskMembershipGuard membershipGuard;
   @Mock private TaskSourceRegistry sourceRegistry;
+  @Mock private MentionRecipientService mentionRecipientService;
 
   private TaskCommandService service;
 
@@ -133,7 +138,8 @@ class TaskCommandServiceTest {
             inboxGenerationService,
             membershipGuard,
             sourceRegistry,
-            new NotificationMuteFilter(userStateQueryRepository));
+            new NotificationMuteFilter(userStateQueryRepository),
+            mentionRecipientService);
 
     // CurrentActor: Mandant + Benutzer
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
@@ -534,7 +540,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -560,7 +568,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
   }
@@ -591,7 +601,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Aufgabe nicht gefunden.");
 
@@ -648,7 +660,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     @SuppressWarnings("unchecked")
     final ArgumentCaptor<Collection<UUID>> refsCaptor = ArgumentCaptor.forClass(Collection.class);
@@ -705,7 +719,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining("UNGUELTIG_STATUS");
   }
@@ -728,7 +744,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -757,7 +775,9 @@ class TaskCommandServiceTest {
                         PatchValue.of(java.util.Set.of(inactiveTagUuid)),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining(inactiveTagUuid.toString());
   }
@@ -796,7 +816,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuid)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     // Kein-Add/Kein-Remove: keine neue/reaktivierte Zuordnung, keine Deaktivierung, keine
     // Tag-History (die Menge ist unveraendert -> changed bleibt fuer den Tag-Block aus).
@@ -837,7 +859,9 @@ class TaskCommandServiceTest {
                         PatchValue.of(Set.of(newInactiveTag)),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessageContaining(newInactiveTag.toString());
     verify(tagRepository, never()).findByUuid(newInactiveTag.toString());
@@ -867,7 +891,9 @@ class TaskCommandServiceTest {
                         PatchValue.of(tagIdsWithNull),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -901,7 +927,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuid)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     final ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
     verify(historyService)
@@ -944,7 +972,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuid)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService)
         .record(
@@ -983,7 +1013,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of()),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService)
         .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag entfernt"), eq("Niedrig"));
@@ -1024,7 +1056,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuid2)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService)
         .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag hinzugefuegt"), eq("Tag-Zwei"));
@@ -1059,7 +1093,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuid)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService, never())
         .record(anyLong(), anyLong(), any(), eq("Tag hinzugefuegt"), any());
@@ -1099,7 +1135,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of(tagUuidA, tagUuidB)),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService)
         .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Tag hinzugefuegt"), eq("Alpha"));
@@ -1133,7 +1171,9 @@ class TaskCommandServiceTest {
             PatchValue.of(Set.of()),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(historyService)
         .record(
@@ -1165,7 +1205,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     final ArgumentCaptor<String> detailCaptor = ArgumentCaptor.forClass(String.class);
     verify(historyService).record(any(), any(), any(), any(), detailCaptor.capture());
@@ -1205,7 +1247,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.absent())))
+                        PatchValue.absent(),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class);
   }
 
@@ -1232,7 +1276,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.of(neu),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     assertThat(task.getStartDate()).as("startDate gesetzt").isEqualTo(neu);
     verify(historyService)
@@ -1259,7 +1305,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.ofNull(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     assertThat(task.getStartDate()).as("startDate geloescht (null)").isNull();
     verify(historyService)
@@ -1288,7 +1336,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.of("Neuer Text"),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     assertThat(task.getDescription()).as("Beschreibung gesetzt").isEqualTo("Neuer Text");
     verify(historyService)
@@ -1321,7 +1371,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.ofNull(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     assertThat(task.getDescription()).as("Beschreibung geloescht (null)").isNull();
     verify(historyService)
@@ -1540,7 +1592,9 @@ class TaskCommandServiceTest {
                         PatchValue.absent(),
                         PatchValue.absent(),
                         PatchValue.absent(),
-                        PatchValue.of("GIBTS_NICHT"))))
+                        PatchValue.of("GIBTS_NICHT"),
+                        List.of(),
+                        List.of())))
         .isInstanceOf(EntityValidationException.class)
         .hasMessage("Ungueltiger priorityCode: 'GIBTS_NICHT'.");
 
@@ -1568,7 +1622,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.of(TaskPriorityCodes.LOW)));
+            PatchValue.of(TaskPriorityCodes.LOW),
+            List.of(),
+            List.of()));
 
     assertThat(task.getTitle()).isEqualTo("Neuer Titel");
     assertThat(task.getPriorityId()).isEqualTo(PRIORITY_ID_LOW);
@@ -1809,7 +1865,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(taskRepository).save(task);
     verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
@@ -2134,7 +2192,9 @@ class TaskCommandServiceTest {
             PatchValue.absent(),
             PatchValue.absent(),
             PatchValue.absent(),
-            PatchValue.absent()));
+            PatchValue.absent(),
+            List.of(),
+            List.of()));
 
     verify(userStateQueryRepository, never()).findMutedByTaskId(any());
   }
@@ -2184,6 +2244,420 @@ class TaskCommandServiceTest {
     final String result = TaskCommandService.truncate(value, 500);
     assertThat(result).endsWith("...");
     assertThat(result.codePoints().filter(cp -> cp == 0x1F600).count()).isEqualTo(1L);
+  }
+
+  // ---- Intake #190 (Task 10): Erwaehnungen in der Beschreibung --------------------------------
+
+  /** Text der MENTION aus der Beschreibung (gleicher Typ wie im Kommentar, eigener Text). */
+  private static final String DESCRIPTION_MENTION_TEXT =
+      "Du wurdest in der Aufgabenbeschreibung erwaehnt.";
+
+  /**
+   * Opake Kandidaten aus {@code resolve}: nur im Dienst erzeugbar (privater Konstruktor), hier ein
+   * Mock, den der PATCH unveraendert an {@code admit} reicht.
+   */
+  private final MentionRecipientService.Candidates mentionCandidates =
+      org.mockito.Mockito.mock(MentionRecipientService.Candidates.class);
+
+  @Test
+  @DisplayName(
+      "i190_description_mentions_resolve_before_mutation_admit_before_save: PATCH Titel und"
+          + " description mit mentions und divisionMentions -> resolve (Akteur, excludedRecipient"
+          + " null) vor dem ersten Verlaufseintrag, admit nach den Mutationen und vor dem"
+          + " TASK-save, danach je Ziel eine MENTION mit dem Beschreibungstext; Bump und Signal"
+          + " auch fuer Aufgenommene")
+  void i190_description_mentions_resolve_before_mutation_admit_before_save() {
+    final Long taskId = 590L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setDescription("Alt");
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    stubActiveReader(taskId);
+    final UUID memberRef = UUID.randomUUID();
+    final UUID admittedRef = UUID.randomUUID();
+    final UUID divisionRef = UUID.randomUUID();
+    stubMentions(new MentionRecipients(Set.of(memberRef, admittedRef), Set.of(admittedRef)));
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.of("Neuer Titel"),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of("Neu"),
+            PatchValue.absent(),
+            List.of(memberRef),
+            List.of(divisionRef)));
+
+    verify(mentionRecipientService)
+        .resolve(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            org.mockito.ArgumentMatchers.isNull(),
+            eq(List.of(memberRef)),
+            eq(List.of(divisionRef)));
+    verify(mentionRecipientService).admit(mentionCandidates);
+    assertThat(task.getDescription()).isEqualTo("Neu");
+
+    final org.mockito.InOrder order =
+        inOrder(mentionRecipientService, historyService, taskRepository, notificationService);
+    order.verify(mentionRecipientService).resolve(any(), anyLong(), any(), any(), any(), any());
+    order
+        .verify(historyService)
+        .record(eq(taskId), eq(TENANT_ID), eq(USER_REF), eq("Titel geaendert"), any());
+    order
+        .verify(historyService)
+        .record(
+            eq(taskId),
+            eq(TENANT_ID),
+            eq(USER_REF),
+            eq("Beschreibung geaendert"),
+            eq("3 -> 3 Zeichen"));
+    order.verify(mentionRecipientService).admit(mentionCandidates);
+    order.verify(taskRepository).save(task);
+    order
+        .verify(notificationService, times(2))
+        .emit(
+            any(),
+            eq(taskId),
+            eq(NotificationTypeCodes.MENTION),
+            any(),
+            any(),
+            any(),
+            eq(USER_REF));
+
+    verifyDescriptionMention(memberRef, taskId, task.getTitle());
+    verifyDescriptionMention(admittedRef, taskId, task.getTitle());
+    verify(notificationService, never())
+        .emit(eq(USER_REF), any(), any(), any(), any(), any(), any());
+
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue())
+        .as("Leser und die per Erwaehnung Aufgenommenen")
+        .contains(USER_REF, admittedRef);
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> signalled = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxSignalService).invalidate(eq(TENANT_ID), signalled.capture());
+    assertThat(signalled.getValue()).contains(USER_REF, admittedRef);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_cleared_with_mentions_still_notifies: description null (Beschreibung"
+          + " leeren) mit mentions ist erlaubt und benachrichtigt die Ziele")
+  void i190_description_cleared_with_mentions_still_notifies() {
+    final Long taskId = 591L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setDescription("Alt");
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    final UUID memberRef = UUID.randomUUID();
+    stubMentions(new MentionRecipients(Set.of(memberRef), Set.of()));
+
+    service.patch(task.getUuid(), descriptionPatch(PatchValue.ofNull(), List.of(memberRef), null));
+
+    assertThat(task.getDescription()).isNull();
+    verifyDescriptionMention(memberRef, taskId, task.getTitle());
+  }
+
+  @Test
+  @DisplayName(
+      "i190_patch_without_mentions_does_not_resolve: PATCH description ohne Erwaehnungen -> weder"
+          + " resolve noch admit, keine MENTION (Verhalten wie bisher)")
+  void i190_patch_without_mentions_does_not_resolve() {
+    final Long taskId = 592L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    stubActiveReader(taskId);
+
+    service.patch(task.getUuid(), descriptionPatch(PatchValue.of("Nur Text"), List.of(), null));
+
+    verify(mentionRecipientService, never()).resolve(any(), anyLong(), any(), any(), any(), any());
+    verify(mentionRecipientService, never()).admit(any());
+    verify(notificationService, never()).emit(any(), any(), any(), any(), any(), any(), any());
+    verify(taskRepository).save(task);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_resolve_400_before_any_write: wirft resolve 400 (unbekannte Abteilung), ist vor jeder"
+          + " Schreibung Schluss: kein Verlauf, keine Tag-Aenderung, keine Aufnahme, kein"
+          + " TASK-save, keine Benachrichtigung, kein Bump, kein Signal; die Aufgabe bleibt"
+          + " unveraendert")
+  void i190_resolve_400_before_any_write() {
+    final Long taskId = 593L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    task.setDescription("Alt");
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    stubActiveReader(taskId);
+    when(mentionRecipientService.resolve(any(), anyLong(), any(), any(), any(), any()))
+        .thenThrow(new EntityValidationException("Unbekannte oder nicht aktive Abteilung."));
+
+    assertThatThrownBy(
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.of("Neuer Titel"),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of(Set.of(UUID.randomUUID())),
+                        PatchValue.absent(),
+                        PatchValue.of("Neu"),
+                        PatchValue.absent(),
+                        null,
+                        List.of(UUID.randomUUID()))))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Unbekannte oder nicht aktive Abteilung.");
+
+    // Keine save- und keine Verlaufs-Aufrufe, kein Bump, kein Signal, keine Benachrichtigung.
+    verifyNoPriorityMutation();
+    org.mockito.Mockito.verifyNoInteractions(tagAssignmentQueryRepository, tagRepository);
+    verify(mentionRecipientService, never()).admit(any());
+    assertThat(task.getTitle()).as("Titel nicht gesetzt").isEqualTo("Testtitel");
+    assertThat(task.getDescription()).as("Beschreibung nicht gesetzt").isEqualTo("Alt");
+  }
+
+  @Test
+  @DisplayName(
+      "i190_invalid_priority_rejected_before_resolve: ungueltiger priorityCode zusammen mit"
+          + " description und mentions -> 400 der Prioritaet, resolve und admit werden nie"
+          + " gerufen")
+  void i190_invalid_priority_rejected_before_resolve() {
+    final Long taskId = 594L;
+    final Task task = taskWithPriority(taskId, STATUS_ID_OPEN, PRIORITY_ID_NORMAL);
+    stubPriorities();
+    when(resolver.resolveTaskPriority("GIBTS_NICHT"))
+        .thenThrow(new DictionaryResolverException("CODE 'GIBTS_NICHT' nicht gefunden."));
+
+    assertThatThrownBy(
+            () ->
+                service.patch(
+                    task.getUuid(),
+                    new TaskPatchInput(
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.absent(),
+                        PatchValue.of("Neu"),
+                        PatchValue.of("GIBTS_NICHT"),
+                        List.of(UUID.randomUUID()),
+                        List.of())))
+        .isInstanceOf(EntityValidationException.class)
+        .hasMessage("Ungueltiger priorityCode: 'GIBTS_NICHT'.");
+
+    verify(mentionRecipientService, never()).resolve(any(), anyLong(), any(), any(), any(), any());
+    verify(mentionRecipientService, never()).admit(any());
+    verifyNoPriorityMutation();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_mention_ignores_mute: das MENTION-emit laeuft ohne Mute-Filter (die"
+          + " Mute-Zustaende werden nicht gelesen), ein stummgeschaltetes Ziel bekommt die"
+          + " MENTION trotzdem. Nachweis mit echter Datenbank:"
+          + " i190_description_mention_reaches_muted_member im TaskFacadeControllerIT")
+  void i190_description_mention_ignores_mute() {
+    final Long taskId = 595L;
+    final Task task = taskWithId(taskId, UUID.randomUUID());
+    when(taskRepository.findByUuid(any())).thenReturn(Optional.of(task));
+    when(taskRepository.save(any(Task.class))).thenReturn(task);
+    final UUID mutedRef = UUID.randomUUID();
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
+        .thenReturn(List.of(mutedState(mutedRef, taskId)));
+    stubMentions(new MentionRecipients(Set.of(mutedRef), Set.of()));
+
+    service.patch(task.getUuid(), descriptionPatch(PatchValue.of("Neu"), List.of(mutedRef), null));
+
+    verifyDescriptionMention(mutedRef, taskId, task.getTitle());
+    verify(userStateQueryRepository, never()).findMutedByTaskId(any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190_status_done_and_mention_same_person_both_notified: PATCH statusCode DONE mit"
+          + " description und mentions -> wer DONE bekommt und erwaehnt wird, erhaelt beide"
+          + " Benachrichtigungen unabhaengig voneinander (keine Deduplizierung ueber die Typen);"
+          + " DONE laeuft mit Mute-Filter, MENTION ohne")
+  void i190_status_done_and_mention_same_person_both_notified() {
+    final Long taskId = 596L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID personRef = UUID.randomUUID();
+    final UUID mutedRef = UUID.randomUUID();
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenReturn(
+            List.of(
+                participantRow(creatorRef, true, false, true, null),
+                participantRow(USER_REF, false, true, true, null),
+                participantRow(personRef, false, false, true, null),
+                participantRow(mutedRef, false, false, true, null)));
+    when(userStateQueryRepository.findMutedByTaskId(eq(taskId)))
+        .thenReturn(List.of(mutedState(mutedRef, taskId)));
+    stubMentions(new MentionRecipients(Set.of(personRef, mutedRef), Set.of()));
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(TaskStatusCodes.DONE),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of("Neu"),
+            PatchValue.absent(),
+            List.of(personRef, mutedRef),
+            List.of()));
+
+    assertThat(task.getTaskStatusId()).as("Status auf DONE gesetzt").isEqualTo(STATUS_ID_DONE);
+    // personRef: DONE und MENTION, je genau einmal und unabhaengig voneinander.
+    verifyStatusDone(creatorRef, taskId);
+    verifyStatusDone(personRef, taskId);
+    verifyDescriptionMention(personRef, taskId, task.getTitle());
+    // mutedRef: DONE faellt durch den Mute-Filter weg, die MENTION kommt trotzdem.
+    verify(notificationService, never())
+        .emit(eq(mutedRef), any(), eq(NotificationTypeCodes.DONE), any(), any(), any(), any());
+    verifyDescriptionMention(mutedRef, taskId, task.getTitle());
+    // creatorRef wird nicht erwaehnt: nur DONE, keine MENTION.
+    verify(notificationService, never())
+        .emit(eq(creatorRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    verify(notificationService, times(4)).emit(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName(
+      "i190_status_done_with_admitted_mention_only_mention_for_new_participant: PATCH statusCode"
+          + " DONE mit description und der Erwaehnung eines Nicht-Mitglieds, das mit TASK_WRITE"
+          + " aufgenommen wird -> die Aufgenommene erhaelt genau eine MENTION und kein DONE (die"
+          + " Empfaenger stehen vor der Aufnahme fest), die vorher aktiven Beteiligten erhalten"
+          + " DONE wie bisher, der Akteur nichts")
+  void i190_status_done_with_admitted_mention_only_mention_for_new_participant() {
+    final Long taskId = 597L;
+    final Task task = taskWithStatus(taskId, STATUS_ID_OPEN);
+    final UUID creatorRef = UUID.randomUUID();
+    final UUID memberRef = UUID.randomUUID();
+    final UUID admittedRef = UUID.randomUUID();
+    // Zustandsbehaftete Teilnehmerliste: erst NACH der Aufnahme steht die neue Person darin. Wuerde
+    // der Dienst die Empfaenger nach der Aufnahme ermitteln, bekaeme sie hier auch DONE.
+    final AtomicBoolean admitDone = new AtomicBoolean(false);
+    when(participantQueryRepository.findActiveByTaskIds(any()))
+        .thenAnswer(
+            invocation -> {
+              final List<TaskParticipant> rows = new ArrayList<>();
+              rows.add(participantRow(creatorRef, true, false, true, null));
+              rows.add(participantRow(USER_REF, false, true, true, null));
+              rows.add(participantRow(memberRef, false, false, true, null));
+              if (admitDone.get()) {
+                rows.add(participantRow(admittedRef, false, false, true, null));
+              }
+              return rows;
+            });
+    when(mentionRecipientService.resolve(any(), anyLong(), any(), any(), any(), any()))
+        .thenReturn(mentionCandidates);
+    when(mentionRecipientService.admit(mentionCandidates))
+        .thenAnswer(
+            invocation -> {
+              admitDone.set(true);
+              return new MentionRecipients(Set.of(admittedRef), Set.of(admittedRef));
+            });
+
+    service.patch(
+        task.getUuid(),
+        new TaskPatchInput(
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of(TaskStatusCodes.DONE),
+            PatchValue.absent(),
+            PatchValue.absent(),
+            PatchValue.of("Neu"),
+            PatchValue.absent(),
+            List.of(admittedRef),
+            List.of()));
+
+    assertThat(task.getTaskStatusId()).as("Status auf DONE gesetzt").isEqualTo(STATUS_ID_DONE);
+    assertThat(admitDone).as("die Aufnahme lief im PATCH").isTrue();
+    // Die vorher aktiven Beteiligten (ohne Akteur): DONE wie bisher, keine MENTION.
+    verifyStatusDone(creatorRef, taskId);
+    verifyStatusDone(memberRef, taskId);
+    verify(notificationService, never())
+        .emit(eq(creatorRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    verify(notificationService, never())
+        .emit(eq(memberRef), any(), eq(NotificationTypeCodes.MENTION), any(), any(), any(), any());
+    // Die Aufgenommene: genau eine MENTION, kein DONE.
+    verifyDescriptionMention(admittedRef, taskId, task.getTitle());
+    verify(notificationService, never())
+        .emit(eq(admittedRef), any(), eq(NotificationTypeCodes.DONE), any(), any(), any(), any());
+    // Der Akteur bekommt nichts, insgesamt zwei DONE und eine MENTION.
+    verify(notificationService, never())
+        .emit(eq(USER_REF), any(), any(), any(), any(), any(), any());
+    verify(notificationService, times(3)).emit(any(), any(), any(), any(), any(), any(), any());
+    // Die Aufgenommene kommt trotzdem in Bump und Signal.
+    @SuppressWarnings("unchecked")
+    final ArgumentCaptor<Collection<UUID>> bumped = ArgumentCaptor.forClass(Collection.class);
+    verify(inboxGenerationService).bumpSorted(eq(TENANT_ID), bumped.capture());
+    assertThat(bumped.getValue()).contains(admittedRef);
+  }
+
+  /** Prueft genau eine DONE-Benachrichtigung an {@code recipientRef}. */
+  private void verifyStatusDone(final UUID recipientRef, final Long taskId) {
+    verify(notificationService, times(1))
+        .emit(
+            eq(recipientRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.DONE),
+            eq(NotificationSeverityCodes.INFO),
+            eq("Die Aufgabe wurde erledigt."),
+            eq("Jahresabschluss"),
+            eq(USER_REF));
+  }
+
+  /**
+   * Stellt {@code resolve} (liefert die opaken Kandidaten) und {@code admit} (liefert die
+   * Empfaenger) des gemockten Dienstes ein.
+   */
+  private void stubMentions(final MentionRecipients recipients) {
+    when(mentionRecipientService.resolve(any(), anyLong(), any(), any(), any(), any()))
+        .thenReturn(mentionCandidates);
+    when(mentionRecipientService.admit(mentionCandidates)).thenReturn(recipients);
+  }
+
+  /** Prueft genau eine MENTION mit dem Beschreibungstext an {@code recipientRef}. */
+  private void verifyDescriptionMention(
+      final UUID recipientRef, final Long taskId, final String preview) {
+    verify(notificationService, times(1))
+        .emit(
+            eq(recipientRef),
+            eq(taskId),
+            eq(NotificationTypeCodes.MENTION),
+            eq(NotificationSeverityCodes.INFO),
+            eq(DESCRIPTION_MENTION_TEXT),
+            eq(preview),
+            eq(USER_REF));
+  }
+
+  /** Patch-Eingabe nur mit Beschreibung und Erwaehnungen (Intake #190). */
+  private static TaskPatchInput descriptionPatch(
+      final PatchValue<String> description,
+      final List<UUID> mentions,
+      final List<UUID> divisionMentions) {
+    return new TaskPatchInput(
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        PatchValue.absent(),
+        description,
+        PatchValue.absent(),
+        mentions,
+        divisionMentions);
   }
 
   // ---- Hilfsmethode ---------------------------------------------------------------------------
@@ -2238,7 +2712,9 @@ class TaskCommandServiceTest {
         PatchValue.absent(),
         PatchValue.absent(),
         PatchValue.absent(),
-        PatchValue.absent());
+        PatchValue.absent(),
+        List.of(),
+        List.of());
   }
 
   /** Baut ein Patch-Input, das ausschliesslich den priorityCode setzt (Intake #183). */
@@ -2250,7 +2726,9 @@ class TaskCommandServiceTest {
         PatchValue.absent(),
         PatchValue.absent(),
         PatchValue.absent(),
-        priorityCode);
+        priorityCode,
+        List.of(),
+        List.of());
   }
 
   /** Baut eine Aufgabe mit Status und Prioritaet (siehe {@link #taskWithStatus}). */

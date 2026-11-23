@@ -1096,15 +1096,13 @@ class CommentConcurrencyIT {
         final NotificationService notificationService,
         final InboxSignalService inboxSignalService,
         final InboxGenerationService inboxGenerationService,
-        final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
-        final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
         final AttachmentProperties attachmentProperties,
-        final DivisionMentionResolver divisionMentionResolver) {
+        final MentionRecipientService mentionRecipientService) {
       super(
           taskRepository,
           commentRepository,
@@ -1113,17 +1111,15 @@ class CommentConcurrencyIT {
           notificationService,
           inboxSignalService,
           inboxGenerationService,
-          userReadRepository,
           userAccessor,
           auditTimeConverter,
           membershipGuard,
           new de.brasi.nova.taskmanagement.notification.NotificationMuteFilter(
               userStateQueryRepository),
-          assigneeService,
           attachmentWriter,
           attachmentModelMapper,
           attachmentProperties,
-          divisionMentionResolver);
+          mentionRecipientService);
     }
 
     void armTaskSaveInjector(final Runnable injector) {
@@ -1314,6 +1310,21 @@ class CommentConcurrencyIT {
           permissionEvaluator);
     }
 
+    /**
+     * Intake #190 (Task 10): Erwaehnungs-Empfaenger des CommentService, aus ihm herausgeloest;
+     * nutzt die Test-Subklasse des AssigneeService, damit deren Seams auch auf dem Erwaehnungspfad
+     * greifen.
+     */
+    @Bean
+    MentionRecipientService mentionRecipientService(
+        final UserReadRepository userReadRepository,
+        final TaskMembershipGuard membershipGuard,
+        final AssigneeService assigneeService,
+        final DivisionMentionResolver divisionMentionResolver) {
+      return new MentionRecipientService(
+          userReadRepository, membershipGuard, assigneeService, divisionMentionResolver);
+    }
+
     @Bean
     MarkerService markerService(
         final TaskKeysetQueryRepository taskRepository,
@@ -1416,15 +1427,13 @@ class CommentConcurrencyIT {
         final NotificationService notificationService,
         final InboxSignalService inboxSignalService,
         final InboxGenerationService inboxGenerationService,
-        final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
-        final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
         final AttachmentProperties attachmentProperties,
-        final DivisionMentionResolver divisionMentionResolver) {
+        final MentionRecipientService mentionRecipientService) {
       return new TestCommentService(
           taskRepository,
           commentRepository,
@@ -1433,15 +1442,13 @@ class CommentConcurrencyIT {
           notificationService,
           inboxSignalService,
           inboxGenerationService,
-          userReadRepository,
           userAccessor,
           auditTimeConverter,
           membershipGuard,
-          assigneeService,
           attachmentWriter,
           attachmentModelMapper,
           attachmentProperties,
-          divisionMentionResolver);
+          mentionRecipientService);
     }
   }
 }

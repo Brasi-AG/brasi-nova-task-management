@@ -143,16 +143,14 @@ class CommentServiceTest {
             notificationService,
             inboxSignalService,
             inboxGenerationService,
-            userReadRepository,
             userAccessor,
             new AuditTimeConverter("Europe/Berlin"),
             membershipGuard,
             new NotificationMuteFilter(userStateQueryRepository),
-            assigneeService,
             attachmentWriter,
             attachmentModelMapper,
             attachmentProperties,
-            divisionMentionResolver);
+            mentionRecipientService());
 
     final TenantInfo tenant = new TenantInfo(TENANT_UUID, TENANT_ID);
     final AuthUser user = new AuthUser(ACTOR_REF, "actor@brasi.de");
@@ -1684,6 +1682,16 @@ class CommentServiceTest {
     return new CommentCreateInput(text, null, List.of(), List.of());
   }
 
+  /**
+   * Echter {@link MentionRecipientService} ueber denselben Mocks (Intake #190, Task 10): die
+   * Erwaehnungs-Logik ist aus dem CommentService herausgeloest, die Erwartungen dieser Klasse
+   * gelten unveraendert fuer beide zusammen.
+   */
+  private MentionRecipientService mentionRecipientService() {
+    return new MentionRecipientService(
+        userReadRepository, membershipGuard, assigneeService, divisionMentionResolver);
+  }
+
   /** CommentService wie im Setup, aber mit Seam, der {@code seam:<Kommentar-ID>} protokolliert. */
   private CommentService serviceWithSeam(final List<String> events) {
     return new CommentService(
@@ -1694,16 +1702,14 @@ class CommentServiceTest {
         notificationService,
         inboxSignalService,
         inboxGenerationService,
-        userReadRepository,
         userAccessor,
         new AuditTimeConverter("Europe/Berlin"),
         membershipGuard,
         new NotificationMuteFilter(userStateQueryRepository),
-        assigneeService,
         attachmentWriter,
         attachmentModelMapper,
         attachmentProperties,
-        divisionMentionResolver) {
+        mentionRecipientService()) {
       @Override
       protected void onAfterAttachmentsStoredForTest(final Long commentId) {
         events.add("seam:" + commentId);

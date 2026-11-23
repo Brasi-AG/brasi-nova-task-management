@@ -18,15 +18,12 @@ import com.zaxxer.hikari.HikariDataSource;
 import de.brasi.nova.taskmanagement.attachment.AttachmentModelMapper;
 import de.brasi.nova.taskmanagement.attachment.AttachmentProperties;
 import de.brasi.nova.taskmanagement.attachment.AttachmentWriter;
-import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
-import de.brasi.nova.taskmanagement.participant.AssigneeService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
 import de.brasi.nova.taskmanagement.push.NoOpInboxSignalConfig;
 import de.brasi.nova.taskmanagement.push.NoOpNotificationPushConfig;
-import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
@@ -1482,16 +1479,14 @@ class CommentAttachmentIT {
         final NotificationService notificationService,
         final InboxSignalService inboxSignalService,
         final InboxGenerationService inboxGenerationService,
-        final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
         final NotificationMuteFilter muteFilter,
-        final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
         final AttachmentProperties attachmentProperties,
-        final DivisionMentionResolver divisionMentionResolver) {
+        final MentionRecipientService mentionRecipientService) {
       super(
           taskRepository,
           commentRepository,
@@ -1500,16 +1495,14 @@ class CommentAttachmentIT {
           notificationService,
           inboxSignalService,
           inboxGenerationService,
-          userReadRepository,
           userAccessor,
           auditTimeConverter,
           membershipGuard,
           muteFilter,
-          assigneeService,
           attachmentWriter,
           attachmentModelMapper,
           attachmentProperties,
-          divisionMentionResolver);
+          mentionRecipientService);
     }
 
     @Override
@@ -1608,16 +1601,14 @@ class CommentAttachmentIT {
         final NotificationService notificationService,
         final InboxSignalService inboxSignalService,
         final InboxGenerationService inboxGenerationService,
-        final UserReadRepository userReadRepository,
         final UserAccessor userAccessor,
         final AuditTimeConverter auditTimeConverter,
         final TaskMembershipGuard membershipGuard,
         final NotificationMuteFilter muteFilter,
-        final AssigneeService assigneeService,
         final AttachmentWriter attachmentWriter,
         final AttachmentModelMapper attachmentModelMapper,
         final AttachmentProperties attachmentProperties,
-        final DivisionMentionResolver divisionMentionResolver) {
+        final MentionRecipientService mentionRecipientService) {
       return new SeamFailingCommentService(
           taskRepository,
           commentRepository,
@@ -1626,16 +1617,14 @@ class CommentAttachmentIT {
           notificationService,
           inboxSignalService,
           inboxGenerationService,
-          userReadRepository,
           userAccessor,
           auditTimeConverter,
           membershipGuard,
           muteFilter,
-          assigneeService,
           attachmentWriter,
           attachmentModelMapper,
           attachmentProperties,
-          divisionMentionResolver);
+          mentionRecipientService);
     }
   }
 }

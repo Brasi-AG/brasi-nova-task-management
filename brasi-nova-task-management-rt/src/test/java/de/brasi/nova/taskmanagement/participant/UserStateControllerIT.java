@@ -789,6 +789,10 @@ class UserStateControllerIT {
     // TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
+    // Intake #190 (Task 10): TaskCommandService haengt am MentionRecipientService (Paket comment,
+    // hier nicht gescannt), der den DivisionMentionResolver braucht.
+    de.brasi.nova.taskmanagement.comment.MentionRecipientService.class,
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
     NoOpNotificationPushConfig.class,
   })
   static class ItConfig {

@@ -1,5 +1,7 @@
 package de.brasi.nova.taskmanagement.task;
 
+import de.brasi.nova.taskmanagement.comment.MentionRecipientService;
+import de.brasi.nova.taskmanagement.comment.MentionRecipients;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskParticipant;
 import de.brasi.nova.taskmanagement.entity.TaskTag;
@@ -67,6 +69,9 @@ public class TaskCommandService {
 
   private static final Logger log = LoggerFactory.getLogger(TaskCommandService.class);
 
+  /** Text der MENTION aus der Aufgabenbeschreibung (Intake #190). */
+  static final String DESCRIPTION_MENTION_TEXT = "Du wurdest in der Aufgabenbeschreibung erwaehnt.";
+
   private final BaseTaskRepository taskRepository;
   private final BaseTaskParticipantRepository participantRepository;
   private final TaskParticipantQueryRepository participantQueryRepository;
@@ -84,6 +89,7 @@ public class TaskCommandService {
   private final TaskMembershipGuard membershipGuard;
   private final TaskSourceRegistry sourceRegistry;
   private final NotificationMuteFilter muteFilter;
+  private final MentionRecipientService mentionRecipientService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public TaskCommandService(
@@ -103,7 +109,8 @@ public class TaskCommandService {
       final InboxGenerationService inboxGenerationService,
       final TaskMembershipGuard membershipGuard,
       final TaskSourceRegistry sourceRegistry,
-      final NotificationMuteFilter muteFilter) {
+      final NotificationMuteFilter muteFilter,
+      final MentionRecipientService mentionRecipientService) {
     this.taskRepository = taskRepository;
     this.participantRepository = participantRepository;
     this.participantQueryRepository = participantQueryRepository;
@@ -121,6 +128,7 @@ public class TaskCommandService {
     this.membershipGuard = membershipGuard;
     this.sourceRegistry = sourceRegistry;
     this.muteFilter = muteFilter;
+    this.mentionRecipientService = mentionRecipientService;
   }
 
   /**
@@ -379,7 +387,7 @@ public class TaskCommandService {
 
   /**
    * Patcht eine bestehende Aufgabe (title, dueDate, startDate, description, statusCode, tagIds,
-   * priorityCode).
+   * priorityCode; mit description auch mentions und divisionMentions).
    *
    * <p>Legt einen Historieneintrag und aktualisiert LAST_ACTIVITY_AT in DERSELBEN Transaktion. Nach
    * Commit: {@link InboxSignalService#invalidate} fuer alle aktiven Teilnehmer.
@@ -391,9 +399,11 @@ public class TaskCommandService {
    * andere Status-Wechsel in beide Richtungen.
    *
    * <p><b>DONE-Benachrichtigung (Intake #151):</b> Nur beim <i>Uebergang</i> in {@code DONE} (neuer
-   * Status DONE, bisheriger nicht) erhaelt jeder aktive Beteiligte (Ersteller, Zugewiesene,
-   * Beteiligte) genau eine {@code DONE}-Benachrichtigung inkl. WebSocket-Push nach Commit - ohne
-   * den schliessenden Akteur und ohne Personen, die die Aufgabe verlassen haben. Ein Patch ohne
+   * Status DONE, bisheriger nicht) erhaelt jeder <i>vor diesem PATCH</i> aktive Beteiligte
+   * (Ersteller, Zugewiesene, Beteiligte) genau eine {@code DONE}-Benachrichtigung inkl.
+   * WebSocket-Push nach Commit - ohne den schliessenden Akteur und ohne Personen, die die Aufgabe
+   * verlassen haben. Wer erst durch eine Erwaehnung im selben PATCH als Beteiligter aufgenommen
+   * wird (siehe unten), gehoert nicht dazu und erhaelt nur die MENTION. Ein Patch ohne
    * Statuswechsel oder in einen anderen Status loest keine DONE-Benachrichtigung aus. Die Emission
    * laeuft in derselben Transaktion wie die Statusaenderung.
    *
@@ -415,6 +425,27 @@ public class TaskCommandService {
    * (z. B. {@code NORMAL -> HIGH}); ein unveraenderter Wert (gleiche ID, auch {@code null} bei
    * bereits NORMAL) schreibt keinen Verlauf und loest allein weder Save noch Bump/Invalidate aus.
    * Eine Prioritaetsaenderung loest keine Benachrichtigung aus.
+   *
+   * <p><b>Erwaehnungen in der Beschreibung (Intake #190):</b> Mit {@code description} duerfen
+   * {@code mentions} und {@code divisionMentions} kommen (ohne {@code description} lehnt schon
+   * {@link TaskPatchInput} ab). Der {@link MentionRecipientService} ermittelt die Empfaenger wie
+   * beim Kommentar (Abteilungen aus der lokalen Projektion, nur lesend; aktive Mandanten-Nutzer;
+   * ohne Akteur; WRITE-Mitglieder als Ziel; Nicht-Mitglieder nur mit {@code TASK_WRITE} als
+   * Beteiligte aufgenommen, mit Verlauf "per Erwaehnung"). Der Lesepart ({@code resolve}:
+   * Abteilungen, Benutzer, Mitgliedschaft) laeuft direkt nach der Aufloesung der Prioritaet und
+   * damit VOR der ersten Mutation (Verlauf, Tags): eine unbekannte oder inaktive Abteilung oder zu
+   * viele Personen ergeben 400, bevor etwas geschrieben ist. Die Aufnahme ({@code admit}) folgt
+   * nach den uebrigen Mutationen und Reads, vor dem TASK-save. Nach dem save bekommt jedes Ziel
+   * eine MENTION "Du wurdest in der Aufgabenbeschreibung erwaehnt." (Vorschau = Titel, trotz Mute).
+   * Wer im selben Patch DONE oder CANCELLED bekommt und erwaehnt wird, erhaelt beide
+   * Benachrichtigungen unabhaengig voneinander (DONE mit Mute-Filter, MENTION ohne, keine
+   * Deduplizierung ueber die Typen hinweg); die Aufgenommenen kommen in Bump und Signal.
+   *
+   * <p><b>Empfaenger der Statusbenachrichtigung gegen Aufnahme (Intake #190):</b> Die Empfaenger
+   * von DONE und CANCELLED stehen VOR der Aufnahme fest (Lock-Reihenfolge: Mitgliedschafts-Read vor
+   * dem TASK-save) und sind die vor diesem PATCH aktiven Beteiligten. Wer durch die Erwaehnung
+   * desselben PATCH erst aufgenommen wird, erhaelt genau eine MENTION und keine DONE- oder
+   * CANCELLED-Benachrichtigung; das ist gewollt.
    *
    * <p><b>Inbox-Generation-Bump (Finding 2 / Option B, Cursor-Invalidierung):</b> Bei JEDER
    * tatsaechlichen Aenderung ({@code changed}) wird die {@link InboxGenerationService}-Generation
@@ -441,8 +472,9 @@ public class TaskCommandService {
    * @param input Patch-Eingabe
    * @throws EntityNotFoundException wenn die Aufgabe nicht gefunden wird oder fremdem Tenant
    *     gehoert
-   * @throws EntityValidationException bei unbekanntem statusCode oder unbekanntem, leerem bzw.
-   *     inaktivem priorityCode
+   * @throws EntityValidationException bei unbekanntem statusCode, unbekanntem, leerem bzw.
+   *     inaktivem priorityCode, unbekannter oder inaktiver erwaehnter Abteilung oder zu vielen
+   *     Personen in den erwaehnten Abteilungen
    */
   @Transactional
   public void patch(final UUID taskExternalId, final TaskPatchInput input) {
@@ -465,6 +497,14 @@ public class TaskCommandService {
         input.priorityCode().isPresent()
             ? resolvePatchPriorityId(input.priorityCode().get())
             : null;
+
+    // Intake #190: Lesepart der Erwaehnungen in der Beschreibung (Abteilungen aus der lokalen
+    // Projektion, aktive Benutzer, Mitgliedschaft der Erwaehnten) ebenfalls VOR der ersten Mutation
+    // (Spec: Reads vor der ersten Schreibung). Ein 400 (unbekannte oder inaktive Abteilung, zu
+    // viele Personen) kommt so vor jeder Schreibung, auch vor dem Verlauf und den Tags. Die
+    // Aufnahme erwaehnter Nicht-Mitglieder folgt unten, vor dem TASK-save. Null ohne Erwaehnung.
+    final MentionRecipientService.Candidates mentionCandidates =
+        resolveDescriptionMentions(taskId, tenantId, actorRef, input);
 
     boolean changed = false;
     // Intake #151/#157: Typ-CODE der Statusbenachrichtigung (DONE oder CANCELLED), wenn dieser
@@ -755,10 +795,19 @@ public class TaskCommandService {
       // Intake #151/#157: Empfaenger der Statusbenachrichtigung aus demselben Grund ebenfalls VOR
       // dem TASK-save lesen (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
       // Intake #158: inklusive gebuendelter Mute-Lesung (stumme Personen fallen heraus).
+      // Intake #190: Empfaenger = die VOR diesem PATCH aktiven Beteiligten; wer unten per
+      // Erwaehnung
+      // erst aufgenommen wird, bekommt nur die MENTION (gewollt, Aufruf bewusst vor der Aufnahme).
       final List<UUID> statusRecipients =
           statusNotificationType != null
               ? findStatusChangeRecipients(taskId, statusNotificationType, actorRef, leftRefs)
               : List.of();
+      // Intake #190: Erwaehnungen in der Beschreibung, Schreibphase. Die Reads (Abteilungen,
+      // Benutzer, Mitgliedschaft) liefen schon vor der ersten Mutation; hier nimmt der Dienst die
+      // erwaehnten Nicht-Mitglieder auf (Teilnehmer- und State-Writes, Mitgliedschaft vor Aufgabe)
+      // und liefert die Ziele der MENTION. Kein REPLY, daher kein ausgenommener Empfaenger.
+      final MentionRecipients mentionRecipients = admitDescriptionMentions(mentionCandidates);
+      readerRefs.addAll(mentionRecipients.admitted());
       task.setLastActivityAt(LocalDateTime.now());
       taskRepository.save(task);
       log.info(
@@ -787,12 +836,74 @@ public class TaskCommandService {
             statusNotificationType,
             statusRecipients.size());
       }
+      // Intake #190: MENTION je Ziel der Beschreibung, wie beim Kommentar (gleicher Typ, kein
+      // Mute-Filter, kein Selbst-Ping). Unabhaengig von einer Statusbenachrichtigung oben: wer im
+      // selben PATCH DONE (oder CANCELLED) bekommt und erwaehnt wird, erhaelt beide, DONE mit
+      // Mute-Filter, MENTION ohne; es gibt keine Deduplizierung ueber die Typen hinweg.
+      for (final UUID mentionRef : mentionRecipients.notifyTargets()) {
+        notificationService.emit(
+            mentionRef,
+            taskId,
+            NotificationTypeCodes.MENTION,
+            NotificationSeverityCodes.INFO,
+            DESCRIPTION_MENTION_TEXT,
+            task.getTitle(),
+            actorRef);
+      }
+      if (!mentionRecipients.notifyTargets().isEmpty()) {
+        log.info(
+            "TaskCommandService.patch: Erwaehnung in der Beschreibung der Aufgabe {} -"
+                + " MENTION an {} Empfaenger, {} Person(en) aufgenommen.",
+            taskExternalId,
+            mentionRecipients.notifyTargets().size(),
+            mentionRecipients.admitted().size());
+      }
       // Gleiche deduplizierte Menge fuer atomaren Generation-Bump und Signal nach Commit.
       if (!readerRefs.isEmpty()) {
         inboxGenerationService.bumpSorted(tenantId, readerRefs);
         inboxSignalService.invalidate(tenantId, readerRefs);
       }
     }
+  }
+
+  /**
+   * Lesephase der Erwaehnungen in der Beschreibung (Intake #190): loest Abteilungen und Personen
+   * auf und teilt sie in Mitglieder und Nicht-Mitglieder, ohne etwas zu schreiben. Laeuft vor der
+   * ersten Mutation des PATCH. Ohne Erwaehnung wird der Dienst nicht gerufen (kein Read).
+   *
+   * @param taskId interne Aufgaben-ID
+   * @param tenantId interner Mandanten-Schluessel
+   * @param actorRef handelnde Person (wird nie Ziel)
+   * @param input Patch-Eingabe
+   * @return die Kandidaten fuer {@link #admitDescriptionMentions}, {@code null} ohne Erwaehnung
+   * @throws EntityValidationException wenn eine erwaehnte Abteilung unbekannt oder nicht aktiv ist
+   *     oder die Abteilungen zu viele Personen umfassen (HTTP 400, nichts ist geschrieben)
+   */
+  private MentionRecipientService.Candidates resolveDescriptionMentions(
+      final Long taskId, final long tenantId, final UUID actorRef, final TaskPatchInput input) {
+    if (!input.description().isPresent()
+        || (input.mentions().isEmpty() && input.divisionMentions().isEmpty())) {
+      return null;
+    }
+    return mentionRecipientService.resolve(
+        taskId, tenantId, actorRef, null, input.mentions(), input.divisionMentions());
+  }
+
+  /**
+   * Schreibphase der Erwaehnungen in der Beschreibung (Intake #190): nimmt erwaehnte
+   * Nicht-Mitglieder (mit {@code TASK_WRITE}) als Beteiligte auf und liefert die Ziele der MENTION.
+   * Laeuft nach den uebrigen Mutationen und Reads des PATCH, vor dem TASK-save.
+   *
+   * @param candidates Ergebnis von {@link #resolveDescriptionMentions}, {@code null} ohne
+   *     Erwaehnung
+   * @return Ziele der MENTION und Aufgenommene, leer ohne Erwaehnung
+   */
+  private MentionRecipients admitDescriptionMentions(
+      final MentionRecipientService.Candidates candidates) {
+    if (candidates == null) {
+      return new MentionRecipients(Set.of(), Set.of());
+    }
+    return mentionRecipientService.admit(candidates);
   }
 
   /**
@@ -834,9 +945,11 @@ public class TaskCommandService {
 
   /**
    * Ermittelt die Empfaenger einer Statusbenachrichtigung beim Schliessen (DONE, Intake #151) und
-   * beim Abbrechen (CANCELLED, Intake #157): alle aktiven Beteiligten der Aufgabe (Ersteller,
-   * Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren Rollen -, ohne den
-   * handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben.
+   * beim Abbrechen (CANCELLED, Intake #157): alle <i>vor diesem PATCH</i> aktiven Beteiligten der
+   * Aufgabe (Ersteller, Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren
+   * Rollen -, ohne den handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben. Wer im
+   * selben PATCH erst per Erwaehnung aufgenommen wird, ist (der Aufruf liegt vor der Aufnahme) nie
+   * Empfaenger.
    *
    * <p>Bewusst EINE gemeinsame Ermittlung fuer beide Statuswechsel: Anpassungen der Empfaengerlogik
    * (z. B. Stummschalten, Intake #158) gelten damit automatisch fuer Schliessen und Abbrechen.

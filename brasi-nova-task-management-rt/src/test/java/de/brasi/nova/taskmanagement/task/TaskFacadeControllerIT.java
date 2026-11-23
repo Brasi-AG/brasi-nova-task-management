@@ -42,6 +42,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Date;
@@ -57,6 +58,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -87,6 +89,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.SqlParameterValue;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -181,6 +184,32 @@ class TaskFacadeControllerIT {
 
   private static final String USER_READ_ONLY_LOGIN = "read-only@brasi.de";
 
+  /**
+   * Aktive Nutzer des Mandanten A fuer die Erwaehnung in der Beschreibung (Intake #190), mit
+   * eigenem Namen fuer das Verlaufsdetail. Kein Mitglied, solange ein Test sie nicht aufnimmt.
+   */
+  private static final UUID DIV_P1_REF = UUID.randomUUID();
+
+  private static final String DIV_P1_NAME = "Beschreibung Person Eins";
+  private static final long DIV_P1_DB_ID = 505L;
+  private static final UUID DIV_P2_REF = UUID.randomUUID();
+  private static final String DIV_P2_NAME = "Beschreibung Person Zwei";
+  private static final long DIV_P2_DB_ID = 506L;
+
+  /** Verlaufstext der Aufnahme per Erwaehnung (wie AssigneeService, dort nur im Paket sichtbar). */
+  private static final String HISTORY_MENTIONED =
+      "hat einen Beteiligten per Erwaehnung hinzugefuegt";
+
+  /** Einheitlicher 400-Text fuer unbekannte, inaktive und mandantenfremde Abteilungen. */
+  private static final String UNKNOWN_DIVISION_MESSAGE = "Unbekannte oder nicht aktive Abteilung.";
+
+  /** Text der MENTION aus der Aufgabenbeschreibung (Intake #190, Task 10). */
+  private static final String DESCRIPTION_MENTION_TEXT =
+      "Du wurdest in der Aufgabenbeschreibung erwaehnt.";
+
+  /** IDs der per JDBC gesaeten Abteilungs- und Mitgliederzeilen, weit weg von der KSF-Sequenz. */
+  private static final AtomicLong JDBC_DIVISION_IDS = new AtomicLong(8_220_000_000L);
+
   private static final KeyPair RSA_KEY_PAIR;
 
   static {
@@ -256,6 +285,11 @@ class TaskFacadeControllerIT {
     seedBenutzerIfAbsent(jt, USER_A_DB_ID, USER_A_REF, USER_A_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_A2_DB_ID, USER_A2_REF, USER_A2_LOGIN, TENANT_A_ID);
     seedBenutzerIfAbsent(jt, USER_B_DB_ID, USER_B_REF, USER_B_LOGIN, TENANT_B_ID);
+    // Intake #190: Nicht-Mitglieder fuer die Erwaehnung in der Beschreibung.
+    seedNamedBenutzerIfAbsent(
+        jt, DIV_P1_DB_ID, DIV_P1_REF, "div-p1-facade@brasi.de", DIV_P1_NAME, TENANT_A_ID);
+    seedNamedBenutzerIfAbsent(
+        jt, DIV_P2_DB_ID, DIV_P2_REF, "div-p2-facade@brasi.de", DIV_P2_NAME, TENANT_A_ID);
   }
 
   // ---- Positiv-IT: POST -> PATCH -> GET Detail -----------------------------------------------
@@ -3192,6 +3226,610 @@ class TaskFacadeControllerIT {
         .isEqualTo(activityAfterExit);
   }
 
+  // ---- Intake #190 (Task 10): Erwaehnungen in der Beschreibung (PATCH) -----------------------
+  //
+  // Die Abteilungs-Projektion (TASK_ABTEILUNG, TASK_ABTEILUNG_MITGLIED) ist read-only; dieser IT
+  // saet sie nur als Testdaten per JDBC, wie CommentControllerIT (so schreibt sie der Consumer).
+  // Mandant A (500) ist der Mandant des Akteurs.
+
+  @Test
+  @DisplayName(
+      "i190_description_division_mention_adds_and_notifies: PATCH description + divisionMentions"
+          + " (P1, P2 keine Mitglieder) -> 204, Beschreibung gesetzt, P1 und P2 reine Beteiligte mit"
+          + " Verlauf per Erwaehnung, je eine MENTION mit dem Beschreibungstext, keine PARTICIPANT,"
+          + " Inbox-Generation gebumpt")
+  void i190_description_division_mention_adds_and_notifies() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Abteilung");
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Vertrieb", DIV_P1_REF, DIV_P2_REF);
+    final long generationP1Before = readGeneration(DIV_P1_REF);
+
+    patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "Bitte ansehen, Vertrieb.",
+                    "divisionMentions",
+                    List.of(division))))
+        .andExpect(status().isNoContent());
+
+    assertThat(descriptionOf(taskId)).isEqualTo("Bitte ansehen, Vertrieb.");
+    assertThat(historyCountWithText(taskId, "Beschreibung geaendert")).isEqualTo(1);
+    final Map<UUID, String> names = Map.of(DIV_P1_REF, DIV_P1_NAME, DIV_P2_REF, DIV_P2_NAME);
+    for (final Map.Entry<UUID, String> person : names.entrySet()) {
+      final UUID ref = person.getKey();
+      final Map<String, Object> row = participantRow(taskId, ref);
+      assertThat(row.get("PARTICIPANT_FLAG")).as("Beteiligte %s", ref).isEqualTo(true);
+      assertThat(row.get("ASSIGNEE_FLAG")).as("nie Assignee").isEqualTo(false);
+      assertThat(row.get("EXIT_KIND")).as("aktives Mitglied").isNull();
+      assertThat(countNotifications(taskId, ref, "MENTION")).as("MENTION %s", ref).isEqualTo(1);
+      assertThat(mentionText(taskId, ref)).isEqualTo(DESCRIPTION_MENTION_TEXT);
+      assertThat(countNotifications(taskId, ref, "PARTICIPANT")).isZero();
+      assertThat(historyEntries(taskId, USER_A_REF, HISTORY_MENTIONED, person.getValue()))
+          .as("Verlauf per Erwaehnung fuer %s", person.getValue())
+          .isEqualTo(1);
+    }
+    assertThat(historyCountWithText(taskId, HISTORY_MENTIONED)).isEqualTo(2);
+    assertThat(readGeneration(DIV_P1_REF))
+        .as("Bump fuer die aufgenommene Person")
+        .isGreaterThan(generationP1Before);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_person_mention_notifies_member: PATCH description + mentions=[A2"
+          + " (Mitglied), A (Akteur)] -> A2 bekommt genau eine MENTION mit dem Beschreibungstext,"
+          + " keine neue Zeile, kein Verlauf per Erwaehnung; der Akteur bekommt keine MENTION")
+  void i190_description_person_mention_notifies_member() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Person");
+    assignA2(mvc, om, tokenA, taskId);
+
+    patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "A2, bitte ansehen.",
+                    "mentions",
+                    List.of(USER_A2_REF, USER_A_REF))))
+        .andExpect(status().isNoContent());
+
+    assertThat(countNotifications(taskId, USER_A2_REF, "MENTION")).isEqualTo(1);
+    assertThat(mentionText(taskId, USER_A2_REF)).isEqualTo(DESCRIPTION_MENTION_TEXT);
+    assertThat(participantRowCount(taskId, USER_A2_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskId, USER_A_REF, "MENTION")).as("kein Selbst-Ping").isZero();
+    assertThat(historyCountWithText(taskId, HISTORY_MENTIONED)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_actor_in_division_not_notified: der Akteur steht selbst in der erwaehnten"
+          + " Abteilung -> keine Benachrichtigung an ihn, seine Zeile bleibt die einzige; P1 bekommt"
+          + " die MENTION")
+  void i190_description_actor_in_division_not_notified() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Akteur");
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Leitung", USER_A_REF, DIV_P1_REF);
+
+    patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of("description", "Leitung, bitte.", "divisionMentions", List.of(division))))
+        .andExpect(status().isNoContent());
+
+    assertThat(notificationCountOfRecipient(taskId, USER_A_REF)).as("kein Selbst-Ping").isZero();
+    assertThat(participantRowCount(taskId, USER_A_REF)).isEqualTo(1);
+    assertThat(countNotifications(taskId, DIV_P1_REF, "MENTION")).isEqualTo(1);
+    assertThat(historyCountWithText(taskId, HISTORY_MENTIONED))
+        .as("nur die Aufnahme von P1")
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_mention_reaches_muted_member: A2 hat die Aufgabe stummgeschaltet und wird"
+          + " in der Beschreibung erwaehnt -> die MENTION kommt trotzdem an")
+  void i190_description_mention_reaches_muted_member() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final String tokenA2 =
+        buildJwtWithAuthority(
+            TENANT_A_UUID,
+            USER_A2_REF,
+            USER_A2_LOGIN,
+            "task-management:TASK_WRITE",
+            "task-management:TASK_READ");
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Mute");
+    assignA2(mvc, om, tokenA, taskId);
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/mute")
+                .header("Authorization", "Bearer " + tokenA2)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"value\":true}"))
+        .andExpect(status().is2xxSuccessful());
+    assertThat(isMuted(taskId, USER_A2_REF)).as("Vorbedingung: A2 ist stumm").isTrue();
+
+    patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of("description", "Trotz Mute.", "mentions", List.of(USER_A2_REF))))
+        .andExpect(status().isNoContent());
+
+    assertThat(countNotifications(taskId, USER_A2_REF, "MENTION")).isEqualTo(1);
+    assertThat(isMuted(taskId, USER_A2_REF)).as("Mute bleibt").isTrue();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_unknown_division_400_description_unchanged: unbekannte Abteilung neben"
+          + " einer bekannten (dazu eine gueltige Person) -> 400 mit einheitlichem Text;"
+          + " Beschreibung, Verlauf, Teilnehmer, Benachrichtigungen, Aktivitaet und Generation"
+          + " unveraendert")
+  void i190_description_unknown_division_400_description_unchanged() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Unbekannt");
+    patchRaw(mvc, tokenA, taskId, om.writeValueAsString(Map.of("description", "Alt")))
+        .andExpect(status().isNoContent());
+    final UUID known = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, known, "ACTIVE", "Bekannt", DIV_P2_REF);
+    final int historyBefore = historyCountOf(taskId);
+    final int participantsBefore = participantRowsOfTask(taskId);
+    final int notificationsBefore = notificationCountOfTask(taskId);
+    final String activityBefore = lastActivityOf(taskId);
+    final long generationBefore = readGeneration(USER_A_REF);
+
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "Neu",
+                    "mentions",
+                    List.of(DIV_P1_REF),
+                    "divisionMentions",
+                    List.of(known, UUID.randomUUID())))),
+        UNKNOWN_DIVISION_MESSAGE);
+
+    assertThat(descriptionOf(taskId)).as("Beschreibung unveraendert").isEqualTo("Alt");
+    assertThat(historyCountOf(taskId)).as("kein Verlauf").isEqualTo(historyBefore);
+    assertThat(participantRowsOfTask(taskId))
+        .as("niemand aufgenommen")
+        .isEqualTo(participantsBefore);
+    assertThat(participantRowCount(taskId, DIV_P1_REF)).isZero();
+    assertThat(participantRowCount(taskId, DIV_P2_REF)).isZero();
+    assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
+    assertThat(lastActivityOf(taskId)).as("keine Aktivitaet").isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF)).as("kein Bump").isEqualTo(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_foreign_tenant_division_400: die Abteilung gibt es nur in Mandant B (mit"
+          + " aktivem Mitglied), der Akteur ist in Mandant A -> 400 mit demselben Text wie bei"
+          + " einer unbekannten Abteilung; Beschreibung, Verlauf, Teilnehmer, Benachrichtigungen,"
+          + " Aktivitaet und Generation unveraendert")
+  void i190_description_foreign_tenant_division_400() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Fremd");
+    patchRaw(mvc, tokenA, taskId, om.writeValueAsString(Map.of("description", "Alt")))
+        .andExpect(status().isNoContent());
+    final UUID foreign = UUID.randomUUID();
+    insertDivision(TENANT_B_ID, foreign, "ACTIVE", "Fremde Abteilung", USER_B_REF);
+    final int historyBefore = historyCountOf(taskId);
+    final int participantsBefore = participantRowsOfTask(taskId);
+    final int notificationsBefore = notificationCountOfTask(taskId);
+    final String activityBefore = lastActivityOf(taskId);
+    final long generationBefore = readGeneration(USER_A_REF);
+
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of("description", "Neu", "divisionMentions", List.of(foreign)))),
+        UNKNOWN_DIVISION_MESSAGE);
+
+    assertThat(descriptionOf(taskId)).as("Beschreibung unveraendert").isEqualTo("Alt");
+    assertThat(historyCountOf(taskId)).as("kein Verlauf").isEqualTo(historyBefore);
+    assertThat(participantRowsOfTask(taskId))
+        .as("nichts geschrieben")
+        .isEqualTo(participantsBefore);
+    assertThat(participantRowCount(taskId, USER_B_REF)).as("Fremde nicht aufgenommen").isZero();
+    assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
+    assertThat(lastActivityOf(taskId)).as("keine Aktivitaet").isEqualTo(activityBefore);
+    assertThat(readGeneration(USER_A_REF)).as("kein Bump").isEqualTo(generationBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_patch_without_mentions_unchanged_behavior: PATCH nur description -> 204 wie bisher,"
+          + " keine Benachrichtigung, keine Beteiligten, kein Verlauf per Erwaehnung")
+  void i190_patch_without_mentions_unchanged_behavior() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Ohne");
+    final int participantsBefore = participantRowsOfTask(taskId);
+    final int notificationsBefore = notificationCountOfTask(taskId);
+
+    patchRaw(mvc, tokenA, taskId, om.writeValueAsString(Map.of("description", "Nur Text")))
+        .andExpect(status().isNoContent());
+
+    assertThat(descriptionOf(taskId)).isEqualTo("Nur Text");
+    assertThat(historyCountWithText(taskId, "Beschreibung geaendert")).isEqualTo(1);
+    assertThat(notificationCountOfTask(taskId)).isEqualTo(notificationsBefore);
+    assertThat(participantRowsOfTask(taskId)).isEqualTo(participantsBefore);
+    assertThat(historyCountWithText(taskId, HISTORY_MENTIONED)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_description_mentions_without_task_write_drop_non_members: A2 (Mitglied, ohne"
+          + " TASK_WRITE) erwaehnt A (Mitglied), P1 und eine Abteilung mit P2 -> 204, A bekommt die"
+          + " MENTION, P1 und P2 werden weder aufgenommen noch benachrichtigt")
+  void i190_description_mentions_without_task_write_drop_non_members() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final String grantFreeA2 = buildJwtWithAuthority(TENANT_A_UUID, USER_A2_REF, USER_A2_LOGIN);
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-OhneRecht");
+    assignA2(mvc, om, tokenA, taskId);
+    final UUID division = UUID.randomUUID();
+    insertDivision(TENANT_A_ID, division, "ACTIVE", "Gemischt", DIV_P2_REF);
+
+    patchRaw(
+            mvc,
+            grantFreeA2,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "Ohne Recht.",
+                    "mentions",
+                    List.of(USER_A_REF, DIV_P1_REF),
+                    "divisionMentions",
+                    List.of(division))))
+        .andExpect(status().isNoContent());
+
+    assertThat(descriptionOf(taskId)).isEqualTo("Ohne Recht.");
+    assertThat(countNotifications(taskId, USER_A_REF, "MENTION")).isEqualTo(1);
+    for (final UUID dropped : List.of(DIV_P1_REF, DIV_P2_REF)) {
+      assertThat(participantRowCount(taskId, dropped)).as("keine Zeile %s", dropped).isZero();
+      assertThat(userStateRowCount(taskId, dropped)).as("kein State %s", dropped).isZero();
+      assertThat(notificationCountOfRecipient(taskId, dropped)).isZero();
+    }
+    assertThat(historyCountWithText(taskId, HISTORY_MENTIONED)).isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "i190_patch_mentions_input_errors_400_wire: Erwaehnungen ohne description, 101 mentions, 11"
+          + " divisionMentions und ein null-Element ergeben 400 mit dem Text; nichts geaendert")
+  void i190_patch_mentions_input_errors_400_wire() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Eingabe");
+    final int historyBefore = historyCountOf(taskId);
+    final String activityBefore = lastActivityOf(taskId);
+
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of("title", "Issue190-Umbenannt", "mentions", List.of(USER_A2_REF)))),
+        "Erwaehnungen sind nur zusammen mit einer Aenderung der Beschreibung zulaessig.");
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "Zu viele.",
+                    "mentions",
+                    java.util.Collections.nCopies(101, USER_A2_REF)))),
+        "mentions darf hoechstens 100 Eintraege enthalten.");
+    assertBadRequestWithMessage(
+        patchRaw(
+            mvc,
+            tokenA,
+            taskId,
+            om.writeValueAsString(
+                Map.of(
+                    "description",
+                    "Zu viele.",
+                    "divisionMentions",
+                    java.util.Collections.nCopies(11, UUID.randomUUID())))),
+        "divisionMentions darf hoechstens 10 Eintraege enthalten.");
+    assertBadRequestWithMessage(
+        patchRaw(mvc, tokenA, taskId, "{\"description\":\"Null.\",\"mentions\":[null]}"),
+        "mentions darf keine null-Elemente enthalten.");
+
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT TITLE FROM [dbo].[TASK] WHERE EXTERNALID = ?", String.class, taskId))
+        .isEqualTo("Issue190-Beschreibung-Eingabe");
+    assertThat(descriptionOf(taskId)).isNull();
+    assertThat(historyCountOf(taskId)).isEqualTo(historyBefore);
+    assertThat(lastActivityOf(taskId)).isEqualTo(activityBefore);
+  }
+
+  @Test
+  @DisplayName(
+      "i190_patch_openapi_examples_match_live: die 400-Beispiele 'Erwaehnung ohne Beschreibung' und"
+          + " 'Abteilung unbekannt' der Operation patch stimmen in status, error, message, errorKey"
+          + " und details mit der Live-Antwort ueberein; der Pfad unterscheidet sich nur in der"
+          + " Aufgaben-UUID")
+  void i190_patch_openapi_examples_match_live() throws Exception {
+    final MockMvc mvc = buildMvc();
+    final ObjectMapper om = new ObjectMapper();
+    final String tokenA = writerTokenA();
+    final UUID taskId = createTask(mvc, om, tokenA, "Issue190-Beschreibung-Beispiele");
+
+    final String withoutDescription =
+        patchRaw(
+                mvc,
+                tokenA,
+                taskId,
+                om.writeValueAsString(Map.of("title", "T", "mentions", List.of(USER_A2_REF))))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+    assertMatchesExample(
+        om,
+        withoutDescription,
+        TaskPatchApiExamples.BAD_REQUEST_MENTIONS_WITHOUT_DESCRIPTION,
+        taskId);
+
+    final String unknownDivision =
+        patchRaw(
+                mvc,
+                tokenA,
+                taskId,
+                om.writeValueAsString(
+                    Map.of("description", "D", "divisionMentions", List.of(UUID.randomUUID()))))
+            .andExpect(status().isBadRequest())
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+    assertMatchesExample(om, unknownDivision, TaskPatchApiExamples.BAD_REQUEST_DIVISION, taskId);
+  }
+
+  /** Vergleicht eine Live-Fehlerantwort mit einem Beispiel (ohne Zeitstempel und Trace-Id). */
+  private static void assertMatchesExample(
+      final ObjectMapper om, final String live, final String example, final UUID taskId)
+      throws Exception {
+    final JsonNode actual = om.readTree(live);
+    final JsonNode expected = om.readTree(example);
+    for (final String field : List.of("status", "error", "message", "errorKey", "details")) {
+      assertThat(actual.path(field)).as("Feld %s", field).isEqualTo(expected.path(field));
+    }
+    assertThat(actual.path("path").asText())
+        .isEqualTo(
+            expected
+                .path("path")
+                .asText()
+                .replace(TaskPatchApiExamples.TASK_REF, taskId.toString()));
+  }
+
+  // ---- Hilfsmethoden Intake #190 ---------------------------------------------------------------
+
+  /** Token von A (Ersteller) mit TASK_WRITE und TASK_READ. */
+  private static String writerTokenA() {
+    return buildJwtWithAuthority(
+        TENANT_A_UUID,
+        USER_A_REF,
+        USER_A_LOGIN,
+        "task-management:TASK_WRITE",
+        "task-management:TASK_READ");
+  }
+
+  /** Weist A2 per PUT /assignees zu (A2 wird WRITE-Mitglied). */
+  private void assignA2(
+      final MockMvc mvc, final ObjectMapper om, final String tokenA, final UUID taskId)
+      throws Exception {
+    mvc.perform(
+            put("/api/v1/tasks/" + taskId + "/assignees")
+                .header("Authorization", "Bearer " + tokenA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(Map.of("assignees", List.of(USER_A2_REF)))))
+        .andExpect(status().isNoContent());
+  }
+
+  /**
+   * Saet eine Abteilung der lokalen Projektion per JDBC (nur Testdaten; die Projektion ist
+   * read-only und wird produktiv allein vom Consumer geschrieben): Kopf mit Status und Name und je
+   * Person eine Mitgliederzeile (MITARBEITER_REF), wie in {@code CommentControllerIT}.
+   */
+  private void insertDivision(
+      final long tenantId,
+      final UUID divisionRef,
+      final String status,
+      final String name,
+      final UUID... members) {
+    final long divisionId = JDBC_DIVISION_IDS.incrementAndGet();
+    jdbcTemplate.update(
+        "INSERT INTO [dbo].[TASK_ABTEILUNG] (ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM,"
+            + " EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_REF, NAME, REVISION, ABGERUFEN_AM)"
+            + " VALUES (?, ?, 'task-facade-it', SYSDATETIME(), NEWID(), 1, ?, ?, ?, ?,"
+            + " SYSDATETIME())",
+        divisionId,
+        status,
+        tenantId,
+        divisionRef,
+        name,
+        new SqlParameterValue(Types.CHAR, "DEACTIVE".equals(status) ? null : "b".repeat(64)));
+    for (final UUID member : members) {
+      jdbcTemplate.update(
+          "INSERT INTO [dbo].[TASK_ABTEILUNG_MITGLIED] (ID, ENTITY_STATUS, ANGELEGT_VON,"
+              + " ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID, ABTEILUNG_ID, MITARBEITER_REF,"
+              + " KERNMITGLIED) VALUES (?, 'ACTIVE', 'task-facade-it', SYSDATETIME(), NEWID(), 1,"
+              + " ?, ?, ?, 0)",
+          JDBC_DIVISION_IDS.incrementAndGet(),
+          tenantId,
+          divisionId,
+          member);
+    }
+  }
+
+  /** Persistierte Beschreibung der Aufgabe (null, wenn keine). */
+  private String descriptionOf(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT DESCRIPTION FROM [dbo].[TASK] WHERE EXTERNALID = ?", String.class, taskId);
+  }
+
+  /** Verlaufseintraege einer Aufgabe mit dem gegebenen Text. */
+  private int historyCountWithText(final UUID taskId, final String text) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND h.TEXT = ?",
+        Integer.class,
+        taskId,
+        text);
+  }
+
+  /** Verlaufseintraege einer Aufgabe mit Akteur, Text und Detail (Name der Person). */
+  private int historyEntries(
+      final UUID taskId, final UUID actorRef, final String text, final String detail) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_HISTORY_ENTRY] h JOIN [dbo].[TASK] t"
+            + " ON h.TASK_ID = t.ID WHERE t.EXTERNALID = ? AND h.ACTOR_REF = ?"
+            + " AND h.TEXT = ? AND h.CHANGE_DETAIL = ?",
+        Integer.class,
+        taskId,
+        actorRef,
+        text,
+        detail);
+  }
+
+  /** Die einzige Teilnehmerzeile einer Person an einer Aufgabe (Rollenflags und Austritt). */
+  private Map<String, Object> participantRow(final UUID taskId, final UUID userRef) {
+    return jdbcTemplate.queryForMap(
+        "SELECT p.ENTITY_STATUS, p.PARTICIPANT_FLAG, p.ASSIGNEE_FLAG, p.CREATOR_FLAG,"
+            + " p.EXIT_KIND FROM [dbo].[TASK_PARTICIPANT] p"
+            + " JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        taskId,
+        userRef);
+  }
+
+  /** Anzahl aller Teilnehmerzeilen einer Person an einer Aufgabe (auch ausgetretene). */
+  private int participantRowCount(final UUID taskId, final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND p.PARTICIPANT_REF = ?",
+        Integer.class,
+        taskId,
+        userRef);
+  }
+
+  /** Alle Teilnehmerzeilen (jeder Status) der Aufgabe. */
+  private int participantRowsOfTask(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_PARTICIPANT] p JOIN [dbo].[TASK] t ON p.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskId);
+  }
+
+  /** Anzahl der persoenlichen State-Zeilen einer Person an einer Aufgabe. */
+  private int userStateRowCount(final UUID taskId, final UUID userRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_USER_STATE] s JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+        Integer.class,
+        taskId,
+        userRef);
+  }
+
+  /** Persoenlicher Mute-Marker (IS_MUTED) eines Benutzers fuer eine Aufgabe. */
+  private boolean isMuted(final UUID taskId, final UUID userRef) {
+    return Boolean.TRUE.equals(
+        jdbcTemplate.queryForObject(
+            "SELECT s.IS_MUTED FROM [dbo].[TASK_USER_STATE] s"
+                + " JOIN [dbo].[TASK] t ON s.TASK_ID = t.ID"
+                + " WHERE t.EXTERNALID = ? AND s.USER_REF = ?",
+            Boolean.class,
+            taskId,
+            userRef));
+  }
+
+  /** Anzahl der Benachrichtigungen eines Typ-CODEs fuer einen Empfaenger an einer Aufgabe. */
+  private int countNotifications(final UUID taskId, final UUID recipientRef, final String code) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND d.CODE = ?",
+        Integer.class,
+        taskId,
+        recipientRef,
+        code);
+  }
+
+  /** Text der einzigen MENTION eines Empfaengers an einer Aufgabe. */
+  private String mentionText(final UUID taskId, final UUID recipientRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT n.TEXT FROM [dbo].[TASK_NOTIFICATION] n"
+            + " JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " JOIN [dbo].[DIC_NOTIFICATION_TYPE] d ON n.TYPE_ID = d.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ? AND d.CODE = 'MENTION'",
+        String.class,
+        taskId,
+        recipientRef);
+  }
+
+  /** Anzahl aller Benachrichtigungen (jeden Typs) eines Empfaengers an einer Aufgabe. */
+  private int notificationCountOfRecipient(final UUID taskId, final UUID recipientRef) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ? AND n.RECIPIENT_REF = ?",
+        Integer.class,
+        taskId,
+        recipientRef);
+  }
+
+  /** Alle Benachrichtigungen (jeden Typs) der Aufgabe. */
+  private int notificationCountOfTask(final UUID taskId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM [dbo].[TASK_NOTIFICATION] n JOIN [dbo].[TASK] t ON n.TASK_ID = t.ID"
+            + " WHERE t.EXTERNALID = ?",
+        Integer.class,
+        taskId);
+  }
+
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
@@ -3452,6 +4090,27 @@ class TaskFacadeControllerIT {
         loginName);
   }
 
+  /** Wie {@link #seedBenutzerIfAbsent}, aber mit eigenem VOLLER_NAME (Verlaufsdetail, #190). */
+  private static void seedNamedBenutzerIfAbsent(
+      final JdbcTemplate jt,
+      final long id,
+      final UUID externalId,
+      final String loginName,
+      final String fullName,
+      final long tenantId) {
+    jt.update(
+        "IF NOT EXISTS (SELECT 1 FROM [dbo].[PROD_BENUTZER] WHERE ID = ?) "
+            + "INSERT INTO [dbo].[PROD_BENUTZER] "
+            + "(ID, ENTITY_STATUS, EXTERNALID, VERSION, TENANT_ID, LOGIN_NAME, VOLLER_NAME) "
+            + "VALUES (?, 'ACTIVE', ?, 1, ?, ?, ?)",
+        id,
+        id,
+        externalId,
+        tenantId,
+        loginName,
+        fullName);
+  }
+
   /**
    * Seedet einen globalen {@code TASK_TAG} (TENANT_ID=0) und liefert dessen EXTERNALID.
    * SEVERITY_ID=601 = PRIMARY (aus Flyway V1-Seed), konsistent zu {@code TaskTagPatchIT}.
@@ -3543,6 +4202,10 @@ class TaskFacadeControllerIT {
     // objekt-level TaskMembershipGuard (@Component im nicht-gescannten Paket ...security).
     de.brasi.nova.taskmanagement.security.TaskMembershipGuard.class,
     NoOpInboxSignalConfig.class,
+    // Intake #190 (Task 10): TaskCommandService haengt am MentionRecipientService (Paket comment,
+    // hier nicht gescannt), der den DivisionMentionResolver braucht.
+    de.brasi.nova.taskmanagement.comment.MentionRecipientService.class,
+    de.brasi.nova.taskmanagement.division.DivisionMentionItWiring.class,
   })
   static class ItConfig {
 
