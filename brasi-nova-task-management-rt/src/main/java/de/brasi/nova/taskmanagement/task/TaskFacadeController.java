@@ -339,8 +339,8 @@ public class TaskFacadeController {
    *
    * <p>{@code mentions} und {@code divisionMentions} (Intake #190): nur zusammen mit {@code
    * description}; Erwaehnte bekommen eine MENTION, Nicht-Mitglieder werden mit {@code TASK_WRITE}
-   * als Beteiligte aufgenommen (wie beim Kommentar, {@code TaskCommandService#patch}). Eine
-   * DONE- oder CANCELLED-Benachrichtigung desselben Aufrufs geht an die vor dem Aufruf aktiven
+   * als Beteiligte aufgenommen (wie beim Kommentar, {@code TaskCommandService#patch}). Eine DONE-
+   * oder CANCELLED-Benachrichtigung desselben Aufrufs geht an die vor dem Aufruf aktiven
    * Beteiligten; wer erst durch die Erwaehnung aufgenommen wird, erhaelt nur die MENTION.
    *
    * @param id externe UUID der Aufgabe

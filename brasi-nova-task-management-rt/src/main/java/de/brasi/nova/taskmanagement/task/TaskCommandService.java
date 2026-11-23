@@ -795,7 +795,8 @@ public class TaskCommandService {
       // Intake #151/#157: Empfaenger der Statusbenachrichtigung aus demselben Grund ebenfalls VOR
       // dem TASK-save lesen (Membership-Read vor TASK-X-Lock); der Emit erfolgt erst nach dem save.
       // Intake #158: inklusive gebuendelter Mute-Lesung (stumme Personen fallen heraus).
-      // Intake #190: Empfaenger = die VOR diesem PATCH aktiven Beteiligten; wer unten per Erwaehnung
+      // Intake #190: Empfaenger = die VOR diesem PATCH aktiven Beteiligten; wer unten per
+      // Erwaehnung
       // erst aufgenommen wird, bekommt nur die MENTION (gewollt, Aufruf bewusst vor der Aufnahme).
       final List<UUID> statusRecipients =
           statusNotificationType != null
@@ -946,9 +947,9 @@ public class TaskCommandService {
    * Ermittelt die Empfaenger einer Statusbenachrichtigung beim Schliessen (DONE, Intake #151) und
    * beim Abbrechen (CANCELLED, Intake #157): alle <i>vor diesem PATCH</i> aktiven Beteiligten der
    * Aufgabe (Ersteller, Zugewiesene und Beteiligte), jede Person genau einmal - auch bei mehreren
-   * Rollen -, ohne den handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben. Wer
-   * im selben PATCH erst per Erwaehnung aufgenommen wird, ist (der Aufruf liegt vor der Aufnahme)
-   * nie Empfaenger.
+   * Rollen -, ohne den handelnden Akteur und ohne Personen, die die Aufgabe verlassen haben. Wer im
+   * selben PATCH erst per Erwaehnung aufgenommen wird, ist (der Aufruf liegt vor der Aufnahme) nie
+   * Empfaenger.
    *
    * <p>Bewusst EINE gemeinsame Ermittlung fuer beide Statuswechsel: Anpassungen der Empfaengerlogik
    * (z. B. Stummschalten, Intake #158) gelten damit automatisch fuer Schliessen und Abbrechen.
