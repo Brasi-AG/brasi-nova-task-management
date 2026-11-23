@@ -132,9 +132,10 @@ public class AssigneeController {
                 + " auf, noch bevor die Aufgabe gespeichert wird; die Anfrage wiederholen."
                 + " Ausgetretene Personen oder solche mit deaktivierter Teilnehmerzeile (bei"
                 + " aktivem Benutzer) sind kein Konfliktgrund: sie werden reaktiviert."
-                + " (4) Sequenzkonflikt des Verlaufs: jede neu zugewiesene und jede abgewaehlte"
-                + " Person schreibt einen Verlaufseintrag, daher kann auch ein PUT, der nur eine"
-                + " Zuweisung entfernt, mit 409 scheitern."
+                + " (4) Sequenzkonflikt von Verlauf oder Benachrichtigung: jede neu zugewiesene und"
+                + " jede abgewaehlte Person schreibt einen Verlaufseintrag, jede abgewaehlte Person"
+                + " ausser dem Akteur zusaetzlich eine UNASSIGN-Benachrichtigung; daher kann auch"
+                + " ein PUT, der nur eine Zuweisung entfernt, mit 409 scheitern."
                 + LockConflictApiExamples.HISTORY_SEQUENCE_CONFLICT
                 + LockConflictApiExamples.DESCRIPTION_SUFFIX,
         content =
