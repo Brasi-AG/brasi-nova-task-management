@@ -137,7 +137,11 @@ public final class ArchiveSearchPageSchema {
               example = "2026-11-16T09:30:00Z")
           Instant lastActivityAt,
       @Schema(description = "Anzahl der Kommentare.", example = "2") int commentCount,
-      @Schema(description = "Anzahl der Anhänge (denormalisiert).", example = "3")
+      @Schema(
+              description =
+                  "Anzahl der Anhänge (denormalisiert). Gezählt werden aktive Anhänge an der"
+                      + " Aufgabe und an ihren aktiven Kommentaren.",
+              example = "3")
           int attachmentCount,
       @Schema(
               description = "UUID des Erstellers oder null.",

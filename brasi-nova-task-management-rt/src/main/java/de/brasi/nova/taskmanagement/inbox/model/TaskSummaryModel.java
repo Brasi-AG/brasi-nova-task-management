@@ -82,7 +82,11 @@ public class TaskSummaryModel extends BaseModel<TaskSummaryModel> {
   private int commentCount;
 
   @JsonProperty("attachmentCount")
-  @Schema(description = "Anzahl der Anhänge (denormalisiert).", example = "0")
+  @Schema(
+      description =
+          "Anzahl der Anhänge (denormalisiert). Gezählt werden aktive Anhänge an der Aufgabe und an"
+              + " ihren aktiven Kommentaren.",
+      example = "0")
   private int attachmentCount;
 
   @JsonProperty("createdById")
