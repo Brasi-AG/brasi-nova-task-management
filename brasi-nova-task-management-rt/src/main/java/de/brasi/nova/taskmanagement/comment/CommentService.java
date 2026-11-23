@@ -7,7 +7,6 @@ import de.brasi.nova.taskmanagement.attachment.PreparedAttachment;
 import de.brasi.nova.taskmanagement.attachment.model.AttachmentModel;
 import de.brasi.nova.taskmanagement.comment.model.CommentCreateInput;
 import de.brasi.nova.taskmanagement.comment.model.CommentModel;
-import de.brasi.nova.taskmanagement.division.DivisionMentionResolver;
 import de.brasi.nova.taskmanagement.entity.Task;
 import de.brasi.nova.taskmanagement.entity.TaskAttachment;
 import de.brasi.nova.taskmanagement.entity.TaskComment;
@@ -18,10 +17,7 @@ import de.brasi.nova.taskmanagement.entity.dictionary.code.NotificationTypeCodes
 import de.brasi.nova.taskmanagement.inbox.InboxSignalService;
 import de.brasi.nova.taskmanagement.notification.NotificationMuteFilter;
 import de.brasi.nova.taskmanagement.notification.NotificationService;
-import de.brasi.nova.taskmanagement.participant.AssigneeService;
 import de.brasi.nova.taskmanagement.participant.InboxGenerationService;
-import de.brasi.nova.taskmanagement.refentity.User;
-import de.brasi.nova.taskmanagement.refentity.UserReadRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskCommentRepository;
 import de.brasi.nova.taskmanagement.repository.BaseTaskRepository;
 import de.brasi.nova.taskmanagement.repository.TaskParticipantQueryRepository;
@@ -72,16 +68,14 @@ public class CommentService {
   private final NotificationService notificationService;
   private final InboxSignalService inboxSignalService;
   private final InboxGenerationService inboxGenerationService;
-  private final UserReadRepository userReadRepository;
   private final UserAccessor userAccessor;
   private final AuditTimeConverter auditTimeConverter;
   private final TaskMembershipGuard membershipGuard;
   private final NotificationMuteFilter muteFilter;
-  private final AssigneeService assigneeService;
   private final AttachmentWriter attachmentWriter;
   private final AttachmentModelMapper attachmentModelMapper;
   private final AttachmentProperties attachmentProperties;
-  private final DivisionMentionResolver divisionMentionResolver;
+  private final MentionRecipientService mentionRecipientService;
 
   /** Konstruktor-Injektion aller Abhaengigkeiten. */
   public CommentService(
@@ -92,16 +86,14 @@ public class CommentService {
       final NotificationService notificationService,
       final InboxSignalService inboxSignalService,
       final InboxGenerationService inboxGenerationService,
-      final UserReadRepository userReadRepository,
       final UserAccessor userAccessor,
       final AuditTimeConverter auditTimeConverter,
       final TaskMembershipGuard membershipGuard,
       final NotificationMuteFilter muteFilter,
-      final AssigneeService assigneeService,
       final AttachmentWriter attachmentWriter,
       final AttachmentModelMapper attachmentModelMapper,
       final AttachmentProperties attachmentProperties,
-      final DivisionMentionResolver divisionMentionResolver) {
+      final MentionRecipientService mentionRecipientService) {
     this.taskRepository = taskRepository;
     this.commentRepository = commentRepository;
     this.userStateQueryRepository = userStateQueryRepository;
@@ -109,16 +101,14 @@ public class CommentService {
     this.notificationService = notificationService;
     this.inboxSignalService = inboxSignalService;
     this.inboxGenerationService = inboxGenerationService;
-    this.userReadRepository = userReadRepository;
     this.userAccessor = userAccessor;
     this.auditTimeConverter = auditTimeConverter;
     this.membershipGuard = membershipGuard;
     this.muteFilter = muteFilter;
-    this.assigneeService = assigneeService;
     this.attachmentWriter = attachmentWriter;
     this.attachmentModelMapper = attachmentModelMapper;
     this.attachmentProperties = attachmentProperties;
-    this.divisionMentionResolver = divisionMentionResolver;
+    this.mentionRecipientService = mentionRecipientService;
   }
 
   /**
@@ -249,52 +239,26 @@ public class CommentService {
       }
     }
 
-    // MENTION-Empfaenger VOR dem TASK-save aufloesen und auf die WRITE-Member-Menge filtern.
-    // Mentions sind explizite Ziel-GUIDs des Clients (NICHT aus dem Text geparst): deduplizieren +
-    // mandanten-scoped auf AKTIVE Benutzer validieren (findActiveByUuids -> fremd-tenant-/inaktive
-    // GUIDs loesen NICHT auf = kein Cross-Tenant-Leak); nicht aufloesbare GUIDs still verwerfen.
-    // Selbst-Notify, REPLY-Vorrang und Nicht-WRITE-Member werden hier bereits herausgefiltert,
-    // sodass
-    // mentionTargets exakt die spaeter zu benachrichtigende MENTION-Menge ist.
-    // Intake #190: erwaehnte Abteilungen auf die Personen der lokalen Projektion aufloesen (reiner
-    // Read, vor jeder Schreibung; 400 bei unbekannter/inaktiver Abteilung oder ueber der
-    // Personengrenze, dann ist nichts geschrieben) und VOR der Deduplizierung mit mentions
-    // vereinigen. Ab hier laufen die Personen der Abteilungen denselben Weg wie mentions.
-    final Set<UUID> dedupedMentions = new LinkedHashSet<>(input.mentions());
-    dedupedMentions.addAll(divisionMentionResolver.resolve(input.divisionMentions()));
-    final List<UUID> mentionRefs;
-    if (dedupedMentions.isEmpty()) {
-      mentionRefs = List.of();
-    } else {
-      mentionRefs =
-          userReadRepository.findActiveByUuids(dedupedMentions).stream()
-              .map(User::getUuid)
-              .toList();
-    }
+    // MENTION-Empfaenger VOR dem TASK-save ermitteln (MentionRecipientService, Intake #190 Task 10;
+    // vorher hier inline), hier die Lesephase; die Aufnahme folgt nach den Assignee-Reads. Mentions
+    // sind explizite Ziel-GUIDs des Clients (NICHT aus dem Text geparst); erwaehnte Abteilungen loest der Dienst ueber die lokale Projektion auf (400 bei
+    // unbekannter/inaktiver Abteilung oder ueber der Personengrenze, dann ist nichts geschrieben).
+    // Nur aktive Mandanten-Nutzer; Selbst-Notify und REPLY-Vorrang (excludedRecipient) sind
+    // herausgefiltert; WRITE-Mitglieder sind Ziel. Erwaehnte Nicht-Mitglieder nimmt der Dienst unter
+    // dem Recht von POST /participants als Beteiligte auf (Intake #156): das sind Teilnehmer- und
+    // State-Writes und gehoeren deshalb VOR den TASK-save (Mitgliedschaft vor Aufgabe, wie bei
+    // updateAssignees); der sortierte Generation-Bump folgt NACH dem save, gemeinsam mit den
+    // uebrigen Lesern (readerRefs). Die Aufgenommenen bekommen NUR die MENTION unten, keine
+    // PARTICIPANT-Benachrichtigung; ein Mute bleibt (MENTION ist ohnehin davon ausgenommen).
     final UUID finalReplyRecipient = replyRecipient;
-    final Set<UUID> mentionTargets = new LinkedHashSet<>();
-    // Intake #156: erwaehnte aktive Mandanten-Nutzer, die noch kein WRITE-Mitglied sind. Sie werden
-    // unten (unter dem Recht von POST /participants) als Beteiligte aufgenommen; sonst verworfen.
-    final Set<UUID> nonMemberMentions = new LinkedHashSet<>();
-    for (final UUID mentionRef : mentionRefs) {
-      // Selbst-Notify ausschliessen + Deduplizierung: wer REPLY bekommt, bekommt kein MENTION.
-      if (actorRef.equals(mentionRef)) {
-        continue;
-      }
-      if (mentionRef.equals(finalReplyRecipient)) {
-        continue;
-      }
-      // Standard-Selfservice (Slice 3/Auflage 4): MENTION geht nur an WRITE-Member. Ein
-      // ausgetretener (READ-Member) oder Nicht-Teilnehmer, den findActiveByUuids als aktiven
-      // Mandanten-Nutzer aufgeloest hat, wird nicht sofort benachrichtigt, sondern ein Kandidat
-      // fuer
-      // die Aufnahme als Beteiligter (Intake #156).
-      if (membershipGuard.isWriteMember(taskId, mentionRef, tenantId)) {
-        mentionTargets.add(mentionRef);
-      } else {
-        nonMemberMentions.add(mentionRef);
-      }
-    }
+    final MentionRecipientService.Candidates mentionCandidates =
+        mentionRecipientService.resolve(
+            taskId,
+            tenantId,
+            actorRef,
+            finalReplyRecipient,
+            input.mentions(),
+            input.divisionMentions());
 
     // COMMENT-Empfaenger (Intake #136) VOR dem TASK-save bestimmen: aktive PERSON-Assignees der
     // Aufgabe. Nur fuer Top-Level-Kommentare (parentComment == null) relevant; der Read laeuft
@@ -315,15 +279,11 @@ public class CommentService {
       assigneeRefs = List.of();
     }
 
-    // Intake #156: erwaehnte Nicht-Mitglieder als Beteiligte aufnehmen. Das sind Teilnehmer- und
-    // State-Writes und gehoeren deshalb VOR den TASK-save (Mitgliedschaft vor Aufgabe, wie bei
-    // updateAssignees); der sortierte Generation-Bump folgt NACH dem save, gemeinsam mit den
-    // uebrigen Lesern (readerRefs). Die Aufgenommenen bekommen NUR die MENTION unten, keine
-    // PARTICIPANT-Benachrichtigung; ein Mute bleibt (MENTION ist ohnehin davon ausgenommen).
-    final Set<UUID> addedMentionRefs =
-        addMentionedNonMembersAsParticipants(taskId, tenantId, nonMemberMentions);
-    mentionTargets.addAll(addedMentionRefs);
-    readerRefs.addAll(addedMentionRefs);
+    // Aufnahme der erwaehnten Nicht-Mitglieder: erst jetzt, nachdem auch die Assignees gelesen sind
+    // (die Aufnahme ist die erste Schreibung des Pfads).
+    final MentionRecipients mentions = mentionRecipientService.admit(mentionCandidates);
+    final Set<UUID> mentionTargets = mentions.notifyTargets();
+    readerRefs.addAll(mentions.admitted());
 
     // Test-Seam: deterministische Synchronisation der Nebenlaeufigkeits-ITs GENAU NACH den
     // Membership-/Assignee-Reads und VOR dem versionierten TASK-save - zu diesem Zeitpunkt haelt
@@ -512,48 +472,6 @@ public class CommentService {
     return stored.stream()
         .map(attachment -> attachmentModelMapper.toModel(attachment, taskExternalId, false))
         .toList();
-  }
-
-  /**
-   * Nimmt erwaehnte Nicht-Mitglieder als Beteiligte auf (Intake #156), sofern der Kommentierende
-   * dazu berechtigt ist.
-   *
-   * <p>Berechtigung: dieselbe Pruefung wie am Endpunkt {@code POST /participants} ({@link
-   * AssigneeService#mayAddParticipants()}); die Mitgliedschaft des Kommentierenden ist durch den
-   * WRITE-Member-Guard in {@link #createComment} schon bestanden. Ohne das Recht wird niemand
-   * aufgenommen: die Erwaehnung von Nicht-Mitgliedern entfaellt still wie bisher, Mitglieder werden
-   * weiter benachrichtigt.
-   *
-   * <p>Die Aufnahme selbst ist der gemeinsame Kern von {@code addParticipants} ({@link
-   * AssigneeService#addAsParticipants}): reiner Teilnehmer, nie Assignee, Ausgetretene werden als
-   * reine Teilnehmer reaktiviert. Hat ein gleichzeitiger Aufruf eine Person schon aufgenommen (der
-   * Kern meldet sie dann nicht), ist sie inzwischen WRITE-Mitglied und wird trotzdem erwaehnt.
-   * Laeuft vor dem TASK-save in der Transaktion von {@link #createComment}.
-   *
-   * @param taskId interne Aufgaben-ID
-   * @param tenantId interner Mandanten-Schluessel
-   * @param nonMembers erwaehnte aktive Mandanten-Nutzer, die (noch) kein WRITE-Mitglied sind
-   * @return die Personen, die danach WRITE-Mitglied sind und die MENTION bekommen
-   */
-  private Set<UUID> addMentionedNonMembersAsParticipants(
-      final Long taskId, final long tenantId, final Set<UUID> nonMembers) {
-    if (nonMembers.isEmpty() || !assigneeService.mayAddParticipants()) {
-      return Set.of();
-    }
-    final Set<UUID> members =
-        new LinkedHashSet<>(assigneeService.addAsParticipants(taskId, tenantId, nonMembers));
-    for (final UUID ref : nonMembers) {
-      if (!members.contains(ref) && membershipGuard.isWriteMember(taskId, ref, tenantId)) {
-        members.add(ref);
-      }
-    }
-    log.info(
-        "CommentService.createComment: {} erwaehnte Person(en) in Aufgabe (id={}) als Beteiligte"
-            + " aufgenommen, Mandant {}.",
-        members.size(),
-        taskId,
-        tenantId);
-    return members;
   }
 
   /**
