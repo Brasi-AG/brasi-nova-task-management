@@ -62,7 +62,8 @@ public class DivisionSignalGuard {
     final UUID tenantUuid = uuid(tenantHeader);
     final UUID divisionRef = uuid(aggregateHeader);
     if (eventId == null || tenantUuid == null || divisionRef == null) {
-      return reject("novaEventId, novaTenantId oder aggregateId fehlt oder ist keine UUID", context);
+      return reject(
+          "novaEventId, novaTenantId oder aggregateId fehlt oder ist keine UUID", context);
     }
     if (!AGGREGATE_TYPE.equals(message.getStringProperty(NovaEventHeaders.AGGREGATE_TYPE))) {
       return reject("aggregateType fehlt oder ist nicht " + AGGREGATE_TYPE, context);

@@ -28,8 +28,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       INFO und verwerfen. Alles Weitere unter {@code runWithTenant}.
  *   <li>Quittung vorhanden ({@code PROCESSED} oder {@code DEAD}): nichts tun.
  *   <li>Abrufstart (Wanduhr der Persistenz-Zone) vor dem HTTP-Aufruf nehmen, {@code fetchCurrent}.
- *       Das geschieht immer: Das Signal traegt keine revision (der Body wird nie gelesen), also gibt
- *       es keinen Kurzschluss ohne HTTP. Ein unveraenderter Stand wird von {@link
+ *       Das geschieht immer: Das Signal traegt keine revision (der Body wird nie gelesen), also
+ *       gibt es keinen Kurzschluss ohne HTTP. Ein unveraenderter Stand wird von {@link
  *       DivisionProjectionService#apply} ersetzt; ein Neustart von application ergibt damit einen
  *       Abruf je Abteilung.
  *   <li>Eine Transaktion: Quittung, dann Projektion ({@link TaskEventReceiptStore#executeOnce} mit

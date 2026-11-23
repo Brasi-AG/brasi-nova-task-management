@@ -45,12 +45,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * TransactionTemplate} ueber einen aufzeichnenden Fake-Transaktionsmanager.
  *
  * <p>Ablauf nach dem Ruling vom 2026-11-22 (immer {@code self}): Mandant aufloesen, Quittung
- * vorhanden, Abrufstart, {@code fetchCurrent}, eine Transaktion mit {@code executeOnce(signal, () ->
- * projection.apply(...))}. Einen Kurzschluss ueber die revision gibt es nicht mehr: Das Signal
- * traegt keine (Fix {@code tm-division-signal-properties}), also wird immer abgerufen. Laufzeitfehler unterhalb von {@code
- * maxDeliveryAttempts} werden weitergeworfen, am Limit wird die Quittung {@code DEAD}; scheitert
- * dagegen die Mandantenaufloesung selbst, ist keine Quittung moeglich und die Ausnahme geht auch am
- * Limit an den Broker zurueck.
+ * vorhanden, Abrufstart, {@code fetchCurrent}, eine Transaktion mit {@code executeOnce(signal, ()
+ * -> projection.apply(...))}. Einen Kurzschluss ueber die revision gibt es nicht mehr: Das Signal
+ * traegt keine (Fix {@code tm-division-signal-properties}), also wird immer abgerufen.
+ * Laufzeitfehler unterhalb von {@code maxDeliveryAttempts} werden weitergeworfen, am Limit wird die
+ * Quittung {@code DEAD}; scheitert dagegen die Mandantenaufloesung selbst, ist keine Quittung
+ * moeglich und die Ausnahme geht auch am Limit an den Broker zurueck.
  *
  * <p>Die Uhr tickt bei jedem Lesen eine Sekunde weiter: so zeigt der Vergleich mit der Zeit des
  * Client-Aufrufs, ob der Abrufstart vor dem HTTP-Aufruf genommen wurde. Ihre Zone ist die

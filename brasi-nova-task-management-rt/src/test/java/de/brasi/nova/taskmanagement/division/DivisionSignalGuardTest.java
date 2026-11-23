@@ -118,8 +118,7 @@ class DivisionSignalGuardTest {
     "semantics, fact"
   })
   @DisplayName("falsche Pflicht-Property: verworfen, Body unberuehrt")
-  void i190_wrong_property_rejected(final String property, final String value)
-      throws JMSException {
+  void i190_wrong_property_rejected(final String property, final String value) throws JMSException {
     final Map<String, String> headers = headers(EVT, TEN, DIV);
     headers.put(property, value);
     final ObjectMessage msg = mock(ObjectMessage.class);

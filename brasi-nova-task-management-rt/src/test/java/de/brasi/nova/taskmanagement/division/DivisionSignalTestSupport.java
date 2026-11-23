@@ -91,7 +91,8 @@ final class DivisionSignalTestSupport {
   // ---- Ereignis ---------------------------------------------------------------------------------
 
   /**
-   * KSF-Envelope zum Signal, aufgebaut wie im {@code DivisionMembershipEventWriter} von application.
+   * KSF-Envelope zum Signal, aufgebaut wie im {@code DivisionMembershipEventWriter} von
+   * application.
    *
    * @param signal Inhalt des Ereignisses
    * @return Envelope ({@code Serializable})
@@ -288,9 +289,9 @@ final class DivisionSignalTestSupport {
 
   /**
    * Beans des kleinen Listener-Kontexts: Verbindung zum eingebetteten Broker mit
-   * Deserialisierungs-Sperre fuer alle Klassen ({@link #DENY_ALL_DESERIALIZATION}), KSF-Profil-Guard
-   * mit {@link #PROFILE}, echter {@link DivisionSignalGuard} als Mockito-Spy (zeigt den
-   * empfangenen Nachrichtentyp) und gemockter {@link DivisionSignalProcessor}.
+   * Deserialisierungs-Sperre fuer alle Klassen ({@link #DENY_ALL_DESERIALIZATION}),
+   * KSF-Profil-Guard mit {@link #PROFILE}, echter {@link DivisionSignalGuard} als Mockito-Spy
+   * (zeigt den empfangenen Nachrichtentyp) und gemockter {@link DivisionSignalProcessor}.
    */
   @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
   @EnableConfigurationProperties(DivisionSyncProperties.class)

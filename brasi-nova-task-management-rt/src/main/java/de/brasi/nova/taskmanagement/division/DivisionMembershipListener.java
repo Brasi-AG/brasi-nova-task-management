@@ -14,10 +14,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>Je Nachricht: {@link NovaEventProfileGuard} (fremdes oder fehlendes {@code brasiProfile}:
  * verwerfen, WARN des Guards), {@link DivisionSignalGuard} (nur JMS-Properties, jeder
- * Nachrichtentyp, der Body wird nie gelesen; ungueltig: verwerfen mit WARN), dann
- * {@link DivisionSignalProcessor#process} mit dem Zustellversuch aus {@code JMSXDeliveryCount}
- * (fehlend oder unlesbar: 1). Verworfene Nachrichten werden bestaetigt, kein Poison-Loop; eine
- * Ausnahme des Processors rollt die Session zurueck und loest die Redelivery aus.
+ * Nachrichtentyp, der Body wird nie gelesen; ungueltig: verwerfen mit WARN), dann {@link
+ * DivisionSignalProcessor#process} mit dem Zustellversuch aus {@code JMSXDeliveryCount} (fehlend
+ * oder unlesbar: 1). Verworfene Nachrichten werden bestaetigt, kein Poison-Loop; eine Ausnahme des
+ * Processors rollt die Session zurueck und loest die Redelivery aus.
  */
 @Component
 @ConditionalOnProperty(
