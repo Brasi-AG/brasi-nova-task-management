@@ -26,8 +26,11 @@ import org.springframework.transaction.annotation.Transactional;
  * Kontext-Mandanten, dessen UUID der Scope sein muss: erst die Quittung ({@code PROCESSED})
  * einfuegen, dann den Handler ausfuehren. Ist das Ereignis schon quittiert oder verliert der Insert
  * gegen einen gleichzeitigen Claim (Unique {@code (MANDANT_UUID, EREIGNIS_ID)}), liefert er {@code
- * false} ohne Handler; der Aufrufer setzt seine Transaktion dann auf rollback-only. Eine Ausnahme
- * des Handlers geht unveraendert weiter, der Rollback nimmt die Quittung mit.
+ * false} ohne Handler; der Aufrufer setzt seine Transaktion dann auf rollback-only. Als verloren
+ * gilt der Insert nur, wenn die Quittung des Gewinners nach dem Unique-Verstoss lesbar ist; ein
+ * Verstoss ohne Gewinnerzeile (Primaerschluessel aus der Sequenz oder {@code EXTERNALID}) geht
+ * unveraendert weiter. Eine Ausnahme des Handlers geht ebenfalls unveraendert weiter, der Rollback
+ * nimmt die Quittung mit.
  *
  * <p>{@link #markDead} schreibt in eigener Transaktion ({@code REQUIRES_NEW}), damit die Verwerfung
  * den Rollback der Verarbeitung ueberlebt. Eine Quittung in jedem Status zaehlt als verarbeitet.
@@ -128,6 +131,16 @@ public class TaskEventReceiptStore implements NovaEventIdempotencyStore {
       repository.save(receipt);
     } catch (final BusinessRuleException | DataIntegrityViolationException conflict) {
       if (!isDuplicateKey(conflict)) {
+        throw conflict;
+      }
+      // Ein Unique-Verstoss (2601/2627) kann auch den Primaerschluessel (ID aus SYS_SEQUENCE) oder
+      // EXTERNALID treffen; dann gibt es keine Gewinnerzeile, und das Signal duerfte nicht still
+      // verloren gehen. Deshalb nur mit gelesener Quittung ueberspringen, sonst die Ausnahme
+      // unveraendert weiterreichen (Retry und DLQ machen sie sichtbar). Der Re-Read laeuft in
+      // derselben Transaktion: eine MSSQL-Unique-Verletzung bricht sie nicht ab (Anweisungsebene),
+      // und save() hat keine eigene Transaktionsklammer, markiert sie also nicht rollback-only; die
+      // Ausnahme verlaesst executeOnce nicht (Vorbild AssigneeService#saveParticipantHandlingRace).
+      if (!repository.existsByEvent(tenantUuid, eventId)) {
         throw conflict;
       }
       log.info(

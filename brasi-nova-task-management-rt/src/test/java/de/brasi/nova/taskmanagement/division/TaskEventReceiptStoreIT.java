@@ -207,9 +207,13 @@ class TaskEventReceiptStoreIT {
   /**
    * Zwei Threads claimen gleichzeitig dasselbe Ereignis, je in eigener Transaktion unter demselben
    * Mandanten; eine {@link CyclicBarrier} haelt beide nach Transaktionsbeginn und vor {@code
-   * executeOnce} an. Der Unique-Schluessel {@code (MANDANT_UUID, EREIGNIS_ID)} laesst den zweiten
-   * Insert bis zum Commit des ersten warten und dann scheitern: genau ein Handler-Lauf, genau eine
-   * Zeile, genau ein {@code true}.
+   * executeOnce} an. Erwartet wird genau ein Gewinner, gleich ueber welchen Weg der Verlierer
+   * ausscheidet: Der zweite Aufruf kann an der Vorpruefung vorbeilaufen, wenn sie erst nach dem
+   * Commit des ersten liest, am Unique-Schluessel {@code (MANDANT_UUID, EREIGNIS_ID)} scheitern oder
+   * an der Sequenzvergabe. Welcher Weg lief, prueft der Test nicht; er belegt also nicht, dass der
+   * Unique-Schluessel belegt war. Den Duplikat-Zweig von {@code TaskEventReceiptStore} belegt {@code
+   * TaskEventReceiptStoreTest} mit gemocktem Repository. Ergebnis: genau ein Handler-Lauf, genau
+   * eine Zeile, genau ein {@code true}.
    *
    * <p>Zulaessiger Sonderfall wie in {@code DivisionProjectionIT} (Lesson {@code
    * concurrency-test-seams}, Punkt 3): scheitert ein Aufruf an der Sequenzvergabe ({@link
