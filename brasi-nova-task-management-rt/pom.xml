@@ -127,6 +127,15 @@
 			<artifactId>spring-security-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!--
+			Eingebetteter Artemis fuer den Broker-Test des Abteilungs-Listeners (Intake #190):
+			geteilte, dauerhafte Topic-Subscription ohne externen Broker. Version via Spring-Boot-BOM.
+		-->
+		<dependency>
+			<groupId>org.apache.activemq</groupId>
+			<artifactId>artemis-jakarta-server</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
