@@ -13,14 +13,12 @@ import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryInfoModel;
 import de.brasi.nova.taskmanagement.inbox.model.TaskSummaryModel;
 import de.brasi.nova.taskmanagement.notification.model.NotificationPage;
 import de.brasi.nova.taskmanagement.paging.KeysetPage;
-import java.lang.reflect.Field;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.util.ReflectionUtils;
 
 /**
  * P2.5-Vertragstest (BE-1): fixiert die JSON-/Wire-Form der additiv erweiterten Lese-Modelle VOR
@@ -83,7 +81,6 @@ class InboxReadContractTest {
     assertThat(j.get("dueDate").asText()).isEqualTo("2026-12-31");
     assertThat(j.get("lastActivityAt").asText()).isEqualTo("2026-10-18T08:00:00Z");
     assertThat(j.get("commentCount").asInt()).isEqualTo(3);
-    assertThat(j.get("attachmentCount").asInt()).isEqualTo(2);
 
     // additive Felder
     assertThat(j.get("createdById").asText()).isEqualTo(CREATOR.toString());
@@ -152,25 +149,64 @@ class InboxReadContractTest {
   }
 
   /**
-   * Intake #194: beide Zusammenfassungen tragen {@code attachmentCount} als Zahl. Die Modelle
-   * entstehen ueber den parameterlosen Konstruktor, der Wert wird per Reflexion gesetzt, damit der
-   * Test unabhaengig von der Konstruktor-Signatur bleibt; fehlt das Feld, fehlt es im JSON.
+   * Intake #194: beide Zusammenfassungen tragen {@code attachmentCount} als Zahl unter dem
+   * JSON-Schluessel {@code attachmentCount}. Die Modelle entstehen ueber den Voll-Konstruktor mit
+   * verschiedenen Werten fuer {@code commentCount} (3) und {@code attachmentCount} (7), damit auch
+   * eine vertauschte Konstruktor-Zuordnung auffaellt.
    */
   @Test
   @DisplayName("i194: beide Zusammenfassungen serialisieren attachmentCount als Zahl")
   void i194_summary_and_info_model_serialize_attachment_count() throws Exception {
-    final TaskSummaryModel summary = new TaskSummaryModel();
-    final TaskSummaryInfoModel info = new TaskSummaryInfoModel();
-    setAttachmentCountIfPresent(summary, 7);
-    setAttachmentCountIfPresent(info, 7);
+    final TaskSummaryModel summary =
+        new TaskSummaryModel(
+            ID,
+            "Titel",
+            "OPEN",
+            "NORMAL",
+            null,
+            Instant.parse("2026-10-18T08:00:00Z"),
+            3,
+            7,
+            CREATOR,
+            Instant.parse("2026-10-01T06:30:00Z"),
+            null,
+            List.of(),
+            List.of(),
+            List.of(),
+            false,
+            false,
+            false,
+            false,
+            null);
+    final TaskSummaryInfoModel info =
+        new TaskSummaryInfoModel(
+            ID,
+            "Titel",
+            "OPEN",
+            "NORMAL",
+            null,
+            Instant.parse("2026-10-18T08:00:00Z"),
+            3,
+            7,
+            CREATOR,
+            Instant.parse("2026-10-01T06:30:00Z"),
+            null,
+            List.of(),
+            List.of(),
+            List.of(),
+            false,
+            false,
+            false,
+            false,
+            null);
 
     for (final Object model : List.of(summary, info)) {
+      final String name = model.getClass().getSimpleName();
       final JsonNode j = om.readTree(om.writeValueAsString(model));
-      assertThat(j.has("attachmentCount"))
-          .as("%s traegt attachmentCount im JSON", model.getClass().getSimpleName())
-          .isTrue();
-      assertThat(j.get("attachmentCount").isInt()).as("attachmentCount als Zahl").isTrue();
-      assertThat(j.get("attachmentCount").asInt()).isEqualTo(7);
+      assertThat(j.has("attachmentCount")).as("%s traegt attachmentCount im JSON", name).isTrue();
+      assertThat(j.get("attachmentCount").isInt()).as("%s: attachmentCount als int", name).isTrue();
+      assertThat(j.get("attachmentCount").asInt()).as("%s: attachmentCount", name).isEqualTo(7);
+      assertThat(j.get("commentCount").asInt()).as("%s: commentCount", name).isEqualTo(3);
     }
   }
 
@@ -191,14 +227,5 @@ class InboxReadContractTest {
     assertThat(j.has("currentUserId")).as("Snapshot muss currentUserId tragen").isTrue();
     assertThat(j.get("currentUserId").asText()).isEqualTo(CURRENT_USER.toString());
     assertThat(j.get("asOf").asText()).isEqualTo("2026-10-18T08:00:00Z");
-  }
-
-  /** Setzt das Feld {@code attachmentCount}, falls die Klasse es hat (sonst bleibt es weg). */
-  private static void setAttachmentCountIfPresent(final Object model, final int value) {
-    final Field field = ReflectionUtils.findField(model.getClass(), "attachmentCount");
-    if (field != null) {
-      ReflectionUtils.makeAccessible(field);
-      ReflectionUtils.setField(field, model, value);
-    }
   }
 }

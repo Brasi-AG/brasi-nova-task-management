@@ -101,7 +101,7 @@ public final class ArchiveSearchPageSchema {
    * @param dueDate Faelligkeitsdatum
    * @param lastActivityAt letzte Aktivitaet
    * @param commentCount Anzahl Kommentare
-   * @param attachmentCount Anzahl Anhaenge an Aufgabe und Kommentaren
+   * @param attachmentCount Anzahl der aktiven Anhaenge an Aufgabe und Kommentaren
    * @param createdById Ersteller
    * @param createdAt Erstellzeitpunkt
    * @param description Beschreibung

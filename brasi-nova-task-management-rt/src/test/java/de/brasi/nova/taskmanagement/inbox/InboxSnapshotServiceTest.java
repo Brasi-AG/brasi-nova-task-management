@@ -37,7 +37,6 @@ import de.brasi.nova.taskmanagement.resolver.DictionaryCodeResolver;
 import de.brasi.nova.taskmanagement.tag.TagCatalogService;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import io.keel.framework.api.validation.EntityValidationException;
-import java.lang.reflect.Field;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -48,7 +47,6 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.util.ReflectionUtils;
 
 /**
  * Unit-Tests fuer {@link InboxSnapshotService} (alle Abhaengigkeiten gemockt, kein DB).
@@ -796,8 +794,7 @@ class InboxSnapshotServiceTest {
 
   /**
    * Intake #194: beide Mapper reichen {@code Task.attachmentCount} durch ({@code toEnrichedSummary}
-   * fuer aktive Liste und Archiv, {@code toSnapshotSummary} fuer den Snapshot). Gelesen wird das
-   * Feld der Modelle per Reflexion, damit der Test ohne das Feld kompiliert.
+   * fuer aktive Liste und Archiv, {@code toSnapshotSummary} fuer den Snapshot).
    */
   @Test
   @DisplayName("i194: Task.attachmentCount 7 -> attachmentCount 7 in Liste, Archiv und Snapshot")
@@ -820,10 +817,10 @@ class InboxSnapshotServiceTest {
         items(service.loadArchivePage(USER_REF, "left", null, 10)).get(0);
     final InboxSnapshotModel snapshot = service.loadSnapshot(USER_REF, TENANT_ID, true);
 
-    assertThat(attachmentCountOf(active)).as("aktive Liste").isEqualTo(7);
-    assertThat(attachmentCountOf(archived)).as("Archiv").isEqualTo(7);
+    assertThat(active.attachmentCount()).as("aktive Liste").isEqualTo(7);
+    assertThat(archived.attachmentCount()).as("Archiv").isEqualTo(7);
     assertThat(snapshot.tasks().items()).hasSize(1);
-    assertThat(attachmentCountOf(snapshot.tasks().items().get(0))).as("Snapshot").isEqualTo(7);
+    assertThat(snapshot.tasks().items().get(0).getAttachmentCount()).as("Snapshot").isEqualTo(7);
   }
 
   @Test
@@ -1020,16 +1017,6 @@ class InboxSnapshotServiceTest {
     final List<Task> tasks = buildTasks(1);
     tasks.get(0).setAttachmentCount(attachmentCount);
     return tasks;
-  }
-
-  /** Liest das Feld {@code attachmentCount} eines Lesemodells; fehlt es, scheitert der Test. */
-  private static int attachmentCountOf(final Object model) {
-    final Field field = ReflectionUtils.findField(model.getClass(), "attachmentCount");
-    assertThat(field)
-        .as("Feld attachmentCount an %s", model.getClass().getSimpleName())
-        .isNotNull();
-    ReflectionUtils.makeAccessible(field);
-    return (int) ReflectionUtils.getField(field, model);
   }
 
   private User buildUser(final String login, final String fullName) {

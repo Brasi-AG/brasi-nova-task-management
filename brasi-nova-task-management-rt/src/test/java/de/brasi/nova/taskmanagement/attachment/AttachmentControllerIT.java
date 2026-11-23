@@ -1499,10 +1499,19 @@ class AttachmentControllerIT {
     assertCountMatchesRows(jdbcTemplate, taskId);
   }
 
+  /**
+   * Beide Fehlerzweige liegen VOR dem Hochzaehlen: die Ablehnung im Preparer (400) und der Abbruch
+   * am Seam {@code onAfterAttachmentsStoredForTest} (500, nach dem Schreiben der Dateien, aber vor
+   * dem versionierten TASK-save mit dem neuen Zaehler). Der Zaehler bleibt hier also stehen, weil
+   * er noch nicht angefasst wurde. Dass ein schon gesetzter Zaehler bei einem Fehler danach (409 am
+   * TASK-save) zurueckgerollt wird, belegen {@code AttachmentCountConcurrencyIT} und {@code
+   * CommentAttachmentIT#i194_failed_store_rolls_back_attachment_count}.
+   */
   @Test
   @DisplayName(
-      "i194_rejected_upload_leaves_count: nach einem Upload (1) lassen eine abgelehnte Datei (400)"
-          + " und ein Abbruch nach dem Schreiben (500) ANHANG_ANZAHL unveraendert")
+      "i194_rejected_upload_leaves_count: nach einem Upload (1) lassen eine abgelehnte Datei (400,"
+          + " vor dem Schreiben) und ein Abbruch am Seam (500, vor dem Hochzaehlen)"
+          + " ANHANG_ANZAHL unveraendert")
   void i194_rejected_upload_leaves_count() throws Exception {
     final MockMvc mvc = buildMvc();
     final String creator = creatorToken();
@@ -1517,7 +1526,7 @@ class AttachmentControllerIT {
     assertThat(attachmentCount(jdbcTemplate, taskId)).as("nach 400").isEqualTo(1);
     assertCountMatchesRows(jdbcTemplate, taskId);
 
-    // Abbruch im Seam nach dem Schreiben der Dateien -> 500, voller Rollback
+    // Abbruch im Seam nach dem Schreiben der Dateien, vor dem Hochzaehlen -> 500
     SeamFailingCommandService.FAIL_ON_TASK.set(taskDbId(taskId));
     try {
       upload(mvc, creator, taskId, file("Notiz.txt", TXT_BYTES))

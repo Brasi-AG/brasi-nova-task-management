@@ -128,7 +128,7 @@ class FlywayMigrationIT {
   /** Altbestand-Aufgabe A mit Anhaengen an Aufgabe und Kommentaren. */
   private static final long LEGACY_TASK_A = 9901L;
 
-  /** Altbestand-Aufgabe B ohne Anhaenge. */
+  /** Altbestand-Aufgabe B mit einem aktiven Anhang an der Aufgabe. */
   private static final long LEGACY_TASK_B = 9902L;
 
   /** Zurueckdatierter Zeitpunkt fuer Seeds des Altbestands (kein nacktes getdate()). */
@@ -885,8 +885,9 @@ class FlywayMigrationIT {
   @Test
   @DisplayName(
       "i194_backfill_counts_active_only: Altbestand vor V17, der Backfill zaehlt nur aktive"
-          + " Anhaenge an der Aufgabe und an aktiven Kommentaren; VERSION, AKTUALISIERT_AM und"
-          + " LAST_ACTIVITY_AT bleiben unveraendert")
+          + " Anhaenge an der Aufgabe und an aktiven Kommentaren (A: 4, B: 1; entfernte Anhaenge"
+          + " und Anhaenge an deaktivierten Kommentaren zaehlen nicht); VERSION, AKTUALISIERT_AM"
+          + " und LAST_ACTIVITY_AT bleiben unveraendert")
   void i194_backfill_counts_active_only() {
     withFreshDbMigratedTo(
         "16",
@@ -905,7 +906,9 @@ class FlywayMigrationIT {
           assertThat(attachmentCountOf(jt, LEGACY_TASK_A))
               .as("A: 2 aktive an der Aufgabe + 2 aktive am aktiven Kommentar")
               .isEqualTo(4);
-          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).as("B ohne Anhaenge").isZero();
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B))
+              .as("B: 1 aktiver Anhang an der Aufgabe")
+              .isEqualTo(1);
           assertThat(auditColumns(jt, LEGACY_TASK_A)).isEqualTo(taskABefore);
           assertThat(auditColumns(jt, LEGACY_TASK_B)).isEqualTo(taskBBefore);
         });
@@ -928,7 +931,7 @@ class FlywayMigrationIT {
           // Zweiter Lauf des echten Skripts (nicht Flyway): ALTER uebersprungen, Backfill gleich
           runV17Script(jt);
           assertThat(attachmentCountOf(jt, LEGACY_TASK_A)).isEqualTo(4);
-          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).isZero();
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).isEqualTo(1);
           assertThat(
                   jt.queryForObject(
                       "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
@@ -937,13 +940,13 @@ class FlywayMigrationIT {
               .as("Spalte genau einmal vorhanden")
               .isEqualTo(1);
 
-          // Abweichende Zaehler (Drift) werden beim erneuten Lauf auf den Ist-Wert gesetzt, auch
-          // an einer Aufgabe ohne aktive Anhaenge (B zurueck auf 0)
+          // Abweichende Zaehler (Drift) werden beim erneuten Lauf auf den Ist-Wert gesetzt: A von
+          // zu hoch (9) auf 4, B von zu hoch (2) wieder auf 1
           jt.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 9 WHERE [ID] = ?", LEGACY_TASK_A);
           jt.update("UPDATE [dbo].[TASK] SET [ANHANG_ANZAHL] = 2 WHERE [ID] = ?", LEGACY_TASK_B);
           runV17Script(jt);
           assertThat(attachmentCountOf(jt, LEGACY_TASK_A)).isEqualTo(4);
-          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).as("B ohne Anhaenge wieder 0").isZero();
+          assertThat(attachmentCountOf(jt, LEGACY_TASK_B)).as("B wieder 1").isEqualTo(1);
 
           assertThat(auditColumns(jt, LEGACY_TASK_A)).isEqualTo(taskABefore);
           assertThat(auditColumns(jt, LEGACY_TASK_B)).isEqualTo(taskBBefore);
@@ -1250,9 +1253,9 @@ class FlywayMigrationIT {
 
   /**
    * Altbestand vor V17 mit festen, zurueckdatierten Zeitstempeln: Aufgabe A mit zwei aktiven und
-   * einem entfernten Anhang an der Aufgabe, einem aktiven Kommentar mit zwei aktiven Anhaengen und
-   * einem deaktivierten Kommentar mit einem aktiven Anhang (erwartet 4); Aufgabe B ohne Anhaenge
-   * (erwartet 0).
+   * einem entfernten Anhang an der Aufgabe, einem aktiven Kommentar mit zwei aktiven und einem
+   * entfernten Anhang sowie einem deaktivierten Kommentar mit einem aktiven Anhang (erwartet 4);
+   * Aufgabe B mit einem aktiven Anhang an der Aufgabe (erwartet 1).
    */
   private static void seedLegacyAttachments(final JdbcTemplate jt) {
     jt.update(
@@ -1273,11 +1276,15 @@ class FlywayMigrationIT {
     insertLegacyAttachment(jt, 9921L, LEGACY_TASK_A, null, "ACTIVE");
     insertLegacyAttachment(jt, 9922L, LEGACY_TASK_A, null, "ACTIVE");
     insertLegacyAttachment(jt, 9923L, LEGACY_TASK_A, null, "DEACTIVE");
-    // Am aktiven Kommentar: zwei aktiv
+    // Am aktiven Kommentar: zwei aktiv, einer entfernt (zaehlt nicht)
     insertLegacyAttachment(jt, 9924L, LEGACY_TASK_A, 9911L, "ACTIVE");
     insertLegacyAttachment(jt, 9925L, LEGACY_TASK_A, 9911L, "ACTIVE");
+    insertLegacyAttachment(jt, 9927L, LEGACY_TASK_A, 9911L, "DEACTIVE");
     // Am deaktivierten Kommentar: ein aktiver Anhang (zaehlt nicht)
     insertLegacyAttachment(jt, 9926L, LEGACY_TASK_A, 9912L, "ACTIVE");
+
+    // Aufgabe B: ein aktiver Anhang an der Aufgabe (Zaehler steigt von 0 auf 1)
+    insertLegacyAttachment(jt, 9928L, LEGACY_TASK_B, null, "ACTIVE");
   }
 
   private static void insertLegacyTask(
@@ -1339,6 +1346,11 @@ class FlywayMigrationIT {
   /**
    * Fuehrt das TATSAECHLICHE V17-Skript erneut aus (nicht Flyway): Kommentarzeilen entfernen, an
    * alleinstehenden {@code GO}-Zeilen in Batches zerlegen, jeden Batch ausfuehren.
+   *
+   * <p>Die Batches laufen im Autocommit ueber den Pool; ein {@code SET QUOTED_IDENTIFIER} aus dem
+   * ersten Batch gilt deshalb nicht sicher fuer den naechsten Batch (anderer Pool-Zugriff,
+   * eventuell andere Verbindung). Das ist unschaedlich, weil der JDBC-Treiber QUOTED_IDENTIFIER
+   * ohnehin auf ON setzt.
    */
   private static void runV17Script(final JdbcTemplate jt) {
     final String raw;
