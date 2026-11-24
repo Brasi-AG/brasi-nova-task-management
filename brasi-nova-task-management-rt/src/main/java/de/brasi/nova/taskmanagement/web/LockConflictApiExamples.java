@@ -36,9 +36,9 @@ public final class LockConflictApiExamples {
 
   /**
    * Baustein der 409-Beschreibungen: Sequenzkonflikt eines Verlaufseintrags (Intake #180).
-   * Wiederholung der Vergabe durch KSF ab 2.3.29 (intake#35): hoechstens zehn Versuche einschliesslich
-   * des ersten ({@code RetryingSequenceIdSource.MAX_ATTEMPTS}), wiederholt wird nur der
-   * Sequenzkonflikt.
+   * Wiederholung der Vergabe durch KSF ab 2.3.29 (intake#35): hoechstens zehn Versuche
+   * einschliesslich des ersten ({@code RetryingSequenceIdSource.MAX_ATTEMPTS}), wiederholt wird nur
+   * der Sequenzkonflikt.
    */
   public static final String HISTORY_SEQUENCE_CONFLICT =
       " Jeder Verlaufseintrag vergibt eine Sequenz, die sich alle Aufgaben und Mandanten teilen"
