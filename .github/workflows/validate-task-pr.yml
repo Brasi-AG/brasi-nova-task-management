@@ -404,3 +404,26 @@ jobs:
           python3 scripts/ci/check-integration-results.py \
             --reports it-reports \
             --expected-from-source brasi-nova-task-management-rt/src/test/java
+
+  # Deploy-Skripte laufen auf dem Host unter Windows PowerShell 5.1, deshalb laufen ihre Pester-Tests dort
+  # (shell: powershell, nicht pwsh). Kein Maven, keine Secrets.
+  deployment-script-tests:
+    name: Deployment script tests (Windows PowerShell)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out PR merge result
+        uses: actions/checkout@v4
+
+      - name: Run deployment script tests
+        shell: powershell
+        run: |
+          $pester = Get-Module -ListAvailable Pester |
+            Where-Object { $_.Version -ge [version]"5.6.0" } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          if (-not $pester) {
+            Install-Module Pester -MinimumVersion 5.6.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          Import-Module Pester -MinimumVersion 5.6.0
+          Invoke-Pester -Path scripts -CI
