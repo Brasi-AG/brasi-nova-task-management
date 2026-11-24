@@ -641,12 +641,16 @@ class InboxListAffordanceIT {
 
   private void seedParticipant(
       final long id, final long taskId, final UUID participantRef, final String exitKind) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jdbcTemplate.update(
         "INSERT INTO [dbo].[TASK_PARTICIPANT] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
-            + "VALUES (?, 'ACTIVE', 'inbox-aff-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, 1, 1, 1, ?)",
+            + "VALUES (?, 'ACTIVE', 'inbox-aff-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " 'PERSON', ?, 1, 1, 1, ?)",
         id,
         UUID.randomUUID(),
         TENANT_A_ID,
@@ -657,11 +661,15 @@ class InboxListAffordanceIT {
   }
 
   private void seedUserState(final long id, final long taskId, final UUID userRef) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jdbcTemplate.update(
         "INSERT INTO [dbo].[TASK_USER_STATE] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
-            + "VALUES (?, 'ACTIVE', 'inbox-aff-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
+            + "VALUES (?, 'ACTIVE', 'inbox-aff-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " ?, 0, 0, 0, NULL)",
         id,
         UUID.randomUUID(),
         TENANT_A_ID,
