@@ -336,6 +336,7 @@ function Assert-ManifestValid([object]$Manifest) {
   }
 
   $seen = @()
+  $bundleFileCounts = @{}
   foreach ($bundle in @(Get-ManifestValue $Manifest "bundles")) {
     if ($null -eq $bundle -or $bundle -isnot [System.Management.Automation.PSCustomObject]) {
       Stop-InvalidManifest "bundles[]" "kein Objekt"
@@ -384,11 +385,26 @@ function Assert-ManifestValid([object]$Manifest) {
     if (-not (Test-ManifestSize $bundleSize)) {
       Stop-InvalidManifest "$classification.size" $bundleSize
     }
+    $bundleFileCount = Get-ManifestValue $bundle "fileCount"
+    if (-not (Test-ManifestSize $bundleFileCount)) {
+      Stop-InvalidManifest "$classification.fileCount" $bundleFileCount
+    }
+    $bundleFileCounts[$classification] = $bundleFileCount
   }
   foreach ($classification in $script:BundleClassifications) {
     if ($seen -cnotcontains $classification) {
       Stop-InvalidManifest "bundles" "$classification fehlt"
     }
+  }
+
+  # Der Gesamtzaehler ist Pflicht (nicht negative ganze JSON-Zahl); den Abgleich mit files[] macht der Schluss
+  $summary = Get-ManifestValue $Manifest "summary"
+  if ($null -eq $summary -or $summary -isnot [System.Management.Automation.PSCustomObject]) {
+    Stop-InvalidManifest "summary" "fehlt oder kein Objekt"
+  }
+  $summaryFileCount = Get-ManifestValue $summary "fileCount"
+  if (-not (Test-ManifestSize $summaryFileCount)) {
+    Stop-InvalidManifest "summary.fileCount" $summaryFileCount
   }
 
   # Jeder Pfad darf nur einmal vorkommen, auch ueber Bundles hinweg: Windows unterscheidet weder Gross- und
@@ -398,6 +414,11 @@ function Assert-ManifestValid([object]$Manifest) {
   $seenFilePaths = @{}
   $seenFilePaths[$applicationPath.Replace('\', '/').ToLowerInvariant()] = $true
   $applicationEntries = 0
+  $filesPerClassification = @{}
+  foreach ($classification in $script:BundleClassifications) {
+    $filesPerClassification[$classification] = 0
+  }
+  $totalFiles = 0
   foreach ($file in @(Get-ManifestValue $Manifest "files")) {
     if ($null -eq $file) { continue }
     if ($file -isnot [System.Management.Automation.PSCustomObject]) {
@@ -413,6 +434,7 @@ function Assert-ManifestValid([object]$Manifest) {
         ($fileClassification -cne "application" -and $script:BundleClassifications -cnotcontains $fileClassification)) {
       Stop-InvalidManifest "files[].classification ($filePath)" $fileClassification
     }
+    $totalFiles++
     # Pfadpraefix und Klasse sind aneinander gebunden: die Anwendung liegt genau auf applicationArtifact.path,
     # jede Bibliothek (jede andere Klasse) unter lib/, nie unter application/.
     if ($fileClassification -ceq "application") {
@@ -428,6 +450,7 @@ function Assert-ManifestValid([object]$Manifest) {
         Stop-InvalidManifest "files[].path (Bibliothek der Klasse $fileClassification nur unter lib/)" $filePath
       }
       $seenFilePaths[$normalizedFilePath] = $true
+      $filesPerClassification[$fileClassification]++
     }
     $fileSha = Get-ManifestValue $file "sha256"
     if (-not (Test-ManifestText $fileSha $script:Sha256Pattern)) {
@@ -441,6 +464,17 @@ function Assert-ManifestValid([object]$Manifest) {
   # Der DistBuilder schreibt die Anwendung immer als genau einen files[]-Eintrag (Pfad wie applicationArtifact.path)
   if ($applicationEntries -ne 1) {
     Stop-InvalidManifest "files[].classification (genau ein Eintrag application erwartet)" "gefunden: $applicationEntries"
+  }
+  # Zaehler und files[] muessen zusammenpassen: je Bundle-Klasse und insgesamt (samt Anwendung). Ein fehlender oder
+  # zusaetzlicher Bibliothekseintrag faellt sonst nicht auf. Vergleich als decimal, damit grosse Zahlen weder
+  # ueberlaufen noch still umgewandelt werden.
+  foreach ($classification in $script:BundleClassifications) {
+    if ([decimal]$bundleFileCounts[$classification] -ne [decimal]$filesPerClassification[$classification]) {
+      Stop-InvalidManifest "$classification.fileCount (files[] enthaelt $($filesPerClassification[$classification]))" $bundleFileCounts[$classification]
+    }
+  }
+  if ([decimal]$summaryFileCount -ne [decimal]$totalFiles) {
+    Stop-InvalidManifest "summary.fileCount (files[] enthaelt $totalFiles)" $summaryFileCount
   }
 }
 

@@ -131,7 +131,9 @@ Describe "incremental updater with a real DeploymentDistBuilder manifest" {
 
   It "rejects the real manifest once <case>" -ForEach @(
     @{ case = "contentSha256 leaves the cache"; mutate = { param($m) $m.bundles[0].contentSha256 = '..\..\_deploy' } },
-    @{ case = "the last file path leaves the staging"; mutate = { param($m) $m.files[$m.files.Count - 1].path = 'lib/../../winsw/x.xml' } }
+    @{ case = "the last file path leaves the staging"; mutate = { param($m) $m.files[$m.files.Count - 1].path = 'lib/../../winsw/x.xml' } },
+    @{ case = "a library entry is removed while the counters stay"; mutate = { param($m) $first = @($m.files | Where-Object { $_.classification -ne 'application' })[0]; $m.files = @($m.files | Where-Object { $_.path -ne $first.path }) } },
+    @{ case = "a library entry is added while the counters stay"; mutate = { param($m) $first = @($m.files | Where-Object { $_.classification -ne 'application' })[0]; $m.files = @($m.files) + [pscustomobject]@{ path = 'lib/zz-extra.jar'; fileName = 'zz-extra.jar'; classification = $first.classification; sha256 = $first.sha256; size = $first.size } } }
   ) {
     $fixture = New-RealManifestFixture ("real-" + (Get-LabelSha256 $case).Substring(0, 12)) $mutate
 
@@ -166,16 +168,17 @@ Describe "incremental updater manifest validation and run lock" {
         applicationArtifact = @{ path = "application/app.jar"; fileName = "app.jar"; sha256 = Get-TestSha256 $app; size = (Get-Item $app).Length }
         bundles = @(
           @{ classification = "snapshot-dependencies"; fileName = "snapshot.zip"; assetName = "snapshot.zip"; release = "deployment-content-store"
-             contentSha256 = (Get-LabelSha256 "v-snapshot"); sha256 = (Get-LabelSha256 "v-snapshot-zip"); artifactSha256 = (Get-LabelSha256 "v-snapshot-zip"); size = 0 },
+             contentSha256 = (Get-LabelSha256 "v-snapshot"); sha256 = (Get-LabelSha256 "v-snapshot-zip"); artifactSha256 = (Get-LabelSha256 "v-snapshot-zip"); size = 0; fileCount = 0 },
           @{ classification = "internal-dependencies"; fileName = "internal.zip"; assetName = "internal.zip"; release = "deployment-content-store"
-             contentSha256 = (Get-LabelSha256 "v-internal"); sha256 = (Get-LabelSha256 "v-internal-zip"); artifactSha256 = (Get-LabelSha256 "v-internal-zip"); size = 0 },
+             contentSha256 = (Get-LabelSha256 "v-internal"); sha256 = (Get-LabelSha256 "v-internal-zip"); artifactSha256 = (Get-LabelSha256 "v-internal-zip"); size = 0; fileCount = 0 },
           @{ classification = "third-party-dependencies"; fileName = "third.zip"; assetName = "third.zip"; release = "deployment-content-store"
-             contentSha256 = (Get-LabelSha256 "v-third"); sha256 = (Get-LabelSha256 "v-third-zip"); artifactSha256 = (Get-LabelSha256 "v-third-zip"); size = 0 }
+             contentSha256 = (Get-LabelSha256 "v-third"); sha256 = (Get-LabelSha256 "v-third-zip"); artifactSha256 = (Get-LabelSha256 "v-third-zip"); size = 0; fileCount = 1 }
         )
         files = @(
           @{ path = "application/app.jar"; fileName = "app.jar"; classification = "application"; sha256 = Get-TestSha256 $app; size = (Get-Item $app).Length },
           @{ path = "lib/dep.jar"; fileName = "dep.jar"; classification = "third-party-dependencies"; sha256 = Get-TestSha256 $dependency; size = (Get-Item $dependency).Length }
         )
+        summary = @{ fileCount = 2 }
       }
       $object = $manifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
       if ($Mutate) { & $Mutate $object }
@@ -221,6 +224,11 @@ Describe "incremental updater manifest validation and run lock" {
       $source = Get-LibFile $Manifest
       $copy = [pscustomobject]@{ path = $Path; fileName = "dep.jar"; classification = $Classification; sha256 = $source.sha256; size = $source.size }
       $Manifest.files = @($Manifest.files) + $copy
+    }
+
+    # Nimmt den files[]-Eintrag mit diesem Pfad heraus; die Zaehler im Manifest bleiben stehen
+    function Remove-ManifestFile([object]$Manifest, [string]$Path) {
+      $Manifest.files = @(@($Manifest.files) | Where-Object { $_.path -ne $Path })
     }
 
     function Invoke-ValidationUpdater([hashtable]$Fixture, [switch]$DryRun) {
@@ -333,7 +341,24 @@ Describe "incremental updater manifest validation and run lock" {
     @{ case = "release mit Zeilenende"; mutate = { param($m) $b = Get-LibBundle $m; $b.release = $b.release + "`n" } },
     @{ case = "applicationArtifact.fileName mit Zeilenende"; mutate = { param($m) $m.applicationArtifact.fileName = "app.jar`n"; $m.applicationArtifact.path = "application/app.jar`n" } },
     @{ case = "Dateipfad mit Zeilenende"; mutate = { param($m) $f = Get-LibFile $m; $f.path = $f.path + "`n" } },
-    @{ case = "Anwendungsdateipfad mit Zeilenende"; mutate = { param($m) $f = Get-ApplicationFile $m; $f.path = $f.path + "`n" } }
+    @{ case = "Anwendungsdateipfad mit Zeilenende"; mutate = { param($m) $f = Get-ApplicationFile $m; $f.path = $f.path + "`n" } },
+    @{ case = "fehlendem summary"; mutate = { param($m) $m.PSObject.Properties.Remove("summary") } },
+    @{ case = "summary ohne Objekt"; mutate = { param($m) $m.summary = 2 } },
+    @{ case = "fehlendem summary.fileCount"; mutate = { param($m) $m.summary.PSObject.Properties.Remove("fileCount") } },
+    @{ case = "summary.fileCount als Text"; mutate = { param($m) $m.summary.fileCount = "2" } },
+    @{ case = "negativem summary.fileCount"; mutate = { param($m) $m.summary.fileCount = -1 } },
+    @{ case = "gebrochenem summary.fileCount"; mutate = { param($m) $m.summary.fileCount = 1.5 } },
+    @{ case = "summary.fileCount als Wahrheitswert"; mutate = { param($m) $m.summary.fileCount = $true } },
+    @{ case = "fehlendem Bundle-fileCount"; mutate = { param($m) (Get-LibBundle $m).PSObject.Properties.Remove("fileCount") } },
+    @{ case = "Bundle-fileCount als Text"; mutate = { param($m) (Get-LibBundle $m).fileCount = "1" } },
+    @{ case = "negativem Bundle-fileCount"; mutate = { param($m) (Get-LibBundle $m).fileCount = -1 } },
+    @{ case = "gebrochenem Bundle-fileCount"; mutate = { param($m) (Get-LibBundle $m).fileCount = 1.5 } },
+    @{ case = "zu grossem summary.fileCount"; mutate = { param($m) $m.summary.fileCount = 3 } },
+    @{ case = "zu kleinem summary.fileCount"; mutate = { param($m) $m.summary.fileCount = 1 } },
+    @{ case = "zu grossem Bundle-fileCount"; mutate = { param($m) (Get-LibBundle $m).fileCount = 2 } },
+    @{ case = "zu kleinem Bundle-fileCount"; mutate = { param($m) (Get-LibBundle $m).fileCount = 0 } },
+    @{ case = "entferntem lib-Eintrag bei unveraenderten Zaehlern"; mutate = { param($m) Remove-ManifestFile $m 'lib/dep.jar' } },
+    @{ case = "zusaetzlichem lib-Eintrag bei unveraenderten Zaehlern"; mutate = { param($m) Add-ManifestFile $m 'lib/extra.jar' 'third-party-dependencies' } }
   ) {
     $fixture = New-ValidationFixture ("invalid-" + (Get-LabelSha256 $case).Substring(0, 12)) $mutate
 
@@ -412,6 +437,23 @@ Describe "incremental updater manifest validation and run lock" {
     $result = Invoke-ValidationUpdater $fixture
 
     $result.Failure | Should -Match "Manifest ungueltig: files\[\]\.classification \(genau ein Eintrag application erwartet\) 'gefunden: $found'"
+    @(Get-GhLogLines $fixture.GhLog).Count | Should -Be 1
+    ($global:UpdaterCalls -join ",") | Should -Be ""
+  }
+
+  It "names the counter and the files[] count when a file count does not match files[] (<case>)" -ForEach @(
+    @{ case = "Bundle-fileCount zu gross"; mutate = { param($m) (Get-LibBundle $m).fileCount = 2 }; expected = "Manifest ungueltig: third-party-dependencies\.fileCount \(files\[\] enthaelt 1\) '2'" },
+    @{ case = "Bundle-fileCount zu klein"; mutate = { param($m) (Get-LibBundle $m).fileCount = 0 }; expected = "Manifest ungueltig: third-party-dependencies\.fileCount \(files\[\] enthaelt 1\) '0'" },
+    @{ case = "lib-Eintrag entfernt"; mutate = { param($m) Remove-ManifestFile $m 'lib/dep.jar' }; expected = "Manifest ungueltig: third-party-dependencies\.fileCount \(files\[\] enthaelt 0\) '1'" },
+    @{ case = "Gesamtzaehler zu gross bei stimmigen Bundle-Zaehlern"; mutate = { param($m) $m.summary.fileCount = 3 }; expected = "Manifest ungueltig: summary\.fileCount \(files\[\] enthaelt 2\) '3'" },
+    @{ case = "Gesamtzaehler zu klein bei stimmigen Bundle-Zaehlern"; mutate = { param($m) $m.summary.fileCount = 1 }; expected = "Manifest ungueltig: summary\.fileCount \(files\[\] enthaelt 2\) '1'" }
+  ) {
+    $fixture = New-ValidationFixture ("rule-count-" + (Get-LabelSha256 $case).Substring(0, 12)) $mutate
+
+    $result = Invoke-ValidationUpdater $fixture
+
+    $result.Failure | Should -Match $expected
+    $result.Failure | Should -Match "Abbruch vor jedem Download, jedem Loeschen und jedem Stop"
     @(Get-GhLogLines $fixture.GhLog).Count | Should -Be 1
     ($global:UpdaterCalls -join ",") | Should -Be ""
   }
