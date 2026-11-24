@@ -41,6 +41,8 @@ class ContactTaskSourceAdapterTest {
   private final AtomicReference<String> path = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
   private final AtomicInteger bodyStarted = new AtomicInteger();
+  private final CountDownLatch stalledHeadersSent = new CountDownLatch(1);
+  private final CountDownLatch firstBodyByteSent = new CountDownLatch(1);
   private final CountDownLatch releaseStalledBody = new CountDownLatch(1);
   private HttpServer server;
   private volatile int responseStatus = 200;
@@ -129,7 +131,7 @@ class ContactTaskSourceAdapterTest {
   }
 
   @Test
-  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() {
+  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() throws InterruptedException {
     responseStatus = 403;
     stallBody = true;
 
@@ -137,7 +139,7 @@ class ContactTaskSourceAdapterTest {
       assertThatThrownBy(() -> registry(3000).requireReadable(source, actor))
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertStalledHeadersSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -168,12 +170,12 @@ class ContactTaskSourceAdapterTest {
   }
 
   @Test
-  void bodyStallIsBoundedByRequestTimeout() {
+  void bodyStallIsBoundedByRequestTimeout() throws InterruptedException {
     stallBody = true;
 
     try {
       assertSafeUnavailable(registry(3000));
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertFirstBodyByteSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -240,6 +242,25 @@ class ContactTaskSourceAdapterTest {
             });
   }
 
+  private void assertStalledHeadersSent() throws InterruptedException {
+    // Bei 403 entscheidet der Client an den Headern und schließt den Fehlerstrom; ob der Server
+    // das erste Body-Byte danach noch schreiben kann, ist offen. Gewartet wird daher nur auf die
+    // gesendeten Header, der Body hängt bis zur Freigabe im finally.
+    assertThat(stalledHeadersSent.await(5, TimeUnit.SECONDS))
+        .describedAs("Header vor hängendem Body gesendet")
+        .isTrue();
+  }
+
+  private void assertFirstBodyByteSent() throws InterruptedException {
+    // Der Server zählt erst nach dem Flush des ersten Body-Bytes, der Client kann schon vorher
+    // zurückkehren. Erst das Latch stellt Happens-before zum Zähler her; ohne Signal scheitert der
+    // Test nach der Frist hart.
+    assertThat(firstBodyByteSent.await(5, TimeUnit.SECONDS))
+        .describedAs("erstes Body-Byte gesendet")
+        .isTrue();
+    assertThat(bodyStarted.get()).isEqualTo(1);
+  }
+
   private TaskSourceRegistry registry() {
     return registry(2000);
   }
@@ -288,10 +309,12 @@ class ContactTaskSourceAdapterTest {
       if (stallBody) {
         exchange.sendResponseHeaders(responseStatus, 0);
         exchange.getResponseBody().flush();
+        stalledHeadersSent.countDown();
         if (!stallBeforeFirstByte) {
           exchange.getResponseBody().write(bytes, 0, 1);
           exchange.getResponseBody().flush();
           bodyStarted.incrementAndGet();
+          firstBodyByteSent.countDown();
         }
         try {
           releaseStalledBody.await(10, TimeUnit.SECONDS);

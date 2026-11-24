@@ -34,12 +34,15 @@ class CustomerTaskSourceAdapterTest {
   private static final UUID TENANT = UUID.randomUUID();
   private static final UUID CUSTOMER = UUID.randomUUID();
   private final CurrentActor actor =
-      new CurrentActor(new TenantInfo(TENANT, 500L), new AuthUser(UUID.randomUUID(), "actor@test.invalid"));
+      new CurrentActor(
+          new TenantInfo(TENANT, 500L), new AuthUser(UUID.randomUUID(), "actor@test.invalid"));
   private final TaskSourceInput source = new TaskSourceInput("application", "customer", CUSTOMER);
   private final AtomicReference<String> bearer = new AtomicReference<>();
   private final AtomicReference<String> path = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
   private final AtomicInteger bodyStarted = new AtomicInteger();
+  private final CountDownLatch stalledHeadersSent = new CountDownLatch(1);
+  private final CountDownLatch firstBodyByteSent = new CountDownLatch(1);
   private final CountDownLatch releaseStalledBody = new CountDownLatch(1);
   private HttpServer server;
   private volatile int responseStatus = 200;
@@ -89,9 +92,10 @@ class CustomerTaskSourceAdapterTest {
 
   @Test
   void mismatchedProofIdsAreNeutralNotFound() {
-    for (final String body : List.of(
-        "{\"tenantId\":\"" + UUID.randomUUID() + "\",\"customerId\":\"" + CUSTOMER + "\"}",
-        "{\"tenantId\":\"" + TENANT + "\",\"customerId\":\"" + UUID.randomUUID() + "\"}")) {
+    for (final String body :
+        List.of(
+            "{\"tenantId\":\"" + UUID.randomUUID() + "\",\"customerId\":\"" + CUSTOMER + "\"}",
+            "{\"tenantId\":\"" + TENANT + "\",\"customerId\":\"" + UUID.randomUUID() + "\"}")) {
       responseBody = body;
       assertThatThrownBy(() -> registry().requireReadable(source, actor))
           .describedAs("Application proof %s, requests %s", body, requests.get())
@@ -127,7 +131,7 @@ class CustomerTaskSourceAdapterTest {
   }
 
   @Test
-  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() {
+  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() throws InterruptedException {
     responseStatus = 403;
     stallBody = true;
 
@@ -135,7 +139,7 @@ class CustomerTaskSourceAdapterTest {
       assertThatThrownBy(() -> registry(3000).requireReadable(source, actor))
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertStalledHeadersSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -166,12 +170,12 @@ class CustomerTaskSourceAdapterTest {
   }
 
   @Test
-  void bodyStallIsBoundedByRequestTimeout() {
+  void bodyStallIsBoundedByRequestTimeout() throws InterruptedException {
     stallBody = true;
 
     try {
       assertSafeUnavailable(registry(3000));
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertFirstBodyByteSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -200,8 +204,10 @@ class CustomerTaskSourceAdapterTest {
     assertSafeUnavailable();
     assertThat(requests.get()).isZero();
 
-    assertThatThrownBy(() -> new CustomerTaskSourceAdapter(
-        baseUrl(), List.of("http://127.0.0.1:1"), new ObjectMapper(), 100, 100))
+    assertThatThrownBy(
+            () ->
+                new CustomerTaskSourceAdapter(
+                    baseUrl(), List.of("http://127.0.0.1:1"), new ObjectMapper(), 100, 100))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(requests.get()).isZero();
   }
@@ -219,18 +225,40 @@ class CustomerTaskSourceAdapterTest {
 
   @Test
   void applicationAdapterIsAbsentUnlessExplicitlyEnabledWithAllowlistedBase() {
-    final ApplicationContextRunner runner = new ApplicationContextRunner()
-        .withBean(ObjectMapper.class, ObjectMapper::new)
-        .withUserConfiguration(CustomerTaskSourceAdapter.class);
+    final ApplicationContextRunner runner =
+        new ApplicationContextRunner()
+            .withBean(ObjectMapper.class, ObjectMapper::new)
+            .withUserConfiguration(CustomerTaskSourceAdapter.class);
     runner.run(context -> assertThat(context.getBeansOfType(TaskSourceAdapter.class)).isEmpty());
-    runner.withPropertyValues(
-        "task.source.customer.enabled=true",
-        "task.source.customer.application-base-url=" + baseUrl(),
-        "task.source.customer.allowed-base-urls=" + baseUrl())
-        .run(context -> {
-          assertThat(context).hasNotFailed();
-          assertThat(context.getBeansOfType(TaskSourceAdapter.class)).hasSize(1);
-        });
+    runner
+        .withPropertyValues(
+            "task.source.customer.enabled=true",
+            "task.source.customer.application-base-url=" + baseUrl(),
+            "task.source.customer.allowed-base-urls=" + baseUrl())
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context.getBeansOfType(TaskSourceAdapter.class)).hasSize(1);
+            });
+  }
+
+  private void assertStalledHeadersSent() throws InterruptedException {
+    // Bei 403 entscheidet der Client an den Headern und schließt den Fehlerstrom; ob der Server
+    // das erste Body-Byte danach noch schreiben kann, ist offen. Gewartet wird daher nur auf die
+    // gesendeten Header, der Body hängt bis zur Freigabe im finally.
+    assertThat(stalledHeadersSent.await(5, TimeUnit.SECONDS))
+        .describedAs("Header vor hängendem Body gesendet")
+        .isTrue();
+  }
+
+  private void assertFirstBodyByteSent() throws InterruptedException {
+    // Der Server zählt erst nach dem Flush des ersten Body-Bytes, der Client kann schon vorher
+    // zurückkehren. Erst das Latch stellt Happens-before zum Zähler her; ohne Signal scheitert der
+    // Test nach der Frist hart.
+    assertThat(firstBodyByteSent.await(5, TimeUnit.SECONDS))
+        .describedAs("erstes Body-Byte gesendet")
+        .isTrue();
+    assertThat(bodyStarted.get()).isEqualTo(1);
   }
 
   private TaskSourceRegistry registry() {
@@ -238,8 +266,10 @@ class CustomerTaskSourceAdapterTest {
   }
 
   private TaskSourceRegistry registry(final int requestTimeoutMillis) {
-    return new TaskSourceRegistry(List.of(new CustomerTaskSourceAdapter(
-        baseUrl(), List.of(baseUrl()), new ObjectMapper(), 1000, requestTimeoutMillis)));
+    return new TaskSourceRegistry(
+        List.of(
+            new CustomerTaskSourceAdapter(
+                baseUrl(), List.of(baseUrl()), new ObjectMapper(), 1000, requestTimeoutMillis)));
   }
 
   private String baseUrl() {
@@ -253,8 +283,10 @@ class CustomerTaskSourceAdapterTest {
   private void assertSafeUnavailable(final TaskSourceRegistry registry) {
     assertThatThrownBy(() -> registry.requireReadable(source, actor))
         .isInstanceOf(ResponseStatusException.class)
-        .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode())
-            .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
+        .satisfies(
+            error ->
+                assertThat(((ResponseStatusException) error).getStatusCode())
+                    .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
         .hasMessageNotContaining("end-user-token");
   }
 
@@ -277,10 +309,12 @@ class CustomerTaskSourceAdapterTest {
       if (stallBody) {
         exchange.sendResponseHeaders(responseStatus, 0);
         exchange.getResponseBody().flush();
+        stalledHeadersSent.countDown();
         if (!stallBeforeFirstByte) {
           exchange.getResponseBody().write(bytes, 0, 1);
           exchange.getResponseBody().flush();
           bodyStarted.incrementAndGet();
+          firstBodyByteSent.countDown();
         }
         try {
           releaseStalledBody.await(10, TimeUnit.SECONDS);
