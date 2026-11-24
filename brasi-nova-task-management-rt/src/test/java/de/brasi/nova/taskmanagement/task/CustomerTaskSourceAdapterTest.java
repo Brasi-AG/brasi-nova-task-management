@@ -34,7 +34,8 @@ class CustomerTaskSourceAdapterTest {
   private static final UUID TENANT = UUID.randomUUID();
   private static final UUID CUSTOMER = UUID.randomUUID();
   private final CurrentActor actor =
-      new CurrentActor(new TenantInfo(TENANT, 500L), new AuthUser(UUID.randomUUID(), "actor@test.invalid"));
+      new CurrentActor(
+          new TenantInfo(TENANT, 500L), new AuthUser(UUID.randomUUID(), "actor@test.invalid"));
   private final TaskSourceInput source = new TaskSourceInput("application", "customer", CUSTOMER);
   private final AtomicReference<String> bearer = new AtomicReference<>();
   private final AtomicReference<String> path = new AtomicReference<>();
@@ -90,9 +91,10 @@ class CustomerTaskSourceAdapterTest {
 
   @Test
   void mismatchedProofIdsAreNeutralNotFound() {
-    for (final String body : List.of(
-        "{\"tenantId\":\"" + UUID.randomUUID() + "\",\"customerId\":\"" + CUSTOMER + "\"}",
-        "{\"tenantId\":\"" + TENANT + "\",\"customerId\":\"" + UUID.randomUUID() + "\"}")) {
+    for (final String body :
+        List.of(
+            "{\"tenantId\":\"" + UUID.randomUUID() + "\",\"customerId\":\"" + CUSTOMER + "\"}",
+            "{\"tenantId\":\"" + TENANT + "\",\"customerId\":\"" + UUID.randomUUID() + "\"}")) {
       responseBody = body;
       assertThatThrownBy(() -> registry().requireReadable(source, actor))
           .describedAs("Application proof %s, requests %s", body, requests.get())
@@ -201,8 +203,10 @@ class CustomerTaskSourceAdapterTest {
     assertSafeUnavailable();
     assertThat(requests.get()).isZero();
 
-    assertThatThrownBy(() -> new CustomerTaskSourceAdapter(
-        baseUrl(), List.of("http://127.0.0.1:1"), new ObjectMapper(), 100, 100))
+    assertThatThrownBy(
+            () ->
+                new CustomerTaskSourceAdapter(
+                    baseUrl(), List.of("http://127.0.0.1:1"), new ObjectMapper(), 100, 100))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(requests.get()).isZero();
   }
@@ -220,18 +224,21 @@ class CustomerTaskSourceAdapterTest {
 
   @Test
   void applicationAdapterIsAbsentUnlessExplicitlyEnabledWithAllowlistedBase() {
-    final ApplicationContextRunner runner = new ApplicationContextRunner()
-        .withBean(ObjectMapper.class, ObjectMapper::new)
-        .withUserConfiguration(CustomerTaskSourceAdapter.class);
+    final ApplicationContextRunner runner =
+        new ApplicationContextRunner()
+            .withBean(ObjectMapper.class, ObjectMapper::new)
+            .withUserConfiguration(CustomerTaskSourceAdapter.class);
     runner.run(context -> assertThat(context.getBeansOfType(TaskSourceAdapter.class)).isEmpty());
-    runner.withPropertyValues(
-        "task.source.customer.enabled=true",
-        "task.source.customer.application-base-url=" + baseUrl(),
-        "task.source.customer.allowed-base-urls=" + baseUrl())
-        .run(context -> {
-          assertThat(context).hasNotFailed();
-          assertThat(context.getBeansOfType(TaskSourceAdapter.class)).hasSize(1);
-        });
+    runner
+        .withPropertyValues(
+            "task.source.customer.enabled=true",
+            "task.source.customer.application-base-url=" + baseUrl(),
+            "task.source.customer.allowed-base-urls=" + baseUrl())
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context.getBeansOfType(TaskSourceAdapter.class)).hasSize(1);
+            });
   }
 
   private void assertFirstBodyByteSent() throws InterruptedException {
@@ -249,8 +256,10 @@ class CustomerTaskSourceAdapterTest {
   }
 
   private TaskSourceRegistry registry(final int requestTimeoutMillis) {
-    return new TaskSourceRegistry(List.of(new CustomerTaskSourceAdapter(
-        baseUrl(), List.of(baseUrl()), new ObjectMapper(), 1000, requestTimeoutMillis)));
+    return new TaskSourceRegistry(
+        List.of(
+            new CustomerTaskSourceAdapter(
+                baseUrl(), List.of(baseUrl()), new ObjectMapper(), 1000, requestTimeoutMillis)));
   }
 
   private String baseUrl() {
@@ -264,8 +273,10 @@ class CustomerTaskSourceAdapterTest {
   private void assertSafeUnavailable(final TaskSourceRegistry registry) {
     assertThatThrownBy(() -> registry.requireReadable(source, actor))
         .isInstanceOf(ResponseStatusException.class)
-        .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode())
-            .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
+        .satisfies(
+            error ->
+                assertThat(((ResponseStatusException) error).getStatusCode())
+                    .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
         .hasMessageNotContaining("end-user-token");
   }
 
