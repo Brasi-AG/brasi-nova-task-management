@@ -20,8 +20,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Der Server antwortet mit einstellbarem Status, Body, Redirect und Verzoegerung. Mit {@link
  * #stallBody(boolean)} sendet er die Header sofort und haelt den Body (optional schon vor dem
  * ersten Byte) bis {@link #releaseStalledBody()} an. Die Latches melden dem Testthread, wie weit
- * der Server dabei gekommen ist; sie stellen das Happens-before her, das ein blosser Zaehler
- * zwischen Server- und Testthread nicht bietet (Wackler tm-adapter-test-flake).
+ * der Server dabei gekommen ist.
+ *
+ * <p>Der Test muss auf diese Ereignisse warten (Wackler tm-adapter-test-flake): Bei Nicht-200 ist
+ * der Adapter schon mit den Headern fertig und wirft bei 403/404 sofort. Der Test pruefte dann,
+ * bevor der Serverthread den frueheren Zaehler nach dem Flush des ersten Body-Bytes erhoeht hatte.
+ * An der Sichtbarkeit lag es nicht, der Zaehler war ein {@code AtomicInteger}; es fehlte das Warten
+ * auf das Ereignis.
  */
 final class TaskSourceProofServer implements AutoCloseable {
 
@@ -123,9 +128,9 @@ final class TaskSourceProofServer implements AutoCloseable {
    * Wartet, bis der Server das erste Body-Byte geflusht hat.
    *
    * <p>Das Latch zaehlt erst nach dem Flush des ersten Body-Bytes herunter; der Client kann schon
-   * vorher zurueckkehren (seine Frist laeuft auf dem angehaltenen Body ab). Erst das erfolgreiche
-   * {@code await} stellt Happens-before zum Serverthread her. Ohne Signal scheitert der Test nach
-   * der Frist hart.
+   * vorher zurueckkehren (seine Frist laeuft auf dem angehaltenen Body ab). Deshalb wartet der Test
+   * auf dieses Ereignis, statt einen Zaehler abzulesen. Ohne Signal scheitert der Test nach der
+   * Frist hart.
    */
   void assertFirstBodyByteSent() throws InterruptedException {
     assertThat(firstBodyByteSent.await(SIGNAL_TIMEOUT_SECONDS, TimeUnit.SECONDS))
