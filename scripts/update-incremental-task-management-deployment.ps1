@@ -189,6 +189,22 @@ function Read-Manifest([string]$Path) {
   Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
 }
 
+# Laufsperre je Dienst: exklusives Handle auf <Dienstordner>\.deploy.lock fuer die ganze Laufzeit. Ein zweiter
+# Updater-Lauf fuer denselben Dienst bricht ab, bevor er etwas anlegt, laedt, stoppt oder verschiebt. Die Sperre
+# haelt das Betriebssystem am Handle; eine liegen gebliebene Datei sperrt nichts.
+function Open-RunLock([string]$Path) {
+  try {
+    return [System.IO.File]::Open($Path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+  } catch {
+    $inner = $_.Exception
+    while ($inner.InnerException) { $inner = $inner.InnerException }
+    if ($inner -is [System.IO.IOException]) {
+      throw "Laufsperre $Path belegt - ein anderer Updater-Lauf fuer diesen Dienst ist aktiv, Abbruch vor jeder Aenderung."
+    }
+    throw "Laufsperre $Path nicht anlegbar ($($inner.Message)) - Abbruch vor jeder Aenderung."
+  }
+}
+
 function Find-Bundle([object]$Manifest, [string]$Classification) {
   @($Manifest.bundles) | Where-Object { $_.classification -eq $Classification } | Select-Object -First 1
 }
@@ -230,6 +246,249 @@ function Wait-ServiceStatus([string]$Name, [string]$Status, [int]$TimeoutSeconds
   $service.WaitForStatus($Status, [TimeSpan]::FromSeconds($TimeoutSeconds))
 }
 
+# Schutz vor Loeschen ausserhalb des vorgesehenen Ordners (zusaetzlich zur Manifestpruefung): $Path muss nach
+# Aufloesung strikt unterhalb von $Parent liegen. Steht unmittelbar vor jedem rekursiven Remove-Item.
+function Assert-PathBelow([string]$Path, [string]$Parent) {
+  try {
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $fullParent = [System.IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
+  } catch {
+    throw "Pfad '$Path' liegt nicht strikt unterhalb von '$Parent' (kein gueltiger Pfad) - nichts geloescht."
+  }
+  if ($fullPath.Length -le $fullParent.Length -or
+      -not $fullPath.StartsWith($fullParent, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Pfad '$Path' liegt nicht strikt unterhalb von '$fullParent' - nichts geloescht."
+  }
+}
+
+# Manifestpruefung (fail-closed): jeder Wert, der spaeter Teil eines Pfads, eines Asset-Namens oder eines
+# Vergleichs wird, muss seine Form haben. Laeuft direkt nach dem Lesen des geladenen Manifests, vor jedem Pfad im
+# Cache oder Staging, jedem weiteren Download, jedem Loeschen und jedem Stop.
+$script:BundleClassifications = @("snapshot-dependencies", "internal-dependencies", "third-party-dependencies")
+$script:Sha256Pattern = '^[0-9a-f]{64}\z'
+$script:ZipNamePattern = '^[A-Za-z0-9][A-Za-z0-9._-]*\.zip\z'
+$script:JarNamePattern = '^[A-Za-z0-9][A-Za-z0-9._-]*\.jar\z'
+$script:ReleasePattern = '^[A-Za-z0-9][A-Za-z0-9._-]*\z'
+$script:PathSegmentPattern = '^[A-Za-z0-9._+-]+\z'
+
+function Stop-InvalidManifest([string]$Field, [object]$Value) {
+  throw "Manifest ungueltig: $Field '$Value' - Abbruch vor jedem Download, jedem Loeschen und jedem Stop."
+}
+
+# Wert einer Eigenschaft; $null, wenn das Objekt oder die Eigenschaft fehlt
+function Get-ManifestValue([object]$Item, [string]$Name) {
+  if ($null -eq $Item -or $Item -isnot [System.Management.Automation.PSCustomObject]) { return $null }
+  $property = $Item.PSObject.Properties[$Name]
+  if ($property) { return $property.Value }
+  return $null
+}
+
+function Test-ManifestText([object]$Value, [string]$Pattern) {
+  return ($Value -is [string]) -and ($Value -cmatch $Pattern)
+}
+
+# Groesse: nicht negative ganze Zahl als JSON-Zahl (kein Text, kein Bruch, kein Wahrheitswert)
+function Test-ManifestSize([object]$Value) {
+  if ($null -eq $Value -or $Value -is [string] -or $Value -is [bool]) { return $false }
+  if (-not ($Value -is [int] -or $Value -is [long] -or $Value -is [decimal] -or $Value -is [double])) { return $false }
+  return ([string]$Value) -cmatch '^[0-9]+\z'
+}
+
+# Relativer Dateipfad unter application\ oder lib\; Trenner / oder \; kein .- oder ..-Segment, kein leeres Segment,
+# kein Laufwerk, kein UNC, keine fuehrenden Trenner; je Segment nur [A-Za-z0-9._+-] und kein Punkt am Ende
+# (Windows entfernt ihn still).
+function Test-ManifestFilePath([object]$Value) {
+  if ($Value -isnot [string] -or [string]::IsNullOrEmpty($Value)) { return $false }
+  $segments = @($Value -split '[\\/]')
+  if ($segments.Count -lt 2 -or ($segments[0] -cne "application" -and $segments[0] -cne "lib")) { return $false }
+  foreach ($segment in $segments) {
+    if ($segment -eq "" -or $segment -eq "." -or $segment -eq ".." -or $segment.EndsWith(".") -or
+        $segment -cnotmatch $script:PathSegmentPattern) {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Assert-ManifestValid([object]$Manifest) {
+  if ($null -eq $Manifest -or $Manifest -isnot [System.Management.Automation.PSCustomObject]) {
+    Stop-InvalidManifest "Wurzel" "kein JSON-Objekt"
+  }
+  $application = Get-ManifestValue $Manifest "applicationArtifact"
+  if ($null -eq $application -or $application -isnot [System.Management.Automation.PSCustomObject]) {
+    Stop-InvalidManifest "applicationArtifact" "fehlt"
+  }
+  $applicationFileName = Get-ManifestValue $application "fileName"
+  if (-not (Test-ManifestText $applicationFileName $script:JarNamePattern)) {
+    Stop-InvalidManifest "applicationArtifact.fileName" $applicationFileName
+  }
+  $applicationPath = Get-ManifestValue $application "path"
+  if ($applicationPath -isnot [string] -or $applicationPath -cne ("application/" + $applicationFileName)) {
+    Stop-InvalidManifest "applicationArtifact.path" $applicationPath
+  }
+  $applicationSha = Get-ManifestValue $application "sha256"
+  if (-not (Test-ManifestText $applicationSha $script:Sha256Pattern)) {
+    Stop-InvalidManifest "applicationArtifact.sha256" $applicationSha
+  }
+  $applicationSize = Get-ManifestValue $application "size"
+  if (-not (Test-ManifestSize $applicationSize)) {
+    Stop-InvalidManifest "applicationArtifact.size" $applicationSize
+  }
+
+  $seen = @()
+  foreach ($bundle in @(Get-ManifestValue $Manifest "bundles")) {
+    if ($null -eq $bundle -or $bundle -isnot [System.Management.Automation.PSCustomObject]) {
+      Stop-InvalidManifest "bundles[]" "kein Objekt"
+    }
+    $classification = Get-ManifestValue $bundle "classification"
+    if ($classification -isnot [string] -or $script:BundleClassifications -cnotcontains $classification) {
+      Stop-InvalidManifest "bundles[].classification" $classification
+    }
+    if ($seen -ccontains $classification) {
+      Stop-InvalidManifest "bundles[].classification (doppelt)" $classification
+    }
+    $seen += $classification
+    $contentSha = Get-ManifestValue $bundle "contentSha256"
+    if (-not (Test-ManifestText $contentSha $script:Sha256Pattern)) {
+      Stop-InvalidManifest "$classification.contentSha256" $contentSha
+    }
+    $hasArtifactSha = $false
+    foreach ($field in @("artifactSha256", "sha256")) {
+      $value = Get-ManifestValue $bundle $field
+      if ($null -eq $value) { continue }
+      if (-not (Test-ManifestText $value $script:Sha256Pattern)) {
+        Stop-InvalidManifest "$classification.$field" $value
+      }
+      $hasArtifactSha = $true
+    }
+    if (-not $hasArtifactSha) {
+      Stop-InvalidManifest "$classification.artifactSha256" "fehlt"
+    }
+    $hasAssetName = $false
+    foreach ($field in @("assetName", "asset", "fileName")) {
+      $value = Get-ManifestValue $bundle $field
+      if ($null -eq $value) { continue }
+      if (-not (Test-ManifestText $value $script:ZipNamePattern)) {
+        Stop-InvalidManifest "$classification.$field" $value
+      }
+      $hasAssetName = $true
+    }
+    if (-not $hasAssetName) {
+      Stop-InvalidManifest "$classification.assetName" "fehlt"
+    }
+    $release = Get-ManifestValue $bundle "release"
+    if ($null -ne $release -and -not (Test-ManifestText $release $script:ReleasePattern)) {
+      Stop-InvalidManifest "$classification.release" $release
+    }
+    $bundleSize = Get-ManifestValue $bundle "size"
+    if (-not (Test-ManifestSize $bundleSize)) {
+      Stop-InvalidManifest "$classification.size" $bundleSize
+    }
+  }
+  foreach ($classification in $script:BundleClassifications) {
+    if ($seen -cnotcontains $classification) {
+      Stop-InvalidManifest "bundles" "$classification fehlt"
+    }
+  }
+
+  # Jeder Pfad darf nur einmal vorkommen, auch ueber Bundles hinweg: Windows unterscheidet weder Gross- und
+  # Kleinschreibung noch / und \, ein spaeterer Eintrag wuerde beim Staging den geprueften Eintrag ueberschreiben.
+  # Der Anwendungspfad steht schon vorab in der Menge, damit ihn ein anderer Eintrag auch dann nicht belegen kann,
+  # wenn der Anwendungseintrag in files[] fehlt.
+  $seenFilePaths = @{}
+  $seenFilePaths[$applicationPath.Replace('\', '/').ToLowerInvariant()] = $true
+  $applicationEntries = 0
+  foreach ($file in @(Get-ManifestValue $Manifest "files")) {
+    if ($null -eq $file) { continue }
+    if ($file -isnot [System.Management.Automation.PSCustomObject]) {
+      Stop-InvalidManifest "files[]" "kein Objekt"
+    }
+    $filePath = Get-ManifestValue $file "path"
+    if (-not (Test-ManifestFilePath $filePath)) {
+      Stop-InvalidManifest "files[].path" $filePath
+    }
+    $normalizedFilePath = $filePath.Replace('\', '/').ToLowerInvariant()
+    $fileClassification = Get-ManifestValue $file "classification"
+    if ($fileClassification -isnot [string] -or
+        ($fileClassification -cne "application" -and $script:BundleClassifications -cnotcontains $fileClassification)) {
+      Stop-InvalidManifest "files[].classification ($filePath)" $fileClassification
+    }
+    # Pfadpraefix und Klasse sind aneinander gebunden: die Anwendung liegt genau auf applicationArtifact.path,
+    # jede Bibliothek (jede andere Klasse) unter lib/, nie unter application/.
+    if ($fileClassification -ceq "application") {
+      if ($filePath -cne $applicationPath) {
+        Stop-InvalidManifest "files[].path (Anwendung nur als applicationArtifact.path '$applicationPath')" $filePath
+      }
+      $applicationEntries++
+    } else {
+      if ($seenFilePaths.ContainsKey($normalizedFilePath)) {
+        Stop-InvalidManifest "files[].path (doppelt)" $filePath
+      }
+      if (-not $normalizedFilePath.StartsWith("lib/", [StringComparison]::Ordinal)) {
+        Stop-InvalidManifest "files[].path (Bibliothek der Klasse $fileClassification nur unter lib/)" $filePath
+      }
+      $seenFilePaths[$normalizedFilePath] = $true
+    }
+    $fileSha = Get-ManifestValue $file "sha256"
+    if (-not (Test-ManifestText $fileSha $script:Sha256Pattern)) {
+      Stop-InvalidManifest "files[].sha256 ($filePath)" $fileSha
+    }
+    $fileSize = Get-ManifestValue $file "size"
+    if (-not (Test-ManifestSize $fileSize)) {
+      Stop-InvalidManifest "files[].size ($filePath)" $fileSize
+    }
+  }
+  # Der DistBuilder schreibt die Anwendung immer als genau einen files[]-Eintrag (Pfad wie applicationArtifact.path)
+  if ($applicationEntries -ne 1) {
+    Stop-InvalidManifest "files[].classification (genau ein Eintrag application erwartet)" "gefunden: $applicationEntries"
+  }
+}
+
+# Abschlusspruefung des gestagten Standes (fail-closed): laeuft nach dem Staging aller Dateien und vor dem Stop.
+# Jede Datei (Anwendung und alle Manifest-Dateien ausser der Anwendung) muss im Staging liegen und Groesse sowie
+# Hash des Manifests haben (Get-DeploymentSha256: Snapshot- und interne JARs ueber den Inhaltshash). lib\ darf genau die
+# Manifest-Dateien enthalten, keine weitere. Das faengt ab, was die Einzelpruefungen beim Kopieren nicht sehen
+# (ueberschriebene oder nachtraeglich geaenderte Dateien, fremde Dateien im Staging).
+function Assert-StagedReleaseComplete([object]$Manifest, [string]$Staging) {
+  $failureTail = "Abbruch vor dem Stop."
+  $checks = New-Object System.Collections.Generic.List[object]
+  $application = $Manifest.applicationArtifact
+  $checks.Add(@{ Path = [string]$application.path; Size = [int64]$application.size; Sha256 = [string]$application.sha256; Classification = "application" })
+  $expectedLibPaths = @{}
+  foreach ($file in @($Manifest.files)) {
+    if ($file.classification -eq "application") { continue }
+    $checks.Add(@{ Path = [string]$file.path; Size = [int64]$file.size; Sha256 = [string]$file.sha256; Classification = [string]$file.classification })
+    $expectedLibPaths[([string]$file.path).Replace('\', '/').ToLowerInvariant()] = $true
+  }
+  foreach ($check in $checks) {
+    $staged = Join-Path $Staging $check.Path
+    if (-not (Test-Path -LiteralPath $staged -PathType Leaf)) {
+      throw "Abschlusspruefung Staging: $($check.Path) fehlt im Staging - $failureTail"
+    }
+    $actualSize = (Get-Item -LiteralPath $staged).Length
+    if ($actualSize -ne $check.Size) {
+      throw "Abschlusspruefung Staging: $($check.Path) hat Groesse $actualSize statt $($check.Size) laut Manifest - $failureTail"
+    }
+    $actualSha256 = if ($check.Classification -eq "application") { Get-Sha256 $staged } else { Get-DeploymentSha256 $staged $check.Classification }
+    if ($actualSha256 -ne $check.Sha256) {
+      throw "Abschlusspruefung Staging: $($check.Path) weicht vom SHA-256 im Manifest ab - $failureTail"
+    }
+  }
+  $libRoot = [System.IO.Path]::GetFullPath((Join-Path $Staging "lib")).TrimEnd('\') + '\'
+  $extraPaths = New-Object System.Collections.Generic.List[string]
+  if (Test-Path -LiteralPath $libRoot -PathType Container) {
+    foreach ($entry in @(Get-ChildItem -LiteralPath $libRoot -Recurse -Force | Where-Object { -not $_.PSIsContainer })) {
+      $relative = "lib/" + $entry.FullName.Substring($libRoot.Length).Replace('\', '/')
+      if (-not $expectedLibPaths.ContainsKey($relative.ToLowerInvariant())) {
+        $extraPaths.Add($relative)
+      }
+    }
+  }
+  if ($extraPaths.Count -gt 0) {
+    throw "Abschlusspruefung Staging: lib enthaelt Dateien ausserhalb des Manifests: $($extraPaths -join ', ') - $failureTail"
+  }
+}
+
 function Compare-ManifestDomain([object]$Current, [object]$Next, [string]$Classification) {
   if (-not $Current) { return $true }
   $old = Find-Bundle $Current $Classification
@@ -264,6 +523,7 @@ function Ensure-BundleCache([object]$Manifest, [object]$Bundle, [string]$CacheRo
     return
   }
   if (Test-Path -LiteralPath $bundleCache) {
+    Assert-PathBelow $bundleCache $CacheRoot
     Remove-Item -LiteralPath $bundleCache -Recurse -Force
   }
   $assetName = Get-BundleAssetName $Bundle
@@ -320,103 +580,121 @@ function Write-DryRunPlan([object]$Current, [object]$Next, [System.Collections.G
   Write-Output ("target release: " + $releasePrefix + "-<timestamp>")
 }
 
+# Nur der Dienstordner selbst entsteht vor der Laufsperre; sie wird vor jeder weiteren Dateioperation genommen,
+# auch bei -DryRun (der liest und schreibt _downloads).
 $root = (Resolve-Path -LiteralPath (New-Item -ItemType Directory -Force -Path $DeploymentRoot)).Path
-$downloads = Join-Path $root "_downloads"
-$cache = Join-Path $root "cache"
-$stagingRoot = Join-Path $root "_staging"
-$releases = Join-Path $root "releases"
-New-Item -ItemType Directory -Force -Path $downloads, $cache, $stagingRoot, $releases | Out-Null
-
-$manifestPath = Join-Path $downloads "deployment-manifest.json"
-Receive-Asset "deployment-manifest.json" $manifestPath $Tag
-$next = Read-Manifest $manifestPath
-$currentManifestPath = Join-Path $root "current\deployment-manifest.json"
-$current = $null
-if (Test-Path -LiteralPath $currentManifestPath -PathType Leaf) {
-  $current = Read-Manifest $currentManifestPath
-}
-
-$downloadsNeeded = New-Object System.Collections.Generic.List[string]
-if (-not $current -or $current.applicationArtifact.sha256 -ne $next.applicationArtifact.sha256) {
-  $downloadsNeeded.Add("application")
-}
-foreach ($classification in @("snapshot-dependencies", "internal-dependencies", "third-party-dependencies")) {
-  if (Compare-ManifestDomain $current $next $classification) {
-    $downloadsNeeded.Add($classification)
-  }
-}
-
-if ($DryRun) {
-  Write-DryRunPlan $current $next $downloadsNeeded $cache
-  return
-}
-
-$applicationAsset = Join-Path $downloads $next.applicationArtifact.fileName
-if ($downloadsNeeded.Contains("application") -or -not (Test-Path -LiteralPath $applicationAsset)) {
-  Receive-Asset $next.applicationArtifact.fileName $applicationAsset $Tag
-}
-if ((Get-Sha256 $applicationAsset) -ne $next.applicationArtifact.sha256) {
-  throw "Application artifact SHA mismatch."
-}
-if ((Get-Item -LiteralPath $applicationAsset).Length -ne [int64]$next.applicationArtifact.size) {
-  throw "Application artifact size mismatch."
-}
-
-foreach ($classification in @("snapshot-dependencies", "internal-dependencies", "third-party-dependencies")) {
-  $bundle = Find-Bundle $next $classification
-  Ensure-BundleCache $next $bundle $cache $downloads
-}
-
-$releaseId = $next.applicationArtifact.sha256.Substring(0, 12) + "-" + (Get-Date -Format "yyyyMMddHHmmss")
-$staging = Join-Path $stagingRoot $releaseId
-if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
-New-Item -ItemType Directory -Force -Path (Join-Path $staging "application"), (Join-Path $staging "lib") | Out-Null
-Copy-Item -LiteralPath $applicationAsset -Destination (Join-Path $staging $next.applicationArtifact.path) -Force
-Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $staging "deployment-manifest.json") -Force
-
-foreach ($file in @($next.files)) {
-  if ($file.classification -eq "application") { continue }
-  $bundle = Find-Bundle $next $file.classification
-  $source = Join-Path (Join-Path $cache $bundle.contentSha256) $file.path
-  $destination = Join-Path $staging $file.path
-  Copy-OrHardlink $source $destination
-  if ((Get-Item -LiteralPath $destination).Length -ne [int64]$file.size) {
-    throw "Staged file size mismatch: $($file.path)."
-  }
-  if ((Get-DeploymentSha256 $destination $file.classification) -ne $file.sha256) {
-    throw "Staged file SHA mismatch: $($file.path)."
-  }
-}
-
-$previous = Join-Path $root ("releases\previous-" + (Get-Date -Format "yyyyMMddHHmmss"))
-$currentPath = Join-Path $root "current"
-$failed = Join-Path $root ("releases\failed-" + $releaseId)
-
-if ($ServiceName) {
-  Stop-Service -Name $ServiceName -Force
-  Wait-ServiceStatus $ServiceName "Stopped" 60
-}
-
+$lockPath = Join-Path $root ".deploy.lock"
+$runLock = Open-RunLock $lockPath
 try {
-  if (Test-Path -LiteralPath $currentPath -PathType Container) {
-    Move-Item -LiteralPath $currentPath -Destination $previous
+  $downloads = Join-Path $root "_downloads"
+  $cache = Join-Path $root "cache"
+  $stagingRoot = Join-Path $root "_staging"
+  $releases = Join-Path $root "releases"
+  New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+
+  $manifestPath = Join-Path $downloads "deployment-manifest.json"
+  Receive-Asset "deployment-manifest.json" $manifestPath $Tag
+  $next = Read-Manifest $manifestPath
+  # Vor jedem Pfad aus Manifestwerten, jedem weiteren Download, jedem Loeschen und jedem Stop
+  Assert-ManifestValid $next
+  New-Item -ItemType Directory -Force -Path $cache, $stagingRoot, $releases | Out-Null
+  $currentManifestPath = Join-Path $root "current\deployment-manifest.json"
+  $current = $null
+  if (Test-Path -LiteralPath $currentManifestPath -PathType Leaf) {
+    $current = Read-Manifest $currentManifestPath
   }
-  Move-Item -LiteralPath $staging -Destination $currentPath
+
+  $downloadsNeeded = New-Object System.Collections.Generic.List[string]
+  if (-not $current -or $current.applicationArtifact.sha256 -ne $next.applicationArtifact.sha256) {
+    $downloadsNeeded.Add("application")
+  }
+  foreach ($classification in @("snapshot-dependencies", "internal-dependencies", "third-party-dependencies")) {
+    if (Compare-ManifestDomain $current $next $classification) {
+      $downloadsNeeded.Add($classification)
+    }
+  }
+
+  if ($DryRun) {
+    Write-DryRunPlan $current $next $downloadsNeeded $cache
+    return
+  }
+
+  $applicationAsset = Join-Path $downloads $next.applicationArtifact.fileName
+  if ($downloadsNeeded.Contains("application") -or -not (Test-Path -LiteralPath $applicationAsset)) {
+    Receive-Asset $next.applicationArtifact.fileName $applicationAsset $Tag
+  }
+  if ((Get-Sha256 $applicationAsset) -ne $next.applicationArtifact.sha256) {
+    throw "Application artifact SHA mismatch."
+  }
+  if ((Get-Item -LiteralPath $applicationAsset).Length -ne [int64]$next.applicationArtifact.size) {
+    throw "Application artifact size mismatch."
+  }
+
+  foreach ($classification in @("snapshot-dependencies", "internal-dependencies", "third-party-dependencies")) {
+    $bundle = Find-Bundle $next $classification
+    Ensure-BundleCache $next $bundle $cache $downloads
+  }
+
+  $releaseId = $next.applicationArtifact.sha256.Substring(0, 12) + "-" + (Get-Date -Format "yyyyMMddHHmmss")
+  $staging = Join-Path $stagingRoot $releaseId
+  if (Test-Path -LiteralPath $staging) {
+    Assert-PathBelow $staging $stagingRoot
+    Remove-Item -LiteralPath $staging -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path (Join-Path $staging "application"), (Join-Path $staging "lib") | Out-Null
+  Copy-Item -LiteralPath $applicationAsset -Destination (Join-Path $staging $next.applicationArtifact.path) -Force
+  Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $staging "deployment-manifest.json") -Force
+
+  foreach ($file in @($next.files)) {
+    if ($file.classification -eq "application") { continue }
+    $bundle = Find-Bundle $next $file.classification
+    $source = Join-Path (Join-Path $cache $bundle.contentSha256) $file.path
+    $destination = Join-Path $staging $file.path
+    Copy-OrHardlink $source $destination
+    if ((Get-Item -LiteralPath $destination).Length -ne [int64]$file.size) {
+      throw "Staged file size mismatch: $($file.path)."
+    }
+    if ((Get-DeploymentSha256 $destination $file.classification) -ne $file.sha256) {
+      throw "Staged file SHA mismatch: $($file.path)."
+    }
+  }
+
+  # Noch einmal alles gestagte gegen das Manifest, vor dem Stop und vor jedem Tausch
+  Assert-StagedReleaseComplete $next $staging
+
+  $previous = Join-Path $root ("releases\previous-" + (Get-Date -Format "yyyyMMddHHmmss"))
+  $currentPath = Join-Path $root "current"
+  $failed = Join-Path $root ("releases\failed-" + $releaseId)
+
   if ($ServiceName) {
-    Start-Service -Name $ServiceName
+    Stop-Service -Name $ServiceName -Force
+    Wait-ServiceStatus $ServiceName "Stopped" 60
   }
-  Test-Health $HealthUrl $HealthTimeoutSeconds
-  Write-Host "DEPLOY SUCCESS $releaseId"
-} catch {
-  if ($ServiceName) {
-    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+
+  try {
+    if (Test-Path -LiteralPath $currentPath -PathType Container) {
+      Move-Item -LiteralPath $currentPath -Destination $previous
+    }
+    Move-Item -LiteralPath $staging -Destination $currentPath
+    if ($ServiceName) {
+      Start-Service -Name $ServiceName
+    }
+    Test-Health $HealthUrl $HealthTimeoutSeconds
+    Write-Host "DEPLOY SUCCESS $releaseId"
+  } catch {
+    if ($ServiceName) {
+      Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $currentPath -PathType Container) {
+      Move-Item -LiteralPath $currentPath -Destination $failed -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $previous -PathType Container) {
+      Move-Item -LiteralPath $previous -Destination $currentPath
+      if ($ServiceName) { Start-Service -Name $ServiceName }
+    }
+    throw
   }
-  if (Test-Path -LiteralPath $currentPath -PathType Container) {
-    Move-Item -LiteralPath $currentPath -Destination $failed -ErrorAction SilentlyContinue
-  }
-  if (Test-Path -LiteralPath $previous -PathType Container) {
-    Move-Item -LiteralPath $previous -Destination $currentPath
-    if ($ServiceName) { Start-Service -Name $ServiceName }
-  }
-  throw
+} finally {
+  # Laufsperre freigeben; die Datei darf liegen bleiben (die Sperre ist das offene Handle, nicht die Datei)
+  $runLock.Dispose()
 }
