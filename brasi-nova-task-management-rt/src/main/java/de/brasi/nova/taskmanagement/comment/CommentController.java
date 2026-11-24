@@ -357,12 +357,14 @@ public class CommentController {
    * <p>Der Teil {@code comment} wird als {@link Part} angenommen, nicht als {@code byte[]}, {@code
    * String} oder {@link MultipartFile} (Intake #152 Teil B): Ein {@code byte[]} oder {@code String}
    * liest Spring ueber einen MessageConverter, und danach laeuft jede {@code RequestBodyAdvice}.
-   * Die KSF-Advice {@code NovaTenantBindingRequestBodyAdvice} (ksf-web) behandelt dabei jedes Array
-   * als {@code Object[]} und scheitert an Primitiv-Arrays wie {@code byte[]} mit {@code
-   * ClassCastException} (500). Ein {@link Part} loest Spring direkt aus der Anfrage auf, ohne
-   * MessageConverter und ohne Advice. {@link MultipartFile} passt nicht, weil ein Teil ohne
-   * Dateinamen (so sendet ihn {@code FormData.append('comment', string)}) in der Multipart-Anfrage
-   * nicht als Datei gefuehrt wird.
+   * Bis KSF 2.3.28 behandelte die KSF-Advice {@code NovaTenantBindingRequestBodyAdvice} (ksf-web)
+   * jedes Array als {@code Object[]} und scheiterte an Primitiv-Arrays wie {@code byte[]} mit
+   * {@code ClassCastException} (500); ab 2.3.29 ist das behoben (KSF-Intake #185). Der Teil bleibt
+   * trotzdem ein {@link Part}: Spring loest ihn direkt aus der Anfrage auf, ohne MessageConverter
+   * und ohne Advice, und der Leser liest die Bytes selbst. Das ist live geprueft und haengt nicht
+   * von der KSF-Version ab. {@link MultipartFile} passt nicht, weil ein Teil ohne Dateinamen (so
+   * sendet ihn {@code FormData.append('comment', string)}) in der Multipart-Anfrage nicht als Datei
+   * gefuehrt wird.
    *
    * @param id externe UUID der Aufgabe
    * @param comment Teil {@code comment} (JSON, UTF-8); den Inhalt liest {@link CommentPartReader}

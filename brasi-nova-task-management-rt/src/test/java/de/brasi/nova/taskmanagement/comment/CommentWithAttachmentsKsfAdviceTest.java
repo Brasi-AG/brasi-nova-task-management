@@ -51,10 +51,13 @@ import org.springframework.util.unit.DataSize;
  * MultipartErrorAdvice} und der KSF-Advice; die Services sind gemockt, ein Mandant steht im Kontext
  * wie im Dienst.
  *
- * <p>Hintergrund: Die KSF-Advice laeuft nach jedem Lesen ueber einen MessageConverter und behandelt
- * jedes Array als {@code Object[]}. Wird der Teil {@code comment} als {@code byte[]} gebunden,
- * endet jede Anfrage mit {@code ClassCastException} und 500 {@code NOVA_INTERNAL_ERROR}. Die
- * bisherigen MockMvc-Tests hatten die Advice nicht im Kontext und blieben gruen.
+ * <p>Hintergrund: Bis KSF 2.3.28 behandelte die KSF-Advice jedes Array als {@code Object[]}, und
+ * sie lief nach jedem Lesen ueber einen MessageConverter. Wurde der Teil {@code comment} als {@code
+ * byte[]} gebunden, endete jede Anfrage mit {@code ClassCastException} und 500 {@code
+ * NOVA_INTERNAL_ERROR}; der Live-Befund auf dev-ui entstand so. Die damaligen MockMvc-Tests hatten
+ * die Advice nicht im Kontext und blieben gruen. Ab KSF 2.3.29 ueberspringt die Advice
+ * Primitiv-Arrays (KSF-Intake #185); der Test sichert weiter den Weg ueber {@code Part} mit der
+ * echten Advice ab.
  *
  * <p>Erwartet: Der Teil {@code comment} wird mit {@code application/json}, ohne Content-Type und
  * als {@code text/plain} angenommen (201); ungueltiges JSON ergibt 400 mit {@code errorKey} {@code
