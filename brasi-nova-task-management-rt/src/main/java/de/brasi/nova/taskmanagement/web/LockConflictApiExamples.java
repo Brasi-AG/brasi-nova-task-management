@@ -36,12 +36,15 @@ public final class LockConflictApiExamples {
 
   /**
    * Baustein der 409-Beschreibungen: Sequenzkonflikt eines Verlaufseintrags (Intake #180).
-   * Wiederholung der Vergabe durch KSF ab 2.3.29 (intake#35).
+   * Wiederholung der Vergabe durch KSF ab 2.3.29 (intake#35): hoechstens zehn Versuche einschliesslich
+   * des ersten ({@code RetryingSequenceIdSource.MAX_ATTEMPTS}), wiederholt wird nur der
+   * Sequenzkonflikt.
    */
   public static final String HISTORY_SEQUENCE_CONFLICT =
       " Jeder Verlaufseintrag vergibt eine Sequenz, die sich alle Aufgaben und Mandanten teilen"
           + " (optimistische Sperre). Vergeben zwei Aufrufe gleichzeitig eine Sequenz, auch fuer"
-          + " verschiedene Aufgaben, wiederholt der Server die Vergabe bis zu zehnmal. Scheitern"
+          + " verschiedene Aufgaben, wiederholt der Server nur bei diesem Sequenzkonflikt die"
+          + " Vergabe, mit hoechstens zehn Versuchen einschliesslich des ersten. Scheitern"
           + " alle Versuche, bekommt der Aufruf 409 mit der Meldung, dass die Sequenz gleichzeitig"
           + " geaendert wurde; die Transaktion rollt vollstaendig zurueck und nichts wurde"
           + " geaendert. Den Stand neu laden und die Anfrage wiederholen.";
