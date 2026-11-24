@@ -36,6 +36,7 @@ import de.brasi.nova.taskmanagement.security.it.RefSchemaItDb;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnabled;
 import de.brasi.nova.taskmanagement.security.it.RefSchemaItEnv;
 import de.brasi.nova.taskmanagement.security.it.WhoAmIProbeController;
+import de.brasi.nova.taskmanagement.support.AwaitStreamingBodyFilter;
 import de.brasi.nova.taskmanagement.time.AuditTimeConverter;
 import de.brasi.nova.taskmanagement.web.MultipartErrorAdvice;
 import io.jsonwebtoken.Jwts;
@@ -1023,6 +1024,8 @@ class CommentAttachmentIT {
   private MockMvc buildMvc() {
     return MockMvcBuilders.webAppContextSetup(webApplicationContext)
         .apply(SecurityMockMvcConfigurers.springSecurity())
+        // nach springSecurity() registriert, also innerhalb der Security-Kette
+        .addFilters(new AwaitStreamingBodyFilter())
         .build();
   }
 
@@ -1170,8 +1173,9 @@ class CommentAttachmentIT {
 
   /**
    * Ruft einen Binaer-Endpunkt ab. Die Antwort ist ein {@code StreamingResponseBody}: der erste
-   * Durchlauf startet die asynchrone Verarbeitung, {@code asyncDispatch} wartet auf das Kopieren
-   * und schliesst den Request ab. Ohne Async (Fehler) zaehlt der erste Durchlauf.
+   * Durchlauf startet die asynchrone Verarbeitung und kehrt erst nach dem Kopieren zurueck ({@link
+   * AwaitStreamingBodyFilter}), {@code asyncDispatch} schliesst den Request ab. Ohne Async (Fehler)
+   * zaehlt der erste Durchlauf.
    */
   private static MvcResult fetch(
       final MockMvc mvc, final MockHttpServletRequestBuilder request, final String token)
