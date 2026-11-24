@@ -62,11 +62,13 @@ public class CommentPartReader {
    *
    * <p>Warum {@link Part} und nicht {@code byte[]} oder {@code String} (Intake #152 Teil B): Ein
    * als {@code byte[]} oder {@code String} gebundener Teil laeuft ueber einen MessageConverter und
-   * danach durch jede {@code RequestBodyAdvice}. Die KSF-Advice {@code
-   * NovaTenantBindingRequestBodyAdvice} (ksf-web) behandelt jedes Array als {@code Object[]} und
-   * bricht bei Primitiv-Arrays wie {@code byte[]} mit {@code ClassCastException} ab (500 {@code
-   * NOVA_INTERNAL_ERROR}). Ein {@link Part} loest Spring ohne MessageConverter und ohne Advice auf;
-   * die Bytes liest dieser Leser selbst aus {@link Part#getInputStream()}.
+   * danach durch jede {@code RequestBodyAdvice}. Bis KSF 2.3.28 behandelte die KSF-Advice {@code
+   * NovaTenantBindingRequestBodyAdvice} (ksf-web) jedes Array als {@code Object[]} und brach bei
+   * Primitiv-Arrays wie {@code byte[]} mit {@code ClassCastException} ab (500 {@code
+   * NOVA_INTERNAL_ERROR}); ab 2.3.29 ist das behoben (KSF-Intake #185). Der Teil bleibt trotzdem
+   * ein {@link Part}: Spring loest ihn ohne MessageConverter und ohne Advice direkt aus der Anfrage
+   * auf, und die Bytes liest dieser Leser selbst aus {@link Part#getInputStream()}. Das ist live
+   * geprueft und haengt nicht von der KSF-Version ab.
    *
    * <p>Verhalten wie bisher: Ein leerer Teil gilt als fehlend ({@link
    * MissingServletRequestPartException}, 400 {@code NOVA_VALIDATION_FAILED}), wie es Spring beim

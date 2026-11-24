@@ -1145,11 +1145,6 @@
     "where": "Antwort 404: ohne Inhalt, daher ohne Example"
   },
   {
-    "operation": "createFromSource",
-    "rule": "response-example",
-    "where": "Antwort 409: ohne Inhalt, daher ohne Example"
-  },
-  {
     "operation": "createTag",
     "rule": "op-summary-de",
     "where": "description"
@@ -2293,16 +2288,6 @@
     "operation": "markRead",
     "rule": "response-example",
     "where": "Antwort 404: ohne Inhalt, daher ohne Example"
-  },
-  {
-    "operation": "patch",
-    "rule": "request-example",
-    "where": "Anfrage application/json"
-  },
-  {
-    "operation": "patch",
-    "rule": "response-example",
-    "where": "Antwort 400: ohne Inhalt, daher ohne Example"
   },
   {
     "operation": "patch",

@@ -34,14 +34,17 @@ public final class LockConflictApiExamples {
           + TranslatesLockConflicts.TAG
           + "“, nichts wurde geaendert, die Anfrage wiederholen.";
 
-  /** Baustein der 409-Beschreibungen: Sequenzkonflikt eines Verlaufseintrags (Intake #180). */
+  /**
+   * Baustein der 409-Beschreibungen: Sequenzkonflikt eines Verlaufseintrags (Intake #180).
+   * Wiederholung der Vergabe durch KSF ab 2.3.29 (intake#35).
+   */
   public static final String HISTORY_SEQUENCE_CONFLICT =
       " Jeder Verlaufseintrag vergibt eine Sequenz, die sich alle Aufgaben und Mandanten teilen"
-          + " (optimistische Sperre, ohne Wiederholung durch den Server). Vergeben zwei Aufrufe"
-          + " gleichzeitig eine Sequenz, auch fuer verschiedene Aufgaben, bekommt einer 409 mit der"
-          + " Meldung, dass die Sequenz gleichzeitig geaendert wurde; die Transaktion rollt"
-          + " vollstaendig zurueck und nichts wurde geaendert. Den Stand neu laden und die Anfrage"
-          + " wiederholen.";
+          + " (optimistische Sperre). Vergeben zwei Aufrufe gleichzeitig eine Sequenz, auch fuer"
+          + " verschiedene Aufgaben, wiederholt der Server die Vergabe bis zu zehnmal. Scheitern"
+          + " alle Versuche, bekommt der Aufruf 409 mit der Meldung, dass die Sequenz gleichzeitig"
+          + " geaendert wurde; die Transaktion rollt vollstaendig zurueck und nichts wurde"
+          + " geaendert. Den Stand neu laden und die Anfrage wiederholen.";
 
   /** Beispiel-UUID einer Aufgabe in den Pfaden. */
   private static final String TASK_ID = "3f2b7c1e-8a4d-4e59-9c3a-0b1d2e3f4a5b";
