@@ -40,6 +40,7 @@ class CustomerTaskSourceAdapterTest {
   private final AtomicReference<String> path = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
   private final AtomicInteger bodyStarted = new AtomicInteger();
+  private final CountDownLatch firstBodyByteSent = new CountDownLatch(1);
   private final CountDownLatch releaseStalledBody = new CountDownLatch(1);
   private HttpServer server;
   private volatile int responseStatus = 200;
@@ -127,7 +128,7 @@ class CustomerTaskSourceAdapterTest {
   }
 
   @Test
-  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() {
+  void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() throws InterruptedException {
     responseStatus = 403;
     stallBody = true;
 
@@ -135,7 +136,7 @@ class CustomerTaskSourceAdapterTest {
       assertThatThrownBy(() -> registry(3000).requireReadable(source, actor))
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertFirstBodyByteSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -166,12 +167,12 @@ class CustomerTaskSourceAdapterTest {
   }
 
   @Test
-  void bodyStallIsBoundedByRequestTimeout() {
+  void bodyStallIsBoundedByRequestTimeout() throws InterruptedException {
     stallBody = true;
 
     try {
       assertSafeUnavailable(registry(3000));
-      assertThat(bodyStarted.get()).isEqualTo(1);
+      assertFirstBodyByteSent();
     } finally {
       releaseStalledBody.countDown();
     }
@@ -233,6 +234,16 @@ class CustomerTaskSourceAdapterTest {
         });
   }
 
+  private void assertFirstBodyByteSent() throws InterruptedException {
+    // Der Server zählt erst nach dem Flush des ersten Body-Bytes, der Client kann schon vorher
+    // zurückkehren. Erst das Latch stellt Happens-before zum Zähler her; ohne Signal scheitert der
+    // Test nach der Frist hart.
+    assertThat(firstBodyByteSent.await(5, TimeUnit.SECONDS))
+        .describedAs("erstes Body-Byte gesendet")
+        .isTrue();
+    assertThat(bodyStarted.get()).isEqualTo(1);
+  }
+
   private TaskSourceRegistry registry() {
     return registry(2000);
   }
@@ -281,6 +292,7 @@ class CustomerTaskSourceAdapterTest {
           exchange.getResponseBody().write(bytes, 0, 1);
           exchange.getResponseBody().flush();
           bodyStarted.incrementAndGet();
+          firstBodyByteSent.countDown();
         }
         try {
           releaseStalledBody.await(10, TimeUnit.SECONDS);
