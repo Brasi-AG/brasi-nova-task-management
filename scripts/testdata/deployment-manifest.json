@@ -1,0 +1,1946 @@
+{
+  "schemaVersion": 1,
+  "applicationArtifact": {
+    "path": "application/brasi-nova-task-management-rt-0.0.1-SNAPSHOT.jar",
+    "fileName": "brasi-nova-task-management-rt-0.0.1-SNAPSHOT.jar",
+    "sha256": "bfbcc05bb30f865ed781d3b198a957f2227652e7571474231ad4b008d222eb45",
+    "size": 626220,
+    "classification": "application",
+    "layer": "application"
+  },
+  "bundles": [
+    {
+      "classification": "snapshot-dependencies",
+      "layer": "snapshot-dependencies",
+      "path": "bundles/snapshot-dependencies-3a2006bef4b7711e0ef9940fa9871353fbd2dd974f3b8499906a4335e8487ebd.zip",
+      "fileName": "snapshot-dependencies-3a2006bef4b7711e0ef9940fa9871353fbd2dd974f3b8499906a4335e8487ebd.zip",
+      "assetName": "snapshot-dependencies-3a2006bef4b7711e0ef9940fa9871353fbd2dd974f3b8499906a4335e8487ebd.zip",
+      "contentSha256": "3a2006bef4b7711e0ef9940fa9871353fbd2dd974f3b8499906a4335e8487ebd",
+      "sha256": "f3208065a13654d86441ebc17a5a1ce83e20ed15e3003356166168109174cacf",
+      "artifactSha256": "f3208065a13654d86441ebc17a5a1ce83e20ed15e3003356166168109174cacf",
+      "release": "deployment-content-store",
+      "size": 281760,
+      "fileCount": 2,
+      "uncompressedSize": 394985
+    },
+    {
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "path": "bundles/internal-dependencies-bcdab50bc66680f191f0a1bc8433f4e38472951b783ebaa473846b5b7f6b5573.zip",
+      "fileName": "internal-dependencies-bcdab50bc66680f191f0a1bc8433f4e38472951b783ebaa473846b5b7f6b5573.zip",
+      "assetName": "internal-dependencies-bcdab50bc66680f191f0a1bc8433f4e38472951b783ebaa473846b5b7f6b5573.zip",
+      "contentSha256": "bcdab50bc66680f191f0a1bc8433f4e38472951b783ebaa473846b5b7f6b5573",
+      "sha256": "98bcabfc0e3de549af0cb37b279205c69198272721a1a35faed8f799a61fccf3",
+      "artifactSha256": "98bcabfc0e3de549af0cb37b279205c69198272721a1a35faed8f799a61fccf3",
+      "release": "deployment-content-store",
+      "size": 4787270,
+      "fileCount": 7,
+      "uncompressedSize": 5003133
+    },
+    {
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "path": "bundles/third-party-dependencies-988a4a6c2055ebd18ff941cfe212a4256d163e0406d7264a815db1712a1c0c1b.zip",
+      "fileName": "third-party-dependencies-988a4a6c2055ebd18ff941cfe212a4256d163e0406d7264a815db1712a1c0c1b.zip",
+      "assetName": "third-party-dependencies-988a4a6c2055ebd18ff941cfe212a4256d163e0406d7264a815db1712a1c0c1b.zip",
+      "contentSha256": "988a4a6c2055ebd18ff941cfe212a4256d163e0406d7264a815db1712a1c0c1b",
+      "sha256": "cea0d2934a6c4eb8d2f05159eed11a55bf0be7d6dc6fc53e32c0dd03a6fb3c79",
+      "artifactSha256": "cea0d2934a6c4eb8d2f05159eed11a55bf0be7d6dc6fc53e32c0dd03a6fb3c79",
+      "release": "deployment-content-store",
+      "size": 59327076,
+      "fileCount": 116,
+      "uncompressedSize": 65851708
+    }
+  ],
+  "files": [
+    {
+      "path": "application/brasi-nova-task-management-rt-0.0.1-SNAPSHOT.jar",
+      "fileName": "brasi-nova-task-management-rt-0.0.1-SNAPSHOT.jar",
+      "sha256": "bfbcc05bb30f865ed781d3b198a957f2227652e7571474231ad4b008d222eb45",
+      "size": 626220,
+      "classification": "application",
+      "layer": "application"
+    },
+    {
+      "path": "lib/accessors-smart-2.5.2.jar",
+      "fileName": "accessors-smart-2.5.2.jar",
+      "sha256": "9b8a7bc43861d6156c021166d941fb7dddbe4463e2fa5ee88077e4b01452a836",
+      "size": 30358,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "net.minidev",
+        "artifactId": "accessors-smart",
+        "type": "jar",
+        "version": "2.5.2",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/artemis-commons-2.40.0.jar",
+      "fileName": "artemis-commons-2.40.0.jar",
+      "sha256": "af6a95589306e1f3cb40df36aa922fd20e3ad6427307f5916accadc816ea6118",
+      "size": 673435,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.activemq",
+        "artifactId": "artemis-commons",
+        "type": "jar",
+        "version": "2.40.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/artemis-core-client-2.40.0.jar",
+      "fileName": "artemis-core-client-2.40.0.jar",
+      "sha256": "c921e4acf0c16895f0ba80f4ac32bc8b906af1c744670be5090ca2bddfa1e4ea",
+      "size": 845849,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.activemq",
+        "artifactId": "artemis-core-client",
+        "type": "jar",
+        "version": "2.40.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/artemis-jakarta-client-2.40.0.jar",
+      "fileName": "artemis-jakarta-client-2.40.0.jar",
+      "sha256": "f5d3c7336f3fc840363df976e329b827709e16f5c25e2e11dd240af32371282e",
+      "size": 191016,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.activemq",
+        "artifactId": "artemis-jakarta-client",
+        "type": "jar",
+        "version": "2.40.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/artemis-selector-2.40.0.jar",
+      "fileName": "artemis-selector-2.40.0.jar",
+      "sha256": "b86c5bba8418ce6e9646ef1a5d60ab85721eb8f0c5d2581b959289296ad9b59b",
+      "size": 113471,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.activemq",
+        "artifactId": "artemis-selector",
+        "type": "jar",
+        "version": "2.40.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/asm-9.7.1.jar",
+      "fileName": "asm-9.7.1.jar",
+      "sha256": "8cadd43ac5eb6d09de05faecca38b917a040bb9139c7edeb4cc81c740b713281",
+      "size": 126093,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.ow2.asm",
+        "artifactId": "asm",
+        "type": "jar",
+        "version": "9.7.1",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/asn-one-0.6.0.jar",
+      "fileName": "asn-one-0.6.0.jar",
+      "sha256": "e4f70fd92849b52240048b8ebace0c9a17d3bb7b9c882b3c7778cec3458495f5",
+      "size": 67005,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.hierynomus",
+        "artifactId": "asn-one",
+        "type": "jar",
+        "version": "0.6.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/aspectjrt-1.9.25.jar",
+      "fileName": "aspectjrt-1.9.25.jar",
+      "sha256": "adb2acbc8900b3fe0e278f97a5aa33ba50dc1b40f56cc775416542c69bbc0728",
+      "size": 132610,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.aspectj",
+        "artifactId": "aspectjrt",
+        "type": "jar",
+        "version": "1.9.25",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/aspectjweaver-1.9.25.jar",
+      "fileName": "aspectjweaver-1.9.25.jar",
+      "sha256": "a7ec6d1f7dd819d743e3a20f95609ec91e41f0b7b4e542b2ff62cfa0eb69b67e",
+      "size": 2190658,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.aspectj",
+        "artifactId": "aspectjweaver",
+        "type": "jar",
+        "version": "1.9.25",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/bcprov-jdk18on-1.80.jar",
+      "fileName": "bcprov-jdk18on-1.80.jar",
+      "sha256": "e8ad209f8c58d291a37ca9750e9e9fac60596956c983e49dd8282381dd8b3249",
+      "size": 8682747,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.bouncycastle",
+        "artifactId": "bcprov-jdk18on",
+        "type": "jar",
+        "version": "1.80",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/brasi-nova-task-management-api-0.0.1-SNAPSHOT.jar",
+      "fileName": "brasi-nova-task-management-api-0.0.1-SNAPSHOT.jar",
+      "sha256": "f7106e48e13d2e369faa3ec8f79102a0a7593915968cca4e4f2888f08285613b",
+      "size": 331043,
+      "classification": "snapshot-dependencies",
+      "layer": "snapshot-dependencies",
+      "maven": {
+        "groupId": "de.brasi.nova",
+        "artifactId": "brasi-nova-task-management-api",
+        "type": "jar",
+        "version": "0.0.1-SNAPSHOT",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/brasi-nova-task-management-entities-0.0.1-SNAPSHOT.jar",
+      "fileName": "brasi-nova-task-management-entities-0.0.1-SNAPSHOT.jar",
+      "sha256": "8bf72466de06c040117f1ccee2d465248c756484f120659e36ce00b2c78dcbeb",
+      "size": 63942,
+      "classification": "snapshot-dependencies",
+      "layer": "snapshot-dependencies",
+      "maven": {
+        "groupId": "de.brasi.nova",
+        "artifactId": "brasi-nova-task-management-entities",
+        "type": "jar",
+        "version": "0.0.1-SNAPSHOT",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/caffeine-3.2.0.jar",
+      "fileName": "caffeine-3.2.0.jar",
+      "sha256": "ec411dfdf0c03f25218648ce89861630b71680e5858a9a7278ebac8e55cab3d7",
+      "size": 906581,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.github.ben-manes.caffeine",
+        "artifactId": "caffeine",
+        "type": "jar",
+        "version": "3.2.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/classmate-1.7.0.jar",
+      "fileName": "classmate-1.7.0.jar",
+      "sha256": "cb868f231c5cceb89d795ea00e6e1b7a93b8f4ac1ce1d8be76dde322dff4a046",
+      "size": 68899,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml",
+        "artifactId": "classmate",
+        "type": "jar",
+        "version": "1.7.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/commons-beanutils-1.10.1.jar",
+      "fileName": "commons-beanutils-1.10.1.jar",
+      "sha256": "707a09e86ed1cf5516cdabdf1710d8fe201b6e26e7233870dce1d0ccf2a468d1",
+      "size": 246568,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "commons-beanutils",
+        "artifactId": "commons-beanutils",
+        "type": "jar",
+        "version": "1.10.1",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/commons-collections-3.2.2.jar",
+      "fileName": "commons-collections-3.2.2.jar",
+      "sha256": "eeeae917917144a68a741d4c0dff66aa5c5c5fd85593ff217bced3fc8ca783b8",
+      "size": 588337,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "commons-collections",
+        "artifactId": "commons-collections",
+        "type": "jar",
+        "version": "3.2.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/commons-lang3-3.17.0.jar",
+      "fileName": "commons-lang3-3.17.0.jar",
+      "sha256": "6ee731df5c8e5a2976a1ca023b6bb320ea8d3539fbe64c8a1d5cb765127c33b4",
+      "size": 673587,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.commons",
+        "artifactId": "commons-lang3",
+        "type": "jar",
+        "version": "3.17.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/commons-logging-1.3.4.jar",
+      "fileName": "commons-logging-1.3.4.jar",
+      "sha256": "bc2dfe32f1ef06509e6a065144c1adf7b420eabf11a87f30bd127f8faa332016",
+      "size": 73721,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "commons-logging",
+        "artifactId": "commons-logging",
+        "type": "jar",
+        "version": "1.3.4",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/error_prone_annotations-2.36.0.jar",
+      "fileName": "error_prone_annotations-2.36.0.jar",
+      "sha256": "77440e270b0bc9a249903c5a076c36a722c4886ca4f42675f2903a1c53ed61a5",
+      "size": 19401,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.google.errorprone",
+        "artifactId": "error_prone_annotations",
+        "type": "jar",
+        "version": "2.36.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/flyway-core-11.7.2.jar",
+      "fileName": "flyway-core-11.7.2.jar",
+      "sha256": "ff01fab3bcfd79e9345df191ecf82cbe1f9f65a757266158bd691564b1c1282c",
+      "size": 698198,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.flywaydb",
+        "artifactId": "flyway-core",
+        "type": "jar",
+        "version": "11.7.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/flyway-sqlserver-11.7.2.jar",
+      "fileName": "flyway-sqlserver-11.7.2.jar",
+      "sha256": "f475905cc1c543ce4cef8c8d14aec42d76ed1715bc454c7d8f5c2efe4e620ea4",
+      "size": 53611,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.flywaydb",
+        "artifactId": "flyway-sqlserver",
+        "type": "jar",
+        "version": "11.7.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/fontbox-3.0.3.jar",
+      "fileName": "fontbox-3.0.3.jar",
+      "sha256": "65690c3f39b04a14d12c17f4998c15186ce877d3e2ec222c708577e3cc028030",
+      "size": 1642152,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.pdfbox",
+        "artifactId": "fontbox",
+        "type": "jar",
+        "version": "3.0.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/HdrHistogram-2.2.2.jar",
+      "fileName": "HdrHistogram-2.2.2.jar",
+      "sha256": "22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8",
+      "size": 177206,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.hdrhistogram",
+        "artifactId": "HdrHistogram",
+        "type": "jar",
+        "version": "2.2.2",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/hibernate-validator-8.0.3.Final.jar",
+      "fileName": "hibernate-validator-8.0.3.Final.jar",
+      "sha256": "2ad24670fd08e21d3f43d3105d5326bd5ef6b01e819c5cd103823866b954517e",
+      "size": 1330712,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.hibernate.validator",
+        "artifactId": "hibernate-validator",
+        "type": "jar",
+        "version": "8.0.3.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/HikariCP-6.3.2.jar",
+      "fileName": "HikariCP-6.3.2.jar",
+      "sha256": "6d3c1b8dc157f6a8525935cb3a3c56f8b2334a6d5c394552a50533ca3b9236bf",
+      "size": 171134,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.zaxxer",
+        "artifactId": "HikariCP",
+        "type": "jar",
+        "version": "6.3.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/httpclient5-5.5.jar",
+      "fileName": "httpclient5-5.5.jar",
+      "sha256": "496b4b0e8d5f3a8139a5d2638486d304758bac3a9c39d76989f663cfd9354fc9",
+      "size": 954979,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.httpcomponents.client5",
+        "artifactId": "httpclient5",
+        "type": "jar",
+        "version": "5.5",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/httpcore5-5.3.4.jar",
+      "fileName": "httpcore5-5.3.4.jar",
+      "sha256": "f2b2fd7a0164e8c3120cd8437bc9fea439239e165c17262b3e907daa7e979f80",
+      "size": 908601,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.httpcomponents.core5",
+        "artifactId": "httpcore5",
+        "type": "jar",
+        "version": "5.3.4",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/httpcore5-h2-5.3.4.jar",
+      "fileName": "httpcore5-h2-5.3.4.jar",
+      "sha256": "1fb4f34e4b612e7c127ad693335583587850b17ce9b1c366f9de1ca49fe2c781",
+      "size": 241692,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.httpcomponents.core5",
+        "artifactId": "httpcore5-h2",
+        "type": "jar",
+        "version": "5.3.4",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-annotations-2.19.2.jar",
+      "fileName": "jackson-annotations-2.19.2.jar",
+      "sha256": "e516743a316dcf83c572ffc9cb6e8c5e8c134880c8c5155b02f7b34e9c5dc3cf",
+      "size": 79309,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.core",
+        "artifactId": "jackson-annotations",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-core-2.19.2.jar",
+      "fileName": "jackson-core-2.19.2.jar",
+      "sha256": "aa77eaf29293a868c47372194f7c5287d77d9370b04ea25d3fffc1e4904b5880",
+      "size": 591418,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.core",
+        "artifactId": "jackson-core",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-databind-2.19.2.jar",
+      "fileName": "jackson-databind-2.19.2.jar",
+      "sha256": "0a1bd4e9b0d670e632d40ee8c625ad376233502f03c2f5889baea95d025b47a7",
+      "size": 1679351,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.core",
+        "artifactId": "jackson-databind",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-dataformat-toml-2.19.2.jar",
+      "fileName": "jackson-dataformat-toml-2.19.2.jar",
+      "sha256": "74ec2f9c4404a7b8fc1e236d94be8e4ed8aaba93623153a57595cc081c1a9ec1",
+      "size": 56196,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.dataformat",
+        "artifactId": "jackson-dataformat-toml",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-dataformat-yaml-2.19.2.jar",
+      "fileName": "jackson-dataformat-yaml-2.19.2.jar",
+      "sha256": "80a213e7d998244922ab7bcf0938ea03eb7868e88e2d05a8407c6228c885a37e",
+      "size": 60230,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.dataformat",
+        "artifactId": "jackson-dataformat-yaml",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-datatype-jdk8-2.19.2.jar",
+      "fileName": "jackson-datatype-jdk8-2.19.2.jar",
+      "sha256": "6055fef10756e8bd1b0e8807aa1d881338c63ca95d59271e1da4922b9a17581e",
+      "size": 36217,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.datatype",
+        "artifactId": "jackson-datatype-jdk8",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-datatype-jsr310-2.19.2.jar",
+      "fileName": "jackson-datatype-jsr310-2.19.2.jar",
+      "sha256": "9709f43e0fa5625633ee66db6c078fb1e8c7ca02092696ba95ea785dbf0fa6a1",
+      "size": 136961,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.datatype",
+        "artifactId": "jackson-datatype-jsr310",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jackson-module-parameter-names-2.19.2.jar",
+      "fileName": "jackson-module-parameter-names-2.19.2.jar",
+      "sha256": "5cafef98759b40a418631e91257930a5e30abc162d9a690c1e365dbbdacdfecb",
+      "size": 10394,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.fasterxml.jackson.module",
+        "artifactId": "jackson-module-parameter-names",
+        "type": "jar",
+        "version": "2.19.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jakarta.activation-api-2.1.3.jar",
+      "fileName": "jakarta.activation-api-2.1.3.jar",
+      "sha256": "01b176d718a169263e78290691fc479977186bcc6b333487325084d6586f4627",
+      "size": 66514,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "jakarta.activation",
+        "artifactId": "jakarta.activation-api",
+        "type": "jar",
+        "version": "2.1.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jakarta.annotation-api-2.1.1.jar",
+      "fileName": "jakarta.annotation-api-2.1.1.jar",
+      "sha256": "5f65fdaf424eee2b55e1d882ba9bb376be93fb09b37b808be6e22e8851c909fe",
+      "size": 26141,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "jakarta.annotation",
+        "artifactId": "jakarta.annotation-api",
+        "type": "jar",
+        "version": "2.1.1",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jakarta.jms-api-3.1.0.jar",
+      "fileName": "jakarta.jms-api-3.1.0.jar",
+      "sha256": "6605e08075ab389c359451c7854808cf4b1575e1ea6317e534e9d4df088096df",
+      "size": 58964,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "jakarta.jms",
+        "artifactId": "jakarta.jms-api",
+        "type": "jar",
+        "version": "3.1.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jakarta.validation-api-3.0.2.jar",
+      "fileName": "jakarta.validation-api-3.0.2.jar",
+      "sha256": "291c25e6910cc6a7ebd96d4c6baebf6d7c37676c5482c2d96146e901b62c1fc9",
+      "size": 93298,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "jakarta.validation",
+        "artifactId": "jakarta.validation-api",
+        "type": "jar",
+        "version": "3.0.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jakarta.xml.bind-api-4.0.2.jar",
+      "fileName": "jakarta.xml.bind-api-4.0.2.jar",
+      "sha256": "0d6bcfe47763e85047acf7c398336dc84ff85ebcad0a7cb6f3b9d3e981245406",
+      "size": 131033,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "jakarta.xml.bind",
+        "artifactId": "jakarta.xml.bind-api",
+        "type": "jar",
+        "version": "4.0.2",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jboss-logging-3.6.1.Final.jar",
+      "fileName": "jboss-logging-3.6.1.Final.jar",
+      "sha256": "5e08a4b092dc85b337f0910a740571d8720cfa565fabd880a8caf94a657ca416",
+      "size": 61853,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.jboss.logging",
+        "artifactId": "jboss-logging",
+        "type": "jar",
+        "version": "3.6.1.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jgroups-5.3.13.Final.jar",
+      "fileName": "jgroups-5.3.13.Final.jar",
+      "sha256": "55d86426ed741523dffc08f4c1a5ab1f2d693176ca399479b3f2e4e3fd3b0d4e",
+      "size": 2395791,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.jgroups",
+        "artifactId": "jgroups",
+        "type": "jar",
+        "version": "5.3.13.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jjwt-api-0.12.6.jar",
+      "fileName": "jjwt-api-0.12.6.jar",
+      "sha256": "8fabe0be1dfad1c823dc43137453e017d2c83f376422c83e017d9dd1043e6984",
+      "size": 140285,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.jsonwebtoken",
+        "artifactId": "jjwt-api",
+        "type": "jar",
+        "version": "0.12.6",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jjwt-impl-0.12.6.jar",
+      "fileName": "jjwt-impl-0.12.6.jar",
+      "sha256": "ad80ceda467ddab64f0e729257dd5f72f61487cc3b92e696270e620f0d88168f",
+      "size": 473271,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.jsonwebtoken",
+        "artifactId": "jjwt-impl",
+        "type": "jar",
+        "version": "0.12.6",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/jjwt-jackson-0.12.6.jar",
+      "fileName": "jjwt-jackson-0.12.6.jar",
+      "sha256": "8f8c293730fa0241a0f882b6128c3e5b2c07f3ff3e6391126ef71e73ecb24ea0",
+      "size": 9431,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.jsonwebtoken",
+        "artifactId": "jjwt-jackson",
+        "type": "jar",
+        "version": "0.12.6",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/json-path-2.9.0.jar",
+      "fileName": "json-path-2.9.0.jar",
+      "sha256": "11a9ee6f88bb31f1450108d1cf6441377dec84aca075eb6bb2343be157575bea",
+      "size": 276633,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.jayway.jsonpath",
+        "artifactId": "json-path",
+        "type": "jar",
+        "version": "2.9.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/json-smart-2.5.2.jar",
+      "fileName": "json-smart-2.5.2.jar",
+      "sha256": "4fbdedb0105cedc7f766b95c297d2e88fb6a560da48f3bbaa0cc538ea8b7bf71",
+      "size": 122358,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "net.minidev",
+        "artifactId": "json-smart",
+        "type": "jar",
+        "version": "2.5.2",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/jspecify-1.0.0.jar",
+      "fileName": "jspecify-1.0.0.jar",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "size": 3819,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.jspecify",
+        "artifactId": "jspecify",
+        "type": "jar",
+        "version": "1.0.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/jul-to-slf4j-2.0.17.jar",
+      "fileName": "jul-to-slf4j-2.0.17.jar",
+      "sha256": "a7afcd23b9cfd1475e55c94f943b808c5922035e7e2c2a5c65a487a4106bc538",
+      "size": 6349,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.slf4j",
+        "artifactId": "jul-to-slf4j",
+        "type": "jar",
+        "version": "2.0.17",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-api-2.3.31.jar",
+      "fileName": "ksf-api-2.3.31.jar",
+      "sha256": "ae3be66c588761f4092aafc8d224c7dba2141683655a948f4f665e60add8e7e4",
+      "size": 295094,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-api",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-integration-2.3.31.jar",
+      "fileName": "ksf-integration-2.3.31.jar",
+      "sha256": "d71d6da124ee22d0cbc513c1b5567a0b7841dd119be57c6fb7b8697a51c42c3d",
+      "size": 211690,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-integration",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-persistence-2.3.31.jar",
+      "fileName": "ksf-persistence-2.3.31.jar",
+      "sha256": "0a85795e0e67f31e4e29b6947eb2e0c4490b72ffaea618b79e12986a0642b871",
+      "size": 422618,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-persistence",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-security-2.3.31.jar",
+      "fileName": "ksf-security-2.3.31.jar",
+      "sha256": "b38481190a8f28ab71dd9d5e8c644549b1a565310d60bf98d924bb7ca18ca1a7",
+      "size": 81671,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-security",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-security-web-starter-2.3.31.jar",
+      "fileName": "ksf-security-web-starter-2.3.31.jar",
+      "sha256": "2d9e7587262d21ed3e6f95ed5ccfb9a5b0faa3b6d98cfaff169b303be3c2672f",
+      "size": 90332,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-security-web-starter",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-starter-2.3.31.jar",
+      "fileName": "ksf-starter-2.3.31.jar",
+      "sha256": "6e6d98466532a82eab8adf250da49ffa23f8a2f0df7896b7535302ba49667547",
+      "size": 1832,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-starter",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/ksf-web-2.3.31.jar",
+      "fileName": "ksf-web-2.3.31.jar",
+      "sha256": "18f09169d8fce78410dd28efd3e84db2a29667c123a1afc38cc091741ea9530f",
+      "size": 3899896,
+      "classification": "internal-dependencies",
+      "layer": "internal-dependencies",
+      "maven": {
+        "groupId": "io.keel.framework",
+        "artifactId": "ksf-web",
+        "type": "jar",
+        "version": "2.3.31",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/LatencyUtils-2.0.3.jar",
+      "fileName": "LatencyUtils-2.0.3.jar",
+      "sha256": "a32a9ffa06b2f4e01c5360f8f9df7bc5d9454a5d373cd8f361347fa5a57165ec",
+      "size": 29779,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.latencyutils",
+        "artifactId": "LatencyUtils",
+        "type": "jar",
+        "version": "2.0.3",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/log4j-api-2.24.3.jar",
+      "fileName": "log4j-api-2.24.3.jar",
+      "sha256": "5b4a0a0cd0e751ded431c162442bdbdd53328d1f8bb2bae5fc1bbeee0f66d80f",
+      "size": 348513,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.logging.log4j",
+        "artifactId": "log4j-api",
+        "type": "jar",
+        "version": "2.24.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/log4j-to-slf4j-2.24.3.jar",
+      "fileName": "log4j-to-slf4j-2.24.3.jar",
+      "sha256": "c7f2b0c612a4eb05b1587d1c880eb4cf5f4f53850676a8ede8da2b8fabb4f73f",
+      "size": 23834,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.logging.log4j",
+        "artifactId": "log4j-to-slf4j",
+        "type": "jar",
+        "version": "2.24.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/logback-classic-1.5.18.jar",
+      "fileName": "logback-classic-1.5.18.jar",
+      "sha256": "3e1533d0321f8815eef46750aee0111b41554f9a4644c3c4d2d404744b09f60f",
+      "size": 306760,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "ch.qos.logback",
+        "artifactId": "logback-classic",
+        "type": "jar",
+        "version": "1.5.18",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/logback-core-1.5.18.jar",
+      "fileName": "logback-core-1.5.18.jar",
+      "sha256": "85139e7b57b464f8e5e36326dd81317648bed199ccc4f98cd42585f8d7571027",
+      "size": 627250,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "ch.qos.logback",
+        "artifactId": "logback-core",
+        "type": "jar",
+        "version": "1.5.18",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/micrometer-commons-1.15.3.jar",
+      "fileName": "micrometer-commons-1.15.3.jar",
+      "sha256": "0dc67ca155ee76470c0c36612e803c81f897b2af808a1f40353658d4434f7914",
+      "size": 49218,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.micrometer",
+        "artifactId": "micrometer-commons",
+        "type": "jar",
+        "version": "1.15.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/micrometer-core-1.15.3.jar",
+      "fileName": "micrometer-core-1.15.3.jar",
+      "sha256": "c7805740412a053cd7dca3bf1acd3dd4c5765e3264e4c9b68e373f9dffb87a8a",
+      "size": 864388,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.micrometer",
+        "artifactId": "micrometer-core",
+        "type": "jar",
+        "version": "1.15.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/micrometer-observation-1.15.3.jar",
+      "fileName": "micrometer-observation-1.15.3.jar",
+      "sha256": "52ccb056ef26fa87dd71a6edabbfbd02b4a4820b6cd37344720e14f9db6ee0ce",
+      "size": 75067,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.micrometer",
+        "artifactId": "micrometer-observation",
+        "type": "jar",
+        "version": "1.15.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/mssql-jdbc-12.10.1.jre11.jar",
+      "fileName": "mssql-jdbc-12.10.1.jre11.jar",
+      "sha256": "d0b614f17f3dece1e813ae534d3037f6e5a65868832b6d23fba07249b14a21d2",
+      "size": 1498699,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "com.microsoft.sqlserver",
+        "artifactId": "mssql-jdbc",
+        "type": "jar",
+        "version": "12.10.1.jre11",
+        "scope": "runtime"
+      }
+    },
+    {
+      "path": "lib/netty-buffer-4.1.124.Final.jar",
+      "fileName": "netty-buffer-4.1.124.Final.jar",
+      "sha256": "830580f29c425c97bf01ae8ec69e96f4ec425f6b0c6a497c3803f261d69a2647",
+      "size": 352365,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-buffer",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-codec-4.1.124.Final.jar",
+      "fileName": "netty-codec-4.1.124.Final.jar",
+      "sha256": "e1f30c0e8808df84126129ac78e303dceb6a701cdf6ccd470a63ee85cb064be0",
+      "size": 355803,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-codec",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-codec-http-4.1.124.Final.jar",
+      "fileName": "netty-codec-http-4.1.124.Final.jar",
+      "sha256": "27bb1fe0ec96abb7aa0b8c8f9bf98a105ad788d3a9abffe7f0a07299b317ffd3",
+      "size": 676581,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-codec-http",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-codec-socks-4.1.124.Final.jar",
+      "fileName": "netty-codec-socks-4.1.124.Final.jar",
+      "sha256": "f79232858d4a8135156623b3837fbebdc6c9a533a7bfdcb5c8653892e0f567b8",
+      "size": 121087,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-codec-socks",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-common-4.1.124.Final.jar",
+      "fileName": "netty-common-4.1.124.Final.jar",
+      "sha256": "0c00e34e457708252daf7ccee0a2fe6509a426ff943c8f876f901c07cbf77931",
+      "size": 724196,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-common",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-handler-4.1.124.Final.jar",
+      "fileName": "netty-handler-4.1.124.Final.jar",
+      "sha256": "8b84814d14804966bab92a91675cbef8b0e054633b0595b57f0115072a65a5c7",
+      "size": 580882,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-handler",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-handler-proxy-4.1.124.Final.jar",
+      "fileName": "netty-handler-proxy-4.1.124.Final.jar",
+      "sha256": "94311023482cf1ab84abaadad374d9ffa048788ba0996885b6aea8cabcbd9676",
+      "size": 25708,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-handler-proxy",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-resolver-4.1.124.Final.jar",
+      "fileName": "netty-resolver-4.1.124.Final.jar",
+      "sha256": "7a49003fc1d4e563c0b6391c4821f4e49bc25094069aa6bae9bafcf62f9c0234",
+      "size": 37904,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-resolver",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-4.1.124.Final.jar",
+      "fileName": "netty-transport-4.1.124.Final.jar",
+      "sha256": "065c5aa6de5e8305dc1a25fb079b5dd041057ee19bd027ba24420316bf2e71b2",
+      "size": 521516,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-classes-epoll-4.1.124.Final.jar",
+      "fileName": "netty-transport-classes-epoll-4.1.124.Final.jar",
+      "sha256": "a098c9a095961c8b118f9352bf23c443e0de7c53db2afa0db189d703aed53ef8",
+      "size": 147627,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport-classes-epoll",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-classes-kqueue-4.1.124.Final.jar",
+      "fileName": "netty-transport-classes-kqueue-4.1.124.Final.jar",
+      "sha256": "ad1b2fa2f6febad7a7ff3f172c7ef42d963666459a30f52fb04bb56cff5e01fc",
+      "size": 112331,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport-classes-kqueue",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-native-epoll-4.1.124.Final-linux-x86_64.jar",
+      "fileName": "netty-transport-native-epoll-4.1.124.Final-linux-x86_64.jar",
+      "sha256": "7138423e8db06cde2d21af195194b9efcc2e6b0c6c0b0381400b8d3a45fcce56",
+      "size": 40823,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport-native-epoll",
+        "type": "jar",
+        "classifier": "linux-x86_64",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-native-kqueue-4.1.124.Final-osx-x86_64.jar",
+      "fileName": "netty-transport-native-kqueue-4.1.124.Final-osx-x86_64.jar",
+      "sha256": "d2a860519554436deeda28242a893d7297cf1dcc91ce6290ff152b7117d6aa1c",
+      "size": 25481,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport-native-kqueue",
+        "type": "jar",
+        "classifier": "osx-x86_64",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/netty-transport-native-unix-common-4.1.124.Final.jar",
+      "fileName": "netty-transport-native-unix-common-4.1.124.Final.jar",
+      "sha256": "5b824b485345d3eb4f29bd96005fe71d4bdcda3e4453a834fd58f7e113346115",
+      "size": 44234,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.netty",
+        "artifactId": "netty-transport-native-unix-common",
+        "type": "jar",
+        "version": "4.1.124.Final",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/pdfbox-3.0.3.jar",
+      "fileName": "pdfbox-3.0.3.jar",
+      "sha256": "5be38d2ec81691b05d535eb720de4dc566c5d07e5a04731fa00668d153a8b4a6",
+      "size": 2030531,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.pdfbox",
+        "artifactId": "pdfbox",
+        "type": "jar",
+        "version": "3.0.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/pdfbox-io-3.0.3.jar",
+      "fileName": "pdfbox-io-3.0.3.jar",
+      "sha256": "123ea3187b497c54e661d50c3c867479bf77668ff450e50710c658f2bb4687ba",
+      "size": 47608,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.pdfbox",
+        "artifactId": "pdfbox-io",
+        "type": "jar",
+        "version": "3.0.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/pem-keystore-3.0.0.jar",
+      "fileName": "pem-keystore-3.0.0.jar",
+      "sha256": "173f806f725c721eed0a04a618a704dfe374ad225208a1e3b4a7edd383cdcc66",
+      "size": 25314,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "de.dentrassi.crypto",
+        "artifactId": "pem-keystore",
+        "type": "jar",
+        "version": "3.0.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/slf4j-api-2.0.17.jar",
+      "fileName": "slf4j-api-2.0.17.jar",
+      "sha256": "7b751d952061954d5abfed7181c1f645d336091b679891591d63329c622eb832",
+      "size": 69908,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.slf4j",
+        "artifactId": "slf4j-api",
+        "type": "jar",
+        "version": "2.0.17",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/snakeyaml-2.4.jar",
+      "fileName": "snakeyaml-2.4.jar",
+      "sha256": "ef779af5d29a9dde8cc70ce0341f5c6f7735e23edff9685ceaa9d35359b7bb7f",
+      "size": 339825,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.yaml",
+        "artifactId": "snakeyaml",
+        "type": "jar",
+        "version": "2.4",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-aop-6.2.10.jar",
+      "fileName": "spring-aop-6.2.10.jar",
+      "sha256": "9ddea2c5dacbe8197548c3d321355a0ed7358dd64ebb191637e59d827df10482",
+      "size": 420147,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-aop",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-beans-6.2.10.jar",
+      "fileName": "spring-beans-6.2.10.jar",
+      "sha256": "d786027a693687d84c6ba9ee1b2f640f4c068bd9c1046990e676c683c30920fc",
+      "size": 889749,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-beans",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-boot-3.5.5.jar",
+      "fileName": "spring-boot-3.5.5.jar",
+      "sha256": "b6d577b1971c84a2b93416b6f014e4d01dfac72dcd62b97d5dc1c8322b30ebe7",
+      "size": 1899228,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.boot",
+        "artifactId": "spring-boot",
+        "type": "jar",
+        "version": "3.5.5",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-boot-autoconfigure-3.5.5.jar",
+      "fileName": "spring-boot-autoconfigure-3.5.5.jar",
+      "sha256": "b12985e62700146973740217a8e010523b2a08879990909b43bd824bd810794d",
+      "size": 2077360,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.boot",
+        "artifactId": "spring-boot-autoconfigure",
+        "type": "jar",
+        "version": "3.5.5",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-boot-jarmode-tools-3.5.5.jar",
+      "fileName": "spring-boot-jarmode-tools-3.5.5.jar",
+      "sha256": "499313fc3a98570feb150ad7111c27478a9db922c4d2a6af046cb79f876c2d5d",
+      "size": 51687,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.boot",
+        "artifactId": "spring-boot-jarmode-tools",
+        "type": "jar",
+        "version": "3.5.5",
+        "scope": "plugin"
+      }
+    },
+    {
+      "path": "lib/spring-cloud-commons-4.3.0.jar",
+      "fileName": "spring-cloud-commons-4.3.0.jar",
+      "sha256": "7c43a62c549cd505c716b96b1a8f5a12f65cdd3c9a25dac6c0bf98a6e2438853",
+      "size": 267703,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.cloud",
+        "artifactId": "spring-cloud-commons",
+        "type": "jar",
+        "version": "4.3.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-cloud-config-client-4.3.0.jar",
+      "fileName": "spring-cloud-config-client-4.3.0.jar",
+      "sha256": "47fa84a1051587f80aac6c10feeac2dbeee12c3f2a1ccb5ed1deb79f0474fdf8",
+      "size": 89194,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.cloud",
+        "artifactId": "spring-cloud-config-client",
+        "type": "jar",
+        "version": "4.3.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-cloud-context-4.3.0.jar",
+      "fileName": "spring-cloud-context-4.3.0.jar",
+      "sha256": "0c562c30259171a7308fc392c0868501dab748b50d7491657fb63f2c3ed97fd3",
+      "size": 189436,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.cloud",
+        "artifactId": "spring-cloud-context",
+        "type": "jar",
+        "version": "4.3.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-cloud-starter-4.3.0.jar",
+      "fileName": "spring-cloud-starter-4.3.0.jar",
+      "sha256": "99a809b1bd8fefc0830f3afcfa34f8b79e6513ee4871675959b2437c284b4b02",
+      "size": 2492,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.cloud",
+        "artifactId": "spring-cloud-starter",
+        "type": "jar",
+        "version": "4.3.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-cloud-starter-config-4.3.0.jar",
+      "fileName": "spring-cloud-starter-config-4.3.0.jar",
+      "sha256": "82ca67ca6f0605f91f38eded6146c92b9c991f8d6b960ffce2c1f3aa8008e23f",
+      "size": 2522,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.cloud",
+        "artifactId": "spring-cloud-starter-config",
+        "type": "jar",
+        "version": "4.3.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-context-6.2.10.jar",
+      "fileName": "spring-context-6.2.10.jar",
+      "sha256": "b46e2ff27708a2f85dadfda5cf1c41c9ecd52b3265b272211ce085516c028af9",
+      "size": 1358053,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-context",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-context-support-6.2.10.jar",
+      "fileName": "spring-context-support-6.2.10.jar",
+      "sha256": "99c227f950eb336902d171ab542900cd6bbaa520f44f832e1f4f5c76eaa1097c",
+      "size": 175200,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-context-support",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-core-6.2.10.jar",
+      "fileName": "spring-core-6.2.10.jar",
+      "sha256": "28122d6e4a48eb8b6a0e4e087a55e96e46fb4d5e7d5d2c74dc8051401d8101da",
+      "size": 1966697,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-core",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-data-commons-3.5.3.jar",
+      "fileName": "spring-data-commons-3.5.3.jar",
+      "sha256": "edcf97455ec396f527aa507043279eb8f85bf76d20c211458e8fbb7c514ca9a0",
+      "size": 1524839,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.data",
+        "artifactId": "spring-data-commons",
+        "type": "jar",
+        "version": "3.5.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-expression-6.2.10.jar",
+      "fileName": "spring-expression-6.2.10.jar",
+      "sha256": "4fb07c59249cfb341208a27c371886c110b55cda2c933e5944ed7e02eabf1828",
+      "size": 317829,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-expression",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-hateoas-2.5.1.jar",
+      "fileName": "spring-hateoas-2.5.1.jar",
+      "sha256": "5f8c303a42253b05329cb8141b4c6d2795253adb2e51d788210f882586103f4e",
+      "size": 604142,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.hateoas",
+        "artifactId": "spring-hateoas",
+        "type": "jar",
+        "version": "2.5.1",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-jcl-6.2.10.jar",
+      "fileName": "spring-jcl-6.2.10.jar",
+      "sha256": "71586e08cdc62daa2c6f06dc606a1cc031e32477986a216c272d1a17270b2ade",
+      "size": 24540,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-jcl",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-jdbc-6.2.10.jar",
+      "fileName": "spring-jdbc-6.2.10.jar",
+      "sha256": "421811b38f9f30243c6720909efd110ceec11c13c523233fa1226e7a89d8411d",
+      "size": 472381,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-jdbc",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-jms-6.2.10.jar",
+      "fileName": "spring-jms-6.2.10.jar",
+      "sha256": "5e148f665877a5243b2611d5d50b5c3604b0c04de0ece7bda35be0f6c43b0399",
+      "size": 272759,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-jms",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-messaging-6.2.10.jar",
+      "fileName": "spring-messaging-6.2.10.jar",
+      "sha256": "0dd05244b81a31806f2bf117dcb86537f2ba032a620c0aa99ae79c40c708f674",
+      "size": 618729,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-messaging",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-plugin-core-3.0.0.jar",
+      "fileName": "spring-plugin-core-3.0.0.jar",
+      "sha256": "edf72d44b9cf1199cc783d620f5f86df82fb378521dac313540086e6c3c66ff0",
+      "size": 30797,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.plugin",
+        "artifactId": "spring-plugin-core",
+        "type": "jar",
+        "version": "3.0.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-security-config-6.5.3.jar",
+      "fileName": "spring-security-config-6.5.3.jar",
+      "sha256": "defdd6e2938b6183b3278251aa50a68afb11311660ef2b01de442c7bdf6f5ed3",
+      "size": 2107980,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.security",
+        "artifactId": "spring-security-config",
+        "type": "jar",
+        "version": "6.5.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-security-core-6.5.3.jar",
+      "fileName": "spring-security-core-6.5.3.jar",
+      "sha256": "eebd37ff370289f51ac84b082297639c905bddf45931b40909802201ddadbe32",
+      "size": 622844,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.security",
+        "artifactId": "spring-security-core",
+        "type": "jar",
+        "version": "6.5.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-security-crypto-6.5.3.jar",
+      "fileName": "spring-security-crypto-6.5.3.jar",
+      "sha256": "635acbe15ea9208f804f824e89f803c170f84867a089f89326e381161f2e11d0",
+      "size": 104853,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.security",
+        "artifactId": "spring-security-crypto",
+        "type": "jar",
+        "version": "6.5.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-security-web-6.5.3.jar",
+      "fileName": "spring-security-web-6.5.3.jar",
+      "sha256": "cca21d916964a94dc12a9d54a78f1a8e0b3d8b61124c5501ad961c6bc7ff51d8",
+      "size": 1052048,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework.security",
+        "artifactId": "spring-security-web",
+        "type": "jar",
+        "version": "6.5.3",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-tx-6.2.10.jar",
+      "fileName": "spring-tx-6.2.10.jar",
+      "sha256": "637a8475d2be7743bbfde3cffc388a9013301edaa708abd7eda472e61855f7de",
+      "size": 285514,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-tx",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-web-6.2.10.jar",
+      "fileName": "spring-web-6.2.10.jar",
+      "sha256": "79b68c5252775e2fb67e945ea8f63d4872dc0d7b3ca35ec2576dc88f7bdb895e",
+      "size": 2090427,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-web",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-webmvc-6.2.10.jar",
+      "fileName": "spring-webmvc-6.2.10.jar",
+      "sha256": "cdd2bdb5e5396d5271559c120c2db81162f420fcfff2b09007b9168b8635175d",
+      "size": 1091514,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-webmvc",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/spring-websocket-6.2.10.jar",
+      "fileName": "spring-websocket-6.2.10.jar",
+      "sha256": "fdb94790dbee3c3336e5de55a6b4a3acd9addd480d1b2dd92c8dc4bb70dffbe9",
+      "size": 444288,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springframework",
+        "artifactId": "spring-websocket",
+        "type": "jar",
+        "version": "6.2.10",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/springdoc-openapi-starter-common-2.8.12.jar",
+      "fileName": "springdoc-openapi-starter-common-2.8.12.jar",
+      "sha256": "13acc2d58fe486368c60219117495bdb87e399396e7ac9aa2b38ca3c24b1c277",
+      "size": 535110,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springdoc",
+        "artifactId": "springdoc-openapi-starter-common",
+        "type": "jar",
+        "version": "2.8.12",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/springdoc-openapi-starter-webmvc-api-2.8.12.jar",
+      "fileName": "springdoc-openapi-starter-webmvc-api-2.8.12.jar",
+      "sha256": "040c9cae89c1e2bad7ca88cd2d3aa4ff96fddd67b0057c6776eb8cac4513e99d",
+      "size": 42599,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springdoc",
+        "artifactId": "springdoc-openapi-starter-webmvc-api",
+        "type": "jar",
+        "version": "2.8.12",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/springdoc-openapi-starter-webmvc-ui-2.8.12.jar",
+      "fileName": "springdoc-openapi-starter-webmvc-ui-2.8.12.jar",
+      "sha256": "73653163c4de34659a7490ab02c8628d42953ece9bacd2810674aec93233144c",
+      "size": 23125,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.springdoc",
+        "artifactId": "springdoc-openapi-starter-webmvc-ui",
+        "type": "jar",
+        "version": "2.8.12",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/swagger-annotations-jakarta-2.2.36.jar",
+      "fileName": "swagger-annotations-jakarta-2.2.36.jar",
+      "sha256": "8dd775fd27e56b3b26b9bef5ad2ab225a872e978047be77dc80fe0fe609a6419",
+      "size": 50579,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.swagger.core.v3",
+        "artifactId": "swagger-annotations-jakarta",
+        "type": "jar",
+        "version": "2.2.36",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/swagger-core-jakarta-2.2.36.jar",
+      "fileName": "swagger-core-jakarta-2.2.36.jar",
+      "sha256": "4b05633d2dc70e39b2f075a3f1b1ab2220c5e0e88e8ebad124ef09fbe3a3ed95",
+      "size": 251161,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.swagger.core.v3",
+        "artifactId": "swagger-core-jakarta",
+        "type": "jar",
+        "version": "2.2.36",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/swagger-models-jakarta-2.2.36.jar",
+      "fileName": "swagger-models-jakarta-2.2.36.jar",
+      "sha256": "bcf9adc6c86c9082aec573987b9ed09e2254392a5c84e5b4972dd57f5ca66997",
+      "size": 140032,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "io.swagger.core.v3",
+        "artifactId": "swagger-models-jakarta",
+        "type": "jar",
+        "version": "2.2.36",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/swagger-ui-5.28.0.jar",
+      "fileName": "swagger-ui-5.28.0.jar",
+      "sha256": "e951189b0f60e437c4c670984e161f2fb476cd784546e9d476bcdacc49d2d5b1",
+      "size": 1137093,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.webjars",
+        "artifactId": "swagger-ui",
+        "type": "jar",
+        "version": "5.28.0",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/tomcat-embed-core-10.1.44.jar",
+      "fileName": "tomcat-embed-core-10.1.44.jar",
+      "sha256": "8bb726735eb89bcef7a0c088db45428fd874dfdcf1775ab029d1a0d5490e68a0",
+      "size": 3633195,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.tomcat.embed",
+        "artifactId": "tomcat-embed-core",
+        "type": "jar",
+        "version": "10.1.44",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/tomcat-embed-el-10.1.44.jar",
+      "fileName": "tomcat-embed-el-10.1.44.jar",
+      "sha256": "8f02930d492d35b6eb987f3c8a2c63285eee739413131fb488668de8c62a4986",
+      "size": 264299,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.tomcat.embed",
+        "artifactId": "tomcat-embed-el",
+        "type": "jar",
+        "version": "10.1.44",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/tomcat-embed-websocket-10.1.44.jar",
+      "fileName": "tomcat-embed-websocket-10.1.44.jar",
+      "sha256": "bf77886db065491103994df64062f466cba7ab617c1a8c79977ed21b3259ca0f",
+      "size": 283787,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.apache.tomcat.embed",
+        "artifactId": "tomcat-embed-websocket",
+        "type": "jar",
+        "version": "10.1.44",
+        "scope": "compile"
+      }
+    },
+    {
+      "path": "lib/webjars-locator-lite-1.1.0.jar",
+      "fileName": "webjars-locator-lite-1.1.0.jar",
+      "sha256": "fd36e2d14fc080f78d14e1ec6820f3b24698f88a062cc1f592c9eb59b1393fcd",
+      "size": 8107,
+      "classification": "third-party-dependencies",
+      "layer": "third-party-dependencies",
+      "maven": {
+        "groupId": "org.webjars",
+        "artifactId": "webjars-locator-lite",
+        "type": "jar",
+        "version": "1.1.0",
+        "scope": "compile"
+      }
+    }
+  ],
+  "summary": {
+    "fileCount": 126,
+    "totalSize": 71876046
+  }
+}
