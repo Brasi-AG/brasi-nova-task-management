@@ -4,22 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 import de.brasi.nova.taskmanagement.security.CurrentActor;
 import de.brasi.nova.taskmanagement.task.model.TaskSourceInput;
 import io.keel.framework.api.exception.EntityNotFoundException;
 import io.keel.framework.api.security.tenant.TenantInfo;
 import io.keel.framework.api.security.user.AuthUser;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,27 +30,13 @@ class FirmTaskSourceAdapterTest {
       new CurrentActor(
           new TenantInfo(TENANT, 500L), new AuthUser(UUID.randomUUID(), "actor@test.invalid"));
   private final TaskSourceInput source = new TaskSourceInput("application", "firm", FIRM);
-  private final AtomicReference<String> bearer = new AtomicReference<>();
-  private final AtomicReference<String> path = new AtomicReference<>();
-  private final AtomicInteger requests = new AtomicInteger();
-  private final AtomicInteger bodyStarted = new AtomicInteger();
-  private final CountDownLatch stalledHeadersSent = new CountDownLatch(1);
-  private final CountDownLatch firstBodyByteSent = new CountDownLatch(1);
-  private final CountDownLatch releaseStalledBody = new CountDownLatch(1);
-  private HttpServer server;
-  private volatile int responseStatus = 200;
-  private volatile String responseBody;
-  private volatile String redirectLocation;
-  private volatile long responseDelayMillis;
-  private volatile boolean stallBody;
-  private volatile boolean stallBeforeFirstByte;
+  private TaskSourceProofServer server;
 
   @BeforeEach
   void startServer() throws IOException {
-    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext("/", this::respond);
-    server.start();
-    responseBody = "{\"tenantId\":\"" + TENANT + "\",\"firmId\":\"" + FIRM + "\"}";
+    server =
+        TaskSourceProofServer.start(
+            "{\"tenantId\":\"" + TENANT + "\",\"firmId\":\"" + FIRM + "\"}");
     final MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader("Authorization", "Bearer end-user-token");
     RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
@@ -67,15 +45,15 @@ class FirmTaskSourceAdapterTest {
   @AfterEach
   void stopServer() {
     RequestContextHolder.resetRequestAttributes();
-    server.stop(0);
+    server.close();
   }
 
   @Test
   void forwardsCurrentBearerToExactApplicationProofAndHasNoNavigationLink() {
     registry().requireReadable(source, actor);
 
-    assertThat(bearer.get()).isEqualTo("Bearer end-user-token");
-    assertThat(path.get())
+    assertThat(server.bearer()).isEqualTo("Bearer end-user-token");
+    assertThat(server.path())
         .isEqualTo("/api/v1/firms/" + TENANT + "/" + FIRM + "/task-source-validation");
     assertThat(registry().href(source, TENANT)).isNull();
   }
@@ -87,15 +65,15 @@ class FirmTaskSourceAdapterTest {
     assertThatThrownBy(() -> registry().requireReadable(foreign, actor))
         .isInstanceOf(EntityNotFoundException.class)
         .hasMessage("Quelle nicht gefunden.");
-    assertThat(requests.get()).isZero();
+    assertThat(server.requests()).isZero();
   }
 
   @Test
   void deniedOrMissingFirmIsNeutralNotFound() {
     for (final int status : List.of(403, 404)) {
-      responseStatus = status;
+      server.status(status);
       assertThatThrownBy(() -> registry().requireReadable(source, actor))
-          .describedAs("Application status %s, requests %s", status, requests.get())
+          .describedAs("Application status %s, requests %s", status, server.requests())
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
     }
@@ -107,9 +85,9 @@ class FirmTaskSourceAdapterTest {
         List.of(
             "{\"tenantId\":\"" + UUID.randomUUID() + "\",\"firmId\":\"" + FIRM + "\"}",
             "{\"tenantId\":\"" + TENANT + "\",\"firmId\":\"" + UUID.randomUUID() + "\"}")) {
-      responseBody = body;
+      server.body(body);
       assertThatThrownBy(() -> registry().requireReadable(source, actor))
-          .describedAs("Application proof %s, requests %s", body, requests.get())
+          .describedAs("Application proof %s, requests %s", body, server.requests())
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
     }
@@ -117,24 +95,24 @@ class FirmTaskSourceAdapterTest {
 
   @Test
   void upstreamFailureAndInvalidProofFailClosedWithSafe503() {
-    responseStatus = 503;
+    server.status(503);
     assertSafeUnavailable();
-    responseStatus = 200;
-    responseBody = "{\"tenantId\":\"bad\"}";
+    server.status(200);
+    server.body("{\"tenantId\":\"bad\"}");
     assertSafeUnavailable();
   }
 
   @Test
   void oversizedButOtherwiseValidProofFailsClosed() {
-    responseBody = " ".repeat(5000) + responseBody;
+    server.body(" ".repeat(5000) + server.body());
 
     assertSafeUnavailable();
   }
 
   @Test
   void forbiddenWithLargeResponseRemainsNeutralNotFound() {
-    responseStatus = 403;
-    responseBody = "x".repeat(5000);
+    server.status(403);
+    server.body("x".repeat(5000));
 
     assertThatThrownBy(() -> registry(5000).requireReadable(source, actor))
         .isInstanceOf(EntityNotFoundException.class)
@@ -143,67 +121,66 @@ class FirmTaskSourceAdapterTest {
 
   @Test
   void forbiddenHeadersRemainNeutralNotFoundWhileErrorBodyIsStalled() throws InterruptedException {
-    responseStatus = 403;
-    stallBody = true;
+    server.status(403);
+    server.stallBody(false);
 
     try {
       assertThatThrownBy(() -> registry(3000).requireReadable(source, actor))
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
-      assertStalledHeadersSent();
+      server.assertStalledHeadersSent();
     } finally {
-      releaseStalledBody.countDown();
+      server.releaseStalledBody();
     }
   }
 
   @Test
-  void notFoundHeadersRemainNeutralBeforeFirstErrorBodyByte() {
-    responseStatus = 404;
-    stallBody = true;
-    stallBeforeFirstByte = true;
+  void notFoundHeadersRemainNeutralBeforeFirstErrorBodyByte() throws InterruptedException {
+    server.status(404);
+    server.stallBody(true);
 
     final TaskSourceRegistry proofRegistry = registry(3000);
     try {
       assertThatThrownBy(() -> proofRegistry.requireReadable(source, actor))
           .isInstanceOf(EntityNotFoundException.class)
           .hasMessage("Quelle nicht gefunden.");
-      assertThat(bodyStarted.get()).isZero();
+      server.assertStalledHeadersSent();
     } finally {
-      releaseStalledBody.countDown();
+      server.releaseStalledBody();
     }
   }
 
   @Test
   void literalNullProofIsMalformedRatherThanMissingFirm() {
-    responseBody = "null";
+    server.body("null");
 
     assertSafeUnavailable();
   }
 
   @Test
   void bodyStallIsBoundedByRequestTimeout() throws InterruptedException {
-    stallBody = true;
+    server.stallBody(false);
 
     try {
       assertSafeUnavailable(registry(3000));
-      assertFirstBodyByteSent();
+      server.assertFirstBodyByteSent();
     } finally {
-      releaseStalledBody.countDown();
+      server.releaseStalledBody();
     }
   }
 
   @Test
   void redirectsAreNeverFollowedWithBearer() {
-    responseStatus = 302;
-    redirectLocation = baseUrl() + "/redirect-target";
+    server.status(302);
+    server.redirectTo(baseUrl() + "/redirect-target");
 
     assertSafeUnavailable();
-    assertThat(requests.get()).isEqualTo(1);
+    assertThat(server.requests()).isEqualTo(1);
   }
 
   @Test
   void timeoutFailsClosed() {
-    responseDelayMillis = 300;
+    server.delayMillis(300);
 
     assertSafeUnavailable(registry(100));
   }
@@ -213,14 +190,14 @@ class FirmTaskSourceAdapterTest {
     final MockHttpServletRequest request = new MockHttpServletRequest();
     RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
     assertSafeUnavailable();
-    assertThat(requests.get()).isZero();
+    assertThat(server.requests()).isZero();
 
     assertThatThrownBy(
             () ->
                 new FirmTaskSourceAdapter(
                     baseUrl(), List.of("http://127.0.0.1:1"), new ObjectMapper(), 100, 100))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThat(requests.get()).isZero();
+    assertThat(server.requests()).isZero();
   }
 
   @Test
@@ -231,7 +208,7 @@ class FirmTaskSourceAdapterTest {
     RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
 
     assertSafeUnavailable();
-    assertThat(requests.get()).isZero();
+    assertThat(server.requests()).isZero();
   }
 
   @Test
@@ -253,25 +230,6 @@ class FirmTaskSourceAdapterTest {
             });
   }
 
-  private void assertStalledHeadersSent() throws InterruptedException {
-    // Bei 403 entscheidet der Client an den Headern und schließt den Fehlerstrom; ob der Server
-    // das erste Body-Byte danach noch schreiben kann, ist offen. Gewartet wird daher nur auf die
-    // gesendeten Header, der Body hängt bis zur Freigabe im finally.
-    assertThat(stalledHeadersSent.await(5, TimeUnit.SECONDS))
-        .describedAs("Header vor hängendem Body gesendet")
-        .isTrue();
-  }
-
-  private void assertFirstBodyByteSent() throws InterruptedException {
-    // Der Server zählt erst nach dem Flush des ersten Body-Bytes, der Client kann schon vorher
-    // zurückkehren. Erst das Latch stellt Happens-before zum Zähler her; ohne Signal scheitert der
-    // Test nach der Frist hart.
-    assertThat(firstBodyByteSent.await(5, TimeUnit.SECONDS))
-        .describedAs("erstes Body-Byte gesendet")
-        .isTrue();
-    assertThat(bodyStarted.get()).isEqualTo(1);
-  }
-
   private TaskSourceRegistry registry() {
     return registry(2000);
   }
@@ -284,7 +242,7 @@ class FirmTaskSourceAdapterTest {
   }
 
   private String baseUrl() {
-    return "http://127.0.0.1:" + server.getAddress().getPort();
+    return server.baseUrl();
   }
 
   private void assertSafeUnavailable() {
@@ -299,52 +257,5 @@ class FirmTaskSourceAdapterTest {
                 assertThat(((ResponseStatusException) error).getStatusCode())
                     .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
         .hasMessageNotContaining("end-user-token");
-  }
-
-  private void respond(final HttpExchange exchange) throws IOException {
-    requests.incrementAndGet();
-    bearer.set(exchange.getRequestHeaders().getFirst("Authorization"));
-    path.set(exchange.getRequestURI().getPath());
-    if (responseDelayMillis > 0) {
-      try {
-        Thread.sleep(responseDelayMillis);
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
-    }
-    if (redirectLocation != null) {
-      exchange.getResponseHeaders().set("Location", redirectLocation);
-    }
-    final byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
-    try {
-      if (stallBody) {
-        exchange.sendResponseHeaders(responseStatus, 0);
-        exchange.getResponseBody().flush();
-        stalledHeadersSent.countDown();
-        if (!stallBeforeFirstByte) {
-          exchange.getResponseBody().write(bytes, 0, 1);
-          exchange.getResponseBody().flush();
-          bodyStarted.incrementAndGet();
-          firstBodyByteSent.countDown();
-        }
-        try {
-          releaseStalledBody.await(10, TimeUnit.SECONDS);
-        } catch (InterruptedException interrupted) {
-          Thread.currentThread().interrupt();
-        }
-        if (stallBeforeFirstByte) {
-          exchange.getResponseBody().write(bytes);
-        } else {
-          exchange.getResponseBody().write(bytes, 1, bytes.length - 1);
-        }
-      } else {
-        exchange.sendResponseHeaders(responseStatus, bytes.length);
-        exchange.getResponseBody().write(bytes);
-      }
-    } catch (IOException clientClosed) {
-      // A request timeout closes the client before the fixture responds.
-    } finally {
-      exchange.close();
-    }
   }
 }
