@@ -5,6 +5,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.locks.LockSupport;
@@ -44,16 +45,28 @@ public final class AwaitStreamingBodyFilter implements Filter {
     final Duration timeout = Duration.ofMillis(request.getAsyncContext().getTimeout());
     if (timeout.isNegative() || timeout.isZero()) {
       throw new IllegalStateException(
-          "Async-Frist des Requests ist nicht begrenzt (" + timeout + ").");
+          "Async-Frist von " + describe(request) + " ist nicht begrenzt (" + timeout + ").");
     }
     final WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
     final long deadline = System.nanoTime() + timeout.toNanos();
     while (!asyncManager.hasConcurrentResult()) {
       if (System.nanoTime() - deadline > 0) {
         throw new IllegalStateException(
-            "Async-Ergebnis der Auslieferung nicht innerhalb von " + timeout + " abgelegt.");
+            "Async-Ergebnis der Auslieferung von "
+                + describe(request)
+                + " nicht innerhalb von "
+                + timeout
+                + " abgelegt.");
       }
       LockSupport.parkNanos(Duration.ofMillis(1).toNanos());
     }
+  }
+
+  /** Methode und URI der Anfrage fuer die Fehlermeldung, damit der Abruf erkennbar ist. */
+  private static String describe(final ServletRequest request) {
+    if (request instanceof HttpServletRequest httpRequest) {
+      return httpRequest.getMethod() + " " + httpRequest.getRequestURI();
+    }
+    return request.toString();
   }
 }
