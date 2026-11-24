@@ -674,13 +674,17 @@ class TaskWebSocketHandlerIT {
       final long taskId,
       final UUID participantRef,
       final long tenantId) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_PARTICIPANT] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_PARTICIPANT] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, PARTICIPANT_REF, PARTICIPANT_KIND, PARTICIPANT_TENANT_ID,"
             + " CREATOR_FLAG, ASSIGNEE_FLAG, PARTICIPANT_FLAG, EXIT_KIND) "
-            + "VALUES (?, 'ACTIVE', 'ws-handler-it', getdate(), ?, 1, ?, ?, ?, 'PERSON', ?, 1, 1, 1, NULL)",
+            + "VALUES (?, 'ACTIVE', 'ws-handler-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " 'PERSON', ?, 1, 1, 1, NULL)",
         id,
         id,
         UUID.randomUUID(),
@@ -696,12 +700,16 @@ class TaskWebSocketHandlerIT {
       final long taskId,
       final UUID userRef,
       final long tenantId) {
+    // ANGELEGT_AM bewusst vor der DB-Uhr datiert: Die Inbox-Abfragen vergleichen es gegen das
+    // asOf der JVM-Uhr (ANGELEGT_AM <= asOf). Ein Stempel mit getdate() kann Millisekunden hinter
+    // dem asOf der naechsten Anfrage liegen (Uhren-Wettlauf, wie in InboxArchiveSearchIT).
     jt.update(
         "IF NOT EXISTS (SELECT 1 FROM [dbo].[TASK_USER_STATE] WHERE ID = ?) "
             + "INSERT INTO [dbo].[TASK_USER_STATE] "
             + "(ID, ENTITY_STATUS, ANGELEGT_VON, ANGELEGT_AM, EXTERNALID, VERSION, TENANT_ID,"
             + " TASK_ID, USER_REF, USER_TENANT_ID, IS_PINNED, IS_FLAGGED, IS_MUTED, UNSUBSCRIBED_AT) "
-            + "VALUES (?, 'ACTIVE', 'ws-handler-it', getdate(), ?, 1, ?, ?, ?, ?, 0, 0, 0, NULL)",
+            + "VALUES (?, 'ACTIVE', 'ws-handler-it', DATEADD(hour, -3, getdate()), ?, 1, ?, ?, ?,"
+            + " ?, 0, 0, 0, NULL)",
         id,
         id,
         UUID.randomUUID(),
